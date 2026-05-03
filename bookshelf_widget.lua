@@ -10,6 +10,7 @@
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local VerticalGroup   = require("ui/widget/verticalgroup")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local TextWidget      = require("ui/widget/textwidget")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
@@ -254,63 +255,84 @@ function BookshelfWidget:_rebuild()
         return
     end
 
-    -- ── Footer-style pagination label ─────────────────────────────────────────
-    -- Tappable: left half = previous page, right half = next page.
-    -- When a series is expanded, the label reads "← Series name" and tapping
-    -- anywhere collapses back to the chip's data.
-    local is_expanded = (self._expanded_series ~= nil)
-    local first_idx   = total > 0 and start_idx or 0
-    local last_idx    = total > 0 and (start_idx + shown_count - 1) or 0
-    local label_text
+    -- ── Bookends-style pagination footer ──────────────────────────────────────
+    -- ⏮  ◀  Page X of Y  ▶  ⏭  with chevron icons. Mirrors the
+    -- bookends preset library's pagination row (chev_size = 32dp).
+    -- When a series is expanded, the label collapses to "← Series name" and
+    -- tapping anywhere collapses back to the chip's data (no pagination).
+    local Button         = require("ui/widget/button")
+    local HorizontalSpan = require("ui/widget/horizontalspan")
+    local is_expanded    = (self._expanded_series ~= nil)
+    local bw             = self
+
+    local label_widget
     if is_expanded then
-        label_text = "\xe2\x86\x90  " .. (self._expanded_series.series_name or "Series")
-    else
-        local left_arrow  = self.page > 1           and "\xe2\x80\xb9  " or "   "
-        local right_arrow = self.page < total_pages and "  \xe2\x80\xba" or ""
-        label_text = string.format(
-            "%s%s  \xc2\xb7  %d\xe2\x80\x93%d of %d%s",
-            left_arrow, self:_chipLabel(), first_idx, last_idx, total, right_arrow
-        )
-    end
-
-    local bw = self
-
-    local ShelfLabel = InputContainer:extend{}
-    function ShelfLabel:init()
-        self.dimen = Geom:new{ w = content_w, h = label_h }
-        self[1] = CenterContainer:new{
-            dimen = Geom:new{ w = content_w, h = label_h },
-            TextWidget:new{
-                text = label_text,
-                face = Font:getFace("infofont", 11),
-            },
-        }
-        self.ges_events = {
-            Tap = { GestureRange:new{ ges = "tap", range = self.dimen } },
-        }
-    end
-    function ShelfLabel:onTap(_, ges)
-        if is_expanded then
+        local SeriesLabel = InputContainer:extend{}
+        function SeriesLabel:init()
+            self.dimen = Geom:new{ w = content_w, h = label_h }
+            self[1] = CenterContainer:new{
+                dimen = self.dimen,
+                TextWidget:new{
+                    text = "\xe2\x86\x90  " .. (bw._expanded_series.series_name or "Series"),
+                    face = Font:getFace("infofont", 14),
+                    bold = true,
+                },
+            }
+            self.ges_events = {
+                Tap = { GestureRange:new{ ges = "tap", range = self.dimen } },
+            }
+        end
+        function SeriesLabel:onTap()
             bw._expanded_series = nil
             bw:_rebuild()
             UIManager:setDirty(bw, "ui")
             return true
         end
-        -- Resolve prev/next based on tap x relative to label centre.
-        local x = ges and ges.pos and ges.pos.x or 0
-        local centre = self.dimen.x + self.dimen.w / 2
-        if x < centre and bw.page > 1 then
-            bw.page = bw.page - 1
-            bw:_rebuild()
-            UIManager:setDirty(bw, "ui")
-        elseif x >= centre and bw.page < total_pages then
-            bw.page = bw.page + 1
-            bw:_rebuild()
-            UIManager:setDirty(bw, "ui")
+        label_widget = SeriesLabel:new{}
+    else
+        local chev_size = Screen:scaleBySize(32)
+        local nav_span  = Screen:scaleBySize(32)
+        local function go(p)
+            return function() bw.page = p; bw:_rebuild(); UIManager:setDirty(bw, "ui") end
         end
-        return true
+        local first = Button:new{
+            icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
+            callback = go(1), bordersize = 0, enabled = self.page > 1, show_parent = self,
+        }
+        local prev = Button:new{
+            icon = "chevron.left",  icon_width = chev_size, icon_height = chev_size,
+            callback = go(self.page - 1), bordersize = 0,
+            enabled = self.page > 1, show_parent = self,
+        }
+        local page_text = Button:new{
+            text = string.format("Page %d of %d", self.page, total_pages),
+            text_font_size = 15,
+            callback = function() end,
+            bordersize = 0, show_parent = self,
+        }
+        local next = Button:new{
+            icon = "chevron.right", icon_width = chev_size, icon_height = chev_size,
+            callback = go(self.page + 1), bordersize = 0,
+            enabled = self.page < total_pages, show_parent = self,
+        }
+        local last = Button:new{
+            icon = "chevron.last", icon_width = chev_size, icon_height = chev_size,
+            callback = go(total_pages), bordersize = 0,
+            enabled = self.page < total_pages, show_parent = self,
+        }
+        local nav = HorizontalGroup:new{
+            align = "center",
+            first, HorizontalSpan:new{ width = nav_span },
+            prev,  HorizontalSpan:new{ width = nav_span },
+            page_text, HorizontalSpan:new{ width = nav_span },
+            next,  HorizontalSpan:new{ width = nav_span },
+            last,
+        }
+        label_widget = CenterContainer:new{
+            dimen = Geom:new{ w = content_w, h = chev_size + Size.padding.default * 2 },
+            nav,
+        }
     end
-    local label_widget = ShelfLabel:new{}
 
     -- ── Shelf rows ────────────────────────────────────────────────────────────
     local items_top, items_bottom = {}, {}
