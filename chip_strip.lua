@@ -1,0 +1,93 @@
+-- chip_strip.lua
+-- Segmented control: zero-gap horizontally-joined chips. Active chip inverts
+-- (black fill, paper text). Tap dispatches an on_change(key) callback.
+--
+-- Border-butting approach: chips are joined by giving each chip (after the
+-- first) a padding_left = -Size.border.thin, which shifts the left edge left
+-- by one border-width so the adjacent right-border and this left-border
+-- overlap at the same pixel. If KOReader's FrameContainer clamps negative
+-- padding to zero, the visual gap is a 1px double-border rather than a
+-- seamless join — still readable. No divider-widget alternative is needed
+-- because the border overlap is only cosmetic.
+
+local FrameContainer = require("ui/widget/container/framecontainer")
+local InputContainer = require("ui/widget/container/inputcontainer")
+local HorizontalGroup= require("ui/widget/horizontalgroup")
+local TextWidget     = require("ui/widget/textwidget")
+local CenterContainer= require("ui/widget/container/centercontainer")
+local Geom           = require("ui/geometry")
+local Size           = require("ui/size")
+local Font           = require("ui/font")
+local Blitbuffer     = require("ffi/blitbuffer")
+
+local ChipStrip = InputContainer:extend{
+    chips     = nil,   -- list of { key="recent", label="Recent" }
+    active    = nil,   -- key of the currently-selected chip
+    width     = nil,
+    height    = nil,
+    on_change = nil,   -- function(key) called when a different chip is tapped
+}
+
+function ChipStrip:init()
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+    local n = #self.chips
+    local chip_w = math.floor(self.width / n)
+    local row = HorizontalGroup:new{}
+    self._chip_dimens = {}
+
+    -- paper tone helper
+    local paper
+    if type(Blitbuffer.gray) == "function" then
+        paper = Blitbuffer.gray(0.95)
+    else
+        paper = Blitbuffer.COLOR_WHITE
+    end
+
+    for i, chip in ipairs(self.chips) do
+        local is_active = (chip.key == self.active)
+        -- Last chip gets any rounding remainder so total width = self.width.
+        local w = (i == n) and (self.width - chip_w * (n - 1)) or chip_w
+        local frame = FrameContainer:new{
+            bordersize = Size.border.thin,
+            margin     = 0,
+            padding    = 0,
+            background = is_active and Blitbuffer.COLOR_BLACK or paper,
+            CenterContainer:new{
+                dimen = Geom:new{ w = w, h = self.height },
+                TextWidget:new{
+                    text    = chip.label,
+                    face    = Font:getFace("infofont", 10),
+                    fgcolor = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
+                }
+            }
+        }
+        -- Visually butt-joined: shift each chip after the first left by one
+        -- border-width so adjacent borders overlap instead of doubling.
+        if i > 1 then frame.padding_left = -Size.border.thin end
+        row[#row + 1] = frame
+        self._chip_dimens[chip.key] = { x = (i - 1) * chip_w, w = w }
+    end
+    self[1] = row
+
+    -- Single gesture binding for the whole strip; we resolve which chip was
+    -- tapped by the x-coordinate within onTapStrip.
+    self.ges_events = {
+        TapStrip = { GestureRange = { ges = "tap", range = self.dimen } },
+    }
+end
+
+function ChipStrip:onTapStrip(_, ges)
+    local x = ges.pos.x - self.dimen.x
+    for _, chip in ipairs(self.chips) do
+        local d = self._chip_dimens[chip.key]
+        if x >= d.x and x < d.x + d.w then
+            if self.on_change and chip.key ~= self.active then
+                self.on_change(chip.key)
+            end
+            return true
+        end
+    end
+    return false
+end
+
+return ChipStrip
