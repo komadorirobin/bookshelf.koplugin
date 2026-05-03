@@ -134,30 +134,13 @@ function SpineWidget:_renderCover()
     }
     if self.cover_fill then
         -- Stretch (CSS object-fit: fill). Default for shelf spines.
-    elseif self.cover_native then
-        -- Render at native bb size with no scaling, then center in the slot.
-        -- Avoids RenderImage:scaleBlitBuffer entirely — the suspected source
-        -- of stripe corruption on the hero. The CenterContainer absorbs the
-        -- size mismatch.
-        img_args.width  = nil
-        img_args.height = nil
-        img_args.scale_factor = 1
-        local img = ImageWidget:new(img_args)
-        local centered = CenterContainer:new{
-            dimen = Geom:new{ w = card_w, h = card_h },
-            img,
-        }
-        local cover = FrameContainer:new{
-            bordersize = CARD_BORDER,
-            radius     = CARD_RADIUS,
-            padding    = 0,
-            width      = card_w,
-            height     = card_h,
-            centered,
-        }
-        return (self:_renderShadowedCard(cover))
     else
-        -- Aspect-preserving fit (CSS object-fit: contain).
+        -- Aspect-preserving fit (CSS object-fit: contain). The hero uses
+        -- this — it scales the bb DOWN to fit when the cached cover_bb is
+        -- larger than the slot (typical: BookInfoManager caches at ~400×640,
+        -- hero slot is ~330×500). Letterboxing on aspect mismatch is fine;
+        -- overflowing the slot (which would happen with no scaling) corrupts
+        -- the framebuffer above the hero.
         img_args.scale_factor = 0
     end
     local cover = FrameContainer:new{
