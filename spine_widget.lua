@@ -39,7 +39,10 @@ function SpineWidget:_renderCover()
             image  = self.book.cover_bb,
             width  = self.width,
             height = self.height,
-            scale_factor = 0,  -- fit (preserves aspect, no upscale)
+            -- scale_factor omitted (= nil) → ImageWidget stretches the image
+            -- to fill width × height without preserving aspect ratio.
+            -- CSS object-fit: fill semantics. Trades off some distortion for
+            -- a fully-occupied slot, which keeps the shelf grid uniform.
         },
     }
 end
