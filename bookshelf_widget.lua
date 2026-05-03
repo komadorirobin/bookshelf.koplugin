@@ -44,6 +44,7 @@ function BookshelfWidget:init()
     self.height = Screen:getHeight()
     self.dimen  = Geom:new{ w = self.width, h = self.height }
     self.chip   = G_reader_settings:readSetting("bookshelf_active_chip") or "recent"
+    self.page   = 1   -- 1-based; 8 books per page (4 cols × 2 shelves)
 
     -- Register top-zone touch zones so the standard KOReader menu opens via
     -- tap/swipe at the top of the screen, exactly as it does in FileManager.
@@ -136,8 +137,11 @@ function BookshelfWidget:_rebuild()
     -- the percentage. Users with PDF/CBZ libraries (where page counts ARE
     -- tracked) can still type "%page_num / %page_count · %book_pct" into
     -- Settings → Edit hero card lines.
+    -- The progress bar already shows the percentage inline, so the default
+    -- detail lines focus on book_time_left and (for PDF/CBZ books that
+    -- expose page numbers) "Page X / Y".
     local lines = G_reader_settings:readSetting("bookshelf_hero_lines") or {
-        "[if:page_num]Page %page_num / %page_count · %book_pct[else]%book_pct[/if]",
+        "[if:page_num]Page %page_num / %page_count[/if]",
         "[if:book_time_left]%book_time_left LEFT[/if]",
     }
     local hero = HeroCard:new{
@@ -165,9 +169,10 @@ function BookshelfWidget:_rebuild()
         width    = content_w,
         height   = chip_h,
         on_change = function(key)
-            -- Reset any expanded series when switching chips.
+            -- Reset any expanded series, and reset to page 1, when switching chips.
             self._expanded_series = nil
             self.chip = key
+            self.page = 1
             G_reader_settings:saveSetting("bookshelf_active_chip", key)
             self:_rebuild()
             UIManager:setDirty(self, "ui")
@@ -175,9 +180,21 @@ function BookshelfWidget:_rebuild()
     }
 
     -- ── Shelf items ───────────────────────────────────────────────────────────
-    local items     = self:_fetchChipItems(8)
-    local total     = self:_chipTotal()
-    local shown     = math.min(8, #items)
+    -- Pagination: 8 per page (4 covers × 2 shelves). Fetch enough items to
+    -- cover all pages, then slice the current window.
+    local PAGE_SIZE  = 8
+    local all_items  = self:_fetchChipItems(9999) or {}
+    local total      = #all_items
+    local total_pages = math.max(1, math.ceil(total / PAGE_SIZE))
+    if self.page > total_pages then self.page = total_pages end
+    if self.page < 1 then self.page = 1 end
+    local start_idx  = (self.page - 1) * PAGE_SIZE + 1
+    local items      = {}
+    for i = 0, PAGE_SIZE - 1 do items[i + 1] = all_items[start_idx + i] end
+    local shown      = #items
+    -- Only count non-nil entries (the last page may be partial).
+    local shown_count = 0
+    for i = 1, PAGE_SIZE do if items[i] then shown_count = shown_count + 1 end end
 
     -- ── Empty-state placeholder (spec §8: "Selected chip yields zero books") ────
     -- When the active chip returns no items, replace both shelf rows with a
@@ -237,32 +254,26 @@ function BookshelfWidget:_rebuild()
         return
     end
 
-    -- ── Shelf-pair label (tappable → LibraryView or collapse series) ────────────
-    -- Defined as a local InputContainer subclass using the standard extend-pattern
-    -- (cleaner than the plan's inline class-mutation approach).
+    -- ── Footer-style pagination label ─────────────────────────────────────────
+    -- Tappable: left half = previous page, right half = next page.
     -- When a series is expanded, the label reads "← Series name" and tapping
-    -- collapses back to the chip's data rather than opening LibraryView.
+    -- anywhere collapses back to the chip's data.
     local is_expanded = (self._expanded_series ~= nil)
+    local first_idx   = total > 0 and start_idx or 0
+    local last_idx    = total > 0 and (start_idx + shown_count - 1) or 0
     local label_text
     if is_expanded then
         label_text = "\xe2\x86\x90  " .. (self._expanded_series.series_name or "Series")
-    elseif total < 0 then
-        -- Total is unknown (e.g. "latest" chip avoids an expensive filesystem
-        -- walk), so omit the "of N" portion.
-        label_text = string.format(
-            "%s  \xc2\xb7  1\xe2\x80\x93%d  \xe2\x80\xba",
-            self:_chipLabel(), math.min(8, shown)
-        )
     else
+        local left_arrow  = self.page > 1           and "\xe2\x80\xb9  " or "   "
+        local right_arrow = self.page < total_pages and "  \xe2\x80\xba" or ""
         label_text = string.format(
-            "%s  \xc2\xb7  1\xe2\x80\x93%d of %d  \xe2\x80\xba",
-            self:_chipLabel(), math.min(8, shown), total
+            "%s%s  \xc2\xb7  %d\xe2\x80\x93%d of %d%s",
+            left_arrow, self:_chipLabel(), first_idx, last_idx, total, right_arrow
         )
     end
 
-    -- We need a reference to self for the closure, but we're building inside
-    -- _rebuild; capture in a local.
-    local bw = self  -- BookshelfWidget reference for callbacks
+    local bw = self
 
     local ShelfLabel = InputContainer:extend{}
     function ShelfLabel:init()
@@ -278,27 +289,24 @@ function BookshelfWidget:_rebuild()
             Tap = { GestureRange:new{ ges = "tap", range = self.dimen } },
         }
     end
-    function ShelfLabel:onTap()
+    function ShelfLabel:onTap(_, ges)
         if is_expanded then
-            -- Collapse back to the chip's data.
             bw._expanded_series = nil
             bw:_rebuild()
             UIManager:setDirty(bw, "ui")
-        else
-            -- Close home screen and show LibraryView; schedule re-show on close
-            -- via nextTick so the UI stack order is correct (Phase 5 lesson).
-            UIManager:close(bw)
-            UIManager:nextTick(function()
-                UIManager:show(LibraryView:new{
-                    chip          = bw.chip,
-                    on_book_tap   = function(b) bw:_openBook(b) end,
-                    on_book_hold  = function(b) bw:_openBookMenu(b) end,
-                    on_series_tap = function(s) bw:_expandSeries(s) end,
-                    on_close      = function()
-                        UIManager:nextTick(function() UIManager:show(bw) end)
-                    end,
-                })
-            end)
+            return true
+        end
+        -- Resolve prev/next based on tap x relative to label centre.
+        local x = ges and ges.pos and ges.pos.x or 0
+        local centre = self.dimen.x + self.dimen.w / 2
+        if x < centre and bw.page > 1 then
+            bw.page = bw.page - 1
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        elseif x >= centre and bw.page < total_pages then
+            bw.page = bw.page + 1
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
         end
         return true
     end

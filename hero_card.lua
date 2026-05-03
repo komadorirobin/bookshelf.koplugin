@@ -116,11 +116,15 @@ function HeroCard:_renderFull()
         end
     end
 
+    -- Spacer before the description so the blurb has visible breathing
+    -- room from the title/author/detail lines above.
+    local VerticalSpan = require("ui/widget/verticalspan")
+    local Screen = require("device").screen
+
     -- Book description / blurb. Pulled from BookInfoManager.description
     -- (populated when the book has been opened or scanned by coverbrowser).
     -- Constrained to ~half the cover height with ellipsis overflow so it
     -- can't push the progress bar / clock off the bottom.
-    local Screen = require("device").screen
     local desc = self.book.description
     if desc and desc ~= "" then
         -- BookInfoManager stores the raw <dc:description> with embedded
@@ -137,6 +141,7 @@ function HeroCard:_renderFull()
                    :gsub("&#(%d+);", function(n) return string.char(tonumber(n)) end)
                    :gsub("^%s+", ""):gsub("%s+$", "")  -- trim
         if desc ~= "" then
+            right_top[#right_top + 1] = VerticalSpan:new{ width = Size.padding.large }
             right_top[#right_top + 1] = TextBoxWidget:new{
                 text   = desc,
                 face   = Font:getFace("infofont", 14),
@@ -147,22 +152,36 @@ function HeroCard:_renderFull()
         end
     end
 
-    -- Bottom-anchored stack: progress bar + large clock/battery readout below.
-    -- Progress bar: token-line-height tall (font 14 → ~14dp scaled).
-    -- Clock: 12-hour format with battery, big enough to read from arm's-length.
+    -- Bottom-anchored stack: [bar  N%] then clock+battery below.
+    -- Progress bar gets the percentage label inline on the right.
     local right_bottom_items = {}
     if self.book.book_pct then
-        right_bottom_items[#right_bottom_items + 1] = ProgressWidget:new{
-            width      = right_w,
+        local TextWidget    = require("ui/widget/textwidget")
+        local HorizontalSpan = require("ui/widget/horizontalspan")
+        local pct_widget = TextWidget:new{
+            text = string.format("%d%%", math.floor(self.book.book_pct * 100 + 0.5)),
+            face = Font:getFace("infofont", 14),
+            bold = true,
+        }
+        local pct_w = pct_widget:getSize().w
+        local gap   = Size.padding.small
+        local bar = ProgressWidget:new{
+            width      = right_w - pct_w - gap,
             height     = Screen:scaleBySize(14),
             percentage = self.book.book_pct,
             margin_h   = 0,
             margin_v   = 0,
         }
+        right_bottom_items[#right_bottom_items + 1] = HorizontalGroup:new{
+            align = "center",
+            bar,
+            HorizontalSpan:new{ width = gap },
+            pct_widget,
+        }
     end
 
-    -- Build the clock + battery text.
-    local time_str = os.date("%I:%M %p"):gsub("^0", "")     -- "1:35 PM" not "01:35 PM"
+    -- Clock + battery — left-aligned, modest size (matches author font).
+    local time_str = os.date("%I:%M %p"):gsub("^0", "")
     local batt_str = ""
     local s = self.device_state
     if s and s.batt then
@@ -170,10 +189,10 @@ function HeroCard:_renderFull()
     end
     local clock_text = batt_str ~= "" and (time_str .. "   " .. batt_str) or time_str
     right_bottom_items[#right_bottom_items + 1] = TextBoxWidget:new{
-        text  = clock_text,
-        face  = Font:getFace("infofont", 28),
-        width = right_w,
-        bold  = true,
+        text      = clock_text,
+        face      = Font:getFace("infofont", 16),
+        width     = right_w,
+        alignment = "left",
     }
     local right_bottom = VerticalGroup:new{
         align = "left",
