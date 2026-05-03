@@ -13,12 +13,13 @@ function M.gettext(s)
     return _gettext(s)
 end
 
+local _ngettext
 function M.ngettext(s, p, n)
-    if not _gettext then
+    if not _ngettext then
         local ok, gettext = pcall(require, "gettext")
-        _gettext = ok and gettext.ngettext or function(t, _, _) return t end
+        _ngettext = ok and gettext.ngettext or function(t, _, _) return t end
     end
-    return _gettext.ngettext(s, p, n)
+    return _ngettext(s, p, n)
 end
 
 return M
