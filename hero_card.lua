@@ -65,10 +65,15 @@ end
 
 function HeroCard:_renderFull()
     local cover_h = self.cover_h or self.height
+    -- Pass tap/hold callbacks through so the cover area itself opens the book
+    -- (otherwise SpineWidget consumes the tap with `return true` even when
+    -- its own on_tap is nil, and the HeroCard's outer handler never fires).
     local cover = SpineWidget:new{
-        book   = self.book,
-        width  = self.cover_w,
-        height = cover_h,
+        book    = self.book,
+        width   = self.cover_w,
+        height  = cover_h,
+        on_tap  = self.on_tap,
+        on_hold = self.on_hold,
     }
 
     local right_w = self.width - self.cover_w - Size.padding.default

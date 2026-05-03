@@ -101,7 +101,17 @@ function SpineWidget:_renderFallback()
     }
 end
 
-function SpineWidget:onTap()      if self.on_tap  then self.on_tap(self.book)  end; return true end
-function SpineWidget:onHold()     if self.on_hold then self.on_hold(self.book) end; return true end
+-- Only consume the gesture when we actually have a callback to invoke.
+-- Otherwise let it bubble so an enclosing widget (e.g. HeroCard) can handle it.
+function SpineWidget:onTap()
+    if not self.on_tap then return false end
+    self.on_tap(self.book)
+    return true
+end
+function SpineWidget:onHold()
+    if not self.on_hold then return false end
+    self.on_hold(self.book)
+    return true
+end
 
 return SpineWidget
