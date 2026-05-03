@@ -44,7 +44,51 @@ function BookshelfWidget:init()
     self.height = Screen:getHeight()
     self.dimen  = Geom:new{ w = self.width, h = self.height }
     self.chip   = G_reader_settings:readSetting("bookshelf_active_chip") or "recent"
+
+    -- Register top-zone touch zones so the standard KOReader menu opens via
+    -- tap/swipe at the top of the screen, exactly as it does in FileManager.
+    -- UIManager does not propagate non-consumed events to widgets below the
+    -- top one, so we cannot rely on the underlying FileManager's own zones —
+    -- we have to register our own and forward to FileManagerMenu directly.
+    local DTAP_ZONE_MENU = G_defaults:readSetting("DTAP_ZONE_MENU")
+    self:registerTouchZones({
+        {
+            id = "bookshelf_top_tap",
+            ges = "tap",
+            screen_zone = {
+                ratio_x = DTAP_ZONE_MENU.x, ratio_y = DTAP_ZONE_MENU.y,
+                ratio_w = DTAP_ZONE_MENU.w, ratio_h = DTAP_ZONE_MENU.h,
+            },
+            handler = function(ges) return self:_showStandardMenu(ges) end,
+        },
+        {
+            id = "bookshelf_top_swipe",
+            ges = "swipe",
+            screen_zone = {
+                ratio_x = DTAP_ZONE_MENU.x, ratio_y = DTAP_ZONE_MENU.y,
+                ratio_w = DTAP_ZONE_MENU.w, ratio_h = DTAP_ZONE_MENU.h,
+            },
+            handler = function(ges) return self:_showStandardMenu(ges) end,
+        },
+    })
+
     self:_rebuild()
+end
+
+-- Forward the standard top-zone gesture to FileManager's menu, mirroring
+-- FileManagerMenu:onTapShowMenu / :onSwipeShowMenu behaviour so the menu
+-- looks and behaves identically to the file manager's.
+function BookshelfWidget:_showStandardMenu(ges)
+    local FileManager = require("apps/filemanager/filemanager")
+    local fm = FileManager.instance
+    if not fm or not fm.menu then return false end
+    -- Swipe handler only fires on a south (downward) swipe; tap handler
+    -- always fires for taps in the zone.
+    if ges and ges.direction and ges.direction ~= "south" then
+        return false
+    end
+    fm.menu:onShowMenu()
+    return true
 end
 
 -- ─── _rebuild ─────────────────────────────────────────────────────────────────
