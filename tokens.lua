@@ -108,6 +108,7 @@ local function cleanDescription(raw)
                :gsub("&apos;",   "'")
                :gsub("&lt;",     "<")
                :gsub("&gt;",     ">")
+               -- Decimal numeric entities only; &#xHHHH; hex form is left as-is.
                :gsub("&#(%d+);", codepointToUtf8)
                :gsub("^%s+", ""):gsub("%s+$", ""))
 end
