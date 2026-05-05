@@ -256,6 +256,16 @@ function BookshelfWidget:_rebuild()
         self.chip = active_chips[1].key
         G_reader_settings:saveSetting("bookshelf_active_chip", self.chip)
     end
+    -- Cache the ordered chip keys + hidden state so the edge-swipe
+    -- handlers can cycle between tabs without re-deriving them. The
+    -- list reflects whatever ordering active_chips had built (today
+    -- it follows CHIP_ORDER, future user-driven reordering would
+    -- fill the same slot).
+    self._active_chip_keys = {}
+    for _, c in ipairs(active_chips) do
+        self._active_chip_keys[#self._active_chip_keys + 1] = c.key
+    end
+    self._chip_strip_hidden = hide_chip_strip
 
     -- Hero card sized exactly to its cover (no internal padding budget). The
     -- VerticalSpan separators below the hero supply the gap to the chips, so
@@ -1151,10 +1161,114 @@ function BookshelfWidget:onResume()
     end
 end
 
--- Swipe gesture handlers: page through the active chip's data. west = next
--- page (swipe content leftward), east = previous page. Series-expanded
--- view doesn't paginate (a series usually fits in one shelf-pair).
-function BookshelfWidget:onSwipeNextPage()
+-- Swipe gesture handlers. Layering by Y-position and state, most specific
+-- first:
+--   1. Swipe in the hero region → cycle previewed book on the shelf
+--      (with wrap; pages flip automatically to keep the preview visible).
+--   2. Else page through the chip's data (west = next page, east = previous).
+--   3. East-swipe at page 1 + drilled-in → pop one drill level.
+--   4. Edge swipe at top level + chip strip visible → cycle tabs (wrap).
+
+-- _chipNeighbour(direction) -> chip key or nil
+-- direction = +1 → next chip (with wrap), -1 → previous chip (with wrap).
+-- Returns nil when there's only one (or zero) chips in the active list,
+-- since cycling would no-op and we don't want a phantom rebuild.
+function BookshelfWidget:_chipNeighbour(direction)
+    local keys = self._active_chip_keys
+    if not keys or #keys <= 1 then return nil end
+    local idx
+    for i, k in ipairs(keys) do
+        if k == self.chip then idx = i; break end
+    end
+    if not idx then return keys[1] end
+    -- Lua's % on negatives follows the sign of the divisor, so
+    -- (idx-1 + direction) % n correctly wraps -1 → n-1.
+    local n = #keys
+    return keys[((idx - 1 + direction) % n) + 1]
+end
+
+-- _setActiveChip(key) — switch tabs as if the user tapped a chip.
+-- Mirrors the on_change closure in _rebuild so swipe-cycling and tap
+-- both produce identical state transitions.
+function BookshelfWidget:_setActiveChip(key)
+    if not key or key == self.chip then return end
+    self._drilldown_path = {}
+    self.chip            = key
+    self.page            = 1
+    G_reader_settings:saveSetting("bookshelf_active_chip", key)
+    self:_rebuild()
+    UIManager:setDirty(self, "ui")
+end
+
+-- _isHeroSwipe(ges) -> bool
+-- True when the swipe started inside the hero card's Y-band. Uses the
+-- cached _hero_dims set during _rebuild — PAD is the leading
+-- VerticalSpan, then hero_h tall.
+function BookshelfWidget:_isHeroSwipe(ges)
+    if not ges or not ges.pos or not self._hero_dims then return false end
+    local widget_y = (self.dimen and self.dimen.y) or 0
+    local local_y  = ges.pos.y - widget_y
+    local d        = self._hero_dims
+    return local_y >= d.PAD and local_y < (d.PAD + d.hero_h)
+end
+
+-- _previewNeighbourBook(direction) — cycle self._preview_book through the
+-- current chip's books in order (skipping series groups, which can't be
+-- previewed). direction = +1 for next, -1 for previous. Wraps at edges.
+-- Crosses page boundaries by recomputing self.page from the target book's
+-- position in the unsliced list.
+function BookshelfWidget:_previewNeighbourBook(direction)
+    local PAGE_SIZE = 8
+    local all_items = self:_fetchChipItems(400) or {}
+    -- Series groups have no filepath; skip them — only books are previewable.
+    -- Track the all_items index of each book so we can map back to a page.
+    local books, books_to_all = {}, {}
+    for i, item in ipairs(all_items) do
+        if item and item.filepath then
+            books[#books + 1] = item
+            books_to_all[#books] = i
+        end
+    end
+    if #books == 0 then return end
+    local n = #books
+    local current_idx
+    if self._preview_book and self._preview_book.filepath then
+        for i, b in ipairs(books) do
+            if b.filepath == self._preview_book.filepath then
+                current_idx = i; break
+            end
+        end
+    end
+    -- No preview yet: a forward swipe should land on book 1, a backward
+    -- swipe on the last book. Anchor current_idx so the wrap arithmetic
+    -- below produces the right destination.
+    if not current_idx then
+        current_idx = direction > 0 and 0 or 1
+    end
+    local next_idx = ((current_idx - 1 + direction) % n) + 1
+    local target = books[next_idx]
+    if not target or not target.filepath then return end
+    if self._preview_book and self._preview_book.filepath == target.filepath then
+        return  -- single-book chip; cycling would otherwise re-trigger open
+    end
+    -- Update page so the new preview is on the visible shelf — otherwise
+    -- _previewBook's swap-shelves-in-place would highlight a book that
+    -- isn't currently rendered.
+    local all_idx = books_to_all[next_idx]
+    if all_idx then
+        self.page = math.floor((all_idx - 1) / PAGE_SIZE) + 1
+    end
+    self:_previewBook(target)
+end
+
+function BookshelfWidget:onSwipeNextPage(_, ges)
+    -- Hero-area swipe: cycle preview to next book. Stays inside the
+    -- chip; pages flip automatically when the next book lives on a
+    -- different page than the current preview.
+    if self:_isHeroSwipe(ges) then
+        self:_previewNeighbourBook(1)
+        return true
+    end
     -- Pagination works inside drilled views too — a series / folder with
     -- >8 books needs to page through. Earlier this early-returned on
     -- _expanded_series because the footer label was hijacked for back;
@@ -1163,10 +1277,23 @@ function BookshelfWidget:onSwipeNextPage()
     if self.page < total then
         self.page = self.page + 1
         self:_swapShelvesInPlace()
+        return true
+    end
+    -- Last page at top level (no drill-down) and chip strip visible
+    -- → cycle to the next tab (with wrap). Drilled-in last page is
+    -- left as a no-op; back-navigation there happens via the
+    -- breadcrumb or east-swipe.
+    if #self._drilldown_path == 0 and not self._chip_strip_hidden then
+        local next_key = self:_chipNeighbour(1)
+        if next_key then self:_setActiveChip(next_key) end
     end
     return true
 end
-function BookshelfWidget:onSwipePrevPage()
+function BookshelfWidget:onSwipePrevPage(_, ges)
+    if self:_isHeroSwipe(ges) then
+        self:_previewNeighbourBook(-1)
+        return true
+    end
     if self.page > 1 then
         self.page = self.page - 1
         self:_swapShelvesInPlace()
@@ -1178,6 +1305,15 @@ function BookshelfWidget:onSwipePrevPage()
     -- escape from drill-down without aiming at the breadcrumb.
     if #self._drilldown_path > 0 then
         self:_drillBackTo(#self._drilldown_path - 1)
+        return true
+    end
+    -- Top level + page 1 + chip strip visible → cycle to previous tab
+    -- (with wrap). Hidden strip means 0 or 1 effective tab; cycling
+    -- would either no-op or surface a hidden chip silently, neither
+    -- helpful.
+    if not self._chip_strip_hidden then
+        local prev_key = self:_chipNeighbour(-1)
+        if prev_key then self:_setActiveChip(prev_key) end
     end
     return true
 end
