@@ -65,6 +65,7 @@ function BookshelfWidget:init()
     -- `activation_menu` preference — fixed as a side benefit.)
 
     self:_rebuild()
+    self:_startStatusTimer()
 end
 
 -- Bookshelf is the topmost widget while it's on screen, so KOReader's
@@ -814,7 +815,77 @@ end
 -- BookshelfWidget instance is closed for any reason. main.lua wires the
 -- callback in show().
 function BookshelfWidget:onCloseWidget()
+    self:_stopStatusTimer()
     if self._on_close_callback then self._on_close_callback() end
+end
+
+-- ─── Status-line auto-refresh ───────────────────────────────────────────────
+-- Drives a minute-aligned re-paint of the hero's right column so the
+-- clock / battery / wifi / brightness tokens in the user's status template
+-- update without the user picking a different book or opening a menu.
+--
+-- The timer self-reschedules; the _status_timer_active flag is the kill
+-- switch. Pending callbacks check the flag and bail if it's been cleared,
+-- so we don't need UIManager:unschedule.
+--
+-- We skip the tick if we're not the topmost visible widget — the line
+-- editor's live-preview path uses a synthesized regions table that
+-- includes the in-progress draft, and a tick that read straight from
+-- stored settings would trample that draft.
+
+function BookshelfWidget:_startStatusTimer()
+    if self._status_timer_active then return end
+    self._status_timer_active = true
+    self:_scheduleNextStatusTick()
+end
+
+function BookshelfWidget:_stopStatusTimer()
+    self._status_timer_active = false
+end
+
+function BookshelfWidget:_scheduleNextStatusTick()
+    if not self._status_timer_active then return end
+    -- Align to the next minute boundary so visible clock changes happen
+    -- at the same instant the system clock ticks. now.sec is 0-60 (60 = leap).
+    local now_sec = os.date("*t").sec
+    local delay = 60 - now_sec
+    if delay <= 0 then delay = 60 end
+    UIManager:scheduleIn(delay, function() self:_statusTick() end)
+end
+
+function BookshelfWidget:_statusTick()
+    if not self._status_timer_active then return end
+    -- Skip if something's overlaying us (line editor, FM menu, dialog).
+    -- The next minute-tick will catch up once they close.
+    if UIManager:getTopmostVisibleWidget() == self
+            and self._hero_parent
+            and self._hero_parent[1]
+            and self._hero_parent[1].replaceRightColumn then
+        local Regions = require("hero_regions")
+        self:_swapHeroRightColumnInPlace(Regions.read())
+    end
+    self:_scheduleNextStatusTick()
+end
+
+-- Sleep / wake hooks: pause the timer so we don't fire while the device
+-- is asleep, and re-arm on wake so the post-resume repaint reflects the
+-- current time / battery / wifi state. UIManager broadcasts these
+-- events to widgets in the window stack.
+function BookshelfWidget:onSuspend()
+    self:_stopStatusTimer()
+end
+
+function BookshelfWidget:onResume()
+    self:_startStatusTimer()
+    -- Fire an immediate tick so the clock / batt / wifi tokens reflect
+    -- post-wake state without the user waiting up to a full minute.
+    if UIManager:getTopmostVisibleWidget() == self
+            and self._hero_parent
+            and self._hero_parent[1]
+            and self._hero_parent[1].replaceRightColumn then
+        local Regions = require("hero_regions")
+        self:_swapHeroRightColumnInPlace(Regions.read())
+    end
 end
 
 -- Swipe gesture handlers: page through the active chip's data. west = next
