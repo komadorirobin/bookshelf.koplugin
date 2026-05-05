@@ -15,7 +15,8 @@
 -- internally (bookends_overlay_widget.lua:223-227), so any future bar
 -- style added to paintProgressBar lights up here automatically.
 
-local Geom = require("ui/geometry")
+local Geom   = require("ui/geometry")
+local Widget = require("ui/widget/widget")
 
 local HeroBar = {}
 
@@ -45,23 +46,38 @@ function HeroBar.availableStyles()
     return HeroBar.FALLBACK_STYLES
 end
 
--- Minimal paintable widget that delegates to bookends's paintProgressBar.
--- Exposes the contract KOReader's HorizontalGroup expects from a child:
--- `getSize() → { w, h }`, `paintTo(bb, x, y)`, optional `free()`.
-local BookendsBar = {}
-BookendsBar.__index = BookendsBar
+-- Paintable widget that delegates to bookends's paintProgressBar.
+-- Extends Widget rather than a bare metatable so KOReader's standard
+-- event-propagation walk (WidgetContainer:propagateEvent → child:handleEvent
+-- on every descendant) finds a `handleEvent` method on us. The earlier
+-- bare-metatable version crashed the first event broadcast (Show /
+-- Resume etc) because `bar:handleEvent` was nil.
+--
+-- Bookends's own BarWidget is similarly bare — but inside bookends it's
+-- only ever rendered via manual paintTo calls in OverlayWidget's
+-- framework, never as a child of a WidgetContainer that propagates
+-- events. Bookshelf places this widget inside a HorizontalGroup, which
+-- IS a WidgetContainer.
+local BookendsBar = Widget:extend{
+    width    = 0,
+    height   = 0,
+    fraction = 0,
+    ticks    = nil,
+    style    = "bordered",
+    colors   = nil,
+    paint    = nil,  -- bookends's paintProgressBar function
+}
 
-function BookendsBar.new(o, paint)
-    o.paint = paint
-    o.dimen = Geom:new{ x = 0, y = 0, w = o.width, h = o.height }
-    return setmetatable(o, BookendsBar)
+function BookendsBar:init()
+    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    self.ticks = self.ticks or {}
 end
 
 function BookendsBar:getSize() return self.dimen end
 
 function BookendsBar:paintTo(bb, x, y)
-    -- Stash dimen with screen coords so getStatusStripDimen-style
-    -- post-paint reads (anywhere a parent walks our dimen) work.
+    -- Stash dimen with screen coords so any parent that walks our dimen
+    -- after paint sees the right values.
     self.dimen.x, self.dimen.y = x, y
     self.paint(bb, x, y, self.width, self.height,
         self.fraction, self.ticks, self.style, nil, false, self.colors)
@@ -82,13 +98,14 @@ function HeroBar:new(o)
 
     local paint = loadBookendsPaint()
     if paint then
-        return BookendsBar.new({
+        return BookendsBar:new{
             width    = width,
             height   = height,
             fraction = percentage,
             ticks    = {},
             style    = style,
-        }, paint)
+            paint    = paint,
+        }
     end
 
     -- Fallback: KOReader ProgressWidget. Only bordered / solid are
