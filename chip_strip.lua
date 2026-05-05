@@ -33,6 +33,8 @@ local HorizontalGroup= require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local TextWidget     = require("ui/widget/textwidget")
 local CenterContainer= require("ui/widget/container/centercontainer")
+local OverlapGroup   = require("ui/widget/overlapgroup")
+local Widget         = require("ui/widget/widget")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
 local Size           = require("ui/size")
@@ -53,22 +55,56 @@ local ChipStrip = InputContainer:extend{
 local CHEVRON      = " \xE2\x80\xBA "  -- " ‹ " — actually › U+203A
 local ELLIPSIS     = "\xE2\x80\xA6"     -- …
 
-local function chipPillFrame(label, w, h)
-    return FrameContainer:new{
-        bordersize = Size.border.thin,
-        margin     = 0,
-        padding    = 0,
-        background = Blitbuffer.COLOR_WHITE,
+-- Breadcrumb pill rendered as a filled black tag with an arrow tip on the
+-- right (the arrow doubles as the leading chevron — no separate "›" needed
+-- after it). Sized to the label's text width plus a small horizontal pad,
+-- so a long chip name like "FAVOURITES" fits and a short one like
+-- "RECENT" doesn't waste space. Returns the widget AND its total width
+-- so the caller can lay out crumbs after it and record the tap zone.
+local function arrowPillFrame(label, h)
+    local label_text = (label or ""):upper()
+    local face       = Font:getFace("infofont", 16)
+    local tw = TextWidget:new{
+        text    = label_text,
+        face    = face,
+        bold    = true,
+        fgcolor = Blitbuffer.COLOR_WHITE,
+    }
+    local h_pad   = Size.padding.large
+    local body_w  = tw:getSize().w + h_pad * 2
+    local tip_w   = math.floor(h * 0.4)
+    local total_w = body_w + tip_w
+
+    -- Custom shape painter: filled black rectangle for the body, then a
+    -- right-pointing triangle whose base is the body's right edge (full
+    -- height) and whose apex sits at (body_w + tip_w, h/2). For each row
+    -- we paint a horizontal strip whose width tapers linearly from tip_w
+    -- at the vertical centre to 0 at top/bottom.
+    local ArrowBg = Widget:extend{}
+    function ArrowBg:init()
+        self.dimen = Geom:new{ w = total_w, h = h }
+    end
+    function ArrowBg:paintTo(bb, x, y)
+        bb:paintRect(x, y, body_w, h, Blitbuffer.COLOR_BLACK)
+        local hh = (h - 1) / 2
+        for dy = 0, h - 1 do
+            local from_center = math.abs(dy - hh)
+            local row_w = math.max(0, math.floor(tip_w * (1 - from_center / hh)))
+            if row_w > 0 then
+                bb:paintRect(x + body_w, y + dy, row_w, 1, Blitbuffer.COLOR_BLACK)
+            end
+        end
+    end
+
+    local pill = OverlapGroup:new{
+        dimen = Geom:new{ w = total_w, h = h },
+        ArrowBg:new{},
         CenterContainer:new{
-            dimen = Geom:new{ w = w, h = h },
-            TextWidget:new{
-                text    = (label or ""):upper(),
-                face    = Font:getFace("infofont", 16),
-                bold    = true,
-                fgcolor = Blitbuffer.COLOR_BLACK,
-            },
+            dimen = Geom:new{ w = body_w, h = h },
+            tw,
         },
     }
+    return pill, total_w
 end
 
 function ChipStrip:init()
@@ -157,8 +193,10 @@ function ChipStrip:_initBreadcrumb()
     -- (e.g. series title), so a heading-equivalent weight matters.
     local face_text  = Font:getFace("infofont", 16)
     local face_chev  = Font:getFace("infofont", 16)
-    local pill_w     = math.floor(self.width / 4)  -- match a 4-chip cell width
-    local pill       = chipPillFrame(self.chip_pill_label or "", pill_w, self.height)
+    -- Pill width hugs the label text + arrow tip; no longer a fixed
+    -- quarter-width slot. Tap zone covers body+tip — anywhere on the
+    -- pill pops back to top level.
+    local pill, pill_w = arrowPillFrame(self.chip_pill_label or "", self.height)
     self._breadcrumb_zones = {
         { x = 0, w = pill_w, depth = 0 },
     }
@@ -202,8 +240,13 @@ function ChipStrip:_initBreadcrumb()
         row = HorizontalGroup:new{ pill }
         self._breadcrumb_zones = { { x = 0, w = pill_w, depth = 0 } }
         cursor_x = pill_w
+        -- Small gap right after the arrow tip — the arrow IS the leading
+        -- chevron, so no "›" between pill and first item.
+        local lead_gap = Size.padding.small * 2
+        row[#row + 1] = HorizontalSpan:new{ width = lead_gap }
+        cursor_x = cursor_x + lead_gap
+        local items_in = 0
         if leading_ellipsis then
-            append_chevron()
             local tw = TextWidget:new{
                 text    = ELLIPSIS,
                 face    = face_text,
@@ -213,10 +256,12 @@ function ChipStrip:_initBreadcrumb()
             row[#row + 1] = tw
             -- No tap zone for the ellipsis — it's an indicator, not a target.
             cursor_x = cursor_x + lw
+            items_in = 1
         end
         for _, crumb in ipairs(visible_path) do
-            append_chevron()
+            if items_in > 0 then append_chevron() end
             append_label(crumb.label or "", crumb._original_depth)
+            items_in = items_in + 1
         end
         return cursor_x  -- total width consumed
     end

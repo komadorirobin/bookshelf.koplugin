@@ -121,17 +121,18 @@ function SeriesStack:init()
         layer1_inner,
     }
 
-    -- Slipcase band: black horizontal strip ~46% from top, height ~18% of widget.
-    -- Placed via padding_top inside a FrameContainer wrapper so it floats at the
+    -- Slipcase band: black horizontal strip in the bottom third of the
+    -- cover (centred ~78% from top), height ~18% of widget. Placed via
+    -- padding_top inside a FrameContainer wrapper so it floats at the
     -- correct vertical position over the front cover in the OverlapGroup.
     local band_h   = math.floor(self.height * 0.18)
-    local band_top = math.floor(self.height * 0.46) - math.floor(band_h / 2)
+    local band_top = math.floor(self.height * 0.78) - math.floor(band_h / 2)
 
     -- Count badge fill: pure white so the digits stay legible on top of any
     -- cover image (covers vary; white is the safest contrast for black ink).
     local paper = Blitbuffer.COLOR_WHITE
 
-    local band_text_pad = Size.padding.default
+    local band_text_pad = Size.padding.large
     local band_inner = FrameContainer:new{
         bordersize    = 0,
         background    = Blitbuffer.COLOR_BLACK,
@@ -141,9 +142,12 @@ function SeriesStack:init()
         CenterContainer:new{
             dimen = Geom:new{ w = self.width - band_text_pad * 2, h = band_h },
             TextWidget:new{
-                text    = (self.series.series_name or ""):upper(),
-                face    = Font:getFace("smallinfofont", 9),
-                fgcolor = Blitbuffer.COLOR_WHITE,
+                text      = (self.series.series_name or ""):upper(),
+                face      = Font:getFace("smallinfofont", 12),
+                fgcolor   = Blitbuffer.COLOR_WHITE,
+                -- Truncate long series names so they don't overflow the
+                -- band's right edge into the count badge area.
+                max_width = self.width - band_text_pad * 2,
             }
         }
     }
