@@ -245,6 +245,91 @@ function Repo.getLatest(limit)
     return out
 end
 
+-- ─── getAll / findFirstBookIn ────────────────────────────────────────────────
+-- Folder-aware listing for the "All" chip. Delegates to KOReader's
+-- FileChooser:genItemTableFromPath so the user's collate, reverse_collate,
+-- collate_mixed and book status filter are honoured for free — no need to
+-- maintain a parallel sort/filter pipeline. Output is converted into our
+-- internal item shape: bare Book records for files, folder records for
+-- directories. Folder records carry { kind = "folder", path, label,
+-- first_book } where first_book is the first usable book found by walking
+-- the directory tree (bounded depth) so the FolderStack widget has a cover
+-- to display on the spine.
+
+-- Walk into `path` to find the first book metadata-buildable via the
+-- BIM, with a bounded recursion depth to keep chip-render time predictable.
+-- Files in the current dir are checked before recursing into subdirs;
+-- entries are sorted alphabetically so the result is deterministic.
+function Repo.findFirstBookIn(path, max_depth)
+    max_depth = max_depth or 3
+    if max_depth < 0 then return nil end
+    local lfs = require("libs/libkoreader-lfs")
+    local entries = {}
+    local ok, iter, dir_obj = pcall(lfs.dir, path)
+    if not ok then return nil end
+    for f in iter, dir_obj do
+        if f ~= "." and f ~= ".." and not f:match("^%.") then
+            entries[#entries + 1] = f
+        end
+    end
+    table.sort(entries)
+    -- Pass 1: files at this level. Use SUPPORTED_EXT directly rather
+    -- than FileChooser:show_file so we don't need a FileChooser self.
+    for _, f in ipairs(entries) do
+        local fp = path .. "/" .. f
+        local attr = lfs.attributes(fp)
+        if attr and attr.mode == "file" then
+            local ext = f:match("%.([^.]+)$")
+            if ext and SUPPORTED_EXT[ext:lower()] then
+                local b = Repo.buildBookMeta(fp)
+                if b then return b end
+            end
+        end
+    end
+    -- Pass 2: descend into subdirs (depth-limited)
+    for _, f in ipairs(entries) do
+        local fp = path .. "/" .. f
+        local attr = lfs.attributes(fp)
+        if attr and attr.mode == "directory" then
+            local found = Repo.findFirstBookIn(fp, max_depth - 1)
+            if found then return found end
+        end
+    end
+    return nil
+end
+
+function Repo.getAll(path, limit)
+    path = path or G_reader_settings:readSetting("home_dir") or "/"
+    local ok, FileChooser = pcall(require, "ui/widget/filechooser")
+    if not ok or not FileChooser then return {} end
+    local raw_items
+    ok, raw_items = pcall(function() return FileChooser:genItemTableFromPath(path) end)
+    if not ok or type(raw_items) ~= "table" then return {} end
+
+    local out = {}
+    for _, item in ipairs(raw_items) do
+        -- FileChooser injects a "../ ⬆" go-up entry and an optional
+        -- "Long-press here to choose current folder" entry. Skip both —
+        -- bookshelf has its own back-navigation (breadcrumb / east-swipe).
+        if not item.is_go_up and item.path and item.path ~= "" and item.text
+                and not (item.text and item.text:find("Long%-press here")) then
+            if item.is_file then
+                local b = Repo.buildBookMeta(item.path)
+                if b then out[#out + 1] = b end
+            elseif item.attr and item.attr.mode == "directory" then
+                out[#out + 1] = {
+                    kind       = "folder",
+                    path       = item.path,
+                    label      = item.text,
+                    first_book = Repo.findFirstBookIn(item.path, 3),
+                }
+            end
+            if limit and #out >= limit then break end
+        end
+    end
+    return out
+end
+
 -- ─── getFavorites ────────────────────────────────────────────────────────────
 -- Returns up to `limit` Book records from ReadCollection favorites collection,
 -- sorted by access time descending (most recently accessed first).

@@ -223,9 +223,13 @@ function BookshelfWidget:_rebuild()
     -- (so the user can navigate back via the breadcrumb), even if every
     -- chip is disabled.
     local CHIP_LABELS = {
-        recent = "Recent", latest = "Latest", series = "Series", favorites = "Favourites",
+        all = "All", recent = "Recent", latest = "Latest",
+        series = "Series", favorites = "Favourites",
     }
-    local CHIP_ORDER = { "recent", "latest", "series", "favorites" }
+    -- "All" leads (folder-aware browse rooted at home_dir, honours the
+    -- user's KOReader collate / reverse / mixed / book-status-filter
+    -- settings via FileChooser:genItemTableFromPath).
+    local CHIP_ORDER = { "all", "recent", "latest", "series", "favorites" }
     local disabled_set = G_reader_settings:readSetting("bookshelf_chips_disabled") or {}
     local active_chips = {}
     for _, key in ipairs(CHIP_ORDER) do
@@ -572,6 +576,10 @@ function BookshelfWidget:_fetchChipItems(n)
         end
         return fresh
     end
+    if tip and tip.kind == "folder" then
+        return Repo.getAll(tip.payload.path, n)
+    end
+    if self.chip == "all"       then return Repo.getAll(nil, n)     end
     if self.chip == "recent"    then return Repo.getRecent(n)       end
     if self.chip == "latest"    then return Repo.getLatest(n)       end
     if self.chip == "series"    then return Repo.getSeriesGroups(n) end
@@ -682,10 +690,8 @@ end
 -- handler shows a fresh Bookshelf instance back on top.)
 function BookshelfWidget:_openBook(book)
     if not book or not book.filepath then return end
-    -- Returning from a book should land on the chip-level view, not in the
-    -- middle of a drilled-in series / folder / tag.
-    self._drilldown_path = {}
-    self._preview_book   = nil
+    -- Preserve self.chip / self.page / self._drilldown_path / self._preview_book
+    -- across the read so closing the book lands the user back where they were.
     -- Suspend the status timer + drop any pending debounced repaint
     -- before the reader takes over. Keeping the minute heartbeat alive
     -- under the reader is wasted Lua wakeups — battery matters most
@@ -752,6 +758,8 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD)
         on_book_hold      = function(b) bw:_openBookMenu(b) end,
         on_series_tap     = function(s) bw:_expandSeries(s) end,
         on_series_hold    = function(s) bw:_openBookMenu(s) end,
+        on_folder_tap     = function(f) bw:_expandFolder(f) end,
+        on_folder_hold    = function(_) end,  -- no folder menu yet
     }
     local row_bottom = ShelfRow.new{
         width             = content_w,
@@ -763,6 +771,8 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD)
         on_book_hold      = function(b) bw:_openBookMenu(b) end,
         on_series_tap     = function(s) bw:_expandSeries(s) end,
         on_series_hold    = function(s) bw:_openBookMenu(s) end,
+        on_folder_tap     = function(f) bw:_expandFolder(f) end,
+        on_folder_hold    = function(_) end,
     }
     return row_top, row_bottom
 end
@@ -1510,6 +1520,15 @@ function BookshelfWidget:_drillInto(entry)
         if first and first.filepath then
             self._preview_book = Repo.buildBook(first.filepath) or first
         end
+    elseif entry.kind == "folder" and entry.payload and entry.payload.path then
+        -- For folders, the cheap preselect path is to use the cached
+        -- first_book carried with the folder entry (already walked when
+        -- the folder was listed). buildBook upgrades the meta into a
+        -- full Book record so the hero has progress/page data.
+        local first = entry.payload.first_book
+        if first and first.filepath then
+            self._preview_book = Repo.buildBook(first.filepath) or first
+        end
     end
     self:_rebuild()
     UIManager:setDirty(self, "ui")
@@ -1536,6 +1555,15 @@ function BookshelfWidget:_expandSeries(series)
         kind    = "series",
         label   = series.series_name,
         payload = series,
+    }
+end
+
+function BookshelfWidget:_expandFolder(folder)
+    if not folder or not folder.path then return end
+    self:_drillInto{
+        kind    = "folder",
+        label   = folder.label or folder.path:match("([^/]+)$") or folder.path,
+        payload = { path = folder.path, first_book = folder.first_book },
     }
 end
 

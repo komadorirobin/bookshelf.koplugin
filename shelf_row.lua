@@ -17,6 +17,7 @@ local Size            = require("ui/size")
 local Blitbuffer      = require("ffi/blitbuffer")
 local SpineWidget     = require("spine_widget")
 local SeriesStack     = require("series_stack")
+local FolderStack     = require("folder_stack")
 
 local ShelfRow = {}
 
@@ -71,7 +72,18 @@ function ShelfRow.new(opts)
         end
 
         local item = opts.items and opts.items[i]
-        if item and item.books then
+        if item and item.kind == "folder" then
+            -- Folder record (carries path / label / first_book)
+            row[#row + 1] = FolderStack:new{
+                folder      = item,
+                width       = slot_w,
+                height      = slot_h,
+                on_tap      = opts.on_folder_tap,
+                on_hold     = opts.on_folder_hold,
+                is_selected = opts.selected_filepath and item.first_book
+                              and item.first_book.filepath == opts.selected_filepath,
+            }
+        elseif item and item.books then
             -- SeriesGroup (has a .books array)
             row[#row + 1] = SeriesStack:new{
                 series    = item,

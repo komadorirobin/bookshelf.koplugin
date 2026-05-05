@@ -373,8 +373,9 @@ end
 -- defensively shows all four chips if a user disables every one, so
 -- this menu can never lock the user out.
 function Settings:_chipsSubItems()
-    local CHIP_ORDER  = { "recent", "latest", "series", "favorites" }
+    local CHIP_ORDER  = { "all", "recent", "latest", "series", "favorites" }
     local CHIP_LABELS = {
+        all       = _("All"),
         recent    = _("Recent"),
         latest    = _("Latest"),
         series    = _("Series"),
