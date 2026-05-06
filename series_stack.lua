@@ -158,11 +158,12 @@ function SeriesStack:init()
         band_inner,
     }
 
-    -- Count badge bottom-right. Uses padding_top to push it to the bottom of
-    -- the OverlapGroup dimen, and is right-aligned by placing it in a
-    -- RightContainer (emulated via padding_left = width - badge_approx_w).
-    -- We use a simple approach: wrap badge in a FrameContainer with large
-    -- padding_top so it sinks to the bottom of the overlap area.
+    -- Count badge: horizontally centered, vertically straddling the slipcase
+    -- band's bottom edge so it reads as a "tab" hanging off the ribbon (half
+    -- on the band, half below). Earlier the badge sat in the bottom-left
+    -- corner of the cover, where it competed with the cover image for the
+    -- visual focus; centring it on the band makes it part of the band's
+    -- design language instead.
     local badge_inner = FrameContainer:new{
         bordersize     = Size.border.thin,
         background     = paper,
@@ -177,16 +178,20 @@ function SeriesStack:init()
             bold = true,
         }
     }
-    -- Push badge to bottom-right using large top padding; horizontal alignment
-    -- relies on OverlapGroup placing it at origin and the inner padding shifting.
-    -- NOTE: for exact bottom-right positioning a BottomContainer + RightContainer
-    -- compose would be cleaner but adds complexity; revisit in emulator smoke test.
+    local badge_h     = badge_inner:getSize().h
+    local band_bottom = band_top + band_h
+    -- Anchor: badge's vertical centre = band's bottom edge → top half on the
+    -- band, bottom half below. CenterContainer width = self.width centres
+    -- the badge horizontally within the cover slot.
+    local badge_top   = math.max(0, band_bottom - math.floor(badge_h / 2))
     local badge = FrameContainer:new{
         bordersize  = 0,
         padding     = 0,
-        -- The count badge area: ~20dp tall, anchored near the bottom.
-        padding_top = math.max(0, self.height - 24),
-        badge_inner,
+        padding_top = badge_top,
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = badge_h },
+            badge_inner,
+        },
     }
 
     self[1] = OverlapGroup:new{
