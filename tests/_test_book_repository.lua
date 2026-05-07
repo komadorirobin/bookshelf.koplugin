@@ -26,6 +26,7 @@ package.loaded["libs/libkoreader-lfs"] = {
         end
     end,
 }
+package.loaded["logger"] = { dbg = function() end, info = function() end, warn = function() end, err = function() end }
 _G.G_reader_settings = setmetatable({}, {
     __index = function(_, k)
         if k == "readSetting" then
