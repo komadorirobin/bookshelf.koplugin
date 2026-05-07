@@ -75,31 +75,6 @@ function BookshelfWidget._coverNeedsResize(info, specs)
     return info.cover_w < target_w * 0.8 or info.cover_h < target_h * 0.8
 end
 
--- _computeSortFingerprint() — string repr of the four KOReader settings that
--- determine the "All" chip's listing order. Stored on the widget after each
--- _rebuild so main.lua's FileChooser:refreshPath wrapper (auto-refresh-on-sort
--- beta) can detect a real change vs spurious refreshPath fires.
-function BookshelfWidget._computeSortFingerprint()
-    local rs = G_reader_settings
-    local filter = rs:readSetting("show_filter") or {}
-    local status = filter.status
-    local status_keys = ""
-    if type(status) == "table" then
-        local keys = {}
-        for k, v in pairs(status) do
-            if v then keys[#keys + 1] = tostring(k) end
-        end
-        table.sort(keys)
-        status_keys = table.concat(keys, ",")
-    end
-    return table.concat({
-        rs:readSetting("collate") or "",
-        tostring(rs:readSetting("reverse_collate") and true or false),
-        tostring(rs:readSetting("collate_mixed") and true or false),
-        status_keys,
-    }, "|")
-end
-
 function BookshelfWidget:init()
     self.width  = Screen:getWidth()
     self.height = Screen:getHeight()
@@ -699,7 +674,6 @@ function BookshelfWidget:_rebuild()
             height     = self.height,
             empty_vgroup,
         }
-        self._sort_fingerprint = BookshelfWidget._computeSortFingerprint()
         logger.dbg(string.format("[bookshelf perf] _rebuild: EMPTY total=%.0fms chip=%s",
             (_gettime() - _perf_t0) * 1000, _perf_chip))
         return
@@ -806,7 +780,6 @@ function BookshelfWidget:_rebuild()
             inner_content,
         },
     }
-    self._sort_fingerprint = BookshelfWidget._computeSortFingerprint()
     logger.dbg(string.format("[bookshelf perf] _rebuild: TOTAL=%.0fms chip=%s page=%d/%d items=%d",
         (_gettime() - _perf_t0) * 1000, _perf_chip, _perf_page, total_pages, total))
 end
