@@ -1236,9 +1236,9 @@ function Repo.searchAll(query)
         end
         return out
     end
-    if not _authors_cache[key] then Repo.getAuthors(0, 0) end
-    if not _series_cache[key]  then Repo.getSeriesGroups(0, 0) end
-    if not _genres_cache[key]  then Repo.getGenres(0, 0) end
+    Repo.getAuthors(0, 0)
+    Repo.getSeriesGroups(0, 0)
+    Repo.getGenres(0, 0)
 
     local authors = matchGroups(_authors_cache)
     local series  = matchGroups(_series_cache)
