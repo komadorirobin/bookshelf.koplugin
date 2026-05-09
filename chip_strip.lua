@@ -281,17 +281,19 @@ function ChipStrip:_initChips()
     -- comfortable on touch. The remaining width is split equally among
     -- the flex (navigable tab) chips. The LAST flex chip absorbs any
     -- rounding leftover so the row fills self.width exactly.
-    local action_w = math.floor(self.height * 1.6)
+    local default_action_w = math.floor(self.height * 1.6)
+    local action_total_w = 0
     local n_flex, last_flex_idx = 0, nil
     for i, c in ipairs(self.chips) do
         if not c.action then
             n_flex = n_flex + 1
             last_flex_idx = i
+        else
+            action_total_w = action_total_w + (c.width or default_action_w)
         end
     end
     n_flex = math.max(1, n_flex)
-    local action_count = n - n_flex  -- chips marked action
-    local flex_total   = self.width - sep_total - action_w * action_count
+    local flex_total   = self.width - sep_total - action_total_w
     local flex_w       = math.floor(flex_total / n_flex)
 
     -- Resolve a chip's fill-state — action chips invert via .selected,
@@ -329,7 +331,7 @@ function ChipStrip:_initChips()
         local is_pending = self._pending_key == chip.key
         local w
         if chip.action then
-            w = action_w
+            w = chip.width or default_action_w
         elseif i == last_flex_idx then
             w = flex_total - flex_w * (n_flex - 1)
         else

@@ -99,6 +99,18 @@ function BookshelfWidget:_hasNextPaginationTarget()
         or (#self._drilldown_path == 0 and not self._chip_strip_hidden)
 end
 
+function BookshelfWidget:_pageInfoChipWidth(label, chip_h)
+    local probe = TextWidget:new{
+        text = label,
+        face = Font:getFace("infofont", 16),
+        bold = true,
+    }
+    local text_w = probe:getSize().w
+    local inner_pad = Size.padding.small * 2
+    local border_pad = Size.border.thick * 2
+    return math.max(math.floor(chip_h * 1.8), text_w + inner_pad + border_pad)
+end
+
 function BookshelfWidget:_getSimpleUIBarContext()
     local ok_fm, FM = pcall(require, "apps/filemanager/filemanager")
     local fm = ok_fm and FM and FM.instance or nil
@@ -544,14 +556,9 @@ function BookshelfWidget:_rebuild()
     -- Height constants. Size.item.height_small does not exist (Phase 3-5 lesson);
     -- use height_default (~30dp) for the chip strip.
     local chip_h  = Size.item.height_default
-    -- Pagination footer reservation. The previous Size.item.height_default
-    -- (~30dp) under-counted the actual chevron-button row by ~12dp and the
-    -- footer was pushed off-screen at high DPI as the under-count multiplied
-    -- through scaleBySize. Now match the *actual* footer geometry one-for-one
-    -- with what _buildPaginationFooter constructs: chev_size (32dp icon) plus
-    -- the CenterContainer's vertical padding on each side.
-    local footer_h = Screen:scaleBySize(32) + Size.padding.default * 2
-    local label_h  = footer_h
+    -- Pagination no longer owns its own footer row: the page indicator now
+    -- lives in the chip strip, so the footer reserves no vertical space.
+    local label_h  = 0
 
     -- Detect "all chips disabled" early so the hero can grow into the
     -- chip strip's vertical footprint when it would otherwise be empty.
@@ -626,31 +633,6 @@ function BookshelfWidget:_rebuild()
             if not c.action then self.chip = c.key; break end
         end
         G_reader_settings:saveSetting("bookshelf_active_chip", self.chip)
-    end
-    -- Append a search "chip" (icon-only, action-on-tap rather than
-    -- chip-switch). Always appended last so it sits at the right edge.
-    -- Tap is intercepted in the on_change closure below — search never
-    -- becomes self.chip, so it doesn't enter the swipe-cycle.
-    -- Nerd-font glyph U+F002 (fa-search) renders bolder than the
-    -- bundled mdlight appbar.search SVG; ChipStrip threads it through
-    -- a TextWidget with KOReader's xtext fallback to symbols.ttf.
-    active_chips[#active_chips + 1] = {
-        key        = "search",
-        nerd_glyph = "\xEF\x80\x82",
-        action     = true,
-    }
-    -- Cache the ordered chip keys + hidden state so the edge-swipe
-    -- handlers can cycle between tabs without re-deriving them. The
-    -- list reflects whatever ordering active_chips had built (today
-    -- it follows CHIP_ORDER, future user-driven reordering would
-    -- fill the same slot).
-    self._active_chip_keys = {}
-    for _, c in ipairs(active_chips) do
-        -- Exclude action chips from the swipe-cycle ring (search, current
-        -- book, …) — they're actions, not navigable tabs.
-        if not c.action then
-            self._active_chip_keys[#self._active_chip_keys + 1] = c.key
-        end
     end
     self._chip_strip_hidden = hide_chip_strip
 
@@ -770,116 +752,6 @@ function BookshelfWidget:_rebuild()
         PAD          = PAD,
     }
 
-    -- ── Chip strip ────────────────────────────────────────────────────────────
-    -- Two modes share the same widget: chips-list at top level, or a
-    -- breadcrumb when the user has drilled into a chip-level item.
-    -- Skipped entirely when hide_chip_strip is true (every chip
-    -- disabled AND no drill-down) so the hero can claim the slot.
-    local breadcrumb_path = nil
-    local in_search_mode  = false
-    if #self._drilldown_path > 0 then
-        breadcrumb_path = {}
-        for i, entry in ipairs(self._drilldown_path) do
-            breadcrumb_path[i] = { label = entry.label }
-            if entry.kind == "search" then in_search_mode = true end
-        end
-    end
-    -- Search-mode chip pill: shows the search nerd-font glyph (U+F002)
-    -- followed by "Search results" so the user reads
-    -- "< Back  [search-icon] SEARCH RESULTS > query". The Back pill is an
-    -- explicit exit from search mode; tapping the chip pill or the query
-    -- crumb re-opens the search dialog with the current query prefilled
-    -- (lets the user fix typos without starting over).
-    local chip_pill_glyph = in_search_mode and "\xEF\x80\x82" or nil
-    local chip_pill_label
-    if in_search_mode then
-        chip_pill_label = "Search results"
-    else
-        chip_pill_label = CHIP_LABELS[self.chip] or self.chip
-    end
-    -- ChipStrip prefixes a chevron-left glyph automatically; we just
-    -- supply the bare label.
-    local back_label = in_search_mode and "Back" or nil
-    local chips = not hide_chip_strip and ChipStrip:new{
-        chips             = active_chips,
-        active            = self.chip,
-        width             = content_w,
-        height            = chip_h,
-        breadcrumb_path   = breadcrumb_path,
-        chip_pill_label   = chip_pill_label,
-        chip_pill_glyph   = chip_pill_glyph,
-        back_label        = back_label,
-        -- show_parent points the strip at the window-level widget so
-        -- its tap-feedback can flag a repaint. UIManager:setDirty only
-        -- accepts widgets registered with UIManager:show.
-        show_parent       = self,
-        on_change = function(key)
-            -- Search "chip" is an action, not a navigable tab — open
-            -- the search dialog and bail before switching self.chip.
-            if key == "search" then
-                self:_openSearchDialog()
-                return
-            end
-            -- "Currently reading" chip clears the preview so the hero
-            -- falls back to Repo.getCurrent() (= lastfile). Same effect
-            -- as the swipe-up gesture, but discoverable via the visible
-            -- icon. Doesn't change self.chip — user stays on whatever
-            -- shelf they were browsing. Full _rebuild because the action
-            -- chip itself disappears with this clear (its presence is
-            -- conditional on preview ≠ lastfile).
-            if key == "current" then
-                -- Clear preview AND collapse expanded mode so the hero
-                -- comes back showing the lastfile. In expanded mode the
-                -- chip is rendered deselected (no visible hero), so the
-                -- user expects this tap to restore the hero view.
-                self._preview_book = nil
-                self._expanded     = false
-                self:_rebuild()
-                UIManager:setDirty(self, "ui")
-                return
-            end
-            -- Switch chips → reset drill path and page; preserve
-            -- _preview_book so the user's "current selection" survives
-            -- a tab tour. The highlight on the new chip's shelf only
-            -- paints when the previewed book happens to be visible
-            -- there; the hero still shows the previewed book in any
-            -- case (it's bound to _preview_book, not the chip).
-            self._drilldown_path = {}
-            self.chip            = key
-            self.page            = 1
-            G_reader_settings:saveSetting("bookshelf_active_chip", key)
-            self:_rebuild()
-            UIManager:setDirty(self, "ui")
-        end,
-        on_breadcrumb = function(depth)
-            -- depth -1 = back pill (search mode only): exit search
-            --            entirely, restoring the prior drilldown path.
-            -- depth  0 = chip pill: in search mode, re-open the search
-            --            dialog with the current query prefilled (so the
-            --            user can fix typos without retyping); in other
-            --            drilldowns, pop to top of current chip.
-            -- depth  N = crumb at index N: in search mode for the deepest
-            --            crumb (= query), same edit-search behaviour as
-            --            the chip pill; otherwise pop to that level.
-            if depth == -1 then
-                self:_drillBackTo(0)
-                return
-            end
-            if in_search_mode then
-                local search_entry = self._drilldown_path[#self._drilldown_path]
-                local query = search_entry and search_entry.payload
-                              and search_entry.payload.query
-                self:_openSearchDialog(query)
-                return
-            end
-            self:_drillBackTo(depth)
-        end,
-    }
-    -- Stash the strip so swipe-cycling (_setActiveChip) can ask it to
-    -- pre-paint a "pending" border on the destination chip — same
-    -- responsiveness affordance that taps already get via onTapStrip.
-    self._chip_strip = chips or nil
-
     -- ── Shelf items ───────────────────────────────────────────────────────────
     -- PAGE_SIZE = _pageSize(): 8 on standard screens, 12 on tall screens.
     -- VIEW_SIZE = _viewSize(): adds 4 books (one row) in expanded mode.
@@ -926,6 +798,100 @@ function BookshelfWidget:_rebuild()
         items = {}
         for i = 0, VIEW_SIZE - 1 do items[i + 1] = all_items[start_idx + i] end
     end
+    -- Append the page-indicator chip to the strip instead of reserving a
+    -- dedicated footer row. Tap opens the sort dialog for the active chip.
+    local page_label = string.format("%d/%d", self.page, total_pages)
+    active_chips[#active_chips + 1] = {
+        key    = "pageinfo",
+        label  = page_label,
+        action = true,
+        width  = self:_pageInfoChipWidth(page_label, chip_h),
+    }
+    -- Search stays at the right edge as the final action chip.
+    active_chips[#active_chips + 1] = {
+        key        = "search",
+        nerd_glyph = "\xEF\x80\x82",
+        action     = true,
+    }
+    -- Cache the ordered chip keys + hidden state so the edge-swipe
+    -- handlers can cycle between tabs without re-deriving them.
+    self._active_chip_keys = {}
+    for _, c in ipairs(active_chips) do
+        if not c.action then
+            self._active_chip_keys[#self._active_chip_keys + 1] = c.key
+        end
+    end
+    -- ── Chip strip ────────────────────────────────────────────────────────────
+    -- Two modes share the same widget: chips-list at top level, or a
+    -- breadcrumb when the user has drilled into a chip-level item.
+    -- Skipped entirely when hide_chip_strip is true (every chip
+    -- disabled AND no drill-down) so the hero can claim the slot.
+    local breadcrumb_path = nil
+    local in_search_mode  = false
+    if #self._drilldown_path > 0 then
+        breadcrumb_path = {}
+        for i, entry in ipairs(self._drilldown_path) do
+            breadcrumb_path[i] = { label = entry.label }
+            if entry.kind == "search" then in_search_mode = true end
+        end
+    end
+    local chip_pill_glyph = in_search_mode and "\xEF\x80\x82" or nil
+    local chip_pill_label
+    if in_search_mode then
+        chip_pill_label = "Search results"
+    else
+        chip_pill_label = CHIP_LABELS[self.chip] or self.chip
+    end
+    local back_label = in_search_mode and "Back" or nil
+    local chips = not hide_chip_strip and ChipStrip:new{
+        chips             = active_chips,
+        active            = self.chip,
+        width             = content_w,
+        height            = chip_h,
+        breadcrumb_path   = breadcrumb_path,
+        chip_pill_label   = chip_pill_label,
+        chip_pill_glyph   = chip_pill_glyph,
+        back_label        = back_label,
+        show_parent       = self,
+        on_change = function(key)
+            if key == "search" then
+                self:_openSearchDialog()
+                return
+            end
+            if key == "pageinfo" then
+                self:_openSortMenu()
+                return
+            end
+            if key == "current" then
+                self._preview_book = nil
+                self._expanded     = false
+                self:_rebuild()
+                UIManager:setDirty(self, "ui")
+                return
+            end
+            self._drilldown_path = {}
+            self.chip            = key
+            self.page            = 1
+            G_reader_settings:saveSetting("bookshelf_active_chip", key)
+            self:_rebuild()
+            UIManager:setDirty(self, "ui")
+        end,
+        on_breadcrumb = function(depth)
+            if depth == -1 then
+                self:_drillBackTo(0)
+                return
+            end
+            if in_search_mode then
+                local search_entry = self._drilldown_path[#self._drilldown_path]
+                local query = search_entry and search_entry.payload
+                              and search_entry.payload.query
+                self:_openSearchDialog(query)
+                return
+            end
+            self:_drillBackTo(depth)
+        end,
+    }
+    self._chip_strip = chips or nil
     -- Last-page de-duplication for expanded mode: pages overlap by
     -- (VIEW_SIZE - PAGE_SIZE) books, so the LAST page's first 4 books are
     -- already shown on the previous page's row 3. Skip them so the last
@@ -1045,10 +1011,9 @@ function BookshelfWidget:_rebuild()
     -- page on first render.
     local paper_bg = Blitbuffer.COLOR_WHITE
 
-    -- Layout order: titlebar / hero / chips / shelf1 / shelf2 / footer-label.
-    -- Pagination label moved BELOW the shelves so the shelves dominate the
-    -- visual hierarchy and "1–8 of 10 ›" reads as a footer. VerticalSpan
-    -- separators between sections give the home screen breathing room.
+    -- Layout order: hero / chips / shelf rows. Pagination no longer owns its
+    -- own footer row; only a zero-height placeholder remains for the fast
+    -- pagination swap path.
     local VerticalSpan = require("ui/widget/verticalspan")
 
     -- Inner content gets horizontal padding only; the titlebar above does
@@ -1078,11 +1043,8 @@ function BookshelfWidget:_rebuild()
         inner_vgroup[#inner_vgroup + 1] = VerticalSpan:new{ width = PAD }
     end
     -- Layout-slack absorber: shelf_h is computed via floor(), which can lose
-    -- up to (n_shelves - 1) pixels per render. Without compensating, the
-    -- label sits a few pixels above its math-derived y → visible pagination
-    -- shift between modes. This VerticalSpan absorbs that exact shortfall
-    -- so pagination y locks to self.height - PAD - label_h regardless of
-    -- which mode rendered.
+    -- up to (n_shelves - 1) pixels per render. The slack gets absorbed just
+    -- above the zero-height footer placeholder so shelf rows stay fixed.
     local layout_sum = PAD * 2  -- outer top + bottom
                      + hero_h
                      + hero_chip_pad
@@ -1755,59 +1717,9 @@ end
 -- Extracted so _swapShelvesInPlace can construct a fresh footer reflecting
 -- the new page's button-enabled states.
 function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
-    local Button         = require("ui/widget/button")
-    local HorizontalSpan = require("ui/widget/horizontalspan")
-    local bw = self
-    -- The footer is always pagination chevrons + page label, regardless
-    -- of drill state. Earlier the footer doubled as a "← back to chips"
-    -- label inside an expanded series, but that hijacked the only
-    -- pagination affordance — series with >8 books couldn't be paged
-    -- through. Back-out now lives in the chip strip's breadcrumb mode
-    -- (tap the chip pill / a crumb), freeing this footer for chevrons
-    -- everywhere.
-    local chev_size = Screen:scaleBySize(32)
-    local nav_span  = Screen:scaleBySize(32)
-    local function go(p)
-        return function() bw.page = p; bw:_swapShelvesInPlace() end
-    end
-    local first = Button:new{
-        icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
-        callback = go(1), bordersize = 0, enabled = self.page > 1, show_parent = self,
-    }
-    local prev = Button:new{
-        icon = "chevron.left",  icon_width = chev_size, icon_height = chev_size,
-        callback = go(self.page - 1), bordersize = 0,
-        enabled = self.page > 1, show_parent = self,
-    }
-    local page_text = Button:new{
-        text = string.format("Page %d of %d", self.page, total_pages),
-        text_font_size = 15,
-        callback = function() bw:_openSortMenu() end,
-        bordersize = 0, show_parent = self,
-    }
-    self._page_text_button = page_text
-    local next_btn = Button:new{
-        icon = "chevron.right", icon_width = chev_size, icon_height = chev_size,
-        callback = go(self.page + 1), bordersize = 0,
-        enabled = self.page < total_pages, show_parent = self,
-    }
-    local last = Button:new{
-        icon = "chevron.last", icon_width = chev_size, icon_height = chev_size,
-        callback = go(total_pages), bordersize = 0,
-        enabled = self.page < total_pages, show_parent = self,
-    }
-    local nav = HorizontalGroup:new{
-        align = "center",
-        first,    HorizontalSpan:new{ width = nav_span },
-        prev,     HorizontalSpan:new{ width = nav_span },
-        page_text,HorizontalSpan:new{ width = nav_span },
-        next_btn, HorizontalSpan:new{ width = nav_span },
-        last,
-    }
-    return CenterContainer:new{
-        dimen = Geom:new{ w = content_w, h = chev_size + Size.padding.default * 2 },
-        nav,
-    }
+    self._page_text_button = nil
+    local VerticalSpan = require("ui/widget/verticalspan")
+    return VerticalSpan:new{ width = 0 }
 end
 
 -- _openSortMenu — chip-relevant sort dialog with native CheckButton rows.

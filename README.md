@@ -11,7 +11,7 @@ Latest, Series, and Favourites.
 
 ## Quick start
 
-1. Download the latest release ZIP from [GitHub Releases](https://github.com/AndyHazz/bookshelf.koplugin/releases) and extract `bookshelf.koplugin/` to your KOReader plugins directory ([paths below](#installation)).
+1. Download the latest release ZIP from [GitHub Releases](https://github.com/komadorirobin/bookshelf.koplugin/releases) and extract `bookshelf.koplugin/` to your KOReader plugins directory ([paths below](#installation)).
 2. Restart KOReader — Bookshelf opens automatically as the home screen.
 3. Tap **Recent**, **Latest**, **Series**, or **★** to browse your library by shelf.
 4. Open the FileManager menu (top of screen) → **Bookshelf** for settings, including the per-region hero card editor.
@@ -173,7 +173,7 @@ Operators: `=` `!=` `<` `>` `<=` `>=`. Boolean: `and`, `or`, `not`. Numeric toke
 
 ## Installation
 
-**Manual install:** Download the latest release ZIP from [GitHub Releases](https://github.com/AndyHazz/bookshelf.koplugin/releases) and extract to your KOReader plugins directory:
+**Manual install:** Download the latest release ZIP from [GitHub Releases](https://github.com/komadorirobin/bookshelf.koplugin/releases) and extract to your KOReader plugins directory:
 
 | Device | Path |
 |--------|------|
