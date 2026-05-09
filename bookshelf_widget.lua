@@ -284,6 +284,17 @@ local function _resolveDisabledSet()
 end
 
 function BookshelfWidget:_rebuild()
+    -- Refresh dimensions; detect landscape from whether Screen swapped them.
+    -- Screen:getWidth()/getHeight() DO swap on rotation (KOReader software
+    -- rotates the framebuffer content), so raw_w > raw_h reliably means
+    -- landscape. The fb0/rotate sysfs node is a permanent panel calibration
+    -- constant on PW5 and cannot be used for orientation detection.
+    local _raw_w    = Screen:getWidth()
+    local _raw_h    = Screen:getHeight()
+    self._landscape = (_raw_w > _raw_h)
+    self.width      = _raw_w
+    self.height     = _raw_h
+    self.dimen      = Geom:new{ w = self.width, h = self.height }
     local _perf_t0   = _gettime()
     local _perf_chip = self.chip
     local _perf_page = self.page
@@ -329,7 +340,8 @@ function BookshelfWidget:_rebuild()
     local pad_natural = math.floor(Size.padding.fullscreen * 2 * 0.8)
     local pad_capped  = math.floor(self.width * 0.03)
     local PAD         = math.min(pad_natural, pad_capped)
-    local content_w   = self.width - PAD * 2
+    local side_pad  = PAD
+    local content_w = self.width - side_pad * 2
 
     -- Height constants. Size.item.height_small does not exist (Phase 3-5 lesson);
     -- use height_default (~30dp) for the chip strip.
@@ -500,13 +512,23 @@ function BookshelfWidget:_rebuild()
                                 content_w, false)
         local strip_minimum = probe_row and probe_row:getSize().h
                               or Screen:scaleBySize(20)
-        shelf_h = math.floor(
+        shelf_h = math.max(1, math.floor(
             (self.height - strip_minimum - chip_contrib - label_h - total_pad)
-            / n_shelves)
+            / n_shelves))
         hero_h = strip_minimum
     else
         shelf_h = slot_h_natural
         hero_h  = self.height - n_shelves * shelf_h - chip_contrib - label_h - total_pad
+        -- In landscape or other short-screen layouts, slot_h_natural (derived
+        -- from slot_w) can exceed available height, making hero_h negative and
+        -- passing a negative dimension to ImageWidget → segfault. When that
+        -- happens, shrink shelf_h to fit within 80% of available height so the
+        -- hero gets at least the remaining 20%.
+        if hero_h < 1 then
+            local available = self.height - chip_contrib - label_h - total_pad
+            shelf_h = math.max(1, math.floor(available * 0.80 / n_shelves))
+            hero_h  = math.max(1, self.height - n_shelves * shelf_h - chip_contrib - label_h - total_pad)
+        end
     end
 
     local hero_cover_w, hero_cover_h
@@ -514,8 +536,8 @@ function BookshelfWidget:_rebuild()
         hero_cover_w = hero_cover_w_natural
         hero_cover_h = hero_cover_h_natural
     else
-        hero_cover_h = hero_h
-        hero_cover_w = math.floor(hero_cover_h / 1.5)
+        hero_cover_h = math.max(1, hero_h)
+        hero_cover_w = math.max(1, math.floor(hero_cover_h / 1.5))
     end
 
     -- Title bar removed: clock + battery moved to the bottom of the hero
@@ -914,8 +936,8 @@ function BookshelfWidget:_rebuild()
     local inner_content = FrameContainer:new{
         bordersize    = 0,
         padding       = 0,
-        padding_left  = PAD,
-        padding_right = PAD,
+        padding_left  = side_pad,
+        padding_right = side_pad,
         inner_vgroup,
     }
 
@@ -2350,30 +2372,59 @@ function BookshelfWidget:_isTallScreen()
     return self.width / self.height < TALL_RATIO
 end
 
+-- paintTo override: if screen dimensions changed since the last _rebuild()
+-- (e.g. the user rotated while the widget was already open), rebuild before
+-- painting so the widget tree matches the new coordinate space. Without this,
+-- UIManager calls paintTo in the new rotated frame while self.dimen still
+-- holds the old portrait size, placing the bottom of the widget off-screen.
+function BookshelfWidget:paintTo(bb, x, y)
+    local sw = Screen:getWidth()
+    local sh = Screen:getHeight()
+    if sw ~= self.width or sh ~= self.height then
+        self:_rebuild()
+    end
+    InputContainer.paintTo(self, bb, x, y)
+end
+
+-- _isLandscape() — true when the device is rotated 90° or 270°.
+-- Cached from Screen:getWidth() > Screen:getHeight() at the top of _rebuild();
+-- Screen swaps those values on rotation, so the comparison is authoritative.
+function BookshelfWidget:_isLandscape()
+    return self._landscape == true
+end
+
 -- _nShelves() — shelf row count for the current mode and screen shape.
+--   landscape normal → 1,  landscape expanded → 2
 --   normal + standard → 2,  expanded + standard → 3
 --   normal + tall     → 3,  expanded + tall     → 4
 function BookshelfWidget:_nShelves()
+    if self:_isLandscape() then
+        return self._expanded and 2 or 1
+    end
     local base = self:_isTallScreen() and 3 or 2
     return self._expanded and base + 1 or base
 end
 
--- _nCols() — column count per shelf row. Tall screens use 3 for larger
--- covers; standard screens use 4.
+-- _nCols() — column count per shelf row.
+-- Landscape: 5 (wide screen fits more covers per row).
+-- Tall screens: 3 for larger covers. Standard: 4.
 function BookshelfWidget:_nCols()
+    if self:_isLandscape() then return 5 end
     return self:_isTallScreen() and 3 or 4
 end
 
 -- _pageSize() — page-advance step: non-expanded rows × cols. Constant
 -- across the expand/collapse toggle so the first-visible book stays put —
 -- the top rows are identical, toggling reveals one extra row at the bottom.
--- Standard: 8 (2×4). Tall: 9 (3×3).
+-- Landscape: 5 (1×5). Standard: 8 (2×4). Tall: 9 (3×3).
 function BookshelfWidget:_pageSize()
+    if self:_isLandscape() then return 5 end
     return (self:_isTallScreen() and 3 or 2) * self:_nCols()
 end
 
 -- _viewSize() — books shown per page: current rows × cols.
 -- Standard normal: 8, standard expanded: 12, tall normal: 9, tall expanded: 12.
+-- Landscape normal: 5, landscape expanded: 10.
 -- Expanded pages overlap _pageSize by one row so paging forward reveals
 -- one new row at the bottom while the top rows stay fixed.
 function BookshelfWidget:_viewSize()
