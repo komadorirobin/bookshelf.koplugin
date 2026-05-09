@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-09 05:49+0100\n"
+"POT-Creation-Date: 2026-05-09 09:35+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,173 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+
+#: bookshelf_settings.lua:71
+msgid "All"
+msgstr ""
+
+#: bookshelf_settings.lua:72
+msgid "Book"
+msgstr ""
+
+#: bookshelf_settings.lua:73
+msgid "Progress"
+msgstr ""
+
+#: bookshelf_settings.lua:74
+msgid "Time"
+msgstr ""
+
+#: bookshelf_settings.lua:75
+msgid "Device"
+msgstr ""
+
+#: bookshelf_settings.lua:76
+msgid "Logic"
+msgstr ""
+
+#: bookshelf_settings.lua:124 bookshelf_settings.lua:274
+msgid "Insert token"
+msgstr ""
+
+#: bookshelf_settings.lua:125
+msgid "Bookshelf tokens"
+msgstr ""
+
+#: bookshelf_settings.lua:126
+msgid ""
+"Tokens are placeholders that get replaced with live data when the book "
+"detail view or status line renders.\n"
+"\n"
+"  %title — %book_pct\n"
+"  → Dune — 36%\n"
+"\n"
+"Wrap content in [if:foo]…[/if] to show it only when the token has a value. "
+"Add [else]…[/if] for a fallback.\n"
+"\n"
+"  [if:series]Book %series_num of %series_name[/if]\n"
+"  [if:batt<20]LOW %batt[/if]"
+msgstr ""
+
+#: bookshelf_settings.lua:149
+msgid "Search tokens…"
+msgstr ""
+
+#: bookshelf_settings.lua:224 bookshelf_updater.lua:277
+#: bookshelf_widget.lua:1774 hero_line_editor.lua:86
+msgid "Close"
+msgstr ""
+
+#: bookshelf_settings.lua:227
+msgid "Help"
+msgstr ""
+
+#: bookshelf_settings.lua:320
+msgid "Font scale"
+msgstr ""
+
+#: bookshelf_settings.lua:387
+msgid "Home"
+msgstr ""
+
+#: bookshelf_settings.lua:388
+msgid "Recent"
+msgstr ""
+
+#: bookshelf_settings.lua:389
+msgid "Latest"
+msgstr ""
+
+#: bookshelf_settings.lua:390
+msgid "Series"
+msgstr ""
+
+#: bookshelf_settings.lua:391
+msgid "Authors"
+msgstr ""
+
+#: bookshelf_settings.lua:392
+msgid "Genres"
+msgstr ""
+
+#: bookshelf_settings.lua:393
+msgid "Tags"
+msgstr ""
+
+#: bookshelf_settings.lua:394
+msgid "Favourites"
+msgstr ""
+
+#: bookshelf_settings.lua:466
+msgid "Book detail font scale"
+msgstr ""
+
+#: bookshelf_settings.lua:477 bookshelf_widget.lua:1777
+#: bookshelf_widget.lua:2894 hero_line_editor.lua:394 main.lua:547 main.lua:583
+msgid "Cancel"
+msgstr ""
+
+#: bookshelf_settings.lua:478 hero_line_editor.lua:81 hero_line_editor.lua:425
+msgid "Default"
+msgstr ""
+
+#: bookshelf_settings.lua:480 bookshelf_widget.lua:1778
+msgid "Apply"
+msgstr ""
+
+#: bookshelf_settings.lua:495
+msgid "\"Latest\" folder walk depth"
+msgstr ""
+
+#: bookshelf_settings.lua:496
+msgid ""
+"How deep to scan your library folder for newly-added books. Higher values "
+"take longer on a cold start."
+msgstr ""
+
+#: bookshelf_settings.lua:533
+msgid "Notify on wake when update available"
+msgstr ""
+
+#: bookshelf_settings.lua:553
+msgid "Update available"
+msgstr ""
+
+#: bookshelf_settings.lua:556
+msgid "Installed version"
+msgstr ""
+
+#: bookshelf_settings.lua:562
+msgid "Developer updates"
+msgstr ""
+
+#: bookshelf_settings.lua:568
+msgid "GitHub access token: set"
+msgstr ""
+
+#: bookshelf_settings.lua:570
+msgid "GitHub access token: not set"
+msgstr ""
+
+#: bookshelf_settings.lua:580 bookshelf_settings.lua:581 main.lua:542
+msgid "Development branch"
+msgstr ""
+
+#: bookshelf_settings.lua:591
+msgid "Check for updates"
+msgstr ""
+
+#: bookshelf_settings.lua:592
+msgid "Install branch"
+msgstr ""
+
+#: bookshelf_settings.lua:598
+msgid "Reset to latest stable release"
+msgstr ""
+
+#: bookshelf_settings.lua:609 bookshelf_settings.lua:612
+msgid "Installed: v"
+msgstr ""
 
 #: bookshelf_updater.lua:116
 msgid "Open the releases page in a browser?"
@@ -44,11 +211,6 @@ msgstr ""
 
 #: bookshelf_updater.lua:249
 msgid "Version: "
-msgstr ""
-
-#: bookshelf_updater.lua:277 bookshelf_widget.lua:1774 hero_line_editor.lua:86
-#: settings.lua:224
-msgid "Close"
 msgstr ""
 
 #: bookshelf_updater.lua:283
@@ -219,15 +381,6 @@ msgstr ""
 msgid "Book count"
 msgstr ""
 
-#: bookshelf_widget.lua:1777 bookshelf_widget.lua:2894 hero_line_editor.lua:394
-#: main.lua:547 main.lua:583 settings.lua:477
-msgid "Cancel"
-msgstr ""
-
-#: bookshelf_widget.lua:1778 settings.lua:480
-msgid "Apply"
-msgstr ""
-
 #: bookshelf_widget.lua:1796
 msgid "Sort by"
 msgstr ""
@@ -258,10 +411,6 @@ msgstr ""
 
 #: hero_line_editor.lua:51
 msgid "Font size"
-msgstr ""
-
-#: hero_line_editor.lua:81 hero_line_editor.lua:425 settings.lua:478
-msgid "Default"
 msgstr ""
 
 #: hero_line_editor.lua:115
@@ -367,7 +516,7 @@ msgid "\"Latest\" walk depth"
 msgstr ""
 
 #: main.lua:293
-msgid "Read calibre metadata.calibre"
+msgid "BETA: Read calibre metadata.calibre"
 msgstr ""
 
 #: main.lua:294
@@ -396,10 +545,6 @@ msgstr ""
 
 #: main.lua:398
 msgid "off"
-msgstr ""
-
-#: main.lua:542 settings.lua:580 settings.lua:581
-msgid "Development branch"
 msgstr ""
 
 #: main.lua:544
@@ -438,149 +583,4 @@ msgstr ""
 msgid ""
 "A nice-looking home screen for KOReader: pick a book from your shelf and "
 "read it, with some customisation around the book-preview info that's shown."
-msgstr ""
-
-#: settings.lua:71
-msgid "All"
-msgstr ""
-
-#: settings.lua:72
-msgid "Book"
-msgstr ""
-
-#: settings.lua:73
-msgid "Progress"
-msgstr ""
-
-#: settings.lua:74
-msgid "Time"
-msgstr ""
-
-#: settings.lua:75
-msgid "Device"
-msgstr ""
-
-#: settings.lua:76
-msgid "Logic"
-msgstr ""
-
-#: settings.lua:124 settings.lua:274
-msgid "Insert token"
-msgstr ""
-
-#: settings.lua:125
-msgid "Bookshelf tokens"
-msgstr ""
-
-#: settings.lua:126
-msgid ""
-"Tokens are placeholders that get replaced with live data when the book "
-"detail view or status line renders.\n"
-"\n"
-"  %title — %book_pct\n"
-"  → Dune — 36%\n"
-"\n"
-"Wrap content in [if:foo]…[/if] to show it only when the token has a value. "
-"Add [else]…[/if] for a fallback.\n"
-"\n"
-"  [if:series]Book %series_num of %series_name[/if]\n"
-"  [if:batt<20]LOW %batt[/if]"
-msgstr ""
-
-#: settings.lua:149
-msgid "Search tokens…"
-msgstr ""
-
-#: settings.lua:227
-msgid "Help"
-msgstr ""
-
-#: settings.lua:320
-msgid "Font scale"
-msgstr ""
-
-#: settings.lua:387
-msgid "Home"
-msgstr ""
-
-#: settings.lua:388
-msgid "Recent"
-msgstr ""
-
-#: settings.lua:389
-msgid "Latest"
-msgstr ""
-
-#: settings.lua:390
-msgid "Series"
-msgstr ""
-
-#: settings.lua:391
-msgid "Authors"
-msgstr ""
-
-#: settings.lua:392
-msgid "Genres"
-msgstr ""
-
-#: settings.lua:393
-msgid "Tags"
-msgstr ""
-
-#: settings.lua:394
-msgid "Favourites"
-msgstr ""
-
-#: settings.lua:466
-msgid "Book detail font scale"
-msgstr ""
-
-#: settings.lua:495
-msgid "\"Latest\" folder walk depth"
-msgstr ""
-
-#: settings.lua:496
-msgid ""
-"How deep to scan your library folder for newly-added books. Higher values "
-"take longer on a cold start."
-msgstr ""
-
-#: settings.lua:533
-msgid "Notify on wake when update available"
-msgstr ""
-
-#: settings.lua:553
-msgid "Update available"
-msgstr ""
-
-#: settings.lua:556
-msgid "Installed version"
-msgstr ""
-
-#: settings.lua:562
-msgid "Developer updates"
-msgstr ""
-
-#: settings.lua:568
-msgid "GitHub access token: set"
-msgstr ""
-
-#: settings.lua:570
-msgid "GitHub access token: not set"
-msgstr ""
-
-#: settings.lua:591
-msgid "Check for updates"
-msgstr ""
-
-#: settings.lua:592
-msgid "Install branch"
-msgstr ""
-
-#: settings.lua:598
-msgid "Reset to latest stable release"
-msgstr ""
-
-#: settings.lua:609 settings.lua:612
-msgid "Installed: v"
 msgstr ""

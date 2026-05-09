@@ -290,7 +290,7 @@ function Bookshelf:addToMainMenu(menu_items)
                 callback = function() S:_pickLatestDepth() end,
             },
             {
-                text = _("Read calibre metadata.calibre"),
+                text = _("BETA: Read calibre metadata.calibre"),
                 help_text = _("For users with a Calibre-managed library. "
                     .. "Reads the metadata.calibre JSON file at home_dir to "
                     .. "cover title / authors / series / tags / language for "
