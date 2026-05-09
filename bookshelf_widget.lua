@@ -82,7 +82,7 @@ function BookshelfWidget:init()
     self.height = Screen:getHeight()
     self.dimen  = Geom:new{ w = self.width, h = self.height }
     self.chip   = G_reader_settings:readSetting("bookshelf_active_chip") or "recent"
-    self.page   = 1   -- 1-based; 8 books per page (4 cols × 2 shelves)
+    self.page   = 1   -- 1-based; page size = _pageSize() (4 cols × 2–4 rows)
     -- Class-level pointer to the live instance. Lets main.lua's
     -- FileChooser:refreshPath wrapper find us without depending on which
     -- plugin context (FM vs Reader) installed the wrapper.
@@ -475,7 +475,7 @@ function BookshelfWidget:_rebuild()
     -- chips (rather than the full PAD) so the strip + chip transition
     -- doesn't eat into shelf vertical real estate. Normal mode keeps PAD
     -- there so the hero card has visible breathing room.
-    local n_shelves     = self._expanded and 3 or 2
+    local n_shelves     = self:_nShelves()
     local chip_contrib  = hide_chip_strip and 0 or chip_h
     local hero_chip_pad = self._expanded and Size.padding.large or PAD
     local total_pad = PAD * 2                                  -- outer (top + bot)
@@ -670,11 +670,10 @@ function BookshelfWidget:_rebuild()
     self._chip_strip = chips or nil
 
     -- ── Shelf items ───────────────────────────────────────────────────────────
-    -- Pagination advance (PAGE_SIZE) is 8 in both modes — total_pages and
-    -- start_idx use this. View size (VIEW_SIZE) is 8 normally / 12 in
-    -- expanded mode — used to slice the window. Decoupling them means the
-    -- expand/collapse toggle preserves the user's first-visible book
-    -- exactly: top 2 rows are identical across the toggle.
+    -- PAGE_SIZE = _pageSize(): 8 on standard screens, 12 on tall screens.
+    -- VIEW_SIZE = _viewSize(): adds 4 books (one row) in expanded mode.
+    -- Decoupling them means toggling preserves the top rows: expanded reveals
+    -- one extra row at the bottom while the rest stays identical.
     local PAGE_SIZE  = self:_pageSize()
     local VIEW_SIZE  = self:_viewSize()
     -- Cap the fetch at a sane upper bound — far below "9999" and well above
@@ -1891,10 +1890,9 @@ function BookshelfWidget:_swapShelvesInPlace()
         UIManager:setDirty(self, "ui")
         return
     end
-    -- Expanded mode uses 3 rows; the in-place 2-row fast path doesn't fit.
-    -- Falling back to _rebuild keeps the indexing simple — page nav in
-    -- expanded mode is rare enough that the rebuild cost doesn't matter.
-    if self._expanded then
+    -- Fast path only handles the 2-row (standard, non-expanded) layout.
+    -- Expanded mode and tall screens use more rows; fall back to _rebuild.
+    if self:_nShelves() ~= 2 then
         self:_rebuild()
         UIManager:setDirty(self, "ui")
         return
@@ -2342,21 +2340,36 @@ function BookshelfWidget:_isHeroSwipe(ges)
     return local_y >= d.PAD and local_y < (d.PAD + d.hero_h)
 end
 
--- _pageSize() — page-advance step (always 8). Pagination chevrons advance
--- self.page by 1; start_idx = (page - 1) * _pageSize. Kept at 8 in both
--- modes so toggling expand/collapse preserves the first-visible-book
--- position exactly — the user's top-2-rows stay identical across the
--- toggle, with the third expanded row showing the next 4 books.
-function BookshelfWidget:_pageSize()
-    return 8
+local TALL_RATIO = 0.65   -- width/height below which the screen is "phone-tall"
+
+-- _isTallScreen() — true when the device aspect ratio is phone-like.
+-- Computed from self.width / self.height which are fixed at init time.
+function BookshelfWidget:_isTallScreen()
+    return self.width / self.height < TALL_RATIO
 end
 
--- _viewSize() — number of books actually shown per page. 8 in normal mode
--- (4×2), 12 in expanded mode (4×3). Decoupled from _pageSize so consecutive
--- expanded pages overlap by 4 books — paging forward in expanded mode
--- reveals 4 new books at the bottom rather than replacing all 12.
+-- _nShelves() — shelf row count for the current mode and screen shape.
+--   normal + standard → 2,  expanded + standard → 3
+--   normal + tall     → 3,  expanded + tall     → 4
+function BookshelfWidget:_nShelves()
+    local base = self:_isTallScreen() and 3 or 2
+    return self._expanded and base + 1 or base
+end
+
+-- _pageSize() — page-advance step: non-expanded row count × 4. Constant
+-- across the expand/collapse toggle so the first-visible book stays put —
+-- the top rows are identical, toggling reveals one extra row at the bottom.
+-- Standard screens: 8 (2×4). Tall screens: 12 (3×4).
+function BookshelfWidget:_pageSize()
+    return (self:_isTallScreen() and 3 or 2) * 4
+end
+
+-- _viewSize() — books shown per page: current row count × 4.
+-- Standard normal: 8, standard expanded / tall normal: 12, tall expanded: 16.
+-- Expanded pages overlap _pageSize by 4 books (one row) so paging forward
+-- reveals one new row at the bottom while the top rows stay fixed.
 function BookshelfWidget:_viewSize()
-    return self._expanded and 12 or 8
+    return self:_nShelves() * 4
 end
 
 -- _previewNeighbourBook(direction) — cycle self._preview_book through the
@@ -2365,7 +2378,7 @@ end
 -- Crosses page boundaries by recomputing self.page from the target book's
 -- position in the unsliced list.
 function BookshelfWidget:_previewNeighbourBook(direction)
-    local PAGE_SIZE = 8
+    local PAGE_SIZE = self:_pageSize()
     local all_items = self:_fetchChipItems(400) or {}
     -- Series groups have no filepath; skip them — only books are previewable.
     -- Track the all_items index of each book so we can map back to a page.
