@@ -99,16 +99,8 @@ function BookshelfWidget:_hasNextPaginationTarget()
         or (#self._drilldown_path == 0 and not self._chip_strip_hidden)
 end
 
-function BookshelfWidget:_pageInfoChipWidth(label, chip_h)
-    local probe = TextWidget:new{
-        text = label,
-        face = Font:getFace("infofont", 16),
-        bold = true,
-    }
-    local text_w = probe:getSize().w
-    local inner_pad = Size.padding.small * 2
-    local border_pad = Size.border.thick * 2
-    return math.max(math.floor(chip_h * 1.8), text_w + inner_pad + border_pad)
+function BookshelfWidget:_simpleUIPageLabel()
+    return string.format("Page %d of %d", self.page or 1, self._total_pages or 1)
 end
 
 function BookshelfWidget:_getSimpleUIBarContext()
@@ -250,7 +242,12 @@ end
 
 function BookshelfWidget:_wrapWithSimpleUIBottomBar(content_widget)
     local ctx = self._simpleui_bar_ctx
-    if not ctx then return content_widget end
+    self._simpleui_page_overlay_parent = nil
+    self._simpleui_page_overlay_idx = nil
+    if not ctx then
+        self._page_text_button = nil
+        return content_widget
+    end
 
     local OverlapGroup = require("ui/widget/overlapgroup")
     local LineWidget = require("ui/widget/linewidget")
@@ -280,15 +277,72 @@ function BookshelfWidget:_wrapWithSimpleUIBottomBar(content_widget)
         background = Blitbuffer.COLOR_WHITE,
         overlap_offset = { 0, self.height - ctx.bot_sp },
     }
-
-    return OverlapGroup:new{
-        allow_mirroring = false,
-        dimen = Geom:new{ w = self.width, h = self.height },
+    local overlay = self:_buildSimpleUIPaginationOverlay()
+    local children = {
         content_widget,
         sep_line,
-        bar,
-        bot_pad,
     }
+    if overlay then
+        children[#children + 1] = overlay
+    end
+    children[#children + 1] = bar
+    children[#children + 1] = bot_pad
+    local overlap = OverlapGroup:new{
+        allow_mirroring = false,
+        dimen = Geom:new{ w = self.width, h = self.height },
+        unpack(children),
+    }
+    if overlay then
+        self._simpleui_page_overlay_parent = overlap
+        self._simpleui_page_overlay_idx = 3
+    end
+    return overlap
+end
+
+function BookshelfWidget:_buildSimpleUIPaginationOverlay()
+    local ctx = self._simpleui_bar_ctx
+    if not ctx then
+        self._page_text_button = nil
+        return nil
+    end
+    local Button = require("ui/widget/button")
+    local overlay_h = math.max(Screen:scaleBySize(16), Size.item.height_default - Screen:scaleBySize(10))
+    local button = Button:new{
+        text = self:_simpleUIPageLabel(),
+        text_font_size = 13,
+        callback = function() self:_openSortMenu() end,
+        bordersize = 0,
+        show_parent = self,
+    }
+    button.dimen = Geom:new{ w = self.width, h = overlay_h }
+    button.overlap_offset = {
+        0,
+        self.height - ctx.total_h - overlay_h,
+    }
+    self._page_text_button = button
+    return CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = overlay_h },
+        overlap_offset = button.overlap_offset,
+        button,
+    }
+end
+
+function BookshelfWidget:_refreshSimpleUIPageOverlay()
+    if not self._simpleui_page_overlay_parent or not self._simpleui_page_overlay_idx then return end
+    local parent = self._simpleui_page_overlay_parent
+    local idx = self._simpleui_page_overlay_idx
+    local old = parent[idx]
+    local new = self:_buildSimpleUIPaginationOverlay()
+    if not new then return end
+    parent[idx] = new
+    if parent.resetLayout then
+        parent:resetLayout()
+    end
+    if old and old.free then
+        UIManager:nextTick(function()
+            pcall(function() old:free() end)
+        end)
+    end
 end
 
 function BookshelfWidget:init()
@@ -556,9 +610,8 @@ function BookshelfWidget:_rebuild()
     -- Height constants. Size.item.height_small does not exist (Phase 3-5 lesson);
     -- use height_default (~30dp) for the chip strip.
     local chip_h  = Size.item.height_default
-    -- Pagination no longer owns its own footer row: the page indicator now
-    -- lives in the chip strip, so the footer reserves no vertical space.
-    local label_h  = 0
+    local footer_h = Screen:scaleBySize(32) + Size.padding.default * 2
+    local label_h  = self._simpleui_bar_ctx and 0 or footer_h
 
     -- Detect "all chips disabled" early so the hero can grow into the
     -- chip strip's vertical footprint when it would otherwise be empty.
@@ -798,15 +851,6 @@ function BookshelfWidget:_rebuild()
         items = {}
         for i = 0, VIEW_SIZE - 1 do items[i + 1] = all_items[start_idx + i] end
     end
-    -- Append the page-indicator chip to the strip instead of reserving a
-    -- dedicated footer row. Tap opens the sort dialog for the active chip.
-    local page_label = string.format("%d/%d", self.page, total_pages)
-    active_chips[#active_chips + 1] = {
-        key    = "pageinfo",
-        label  = page_label,
-        action = true,
-        width  = self:_pageInfoChipWidth(page_label, chip_h),
-    }
     -- Search stays at the right edge as the final action chip.
     active_chips[#active_chips + 1] = {
         key        = "search",
@@ -856,10 +900,6 @@ function BookshelfWidget:_rebuild()
         on_change = function(key)
             if key == "search" then
                 self:_openSearchDialog()
-                return
-            end
-            if key == "pageinfo" then
-                self:_openSortMenu()
                 return
             end
             if key == "current" then
@@ -1717,9 +1757,58 @@ end
 -- Extracted so _swapShelvesInPlace can construct a fresh footer reflecting
 -- the new page's button-enabled states.
 function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
-    self._page_text_button = nil
-    local VerticalSpan = require("ui/widget/verticalspan")
-    return VerticalSpan:new{ width = 0 }
+    if self._simpleui_bar_ctx then
+        self._page_text_button = nil
+        local VerticalSpan = require("ui/widget/verticalspan")
+        return VerticalSpan:new{ width = 0 }
+    end
+
+    local Button         = require("ui/widget/button")
+    local HorizontalSpan = require("ui/widget/horizontalspan")
+    local bw = self
+    local chev_size = Screen:scaleBySize(32)
+    local nav_span  = Screen:scaleBySize(32)
+    local function go(p)
+        return function() bw.page = p; bw:_swapShelvesInPlace() end
+    end
+    local first = Button:new{
+        icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
+        callback = go(1), bordersize = 0, enabled = self.page > 1, show_parent = self,
+    }
+    local prev = Button:new{
+        icon = "chevron.left",  icon_width = chev_size, icon_height = chev_size,
+        callback = go(self.page - 1), bordersize = 0,
+        enabled = self.page > 1, show_parent = self,
+    }
+    local page_text = Button:new{
+        text = self:_simpleUIPageLabel(),
+        text_font_size = 15,
+        callback = function() bw:_openSortMenu() end,
+        bordersize = 0, show_parent = self,
+    }
+    self._page_text_button = page_text
+    local next_btn = Button:new{
+        icon = "chevron.right", icon_width = chev_size, icon_height = chev_size,
+        callback = go(self.page + 1), bordersize = 0,
+        enabled = self.page < total_pages, show_parent = self,
+    }
+    local last = Button:new{
+        icon = "chevron.last", icon_width = chev_size, icon_height = chev_size,
+        callback = go(total_pages), bordersize = 0,
+        enabled = self.page < total_pages, show_parent = self,
+    }
+    local nav = HorizontalGroup:new{
+        align = "center",
+        first,    HorizontalSpan:new{ width = nav_span },
+        prev,     HorizontalSpan:new{ width = nav_span },
+        page_text,HorizontalSpan:new{ width = nav_span },
+        next_btn, HorizontalSpan:new{ width = nav_span },
+        last,
+    }
+    return CenterContainer:new{
+        dimen = Geom:new{ w = content_w, h = chev_size + Size.padding.default * 2 },
+        nav,
+    }
 end
 
 -- _openSortMenu — chip-relevant sort dialog with native CheckButton rows.
@@ -2084,6 +2173,7 @@ function BookshelfWidget:_swapShelvesInPlace()
     if self._inner_vgroup.resetLayout then
         self._inner_vgroup:resetLayout()
     end
+    self:_refreshSimpleUIPageOverlay()
     UIManager:nextTick(function()
         for _, w in ipairs({ old_top, old_bottom, old_footer }) do
             if w and w.free then pcall(function() w:free() end) end
