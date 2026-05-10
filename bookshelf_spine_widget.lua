@@ -449,6 +449,10 @@ function SpineWidget:init()
     }
 end
 
+function SpineWidget.newStatusBadge(args)
+    return StatusBadge:new(args)
+end
+
 function SpineWidget:_withCoverBadges(base)
     local status = self.book and self.book.reading_status
     local state = status and status.state

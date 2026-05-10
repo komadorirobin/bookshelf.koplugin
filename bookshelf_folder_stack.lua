@@ -21,6 +21,7 @@ local Blitbuffer     = require("ffi/blitbuffer")
 local Screen         = require("device").screen
 local SpineWidget    = require("bookshelf_spine_widget")
 local FolderCard     = require("bookshelf_folder_card")
+local BD             = require("ui/bidi")
 
 local FolderStack = InputContainer:extend{
     folder      = nil,    -- { path, label, first_book }
@@ -107,8 +108,15 @@ function FolderStack:init()
         badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }
         children[#children + 1] = badge
     elseif all_read and book_count and book_count > 0 then
-        local badge = makeBadge("\226\156\147", 13)
-        badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }
+        local card_w = self.width - FolderCard.SHADOW_OFFSET
+        local card_h = self.height - FolderCard.SHADOW_OFFSET
+        local badge_size = math.max(Screen:scaleBySize(16), math.floor(math.min(card_w, card_h) * 0.18))
+        local overhang = Screen:scaleBySize(2)
+        local badge = SpineWidget.newStatusBadge{ size = badge_size, state = "read" }
+        badge.overlap_offset = {
+            BD.mirroredUILayout() and -overhang or (card_w - badge_size + overhang),
+            card_h - badge_size + overhang,
+        }
         children[#children + 1] = badge
     end
 
