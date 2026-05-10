@@ -33,6 +33,7 @@ local UIManager       = require("ui/uimanager")
 local logger          = require("logger")
 local _               = require("bookshelf_i18n").gettext
 local T               = require("ffi/util").template
+local Profiles        = require("bookshelf_profiles")
 
 local Bookshelf = WidgetContainer:extend{
     name        = "bookshelf",
@@ -428,6 +429,12 @@ function Bookshelf:onDispatcherRegisterActions()
         title    = _("Bookshelf: open Comics profile"),
         general  = true,
     })
+    Dispatcher:registerAction("open_bookshelf_auto", {
+        category = "none",
+        event    = "OpenBookshelfAuto",
+        title    = _("Bookshelf: open matching profile"),
+        general  = true,
+    })
 end
 
 -- _safeShow — show bookshelf, doing the right thing depending on whether
@@ -489,6 +496,32 @@ end
 
 function Bookshelf:onOpenBookshelfComics()
     self:_safeShow("comics")
+    return true
+end
+
+function Bookshelf:_currentDocumentFile()
+    local doc = self.ui and self.ui.document
+    if doc then
+        if type(doc.file) == "string" and doc.file ~= "" then
+            return doc.file
+        end
+        if type(doc.getFileName) == "function" then
+            local ok, file = pcall(function() return doc:getFileName() end)
+            if ok and type(file) == "string" and file ~= "" then return file end
+        end
+    end
+    local lastfile = G_reader_settings:readSetting("lastfile")
+    if type(lastfile) == "string" and lastfile ~= "" then return lastfile end
+    return nil
+end
+
+function Bookshelf:onOpenBookshelfAuto()
+    local file = self:_currentDocumentFile()
+    local profile_key = Profiles.matchFile(file)
+    if not profile_key then
+        logger.dbg("[bookshelf] open_bookshelf_auto: no profile match for " .. tostring(file))
+    end
+    self:_safeShow(profile_key)
     return true
 end
 

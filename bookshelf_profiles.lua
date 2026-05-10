@@ -89,4 +89,34 @@ function Profiles.folderSort(profile)
     return profile and profile.folder_sort or nil
 end
 
+local function normalizePath(path)
+    if type(path) ~= "string" or path == "" then return nil end
+    path = path:gsub("/+$", "")
+    if path == "" then return "/" end
+    return path
+end
+
+local function pathInRoot(filepath, root)
+    local fp = normalizePath(filepath)
+    root = normalizePath(root)
+    if not fp or not root then return false end
+    return fp == root or fp:sub(1, #root + 1) == (root .. "/")
+end
+
+function Profiles.matchFile(filepath)
+    local best_key, best_len
+    for key, profile in pairs(PROFILE_DEFS) do
+        for _, root in ipairs(profile.roots or {}) do
+            if pathInRoot(filepath, root) then
+                local len = #normalizePath(root)
+                if not best_len or len > best_len then
+                    best_key = key
+                    best_len = len
+                end
+            end
+        end
+    end
+    return best_key and PROFILE_DEFS[best_key] and best_key or nil
+end
+
 return Profiles
