@@ -24,6 +24,8 @@ local GestureRange    = require("ui/gesturerange")
 local Size            = require("ui/size")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local Screen          = require("device").screen
+local Font            = require("ui/font")
+local TextWidget      = require("ui/widget/textwidget")
 
 -- Shadow geometry shared by both render paths.
 local SHADOW_OFFSET   = Screen:scaleBySize(4)       -- shadow offset in dp
@@ -51,11 +53,11 @@ function ShadowRect:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, SHADOW_GRAY, CARD_RADIUS)
 end
 
-local StatusBadge = Widget:extend{
+local DogearStatusBadge = Widget:extend{
     size  = nil,
     state = nil,
 }
-function StatusBadge:init()
+function DogearStatusBadge:init()
     self.dimen = Geom:new{ w = self.size, h = self.size }
 end
 local function paintDotLine(bb, x1, y1, x2, y2, thickness, color)
@@ -69,30 +71,49 @@ local function paintDotLine(bb, x1, y1, x2, y2, thickness, color)
         bb:paintRect(x - r, y - r, thickness, thickness, color)
     end
 end
-function StatusBadge:paintTo(bb, x, y)
+function DogearStatusBadge:paintTo(bb, x, y)
     local s = self.size
-    local r = math.floor(s / 2)
-    bb:paintCircle(x + r, y + r, r, Blitbuffer.COLOR_BLACK)
+    for dy = 0, s - 1 do
+        local row_w = dy + 1
+        bb:paintRect(x + s - row_w, y + dy, row_w, 1, Blitbuffer.COLOR_BLACK)
+    end
     if self.state == "read" then
         local t = math.max(2, math.floor(s * 0.12))
         paintDotLine(bb,
-            x + math.floor(s * 0.25), y + math.floor(s * 0.54),
-            x + math.floor(s * 0.43), y + math.floor(s * 0.72),
+            x + math.floor(s * 0.48), y + math.floor(s * 0.68),
+            x + math.floor(s * 0.62), y + math.floor(s * 0.82),
             t, Blitbuffer.COLOR_WHITE)
         paintDotLine(bb,
-            x + math.floor(s * 0.41), y + math.floor(s * 0.72),
-            x + math.floor(s * 0.76), y + math.floor(s * 0.30),
+            x + math.floor(s * 0.61), y + math.floor(s * 0.82),
+            x + math.floor(s * 0.88), y + math.floor(s * 0.48),
             t, Blitbuffer.COLOR_WHITE)
     elseif self.state == "reading" then
-        local left = math.floor(s * 0.36)
-        local top = math.floor(s * 0.28)
-        local h = math.floor(s * 0.46)
-        local w = math.floor(s * 0.36)
+        local left = math.floor(s * 0.56)
+        local top = math.floor(s * 0.46)
+        local h = math.floor(s * 0.38)
+        local w = math.floor(s * 0.30)
         for dy = 0, h do
             local half = math.floor((w * (1 - math.abs((dy / h) * 2 - 1))) + 0.5)
             bb:paintRect(x + left, y + top + dy, half, 1, Blitbuffer.COLOR_WHITE)
         end
     end
+end
+
+local function makeTextBadge(text, font_size)
+    local label = TextWidget:new{
+        text    = text,
+        face    = Font:getFace("cfont", font_size),
+        bold    = true,
+        fgcolor = Blitbuffer.COLOR_BLACK,
+    }
+    return FrameContainer:new{
+        bordersize = math.max(1, Screen:scaleBySize(1)),
+        radius     = Screen:scaleBySize(7),
+        padding    = Screen:scaleBySize(2),
+        margin     = 0,
+        background = Blitbuffer.gray(0.08),
+        label,
+    }
 end
 
 -- Solid rounded-rect "backdrop" used as the selected-state cue. Sits
@@ -310,32 +331,54 @@ function SpineWidget:init()
     else
         rendered = self:_renderFallback()
     end
-    self[1] = self:_withStatusBadge(rendered)
+    self[1] = self:_withCoverBadges(rendered)
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
         Hold = { GestureRange:new{ ges = "hold", range = self.dimen } },
     }
 end
 
-function SpineWidget:_withStatusBadge(base)
+function SpineWidget:_withCoverBadges(base)
     local status = self.book and self.book.reading_status
     local state = status and status.state
-    if state ~= "read" and state ~= "reading" then return base end
+    local has_status = state == "read" or state == "reading"
+    local pct = status and tonumber(status.pct)
+    local show_percent = state == "reading" and pct and pct > 0 and pct < 1
+    local series_num = self.book and self.book.series_num
+    local show_series = series_num ~= nil and tostring(series_num) ~= ""
+    if not has_status and not show_percent and not show_series then return base end
 
     local card_w = self.width - SHADOW_OFFSET
     local card_h = self.height - SHADOW_OFFSET
-    local badge_size = math.max(Screen:scaleBySize(18), math.floor(math.min(card_w, card_h) * 0.24))
-    local margin = math.max(Screen:scaleBySize(3), math.floor(badge_size * 0.16))
-    local badge = StatusBadge:new{ size = badge_size, state = state }
-    badge.overlap_offset = {
-        card_w - badge_size - margin,
-        card_h - badge_size - margin,
-    }
-    return OverlapGroup:new{
+    local margin = Screen:scaleBySize(4)
+    local group = OverlapGroup:new{
         dimen = Geom:new{ w = self.width, h = self.height },
         base,
-        badge,
     }
+    if show_percent then
+        local percent = string.format("%d%%", math.floor(pct * 100 + 0.5))
+        local badge = makeTextBadge(percent, math.max(8, math.floor(math.min(card_w, card_h) * 0.10)))
+        local size = badge:getSize()
+        badge.overlap_offset = { card_w - size.w - margin, margin }
+        group[#group + 1] = badge
+    end
+    if show_series then
+        local badge = makeTextBadge("#" .. tostring(series_num),
+            math.max(8, math.floor(math.min(card_w, card_h) * 0.10)))
+        local size = badge:getSize()
+        badge.overlap_offset = {
+            show_percent and margin or (card_w - size.w - margin),
+            margin,
+        }
+        group[#group + 1] = badge
+    end
+    if has_status then
+        local badge_size = math.max(Screen:scaleBySize(16), math.floor(math.min(card_w, card_h) * 0.18))
+        local badge = DogearStatusBadge:new{ size = badge_size, state = state }
+        badge.overlap_offset = { card_w - badge_size, card_h - badge_size }
+        group[#group + 1] = badge
+    end
+    return group
 end
 
 -- Wraps an inner card widget in a "card with shadow" composition. The inner
