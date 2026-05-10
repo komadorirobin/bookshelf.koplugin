@@ -54,6 +54,8 @@ local SERIES_FONT_SIZE       = 11
 local SERIES_BORDER_THICKNESS = 1
 local SERIES_RADIUS          = 9
 local STATUS_BADGE_OVERHANG  = 2
+local STATUS_GREEN          = Blitbuffer.colorFromString("#008000")
+local STATUS_BLUE           = Blitbuffer.colorFromString("#37abc8")
 
 local function moduleDir()
     local src = debug.getinfo(1, "S").source or ""
@@ -68,7 +70,6 @@ local function moduleDir()
 end
 
 local PERCENT_BADGE_ICON = (moduleDir() or ".") .. "/icons/percent.badge.svg"
-local STATUS_ICON_DIR = (moduleDir() or ".") .. "/icons"
 
 -- A simple Widget subclass that paints a rounded rectangle in a fixed grey.
 -- Used as the shadow layer behind every cover. Has its own dimen so
@@ -84,14 +85,84 @@ function ShadowRect:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, SHADOW_GRAY, CARD_RADIUS)
 end
 
-local function makeStatusIconBadge(state, size)
-    local filename = state == "read" and "dogear.complete.svg" or "dogear.reading.svg"
-    return IconWidget:new{
-        file           = STATUS_ICON_DIR .. "/" .. filename,
-        rotation_angle = state == "reading" and BD.mirroredUILayout() and 270 or 0,
-        width          = size,
-        height         = size,
-    }
+local StatusBadge = Widget:extend{
+    size  = nil,
+    state = nil,
+}
+
+function StatusBadge:init()
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+local function paintDotLine(bb, x1, y1, x2, y2, thickness, color)
+    local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1))
+    if steps <= 0 then return end
+    local r = math.max(1, math.floor(thickness / 2))
+    for i = 0, steps do
+        local t = i / steps
+        local x = math.floor(x1 + (x2 - x1) * t + 0.5)
+        local y = math.floor(y1 + (y2 - y1) * t + 0.5)
+        bb:paintRect(x - r, y - r, thickness, thickness, color)
+    end
+end
+
+local function paintFilledTriangle(bb, ax, ay, bx, by, cx, cy, color)
+    local min_y = math.floor(math.min(ay, by, cy))
+    local max_y = math.ceil(math.max(ay, by, cy))
+    for y = min_y, max_y do
+        local xs = {}
+        local function edge(x1, y1, x2, y2)
+            if y1 == y2 then return end
+            if y >= math.min(y1, y2) and y <= math.max(y1, y2) then
+                local t = (y - y1) / (y2 - y1)
+                xs[#xs + 1] = x1 + (x2 - x1) * t
+            end
+        end
+        edge(ax, ay, bx, by)
+        edge(bx, by, cx, cy)
+        edge(cx, cy, ax, ay)
+        if #xs >= 2 then
+            table.sort(xs)
+            local x1 = math.floor(xs[1] + 0.5)
+            local x2 = math.floor(xs[#xs] + 0.5)
+            bb:paintRect(x1, y, math.max(1, x2 - x1 + 1), 1, color)
+        end
+    end
+end
+
+function StatusBadge:paintTo(bb, x, y)
+    local s = self.size
+    local cx = x + math.floor(s / 2)
+    local cy = y + math.floor(s / 2)
+    local r = math.floor(s / 2)
+    local border = math.max(1, Screen:scaleBySize(1))
+
+    bb:paintCircle(cx, cy, r, Blitbuffer.COLOR_BLACK)
+    bb:paintCircle(cx, cy, math.max(1, r - border), Blitbuffer.COLOR_WHITE)
+
+    if self.state == "read" then
+        local t = math.max(2, math.floor(s * 0.14))
+        paintDotLine(bb,
+            x + math.floor(s * 0.28), y + math.floor(s * 0.53),
+            x + math.floor(s * 0.43), y + math.floor(s * 0.68),
+            t, STATUS_GREEN)
+        paintDotLine(bb,
+            x + math.floor(s * 0.42), y + math.floor(s * 0.68),
+            x + math.floor(s * 0.74), y + math.floor(s * 0.34),
+            t, STATUS_GREEN)
+    else
+        local top = y + math.floor(s * 0.24)
+        local bottom = y + math.floor(s * 0.76)
+        local left = x + math.floor(s * 0.31)
+        local right = x + math.floor(s * 0.69)
+        local mid_x = x + math.floor(s * 0.50)
+        local mid_y = y + math.floor(s * 0.50)
+        local t = math.max(2, math.floor(s * 0.10))
+        paintDotLine(bb, left, top, right, top, t, STATUS_BLUE)
+        paintDotLine(bb, left, bottom, right, bottom, t, STATUS_BLUE)
+        paintFilledTriangle(bb, left, top + t, right, top + t, mid_x, mid_y, STATUS_BLUE)
+        paintFilledTriangle(bb, left, bottom - t, right, bottom - t, mid_x, mid_y, STATUS_BLUE)
+    end
 end
 
 local PercentBadge = Widget:extend{
@@ -426,7 +497,7 @@ function SpineWidget:_withCoverBadges(base)
     if has_status then
         local badge_size = math.max(Screen:scaleBySize(16), math.floor(math.min(card_w, card_h) * 0.18))
         local overhang = Screen:scaleBySize(STATUS_BADGE_OVERHANG)
-        local badge = makeStatusIconBadge(state, badge_size)
+        local badge = StatusBadge:new{ size = badge_size, state = state }
         badge.overlap_offset = {
             BD.mirroredUILayout() and -overhang or (card_w - badge_size + overhang),
             card_h - badge_size + overhang,
