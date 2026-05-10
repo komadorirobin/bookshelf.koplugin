@@ -27,6 +27,7 @@ local Screen          = require("device").screen
 local Font            = require("ui/font")
 local TextWidget      = require("ui/widget/textwidget")
 local IconWidget      = require("ui/widget/iconwidget")
+local BD              = require("ui/bidi")
 
 -- Shadow geometry shared by both render paths.
 local SHADOW_OFFSET   = Screen:scaleBySize(4)       -- shadow offset in dp
@@ -40,13 +41,18 @@ local CARD_BORDER     = Screen:scaleBySize(1)       -- 1dp border on the card
 local SELECTED_BORDER = SHADOW_OFFSET
 local SHADOW_GRAY     = Blitbuffer.gray(0.5)        -- grey level for the shadow
 
--- Ported from SeriousHornet's 2-percent-badge.lua userpatch.
-local PERCENT_TEXT_SIZE = 0.50
+-- Ported from SeriousHornet's badge userpatches, with text scaled for
+-- Bookshelf's smaller cover cells.
+local PERCENT_TEXT_SIZE = 0.34
 local PERCENT_MOVE_X    = 5
 local PERCENT_MOVE_Y    = -1
 local PERCENT_BADGE_W   = 70
 local PERCENT_BADGE_H   = 40
 local PERCENT_BUMP_UP   = 1
+
+local SERIES_FONT_SIZE       = 11
+local SERIES_BORDER_THICKNESS = 1
+local SERIES_RADIUS          = 9
 
 local function moduleDir()
     local src = debug.getinfo(1, "S").source or ""
@@ -127,7 +133,7 @@ local PercentBadge = Widget:extend{
 }
 function PercentBadge:init()
     local corner_mark_size = Screen:scaleBySize(20)
-    local font_size = math.floor(corner_mark_size * PERCENT_TEXT_SIZE)
+    local font_size = math.max(8, math.floor(corner_mark_size * PERCENT_TEXT_SIZE))
     local badge_w = Screen:scaleBySize(PERCENT_BADGE_W)
     local badge_h = Screen:scaleBySize(PERCENT_BADGE_H)
     local text_pad = Screen:scaleBySize(6)
@@ -164,19 +170,21 @@ function PercentBadge:paintTo(bb, x, y)
     self._label:paintTo(bb, math.floor(tx), math.floor(ty))
 end
 
-local function makeTextBadge(text, font_size)
+local function makeSeriesBadge(text)
     local label = TextWidget:new{
         text    = text,
-        face    = Font:getFace("cfont", font_size),
+        face    = Font:getFace("cfont", SERIES_FONT_SIZE),
         bold    = true,
         fgcolor = Blitbuffer.COLOR_BLACK,
     }
     return FrameContainer:new{
-        bordersize = math.max(1, Screen:scaleBySize(1)),
-        radius     = Screen:scaleBySize(7),
+        linesize   = Screen:scaleBySize(2),
+        radius     = Screen:scaleBySize(SERIES_RADIUS),
+        color      = Blitbuffer.COLOR_BLACK,
+        bordersize = SERIES_BORDER_THICKNESS,
+        background = Blitbuffer.COLOR_GRAY_E,
         padding    = Screen:scaleBySize(2),
         margin     = 0,
-        background = Blitbuffer.gray(0.08),
         label,
     }
 end
@@ -431,12 +439,22 @@ function SpineWidget:_withCoverBadges(base)
         group[#group + 1] = badge
     end
     if show_series then
-        local badge = makeTextBadge("#" .. tostring(series_num),
-            math.max(8, math.floor(math.min(card_w, card_h) * 0.10)))
+        local badge = makeSeriesBadge("#" .. tostring(series_num))
         local size = badge:getSize()
+        local d_w = math.ceil(card_w / 5)
+        local d_h = math.ceil(card_h / 10)
+        local ix
+        if show_percent then
+            ix = margin
+        elseif BD.mirroredUILayout() then
+            ix = -math.floor(d_w) + math.floor((d_w - size.w) / 2)
+        else
+            ix = card_w - math.floor(d_w) + math.floor((d_w - size.w) / 2)
+        end
+        local iy = Screen:scaleBySize(5) + math.floor((d_h - size.h) / 2)
         badge.overlap_offset = {
-            show_percent and margin or (card_w - size.w - margin),
-            margin,
+            ix,
+            iy,
         }
         group[#group + 1] = badge
     end
