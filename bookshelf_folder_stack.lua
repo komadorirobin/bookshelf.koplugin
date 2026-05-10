@@ -10,9 +10,15 @@
 -- input handling.
 
 local InputContainer = require("ui/widget/container/inputcontainer")
+local FrameContainer = require("ui/widget/container/framecontainer")
 local OverlapGroup   = require("ui/widget/overlapgroup")
+local TextWidget     = require("ui/widget/textwidget")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
+local Size           = require("ui/size")
+local Font           = require("ui/font")
+local Blitbuffer     = require("ffi/blitbuffer")
+local Screen         = require("device").screen
 local SpineWidget    = require("bookshelf_spine_widget")
 local FolderCard     = require("bookshelf_folder_card")
 
@@ -35,20 +41,22 @@ function FolderStack:init()
     local book_widget
     if self.folder and self.folder.first_book then
         book_widget = SpineWidget:new{
-            book        = self.folder.first_book,
-            width       = self.width,
-            height      = self.height,
-            cover_fill  = true,
-            is_selected = self.is_selected,
+            book            = self.folder.first_book,
+            width           = self.width,
+            height          = self.height,
+            cover_fill      = true,
+            is_selected     = self.is_selected,
+            suppress_badges = true,
         }
     else
         -- Empty folder: SpineWidget's fallback path with the folder's
         -- label as the title so the "?" placeholder reads correctly.
         book_widget = SpineWidget:new{
-            book        = { title = self.folder and self.folder.label or "" },
-            width       = self.width,
-            height      = self.height,
-            is_selected = self.is_selected,
+            book            = { title = self.folder and self.folder.label or "" },
+            width           = self.width,
+            height          = self.height,
+            is_selected     = self.is_selected,
+            suppress_badges = true,
         }
     end
 
@@ -58,12 +66,37 @@ function FolderStack:init()
         label  = self.folder and self.folder.label or "",
     }
 
-    self[1] = OverlapGroup:new{
+    local children = {
         dimen = self.dimen,
         book_widget,           -- 0: book card + book's own drop shadow
         folder_widget,         -- 1: cardboard front (covers book bottom)
         label_widget,          -- 2: folder name on body
     }
+    local book_count = self.folder and tonumber(self.folder.book_count)
+    if book_count and book_count > 0 then
+        local badge = FrameContainer:new{
+            bordersize     = Size.border.thin,
+            background     = Blitbuffer.COLOR_WHITE,
+            radius         = Screen:scaleBySize(3),
+            padding_left   = Size.padding.default,
+            padding_right  = Size.padding.default,
+            padding_top    = Size.padding.small,
+            padding_bottom = Size.padding.small,
+            TextWidget:new{
+                text = "\xc3\x97" .. tostring(book_count),
+                face = Font:getFace("smallinfofont", 12),
+                bold = true,
+            }
+        }
+        local badge_w = badge:getSize().w
+        local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
+        local badge_x = math.max(0, math.min(self.width - badge_w,
+                                             cover_right_x - math.floor(badge_w / 2)))
+        badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
+        children[#children + 1] = badge
+    end
+
+    self[1] = OverlapGroup:new(children)
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
         Hold = { GestureRange:new{ ges = "hold", range = self.dimen } },

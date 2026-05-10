@@ -942,23 +942,15 @@ end
 -- the directory tree (bounded depth) so the FolderStack widget has a cover
 -- to display on the spine.
 
--- Returns the filepath (string) of the first supported book file at or
--- below `path`, depth-limited. Returns nil if no book is found.
---
--- Used by getAll's shape-builder to pick a representative cover for each
--- folder card. Only the filepath is needed at shape-build time — per-page
--- hydration loads the actual Book record with cover. Previously this
--- returned a full Book record built via _safeBuildBookMeta, meaning a
--- zstd cover decompression per subfolder during cold shape construction:
--- the dominant cost on Home for libraries with many subfolders.
--- (We previously also did two stat passes per entry — one looking for
--- files, then a second looking for directories; merged into one pass.)
-function Repo.findFirstBookIn(path, max_depth)
+-- Returns a depth-limited summary for a folder: representative first book
+-- filepath plus total supported files. Used for folder cards so the badge
+-- reports folder contents, not the first book's series index.
+function Repo.getFolderSummary(path, max_depth)
     max_depth = max_depth or 3
-    if max_depth < 0 then return nil end
+    if max_depth < 0 then return { first_book_fp = nil, book_count = 0 } end
     local lfs = require("libs/libkoreader-lfs")
     local ok, iter, dir_obj = pcall(lfs.dir, path)
-    if not ok then return nil end
+    if not ok then return { first_book_fp = nil, book_count = 0 } end
     local files, dirs = {}, {}
     for f in iter, dir_obj do
         if f ~= "." and f ~= ".." and not f:match("^%.") then
@@ -976,15 +968,32 @@ function Repo.findFirstBookIn(path, max_depth)
             end
         end
     end
-    -- Files at this level take precedence over deeper subdirectories.
     table.sort(files, function(a, b) return a.name < b.name end)
-    if files[1] then return files[1].fp end
     table.sort(dirs, function(a, b) return a.name < b.name end)
+
+    local first = files[1] and files[1].fp or nil
+    local count = #files
     for _, e in ipairs(dirs) do
-        local found = Repo.findFirstBookIn(e.fp, max_depth - 1)
-        if found then return found end
+        local child = Repo.getFolderSummary(e.fp, max_depth - 1)
+        if not first and child.first_book_fp then first = child.first_book_fp end
+        count = count + (tonumber(child.book_count) or 0)
     end
-    return nil
+    return { first_book_fp = first, book_count = count }
+end
+
+-- Returns the filepath (string) of the first supported book file at or
+-- below `path`, depth-limited. Returns nil if no book is found.
+--
+-- Used by getAll's shape-builder to pick a representative cover for each
+-- folder card. Only the filepath is needed at shape-build time — per-page
+-- hydration loads the actual Book record with cover. Previously this
+-- returned a full Book record built via _safeBuildBookMeta, meaning a
+-- zstd cover decompression per subfolder during cold shape construction:
+-- the dominant cost on Home for libraries with many subfolders.
+-- (We previously also did two stat passes per entry — one looking for
+-- files, then a second looking for directories; merged into one pass.)
+function Repo.findFirstBookIn(path, max_depth)
+    return Repo.getFolderSummary(path, max_depth).first_book_fp
 end
 
 -- Comparator for the All chip's entries. Operates on raw lfs entries
@@ -1133,6 +1142,7 @@ function Repo.getAll(path, limit, offset, opts)
                     path       = shape.path,
                     label      = shape.label,
                     first_book = fb,
+                    book_count = shape.book_count,
                 }
             else
                 local b = _safeBuildBookMeta(shape.fp)
@@ -1310,11 +1320,13 @@ function Repo.getAll(path, limit, offset, opts)
         elseif e.attr.mode == "directory" then
             -- findFirstBookIn now returns just the filepath; per-page
             -- hydration below builds the actual Book record with cover.
+            local summary = Repo.getFolderSummary(e.fp, 3)
             shapes[#shapes + 1] = {
                 kind          = "folder",
                 path          = e.fp,
                 label         = e.name,
-                first_book_fp = Repo.findFirstBookIn(e.fp, 3),
+                first_book_fp = summary.first_book_fp,
+                book_count    = summary.book_count,
             }
         end
     end
@@ -1332,6 +1344,7 @@ function Repo.getAll(path, limit, offset, opts)
                 path       = shape.path,
                 label      = shape.label,
                 first_book = fb,
+                book_count = shape.book_count,
             }
         else
             local b = _safeBuildBookMeta(shape.fp)
@@ -1952,12 +1965,15 @@ function Repo.searchAll(query, scope)
             seen_dirs[dir] = true
             local basename = dir:match("([^/]+)$") or dir
             if basename:lower():find(q, 1, true) then
-                local first_book = Repo.buildBookMeta(c.fp)
+                local summary = Repo.getFolderSummary(dir, 3)
+                local first_book = summary.first_book_fp and Repo.buildBookMeta(summary.first_book_fp)
+                                   or Repo.buildBookMeta(c.fp)
                 folders[#folders + 1] = {
                     kind       = "folder",
                     path       = dir,
                     label      = basename,
                     first_book = first_book,
+                    book_count = summary.book_count,
                 }
             end
         end

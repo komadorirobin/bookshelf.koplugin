@@ -430,6 +430,7 @@ local SpineWidget = InputContainer:extend{
     -- the copies leak across chip rebuilds.
     cover_bb            = nil,
     cover_bb_disposable = false,
+    suppress_badges     = false,
 }
 
 function SpineWidget:init()
@@ -441,7 +442,7 @@ function SpineWidget:init()
     else
         rendered = self:_renderFallback()
     end
-    self[1] = self:_withCoverBadges(rendered)
+    self[1] = self.suppress_badges and rendered or self:_withCoverBadges(rendered)
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
         Hold = { GestureRange:new{ ges = "hold", range = self.dimen } },
