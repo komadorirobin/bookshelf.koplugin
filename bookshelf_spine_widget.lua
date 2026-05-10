@@ -53,6 +53,7 @@ local PERCENT_BUMP_UP   = 1
 local SERIES_FONT_SIZE       = 11
 local SERIES_BORDER_THICKNESS = 1
 local SERIES_RADIUS          = 9
+local STATUS_BADGE_OVERHANG  = 2
 
 local function moduleDir()
     local src = debug.getinfo(1, "S").source or ""
@@ -90,7 +91,6 @@ local function makeStatusIconBadge(state, size)
         rotation_angle = state == "reading" and BD.mirroredUILayout() and 270 or 0,
         width          = size,
         height         = size,
-        alpha          = true,
     }
 end
 
@@ -425,10 +425,11 @@ function SpineWidget:_withCoverBadges(base)
     end
     if has_status then
         local badge_size = math.max(Screen:scaleBySize(16), math.floor(math.min(card_w, card_h) * 0.18))
+        local overhang = Screen:scaleBySize(STATUS_BADGE_OVERHANG)
         local badge = makeStatusIconBadge(state, badge_size)
         badge.overlap_offset = {
-            BD.mirroredUILayout() and 0 or (card_w - badge_size),
-            card_h - badge_size,
+            BD.mirroredUILayout() and -overhang or (card_w - badge_size + overhang),
+            card_h - badge_size + overhang,
         }
         group[#group + 1] = badge
     end
