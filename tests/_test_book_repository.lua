@@ -546,9 +546,72 @@ end)
 
 test("getSortKey: returns chip default when setting missing", function()
     _G._test_settings = {}
-    assert(Repo.getSortKey("authors") == "latest_read")
+    assert(Repo.getSortKey("authors") == "name")
     assert(Repo.getSortKey("all") == "title")
     assert(Repo.getSortKey("latest") == "mtime")
+end)
+
+test("getAuthors: default name sort uses surname first", function()
+    Repo.invalidateWalkCache()
+    Repo.invalidateSeriesCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib") and {".", "..",
+            "morrison.epub", "asimov.epub", "le-guin.epub", "gaiman.epub"} or {".", ".."}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        local is_file = fp:match("%.epub$") ~= nil
+        if key == "mode" then return is_file and "file" or "directory" end
+        if key == "modification" then return 0 end
+        return { mode = is_file and "file" or "directory", modification = 0 }
+    end
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/lib/morrison.epub"] = { title = "Beloved", authors = "Toni Morrison" },
+        ["/lib/asimov.epub"]   = { title = "Foundation", authors = "Isaac Asimov" },
+        ["/lib/le-guin.epub"]  = { title = "The Dispossessed", authors = "Ursula K. Le Guin" },
+        ["/lib/gaiman.epub"]   = { title = "Neverwhere", authors = "Neil Gaiman" },
+    }
+
+    local authors = Repo.getAuthors(10, 0)
+    assert(authors[1].series_name == "Isaac Asimov", "got " .. tostring(authors[1].series_name))
+    assert(authors[2].series_name == "Neil Gaiman", "got " .. tostring(authors[2].series_name))
+    assert(authors[3].series_name == "Ursula K. Le Guin", "got " .. tostring(authors[3].series_name))
+    assert(authors[4].series_name == "Toni Morrison", "got " .. tostring(authors[4].series_name))
+end)
+
+test("getAuthors: scoped name sort uses surname first", function()
+    Repo.invalidateWalkCache()
+    Repo.invalidateSeriesCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local listings = {
+            ["/prose"] = {".", "..", "tawada.epub", "atwood.epub"},
+            ["/manga"] = {".", "..", "aot.cbz", "op.cbz"},
+        }
+        local files = listings[path] or {".", ".."}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        local ext = fp:match("%.([^.]+)$")
+        local is_file = ext == "epub" or ext == "cbz"
+        if key == "mode" then return is_file and "file" or "directory" end
+        if key == "modification" then return 0 end
+        return { mode = is_file and "file" or "directory", modification = 0 }
+    end
+    _G._test_settings = { home_dir = "/", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/prose/tawada.epub"] = { title = "Memoirs", authors = "Yoko Tawada" },
+        ["/prose/atwood.epub"] = { title = "Alias Grace", authors = "Margaret Atwood" },
+        ["/manga/aot.cbz"]     = { title = "Attack on Titan 1", authors = "Hajime Isayama" },
+        ["/manga/op.cbz"]      = { title = "One Piece 1", authors = "Eiichiro Oda" },
+    }
+
+    local prose = Repo.getAuthors(10, 0, { roots = { "/prose" } })
+    local manga = Repo.getAuthors(10, 0, { roots = { "/manga" } })
+    assert(prose[1].series_name == "Margaret Atwood", "got " .. tostring(prose[1].series_name))
+    assert(prose[2].series_name == "Yoko Tawada", "got " .. tostring(prose[2].series_name))
+    assert(manga[1].series_name == "Hajime Isayama", "got " .. tostring(manga[1].series_name))
+    assert(manga[2].series_name == "Eiichiro Oda", "got " .. tostring(manga[2].series_name))
 end)
 
 test("getSortKey: returns saved setting when valid", function()
@@ -558,7 +621,7 @@ end)
 
 test("getSortKey: falls back to default when saved value is invalid", function()
     _G._test_settings = { bookshelf_sort_authors = "garbage_value" }
-    assert(Repo.getSortKey("authors") == "latest_read")
+    assert(Repo.getSortKey("authors") == "name")
 end)
 
 test("getSortKey: returns nil for unknown chip", function()

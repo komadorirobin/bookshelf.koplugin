@@ -273,7 +273,7 @@ local _SORT_DEFAULT = {
     latest     = "mtime",
     favorites  = "date_added",
     series     = "latest_read",
-    authors    = "latest_read",
+    authors    = "name",
     genres     = "latest_read",
     tags       = "latest_read",
 }
@@ -1391,21 +1391,65 @@ end
 -- cached SHAPE (with .filepaths) or a freshly-built group (with .books) —
 -- so the same comparator can sort _series_cache entries at HIT time and
 -- in-memory groups at MISS time without a second helper.
+local AUTHOR_SURNAME_PARTICLES = {
+    da = true, de = true, del = true, der = true, di = true,
+    la = true, le = true, van = true, von = true,
+}
+
+local function _authorSortKey(name)
+    name = tostring(name or ""):match("^%s*(.-)%s*$")
+    name = name:gsub("%s+", " ")
+    if name:find(",", 1, true) then return name:lower() end
+
+    local parts = {}
+    for part in name:gmatch("%S+") do parts[#parts + 1] = part end
+    if #parts <= 1 then return name:lower() end
+
+    local surname_start = #parts
+    local prev = parts[surname_start - 1]
+    if prev and AUTHOR_SURNAME_PARTICLES[prev:lower():gsub("%.", "")] then
+        surname_start = surname_start - 1
+    end
+
+    local surname, given = {}, {}
+    for i = surname_start, #parts do surname[#surname + 1] = parts[i] end
+    for i = 1, surname_start - 1 do given[#given + 1] = parts[i] end
+    return (table.concat(surname, " ") .. ", " .. table.concat(given, " ")):lower()
+end
+
+local function _groupNameSortKey(group)
+    if group and group.kind == "author" then
+        return _authorSortKey(group.series_name)
+    end
+    return tostring((group and group.series_name) or ""):lower()
+end
+
 local function _groupShapeCmp(key)
     if key == "name" then
         return function(a, b)
-            return (a.series_name or ""):lower() < (b.series_name or ""):lower()
+            local ka, kb = _groupNameSortKey(a), _groupNameSortKey(b)
+            if ka ~= kb then return ka < kb end
+            return tostring(a.series_name or ""):lower() < tostring(b.series_name or ""):lower()
         end
     elseif key == "book_count" then
         return function(a, b)
             local na = a.filepaths and #a.filepaths or (a.books and #a.books or 0)
             local nb = b.filepaths and #b.filepaths or (b.books and #b.books or 0)
             if na ~= nb then return na > nb end
-            return (a.series_name or ""):lower() < (b.series_name or ""):lower()
+            local ka, kb = _groupNameSortKey(a), _groupNameSortKey(b)
+            if ka ~= kb then return ka < kb end
+            return tostring(a.series_name or ""):lower() < tostring(b.series_name or ""):lower()
         end
     end
     -- latest_read (default): most recent first.
-    return function(a, b) return (a.latest or 0) > (b.latest or 0) end
+    return function(a, b)
+        if (a.latest or 0) ~= (b.latest or 0) then
+            return (a.latest or 0) > (b.latest or 0)
+        end
+        local ka, kb = _groupNameSortKey(a), _groupNameSortKey(b)
+        if ka ~= kb then return ka < kb end
+        return tostring(a.series_name or ""):lower() < tostring(b.series_name or ""):lower()
+    end
 end
 
 function Repo.getTags(limit)
