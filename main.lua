@@ -617,6 +617,9 @@ function Bookshelf:onCloseDocument()
     if Repo and Repo.invalidateStatsCache and self.ui and self.ui.document
        and self.ui.document.file then
         Repo.invalidateStatsCache(self.ui.document.file)
+        if Repo.invalidateProgressCache then
+            Repo.invalidateProgressCache(self.ui.document.file)
+        end
     end
 
     -- Only re-show Bookshelf if the user is actually returning to "home"

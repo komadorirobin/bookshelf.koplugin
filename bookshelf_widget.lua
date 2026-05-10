@@ -489,6 +489,13 @@ function BookshelfWidget:refreshAfterReaderReturn()
     if self._hero_parent and self._hero_dims then
         self:_swapHeroInPlace()
     end
+    if not self:_needsReaderReturnShelfRefresh() then
+        UIManager:setDirty(self, "ui")
+        if self._startStatusTimer then
+            self:_startStatusTimer()
+        end
+        return
+    end
     if self._reader_return_shelves_fn then
         UIManager:unschedule(self._reader_return_shelves_fn)
     end
@@ -500,6 +507,32 @@ function BookshelfWidget:refreshAfterReaderReturn()
     if self._startStatusTimer then
         self:_startStatusTimer()
     end
+end
+
+function BookshelfWidget:_needsReaderReturnShelfRefresh()
+    if #self._drilldown_path > 0 then return false end
+    if self.chip == "recent" or self.chip == "next" then return true end
+    if self.chip == "series" or self.chip == "genres" then
+        return Repo.getSortKey(self.chip) == "latest_read"
+    end
+    if self.chip == "authors" then
+        return Repo.getSortKey("authors") == "latest_read"
+    end
+    if self.chip == "favorites" then
+        return Repo.getSortKey("favorites") == "recently_read"
+    end
+    if self.chip == "all" then
+        local sk = Repo.getSortKey("all")
+        return sk == "last_read"
+            or sk == "percent_unopened_first"
+            or sk == "percent_unopened_last"
+            or sk == "percent_natural"
+    end
+    local profile_chip = self:_profileChip(self.chip)
+    if profile_chip and profile_chip.kind == "folder" then
+        return Profiles.folderSort(self.profile) == "last_read"
+    end
+    return false
 end
 
 -- Bookshelf is the topmost widget while it's on screen, so KOReader's

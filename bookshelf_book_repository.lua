@@ -633,6 +633,12 @@ local _all_cache       = {}  -- { [key] = { shapes = {...}, expires_at = number 
 -- and letting all three readers hit the result is the dominant speedup
 -- (Lutesong's Kindle Color: 20s per chip → ~1-2s, 2000-book library).
 local _light_meta_cache = {}  -- { [key] = { map = {[fp]=record}, expires_at = number } }
+-- DocSettings progress reads are expensive on e-ink devices because each
+-- lookup parses a sidecar file. The Comics/Next chip needs progress for
+-- every series candidate; cache per filepath and invalidate the just-closed
+-- document from main.lua so the active book stays fresh.
+local PROGRESS_CACHE_TTL = 120
+local _progress_cache = {}  -- filepath → { pct = number|nil, expires_at = number }
 
 function Repo.invalidateWalkCache()
     _walk_cache       = {}
@@ -641,6 +647,7 @@ function Repo.invalidateWalkCache()
     _genres_cache     = {}
     _all_cache        = {}
     _light_meta_cache = {}
+    _progress_cache   = {}
 end
 
 function Repo.invalidateSeriesCache()
@@ -648,6 +655,11 @@ function Repo.invalidateSeriesCache()
     _authors_cache    = {}
     _genres_cache     = {}
     _light_meta_cache = {}
+end
+
+function Repo.invalidateProgressCache(filepath)
+    if filepath then _progress_cache[filepath] = nil
+    else _progress_cache = {} end
 end
 
 local function walkBooks(root, depth, out, current_depth)
@@ -1973,11 +1985,21 @@ end
 
 local function _readProgress(filepath)
     if not filepath then return nil end
+    local now = os.time()
+    local cached = _progress_cache[filepath]
+    if cached and cached.expires_at > now then
+        return cached.pct
+    end
     local ok_ds, ds = pcall(function() return getDocSettings():open(filepath) end)
-    if not (ok_ds and ds) then return nil end
+    if not (ok_ds and ds) then
+        _progress_cache[filepath] = { pct = nil, expires_at = now + PROGRESS_CACHE_TTL }
+        return nil
+    end
     local ok_pct, pct = pcall(ds.readSetting, ds, "percent_finished")
-    if not ok_pct then return nil end
-    return tonumber(pct)
+    if not ok_pct then pct = nil end
+    pct = tonumber(pct)
+    _progress_cache[filepath] = { pct = pct, expires_at = now + PROGRESS_CACHE_TTL }
+    return pct
 end
 
 function Repo.getNextUnreadInSeries(limit, offset, scope)
