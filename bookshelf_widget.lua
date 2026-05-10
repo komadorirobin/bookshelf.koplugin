@@ -1523,7 +1523,10 @@ function BookshelfWidget:_fetchChipItems(n)
     local offset    = (self.page - 1) * self:_pageSize()
     local LIMIT     = self:_viewSize()
     if tip and tip.kind == "folder" then
-        return Repo.getAll(tip.payload.path, LIMIT, offset)
+        return Repo.getAll(tip.payload.path, LIMIT, offset, {
+            sort_key = Profiles.folderSort(self.profile),
+            reverse  = false,
+        })
     end
     local profile_chip = self:_profileChip(self.chip)
     local profile_scope = self:_profileScope()
