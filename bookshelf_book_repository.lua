@@ -639,6 +639,7 @@ local _light_meta_cache = {}  -- { [key] = { map = {[fp]=record}, expires_at = n
 -- document from main.lua so the active book stays fresh.
 local PROGRESS_CACHE_TTL = 120
 local _progress_cache = {}  -- filepath → { pct = number|nil, expires_at = number }
+local _reading_status_cache = {}  -- filepath → { status = table|nil, expires_at = number }
 
 function Repo.invalidateWalkCache()
     _walk_cache       = {}
@@ -648,6 +649,7 @@ function Repo.invalidateWalkCache()
     _all_cache        = {}
     _light_meta_cache = {}
     _progress_cache   = {}
+    _reading_status_cache = {}
 end
 
 function Repo.invalidateSeriesCache()
@@ -658,8 +660,50 @@ function Repo.invalidateSeriesCache()
 end
 
 function Repo.invalidateProgressCache(filepath)
-    if filepath then _progress_cache[filepath] = nil
-    else _progress_cache = {} end
+    if filepath then
+        _progress_cache[filepath] = nil
+        _reading_status_cache[filepath] = nil
+    else
+        _progress_cache = {}
+        _reading_status_cache = {}
+    end
+end
+
+function Repo.getReadingStatus(filepath)
+    if not filepath then return nil end
+    local now = os.time()
+    local cached = _reading_status_cache[filepath]
+    if cached and cached.expires_at > now then
+        return cached.status
+    end
+
+    local ok_ds, ds = pcall(function() return getDocSettings():open(filepath) end)
+    if not (ok_ds and ds) then
+        _reading_status_cache[filepath] = { status = nil, expires_at = now + PROGRESS_CACHE_TTL }
+        return nil
+    end
+
+    local ok_pct, pct = pcall(ds.readSetting, ds, "percent_finished")
+    if not ok_pct then pct = nil end
+    pct = tonumber(pct)
+
+    local status_name
+    local ok_summary, summary = pcall(ds.readSetting, ds, "summary")
+    if ok_summary and type(summary) == "table" then
+        status_name = summary.status
+    end
+
+    local status
+    if status_name == "complete" or (pct and pct >= 1) then
+        pct = pct or 1
+        status = { state = "read", pct = pct }
+    elseif status_name == "reading" or (pct and pct > 0) then
+        status = { state = "reading", pct = pct }
+    end
+
+    _progress_cache[filepath] = { pct = pct, expires_at = now + PROGRESS_CACHE_TTL }
+    _reading_status_cache[filepath] = { status = status, expires_at = now + PROGRESS_CACHE_TTL }
+    return status
 end
 
 local function walkBooks(root, depth, out, current_depth)
@@ -1985,6 +2029,11 @@ end
 
 local function _readProgress(filepath)
     if not filepath then return nil end
+    local status_cached = _reading_status_cache[filepath]
+    if status_cached and status_cached.expires_at > os.time() then
+        local status = status_cached.status
+        return status and status.pct or nil
+    end
     local now = os.time()
     local cached = _progress_cache[filepath]
     if cached and cached.expires_at > now then

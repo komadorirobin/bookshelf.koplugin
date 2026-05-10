@@ -26,6 +26,7 @@ local Screen          = require("device").screen
 local SpineWidget     = require("bookshelf_spine_widget")
 local SeriesStack     = require("bookshelf_series_stack")
 local FolderStack     = require("bookshelf_folder_stack")
+local Repo            = require("bookshelf_book_repository")
 
 local ShelfRow = {}
 
@@ -182,6 +183,9 @@ function ShelfRow.new(opts)
             })
         elseif item then
             -- Single book record
+            if item.filepath and not item.reading_status and Repo.getReadingStatus then
+                item.reading_status = Repo.getReadingStatus(item.filepath)
+            end
             local spine = SpineWidget:new{
                 book        = item,
                 width       = slot_w,

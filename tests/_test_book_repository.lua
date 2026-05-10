@@ -669,6 +669,21 @@ test("getNextUnreadInSeries: prefers in-progress volume over following unread", 
         "expected in-progress volume 31, got " .. tostring(next_items[1].filepath))
 end)
 
+test("getReadingStatus: detects complete and in-progress books", function()
+    Repo.invalidateProgressCache()
+    _G._test_docsettings_data = {
+        ["/done.epub"] = { summary = { status = "complete" } },
+        ["/reading.epub"] = { percent_finished = 0.25 },
+        ["/new.epub"] = { percent_finished = 0 },
+    }
+    local done = Repo.getReadingStatus("/done.epub")
+    local reading = Repo.getReadingStatus("/reading.epub")
+    local new = Repo.getReadingStatus("/new.epub")
+    assert(done and done.state == "read", "expected read status")
+    assert(reading and reading.state == "reading", "expected reading status")
+    assert(new == nil, "expected no status for unopened book")
+end)
+
 test("getSortKey: returns saved setting when valid", function()
     _G._test_settings = { bookshelf_sort_authors = "book_count" }
     assert(Repo.getSortKey("authors") == "book_count")

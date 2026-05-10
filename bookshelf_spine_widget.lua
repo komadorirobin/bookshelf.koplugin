@@ -51,6 +51,50 @@ function ShadowRect:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, SHADOW_GRAY, CARD_RADIUS)
 end
 
+local StatusBadge = Widget:extend{
+    size  = nil,
+    state = nil,
+}
+function StatusBadge:init()
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+local function paintDotLine(bb, x1, y1, x2, y2, thickness, color)
+    local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1))
+    if steps <= 0 then return end
+    local r = math.max(1, math.floor(thickness / 2))
+    for i = 0, steps do
+        local t = i / steps
+        local x = math.floor(x1 + (x2 - x1) * t + 0.5)
+        local y = math.floor(y1 + (y2 - y1) * t + 0.5)
+        bb:paintRect(x - r, y - r, thickness, thickness, color)
+    end
+end
+function StatusBadge:paintTo(bb, x, y)
+    local s = self.size
+    local r = math.floor(s / 2)
+    bb:paintCircle(x + r, y + r, r, Blitbuffer.COLOR_BLACK)
+    if self.state == "read" then
+        local t = math.max(2, math.floor(s * 0.12))
+        paintDotLine(bb,
+            x + math.floor(s * 0.25), y + math.floor(s * 0.54),
+            x + math.floor(s * 0.43), y + math.floor(s * 0.72),
+            t, Blitbuffer.COLOR_WHITE)
+        paintDotLine(bb,
+            x + math.floor(s * 0.41), y + math.floor(s * 0.72),
+            x + math.floor(s * 0.76), y + math.floor(s * 0.30),
+            t, Blitbuffer.COLOR_WHITE)
+    elseif self.state == "reading" then
+        local left = math.floor(s * 0.36)
+        local top = math.floor(s * 0.28)
+        local h = math.floor(s * 0.46)
+        local w = math.floor(s * 0.36)
+        for dy = 0, h do
+            local half = math.floor((w * (1 - math.abs((dy / h) * 2 - 1))) + 0.5)
+            bb:paintRect(x + left, y + top + dy, half, 1, Blitbuffer.COLOR_WHITE)
+        end
+    end
+end
+
 -- Solid rounded-rect "backdrop" used as the selected-state cue. Sits
 -- BEHIND the cover in an OverlapGroup; paints a filled rounded black
 -- rectangle that extends `thickness` pixels in every direction outside
@@ -260,14 +304,37 @@ local SpineWidget = InputContainer:extend{
 function SpineWidget:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
     local effective_bb = self.cover_bb or (self.book and self.book.cover_bb)
+    local rendered
     if self.book and self.book.has_cover and effective_bb then
-        self[1] = self:_renderCover(effective_bb)
+        rendered = self:_renderCover(effective_bb)
     else
-        self[1] = self:_renderFallback()
+        rendered = self:_renderFallback()
     end
+    self[1] = self:_withStatusBadge(rendered)
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
         Hold = { GestureRange:new{ ges = "hold", range = self.dimen } },
+    }
+end
+
+function SpineWidget:_withStatusBadge(base)
+    local status = self.book and self.book.reading_status
+    local state = status and status.state
+    if state ~= "read" and state ~= "reading" then return base end
+
+    local card_w = self.width - SHADOW_OFFSET
+    local card_h = self.height - SHADOW_OFFSET
+    local badge_size = math.max(Screen:scaleBySize(18), math.floor(math.min(card_w, card_h) * 0.24))
+    local margin = math.max(Screen:scaleBySize(3), math.floor(badge_size * 0.16))
+    local badge = StatusBadge:new{ size = badge_size, state = state }
+    badge.overlap_offset = {
+        card_w - badge_size - margin,
+        card_h - badge_size - margin,
+    }
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = self.width, h = self.height },
+        base,
+        badge,
     }
 end
 
