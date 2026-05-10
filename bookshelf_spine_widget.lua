@@ -67,6 +67,7 @@ local function moduleDir()
 end
 
 local PERCENT_BADGE_ICON = (moduleDir() or ".") .. "/icons/percent.badge.svg"
+local STATUS_ICON_DIR = (moduleDir() or ".") .. "/icons"
 
 -- A simple Widget subclass that paints a rounded rectangle in a fixed grey.
 -- Used as the shadow layer behind every cover. Has its own dimen so
@@ -82,50 +83,15 @@ function ShadowRect:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, SHADOW_GRAY, CARD_RADIUS)
 end
 
-local DogearStatusBadge = Widget:extend{
-    size  = nil,
-    state = nil,
-}
-function DogearStatusBadge:init()
-    self.dimen = Geom:new{ w = self.size, h = self.size }
-end
-local function paintDotLine(bb, x1, y1, x2, y2, thickness, color)
-    local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1))
-    if steps <= 0 then return end
-    local r = math.max(1, math.floor(thickness / 2))
-    for i = 0, steps do
-        local t = i / steps
-        local x = math.floor(x1 + (x2 - x1) * t + 0.5)
-        local y = math.floor(y1 + (y2 - y1) * t + 0.5)
-        bb:paintRect(x - r, y - r, thickness, thickness, color)
-    end
-end
-function DogearStatusBadge:paintTo(bb, x, y)
-    local s = self.size
-    for dy = 0, s - 1 do
-        local row_w = dy + 1
-        bb:paintRect(x + s - row_w, y + dy, row_w, 1, Blitbuffer.COLOR_BLACK)
-    end
-    if self.state == "read" then
-        local t = math.max(2, math.floor(s * 0.12))
-        paintDotLine(bb,
-            x + math.floor(s * 0.48), y + math.floor(s * 0.68),
-            x + math.floor(s * 0.62), y + math.floor(s * 0.82),
-            t, Blitbuffer.COLOR_WHITE)
-        paintDotLine(bb,
-            x + math.floor(s * 0.61), y + math.floor(s * 0.82),
-            x + math.floor(s * 0.88), y + math.floor(s * 0.48),
-            t, Blitbuffer.COLOR_WHITE)
-    elseif self.state == "reading" then
-        local left = math.floor(s * 0.56)
-        local top = math.floor(s * 0.46)
-        local h = math.floor(s * 0.38)
-        local w = math.floor(s * 0.30)
-        for dy = 0, h do
-            local half = math.floor((w * (1 - math.abs((dy / h) * 2 - 1))) + 0.5)
-            bb:paintRect(x + left, y + top + dy, half, 1, Blitbuffer.COLOR_WHITE)
-        end
-    end
+local function makeStatusIconBadge(state, size)
+    local filename = state == "read" and "dogear.complete.svg" or "dogear.reading.svg"
+    return IconWidget:new{
+        file           = STATUS_ICON_DIR .. "/" .. filename,
+        rotation_angle = state == "reading" and BD.mirroredUILayout() and 270 or 0,
+        width          = size,
+        height         = size,
+        alpha          = true,
+    }
 end
 
 local PercentBadge = Widget:extend{
@@ -459,8 +425,11 @@ function SpineWidget:_withCoverBadges(base)
     end
     if has_status then
         local badge_size = math.max(Screen:scaleBySize(16), math.floor(math.min(card_w, card_h) * 0.18))
-        local badge = DogearStatusBadge:new{ size = badge_size, state = state }
-        badge.overlap_offset = { card_w - badge_size, card_h - badge_size }
+        local badge = makeStatusIconBadge(state, badge_size)
+        badge.overlap_offset = {
+            BD.mirroredUILayout() and 0 or (card_w - badge_size),
+            card_h - badge_size,
+        }
         group[#group + 1] = badge
     end
     return group
