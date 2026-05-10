@@ -374,6 +374,56 @@ function Bookshelf:show(profile_key)
     UIManager:show(self._widget)
 end
 
+function Bookshelf:_notifyOpeningBookshelf(profile_key)
+    local label = profile_key == "comics" and _("Comics")
+        or profile_key == "prose" and _("Books")
+        or _("Bookshelf")
+    local ok, Notification = pcall(require, "ui/widget/notification")
+    if ok and Notification and Notification.notify then
+        Notification:notify(_("Opening ") .. label, Notification.SOURCE_ALWAYS_SHOW, true)
+        return
+    end
+    local ok_info, InfoMessage = pcall(require, "ui/widget/infomessage")
+    if ok_info and InfoMessage then
+        UIManager:show(InfoMessage:new{
+            text    = _("Opening ") .. label,
+            timeout = 1,
+        })
+        UIManager:forceRePaint()
+    end
+end
+
+function Bookshelf:_showAfterReaderReturn(profile_key)
+    if not self._widget then
+        self:show(profile_key)
+        return
+    end
+    -- Same rotation restore as show(), but without the full widget rebuild.
+    if self._widget._pre_read_rotation ~= nil then
+        local Screen = require("device").screen
+        Screen:setRotationMode(self._widget._pre_read_rotation)
+        self._widget._pre_read_rotation = nil
+        self._widget.width  = Screen:getWidth()
+        self._widget.height = Screen:getHeight()
+        if self._widget.dimen then
+            self._widget.dimen.w = self._widget.width
+            self._widget.dimen.h = self._widget.height
+        end
+    end
+    if profile_key and not (self._widget.profile and self._widget.profile.key == profile_key) then
+        self._widget:setProfile(profile_key)
+        if self._widget._startStatusTimer then
+            self._widget:_startStatusTimer()
+        end
+        return
+    end
+    if self._widget.refreshAfterReaderReturn then
+        self._widget:refreshAfterReaderReturn()
+    else
+        self:show(profile_key)
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- Dispatcher actions
 -- ---------------------------------------------------------------------------
@@ -451,9 +501,10 @@ end
 -- start_with=last boot would leave those gestures without a receiver.
 function Bookshelf:_safeShow(profile_key)
     if self.ui and self.ui.document and self.ui.onHome then
+        self:_notifyOpeningBookshelf(profile_key)
         if self:_isShowing() and self.ui.onClose then
             self.ui:onClose(false)
-            UIManager:nextTick(function() self:show(profile_key) end)
+            UIManager:nextTick(function() self:_showAfterReaderReturn(profile_key) end)
         else
             self.ui:onHome()
             -- onCloseDocument fires synchronously inside onHome → FM is

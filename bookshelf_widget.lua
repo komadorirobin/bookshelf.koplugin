@@ -474,6 +474,34 @@ function BookshelfWidget:setProfile(profile_key)
     UIManager:setDirty(self, "ui")
 end
 
+function BookshelfWidget:refreshAfterReaderReturn()
+    -- Returning from Reader usually only changes current-book stats,
+    -- read-history ordering, and shelves whose data depends on progress.
+    -- Keep the existing layout/chip tree and refresh the volatile parts.
+    -- The shelf query can still be expensive for progress-derived chips
+    -- like Comics/Next, so paint the existing Bookshelf first and refresh
+    -- shelves shortly after instead of blocking the Reader close path.
+    if not (self._inner_vgroup and self._shelf_dims) or self:_nShelves() ~= 2 then
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+        return
+    end
+    if self._hero_parent and self._hero_dims then
+        self:_swapHeroInPlace()
+    end
+    if self._reader_return_shelves_fn then
+        UIManager:unschedule(self._reader_return_shelves_fn)
+    end
+    self._reader_return_shelves_fn = function()
+        self._reader_return_shelves_fn = nil
+        self:_swapShelvesInPlace()
+    end
+    UIManager:scheduleIn(0.15, self._reader_return_shelves_fn)
+    if self._startStatusTimer then
+        self:_startStatusTimer()
+    end
+end
+
 -- Bookshelf is the topmost widget while it's on screen, so KOReader's
 -- UIManager:sendEvent dispatches gestures to us alone — FileManager
 -- underneath us is NOT is_always_active, so its registered touch zones
