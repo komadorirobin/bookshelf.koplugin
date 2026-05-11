@@ -422,6 +422,19 @@ function SpineWidget:_renderCover(bb)
     local border = CARD_BORDER
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
+
+    -- When the bar will be drawn on top of the card, shorten the image
+    -- so its top edge isn't obscured. The shrink is bar_h + 1dp (a 1dp
+    -- gutter between bar and image). Shifting is handled by wrapping the
+    -- ImageWidget in a FrameContainer with extra top padding.
+    local bar_h = 0
+    do
+        local _i = CoverProgress.decide(self.book)
+        if _i.bar then bar_h = Size.line.thick end
+    end
+    local img_top_inset = bar_h > 0 and (bar_h + Screen:scaleBySize(1)) or 0
+    img_h = img_h - img_top_inset
+
     local bb_w  = bb:getWidth()
     local bb_h  = bb:getHeight()
 
@@ -506,6 +519,16 @@ function SpineWidget:_renderCover(bb)
             img_args.scale_factor = 0   -- aspect-preserving downscale
         end
         cover_inner = ImageWidget:new(img_args)
+    end
+
+    if img_top_inset > 0 then
+        cover_inner = FrameContainer:new{
+            bordersize   = 0,
+            padding      = 0,
+            padding_top  = img_top_inset,
+            padding_left = 0,
+            cover_inner,
+        }
     end
 
     local cover_args = {
