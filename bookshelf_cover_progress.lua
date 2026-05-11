@@ -82,26 +82,33 @@ function ProgressBarWidget:init()
 end
 
 function ProgressBarWidget:paintTo(bb, x, y)
-    -- Top border: a scaled-1dp dark line matching the card's own border
-    -- thickness, so the bar reads as visually continuous with the cover
-    -- frame. Using raw 1px here was invisible on the PW5 (~264 DPI);
-    -- scaleBySize(1) returns ~2 raw px on that device.
-    local border_h = math.max(1, _ScreenBar:scaleBySize(1))
-    bb:paintRect(x, y, self.width, border_h, _BlitbufferBar.COLOR_BLACK)
-    local body_y = y + border_h
-    local body_h = self.height - border_h
-    if body_h < 1 then return end
+    -- Bookends-style rounded pill: track background + dark border outline,
+    -- with an inner rounded fill inset by border + small padding. Inner
+    -- fill is a smaller pill whose right edge moves with progress.
+    local w, h = self.width, self.height
+    if w < 1 or h < 1 then return end
+    local border = math.max(1, _ScreenBar:scaleBySize(1))
+    local radius = math.floor(h / 2)
+    -- 1. Track background (rounded rect, full bar)
+    if self.track then
+        bb:paintRoundedRect(x, y, w, h, self.track, radius)
+    end
+    -- 2. Dark border outlining the track
+    bb:paintBorder(x, y, w, h, border, _BlitbufferBar.COLOR_BLACK, radius)
+    -- 3. Inner fill (rounded), inset by border + padding, width scales with pct
     local clamped = self.pct
     if clamped < 0 then clamped = 0 end
     if clamped > 1 then clamped = 1 end
-    local fill_w  = math.floor(self.width * clamped + 0.5)
-    local track_w = self.width - fill_w
-    if fill_w > 0 then
-        bb:paintRect(x, body_y, fill_w, body_h, self.fill)
-    end
-    if track_w > 0 then
-        bb:paintRect(x + fill_w, body_y, track_w, body_h, self.track)
-    end
+    if clamped <= 0 or not self.fill then return end
+    local padding     = math.max(1, math.floor(h * 0.15))
+    local inset       = border + padding
+    local inner_max_w = w - 2 * inset
+    local inner_h     = h - 2 * inset
+    if inner_max_w < 1 or inner_h < 1 then return end
+    local inner_w = math.floor(inner_max_w * clamped + 0.5)
+    if inner_w < 1 then return end
+    local inner_r = math.max(0, radius - inset)
+    bb:paintRoundedRect(x + inset, y + inset, inner_w, inner_h, self.fill, inner_r)
 end
 
 -- Build a ProgressBarWidget. `fill` and `track` are Blitbuffer colour

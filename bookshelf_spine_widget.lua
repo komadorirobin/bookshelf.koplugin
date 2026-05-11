@@ -53,18 +53,20 @@ end
 -- glyph height further up.
 local GLYPH_TOP_LIFT = 1.35
 
--- Pixel thickness of the progress bar inside the card border.
+-- Pixel thickness of the progress bar (rounded pill on top of cover).
+-- Bookends-style rounded look needs more vertical room than a stripe.
 local function _barHeight()
-    return Screen:scaleBySize(6)
+    return Screen:scaleBySize(8)
 end
 
--- How far below the card's bottom-inside-border the bar is shifted.
--- Positive values let the bar extend down into the shadow zone so it
--- reads as 'page edges between the front cover and the back cover'
--- rather than as a stripe-on-the-cover. SHADOW_OFFSET is the size of
--- the shadow zone (4dp); offsetting half that pushes the bar's bottom
--- ~2dp into the shadow and leaves ~2dp of shadow remaining below.
-local function _barShadowShift()
+-- Padding between the bar's bottom edge and the card's inside-border.
+local function _barBottomPadding()
+    return Screen:scaleBySize(1)
+end
+
+-- Horizontal margin between the bar and the card sides (inset from the
+-- card's inside-border so the rounded bar doesn't kiss the cover edges).
+local function _barSideMargin()
     return Screen:scaleBySize(3)
 end
 
@@ -392,23 +394,27 @@ function SpineWidget:_renderShadowedCard(inner)
         end
     end
 
-    -- 5. Progress bar (IN FRONT, BOTTOM-inside-border, shifted into shadow)
-    --    The bar is shifted DOWN by _barShadowShift() so part of it extends
-    --    into the shadow zone -- reads as 'page edges between front cover
-    --    and back cover' rather than a stripe glued to the cover.
+    -- 5. Progress bar (IN FRONT of cover artwork, bottom-inside-border,
+    --    1dp padding above card's inside border). Rounded pill style,
+    --    overlaid on the cover -- no image-shrink.
     if indicators.bar then
         local colours = CoverProgress.resolvedColours()
-        local bar_h = _barHeight()
-        local bar   = CoverProgress.buildBarWidget(
-            card_w - 2 * CARD_BORDER, bar_h,
-            indicators.bar_pct, colours.fill, colours.track)
-        children[#children + 1] = FrameContainer:new{
-            bordersize   = 0,
-            padding      = 0,
-            padding_top  = card_h - CARD_BORDER - bar_h + _barShadowShift(),
-            padding_left = CARD_BORDER,
-            bar,
-        }
+        local bar_h   = _barHeight()
+        local bar_pad = _barBottomPadding()
+        local side    = _barSideMargin()
+        local bar_w   = card_w - 2 * CARD_BORDER - 2 * side
+        if bar_w > 0 then
+            local bar = CoverProgress.buildBarWidget(
+                bar_w, bar_h,
+                indicators.bar_pct, colours.fill, colours.track)
+            children[#children + 1] = FrameContainer:new{
+                bordersize   = 0,
+                padding      = 0,
+                padding_top  = card_h - CARD_BORDER - bar_pad - bar_h,
+                padding_left = CARD_BORDER + side,
+                bar,
+            }
+        end
     end
 
     return OverlapGroup:new{
@@ -444,23 +450,8 @@ function SpineWidget:_renderCover(bb)
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
 
-    -- When the bar will be drawn at the BOTTOM of the card, shorten the
-    -- image so its bottom edge isn't obscured. With the bar shifted down
-    -- into the shadow zone by _barShadowShift(), the portion of the bar
-    -- INSIDE the card is (bar_h - shift), so that's what we need to free
-    -- up. No extra gutter: the bar's dark top border acts as the visual
-    -- separator between image and bar.
-    local bar_h = 0
-    if self.show_progress then
-        local _i = CoverProgress.decide(self.book)
-        if _i.bar then bar_h = _barHeight() end
-    end
-    local img_bottom_inset = 0
-    if bar_h > 0 then
-        img_bottom_inset = bar_h - _barShadowShift()
-        if img_bottom_inset < 0 then img_bottom_inset = 0 end
-    end
-    img_h = img_h - img_bottom_inset
+    -- Bar overlays the cover artwork (rounded pill on top); no image
+    -- shrinking required. The image fills the card normally.
 
     local bb_w  = bb:getWidth()
     local bb_h  = bb:getHeight()
@@ -546,16 +537,6 @@ function SpineWidget:_renderCover(bb)
             img_args.scale_factor = 0   -- aspect-preserving downscale
         end
         cover_inner = ImageWidget:new(img_args)
-    end
-
-    if img_bottom_inset > 0 then
-        cover_inner = FrameContainer:new{
-            bordersize     = 0,
-            padding        = 0,
-            padding_bottom = img_bottom_inset,
-            padding_left   = 0,
-            cover_inner,
-        }
     end
 
     local cover_args = {
