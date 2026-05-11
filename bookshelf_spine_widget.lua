@@ -40,18 +40,24 @@ local SHADOW_GRAY     = Blitbuffer.gray(0.5)        -- grey level for the shadow
 
 -- Glyph sizing for the in-progress / finished badge on covers.
 -- Scaled with cover width but floored so tiny columns don't render
--- a glyph too small to read.
+-- a glyph too small to read. 80% of the original sizing so the glyph
+-- doesn't crowd the title text in expanded (title-view) mode.
 local function _glyphSize(card_w)
-    local px = math.max(Screen:scaleBySize(11), math.floor(card_w * 0.165))
+    local px = math.max(Screen:scaleBySize(9), math.floor(card_w * 0.132))
     return px
 end
 
 -- Vertical placement of the in-progress glyph relative to the card.
 -- The glyph's top sits at (card_h - glyph_h * GLYPH_TOP_LIFT) so the
--- entire glyph is INSIDE the cover (glyph bottom = card_h - 0.35*glyph_h).
--- Was 0.85 (15% dangling below); user requested moving it 50% of the
--- glyph height further up.
-local GLYPH_TOP_LIFT = 1.35
+-- entire glyph is INSIDE the cover. Bumped from 1.35 -> 1.55 so the
+-- glyph's bottom sits ~0.45 * glyph_h above the cover bottom (instead
+-- of 0.35), giving more breathing room above the title in expanded view.
+local GLYPH_TOP_LIFT = 1.55
+
+-- Horizontal inset of the glyph from the card's left edge.
+local function _glyphLeftInset()
+    return Size.padding.small + Screen:scaleBySize(2)
+end
 
 -- Pixel thickness of the progress bar (rounded pill on top of cover).
 -- Bookends-style rounded look needs more vertical room than a stripe.
@@ -367,7 +373,7 @@ function SpineWidget:_renderShadowedCard(inner)
                 bordersize   = 0,
                 padding      = 0,
                 padding_top  = y_offset,
-                padding_left = Size.padding.small,
+                padding_left = _glyphLeftInset(),
                 glyph,
             }
         end
@@ -394,7 +400,7 @@ function SpineWidget:_renderShadowedCard(inner)
                 bordersize   = 0,
                 padding      = 0,
                 padding_top  = y_offset - halo_w,
-                padding_left = Size.padding.small - halo_w,
+                padding_left = _glyphLeftInset() - halo_w,
                 outlined,
             }
         end
