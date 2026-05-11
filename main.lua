@@ -40,6 +40,13 @@ local Bookshelf = WidgetContainer:extend{
     is_doc_only = false, -- must be false: hook fires in Reader context
 }
 
+-- Tracks the live BookshelfWidget singleton across plugin instances. Two
+-- Bookshelf instances exist — one attached to FM, one to Reader — but the
+-- widget itself is a single shared overlay. The tracker lets either
+-- instance's onCloseWidget find and dismiss the overlay during a KOReader
+-- exit, so the UIManager window stack can drain to zero.
+local _live_widget = nil
+
 -- ---------------------------------------------------------------------------
 -- init
 -- ---------------------------------------------------------------------------
@@ -368,9 +375,12 @@ function Bookshelf:show(profile_key)
     -- Clear our reference if the widget is dismissed for any reason, so a
     -- subsequent show() falls back to the create path.
     local outer = self
+    local widget_instance = self._widget
     self._widget._on_close_callback = function()
         outer._widget = nil
+        if _live_widget == widget_instance then _live_widget = nil end
     end
+    _live_widget = self._widget
     UIManager:show(self._widget)
 end
 
@@ -603,6 +613,23 @@ end
 -- ---------------------------------------------------------------------------
 -- Close-document hook
 -- ---------------------------------------------------------------------------
+
+-- KOReader's main loop only quits when the UIManager window stack empties
+-- (uimanager.lua:1474-1478). BookshelfWidget is a separate top-level window,
+-- so when the user picks Exit, the host (FM or Reader) is removed but the
+-- overlay remains and the loop keeps running. (Issue #15.)
+--
+-- We disambiguate exit from FM↔Reader transitions via `tearing_down`: KOReader
+-- sets it on the host that's transitioning to the other (filemanager.lua:837,
+-- readerui.lua:588) but not on a real exit. Reader→Home doesn't set it either;
+-- in that case we close the overlay and the new FM's _takeOver recreates it
+-- on next tick, which is the correct end state.
+function Bookshelf:onCloseWidget()
+    if not _live_widget then return end
+    if self.ui and self.ui.tearing_down then return end
+    if not UIManager:isWidgetShown(_live_widget) then return end
+    UIManager:close(_live_widget)
+end
 
 function Bookshelf:onCloseDocument()
     -- The walk cache has a 30s TTL; sideloaded / moved / mtime-changed files
