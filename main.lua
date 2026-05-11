@@ -162,9 +162,20 @@ function Bookshelf:_registerStartWithMenu()
                 checked_func = function()
                     return G_reader_settings:readSetting("start_with") == "bookshelf"
                 end,
-                callback = function()
+                callback = function(touchmenu_instance)
                     G_reader_settings:saveSetting("start_with", "bookshelf")
                     G_reader_settings:flush()
+                    -- Close the menu BEFORE showing bookshelf — otherwise
+                    -- UIManager:show inserts the new widget above the
+                    -- still-open menu_container, leaving the menu hidden
+                    -- but still on the stack. When the user later closes
+                    -- bookshelf, that orphaned menu would be exposed
+                    -- (looking like a "menu stuck open" bug, with FM
+                    -- non-operable beneath it because the orphan absorbs
+                    -- input).
+                    if touchmenu_instance and touchmenu_instance.closeMenu then
+                        touchmenu_instance:closeMenu()
+                    end
                     -- Show Bookshelf immediately if not already showing.
                     if plugin._isShowing and not plugin:_isShowing() then
                         plugin:show()
