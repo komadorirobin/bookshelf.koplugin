@@ -13,6 +13,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local OverlapGroup   = require("ui/widget/overlapgroup")
 local TextWidget     = require("ui/widget/textwidget")
+local Widget         = require("ui/widget/widget")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
 local Size           = require("ui/size")
@@ -22,6 +23,29 @@ local Screen         = require("device").screen
 local SpineWidget    = require("bookshelf_spine_widget")
 local FolderCard     = require("bookshelf_folder_card")
 local BD             = require("ui/bidi")
+
+local FADED_FINISHED_FOLDER_AMOUNT = 0.5
+
+local FadeOverlay = Widget:extend{
+    width  = nil,
+    height = nil,
+    amount = nil,
+}
+
+function FadeOverlay:init()
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function FadeOverlay:paintTo(bb, x, y)
+    bb:lightenRect(x, y, self.width, self.height,
+                   self.amount or FADED_FINISHED_FOLDER_AMOUNT)
+end
+
+local function fadeFinishedFoldersEnabled()
+    return G_reader_settings
+       and type(G_reader_settings.isTrue) == "function"
+       and G_reader_settings:isTrue("bookshelf_fade_finished_folders")
+end
 
 local FolderStack = InputContainer:extend{
     folder      = nil,    -- { path, label, first_book }
@@ -73,6 +97,17 @@ function FolderStack:init()
         folder_widget,         -- 1: cardboard front (covers book bottom)
         label_widget,          -- 2: folder name on body
     }
+    local book_count = self.folder and tonumber(self.folder.book_count)
+    local unread_count = self.folder and tonumber(self.folder.unread_count)
+    local all_read = self.folder and self.folder.all_read
+    if all_read and book_count and book_count > 0 and fadeFinishedFoldersEnabled() then
+        children[#children + 1] = FadeOverlay:new{
+            width  = self.width - FolderCard.SHADOW_OFFSET,
+            height = self.height - FolderCard.SHADOW_OFFSET,
+            amount = FADED_FINISHED_FOLDER_AMOUNT,
+        }
+    end
+
     local function makeBadge(text, size)
         return FrameContainer:new{
             bordersize     = Size.border.thin,
@@ -90,7 +125,6 @@ function FolderStack:init()
         }
     end
 
-    local book_count = self.folder and tonumber(self.folder.book_count)
     if book_count and book_count > 0 then
         local badge = makeBadge("\xc3\x97" .. tostring(book_count), 12)
         local badge_w = badge:getSize().w
@@ -101,8 +135,6 @@ function FolderStack:init()
         children[#children + 1] = badge
     end
 
-    local unread_count = self.folder and tonumber(self.folder.unread_count)
-    local all_read = self.folder and self.folder.all_read
     if unread_count and unread_count > 0 then
         local badge = makeBadge(tostring(unread_count) .. " kvar", 10)
         badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }

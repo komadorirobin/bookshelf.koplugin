@@ -315,6 +315,23 @@ function Bookshelf:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Fade finished folders"),
+                help_text = _("Lightens folders where every book inside is marked as finished."),
+                checked_func = function()
+                    return G_reader_settings:isTrue("bookshelf_fade_finished_folders")
+                end,
+                keep_menu_open = true,
+                callback = function()
+                    local enabled = G_reader_settings:isTrue("bookshelf_fade_finished_folders")
+                    G_reader_settings:saveSetting("bookshelf_fade_finished_folders", not enabled)
+                    G_reader_settings:flush()
+                    if S._bw and S._bw._rebuild then
+                        S._bw:_rebuild()
+                        UIManager:setDirty(S._bw, "ui")
+                    end
+                end,
+            },
+            {
                 text = _("BETA: Read calibre metadata.calibre"),
                 help_text = _("For users with a Calibre-managed library. "
                     .. "Reads the metadata.calibre JSON file at home_dir to "

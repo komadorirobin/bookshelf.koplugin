@@ -1594,7 +1594,7 @@ function BookshelfWidget:_fetchChipItems(n)
     -- 12) so expanded mode pulls the extra 4 books needed for row 3.
     local offset    = (self.page - 1) * self:_pageSize()
     local LIMIT     = self:_viewSize()
-    local folder_read_summary = self.profile and self.profile.key == "comics"
+    local folder_read_summary = self.profile ~= nil
     if tip and tip.kind == "folder" then
         return Repo.getAll(tip.payload.path, LIMIT, offset, {
             sort_key            = Profiles.folderSort(self.profile),
