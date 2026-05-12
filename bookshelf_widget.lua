@@ -309,15 +309,21 @@ function BookshelfWidget:_buildSimpleUIPaginationOverlay()
     local overlay_h = math.max(Screen:scaleBySize(16), Size.item.height_default - Screen:scaleBySize(10))
     local overlay_raise = math.max(Screen:scaleBySize(4), math.floor(overlay_h * 0.45))
     local overlay_y = self.height - ctx.total_h - overlay_h - overlay_raise
+    local label = TextWidget:new{
+        text = self:_simpleUIPageLabel(),
+        face = Font:getFace("smallinfofont", 13),
+        bold = true,
+    }
+    local label_w = label:getSize().w
+    local overlay_w = math.min(self.width, math.max(
+        label_w + Size.padding.large * 2,
+        Screen:scaleBySize(56)))
+    local overlay_x = math.max(0, self.width - (ctx.side_m or 0) - overlay_w)
     local overlay = InputContainer:new{
-        dimen = Geom:new{ w = self.width, h = overlay_h },
+        dimen = Geom:new{ w = overlay_w, h = overlay_h },
         CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = overlay_h },
-            TextWidget:new{
-                text = self:_simpleUIPageLabel(),
-                face = Font:getFace("smallinfofont", 13),
-                bold = true,
-            },
+            dimen = Geom:new{ w = overlay_w, h = overlay_h },
+            label,
         },
     }
     overlay.ges_events = {
@@ -327,7 +333,7 @@ function BookshelfWidget:_buildSimpleUIPaginationOverlay()
         self:_openSortMenu()
         return true
     end
-    overlay.overlap_offset = { 0, overlay_y }
+    overlay.overlap_offset = { overlay_x, overlay_y }
     self._page_text_button = overlay
     return overlay
 end
