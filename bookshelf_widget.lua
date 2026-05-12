@@ -306,27 +306,30 @@ function BookshelfWidget:_buildSimpleUIPaginationOverlay()
         self._page_text_button = nil
         return nil
     end
-    local Button = require("ui/widget/button")
     local overlay_h = math.max(Screen:scaleBySize(16), Size.item.height_default - Screen:scaleBySize(10))
     local overlay_raise = math.max(Screen:scaleBySize(4), math.floor(overlay_h * 0.45))
-    local button = Button:new{
-        text = self:_simpleUIPageLabel(),
-        text_font_size = 13,
-        callback = function() self:_openSortMenu() end,
-        bordersize = 0,
-        show_parent = self,
-    }
-    button.dimen = Geom:new{ w = self.width, h = overlay_h }
-    button.overlap_offset = {
-        0,
-        self.height - ctx.total_h - overlay_h - overlay_raise,
-    }
-    self._page_text_button = button
-    return CenterContainer:new{
+    local overlay_y = self.height - ctx.total_h - overlay_h - overlay_raise
+    local overlay = InputContainer:new{
         dimen = Geom:new{ w = self.width, h = overlay_h },
-        overlap_offset = button.overlap_offset,
-        button,
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = overlay_h },
+            TextWidget:new{
+                text = self:_simpleUIPageLabel(),
+                face = Font:getFace("smallinfofont", 13),
+                bold = true,
+            },
+        },
     }
+    overlay.ges_events = {
+        Tap = { GestureRange:new{ ges = "tap", range = overlay.dimen } },
+    }
+    overlay.onTap = function()
+        self:_openSortMenu()
+        return true
+    end
+    overlay.overlap_offset = { 0, overlay_y }
+    self._page_text_button = overlay
+    return overlay
 end
 
 function BookshelfWidget:_refreshSimpleUIPageOverlay()
