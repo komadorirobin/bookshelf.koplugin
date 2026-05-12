@@ -2081,8 +2081,9 @@ function BookshelfWidget:_openSortMenu()
 
     local chip   = self.chip
     local profile_chip = self:_profileChip(chip)
+    local profile_folder_sort = profile_chip and profile_chip.kind == "folder" and self.profile
     local sort_chip = (profile_chip and profile_chip.kind == "folder") and "all" or chip
-    local active = (profile_chip and profile_chip.kind == "folder" and Profiles.folderSort(self.profile))
+    local active = (profile_folder_sort and Profiles.folderSort(self.profile))
         or Repo.getSortKey(sort_chip)
     local bw     = self
 
@@ -2156,6 +2157,7 @@ function BookshelfWidget:_openSortMenu()
         })
     elseif sort_chip == "all" then
         table.insert(radio_rows, radio_row(_("Series"),                           "series"))
+        table.insert(radio_rows, radio_row(_("Author"),                           "author"))
         table.insert(radio_rows, radio_row(_("Name"),                             "title"))
         table.insert(radio_rows, radio_row(_("Name (natural sorting)"),           "natural"))
         table.insert(radio_rows, radio_row(_("Date modified"),                    "date_added"))
@@ -2220,7 +2222,11 @@ function BookshelfWidget:_openSortMenu()
     -- "recent" chip has nothing to apply so both buttons just close.
     local function do_apply()
         if sort_chip ~= "recent" then
-            G_reader_settings:saveSetting("bookshelf_sort_" .. sort_chip, selected_sort)
+            if profile_folder_sort then
+                G_reader_settings:saveSetting("bookshelf_profile_sort_" .. self.profile.key, selected_sort)
+            else
+                G_reader_settings:saveSetting("bookshelf_sort_" .. sort_chip, selected_sort)
+            end
         end
         for key, val in pairs(toggle_states) do
             G_reader_settings:saveSetting(key, val)

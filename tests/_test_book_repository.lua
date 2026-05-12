@@ -569,8 +569,35 @@ end)
 test("getSortKey: returns chip default when setting missing", function()
     _G._test_settings = {}
     assert(Repo.getSortKey("authors") == "name")
-    assert(Repo.getSortKey("all") == "title")
+    assert(Repo.getSortKey("all") == "author")
     assert(Repo.getSortKey("latest") == "mtime")
+end)
+
+test("getAll: default author sort uses surname first", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib" }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib") and {".", "..",
+            "tawada.epub", "atwood.epub", "gaiman.epub"} or {".", ".."}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        local is_file = fp:match("%.epub$") ~= nil
+        if key == "mode" then return is_file and "file" or "directory" end
+        if key == "size" then return 100 end
+        if key == "modification" then return 0 end
+        return { mode = is_file and "file" or "directory", size = 100, modification = 0 }
+    end
+    _G._test_bim_data = {
+        ["/lib/tawada.epub"] = { title = "Memoirs", authors = "Yoko Tawada" },
+        ["/lib/atwood.epub"] = { title = "Alias Grace", authors = "Margaret Atwood" },
+        ["/lib/gaiman.epub"] = { title = "Neverwhere", authors = "Neil Gaiman" },
+    }
+
+    local items = Repo.getAll(nil, 10, 0)
+    assert(items[1].title == "Alias Grace", "got " .. tostring(items[1].title))
+    assert(items[2].title == "Neverwhere", "got " .. tostring(items[2].title))
+    assert(items[3].title == "Memoirs", "got " .. tostring(items[3].title))
 end)
 
 test("getAuthors: default name sort uses surname first", function()

@@ -7,7 +7,7 @@ local PROFILE_DEFS = {
     prose = {
         key = "prose",
         label = "Books",
-        folder_sort = "title",
+        folder_sort = "author",
         roots = {
             "/storage/emulated/0/ePubs/Fiktion",
             "/storage/emulated/0/ePubs/Facklitteratur",
@@ -85,8 +85,30 @@ function Profiles.scope(profile)
     return { roots = profile.roots }
 end
 
+function Profiles.isFolderSortValid(sort_key)
+    return sort_key == "author"
+        or sort_key == "series"
+        or sort_key == "title"
+        or sort_key == "natural"
+        or sort_key == "date_added"
+        or sort_key == "last_read"
+        or sort_key == "size"
+        or sort_key == "format"
+        or sort_key == "percent_unopened_first"
+        or sort_key == "percent_unopened_last"
+        or sort_key == "percent_natural"
+end
+
 function Profiles.folderSort(profile)
-    return profile and profile.folder_sort or nil
+    if not profile then return nil end
+    local default = profile.folder_sort
+    local saved = G_reader_settings
+        and type(G_reader_settings.readSetting) == "function"
+        and profile.key
+        and G_reader_settings:readSetting("bookshelf_profile_sort_" .. profile.key)
+        or nil
+    if Profiles.isFolderSortValid(saved) then return saved end
+    return default
 end
 
 local function normalizePath(path)

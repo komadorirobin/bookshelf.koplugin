@@ -29,5 +29,29 @@ test("matchFile: unknown paths have no profile match", function()
     assert(Profiles.matchFile(nil) == nil)
 end)
 
+test("folderSort: prose defaults to author and comics defaults to series", function()
+    _G.G_reader_settings = nil
+    assert(Profiles.folderSort(Profiles.get("prose")) == "author")
+    assert(Profiles.folderSort(Profiles.get("comics")) == "series")
+end)
+
+test("folderSort: saved profile sort overrides default when valid", function()
+    _G.G_reader_settings = {
+        readSetting = function(_, key)
+            if key == "bookshelf_profile_sort_prose" then return "last_read" end
+        end,
+    }
+    assert(Profiles.folderSort(Profiles.get("prose")) == "last_read")
+end)
+
+test("folderSort: invalid saved profile sort falls back to default", function()
+    _G.G_reader_settings = {
+        readSetting = function(_, key)
+            if key == "bookshelf_profile_sort_prose" then return "garbage" end
+        end,
+    }
+    assert(Profiles.folderSort(Profiles.get("prose")) == "author")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

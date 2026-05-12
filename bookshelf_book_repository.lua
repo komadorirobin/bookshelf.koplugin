@@ -268,7 +268,7 @@ end
 -- writes via the sort menu (BookshelfWidget:_openSortMenu); each chip getter
 -- reads via Repo.getSortKey(chip).
 local _SORT_DEFAULT = {
-    all        = "title",
+    all        = "author",
     recent     = "recently_read",  -- not user-changeable; menu shows single row
     latest     = "mtime",
     favorites  = "date_added",
@@ -280,7 +280,7 @@ local _SORT_DEFAULT = {
 
 local _SORT_VALID = {
     all        = {
-        title = true, natural = true, date_added = true,
+        author = true, title = true, natural = true, date_added = true,
         size  = true, format  = true, last_read  = true, series = true,
         percent_unopened_first = true, percent_unopened_last = true,
         percent_natural        = true,
@@ -1071,6 +1071,32 @@ end
 -- (name/fp/attr/optional doc_props/_pct/_last_read) before cache shaping.
 -- Keys requiring extra data have that data pre-fetched by getAll before
 -- this comparator is created.
+local AUTHOR_SURNAME_PARTICLES = {
+    da = true, de = true, del = true, der = true, di = true,
+    la = true, le = true, van = true, von = true,
+}
+
+local function _authorSortKey(name)
+    name = tostring(name or ""):match("^%s*(.-)%s*$")
+    name = name:gsub("%s+", " ")
+    if name:find(",", 1, true) then return name:lower() end
+
+    local parts = {}
+    for part in name:gmatch("%S+") do parts[#parts + 1] = part end
+    if #parts <= 1 then return name:lower() end
+
+    local surname_start = #parts
+    local prev = parts[surname_start - 1]
+    if prev and AUTHOR_SURNAME_PARTICLES[prev:lower():gsub("%.", "")] then
+        surname_start = surname_start - 1
+    end
+
+    local surname, given = {}, {}
+    for i = surname_start, #parts do surname[#surname + 1] = parts[i] end
+    for i = 1, surname_start - 1 do given[#given + 1] = parts[i] end
+    return (table.concat(surname, " ") .. ", " .. table.concat(given, " ")):lower()
+end
+
 local function _makeAllSort(key)
     if key == "date_added" then
         return function(a, b)
@@ -1086,6 +1112,21 @@ local function _makeAllSort(key)
             local fb = (b.name:match("%.([^.]+)$") or ""):lower()
             if fa ~= fb then return fa < fb end
             return a.name:lower() < b.name:lower()
+        end
+    elseif key == "author" then
+        local natsort = require("sort").natsort_cmp()
+        local function author_key(e)
+            local author = e._author or (e.doc_props and e.doc_props.author)
+            if author and author ~= "" then return _authorSortKey(author) end
+            local title = (e.doc_props and e.doc_props.display_title) or e.name
+            return "\255" .. tostring(title):lower()
+        end
+        return function(a, b)
+            local aa, ab = author_key(a), author_key(b)
+            if aa ~= ab then return aa < ab end
+            local ta = (a.doc_props and a.doc_props.display_title) or a.name
+            local tb = (b.doc_props and b.doc_props.display_title) or b.name
+            return natsort(ta, tb)
         end
     elseif key == "natural" then
         local natsort = require("sort").natsort_cmp()
@@ -1262,10 +1303,11 @@ function Repo.getAll(path, limit, offset, opts)
     end
 
     -- Pre-fetch data required by the comparator before sorting so each
-    -- comparison stays O(1). BIM titles for title/natural/percent_natural;
-    -- ReadHistory timestamps for last_read; DocSettings percent for the
-    -- three percent-based keys.
-    local needs_titles  = sort_key == "title" or sort_key == "natural" or sort_key == "series"
+    -- comparison stays O(1). BIM metadata for author/title/natural/series/
+    -- percent_natural; ReadHistory timestamps for last_read; DocSettings
+    -- percent for the three percent-based keys.
+    local needs_titles  = sort_key == "author" or sort_key == "title"
+                          or sort_key == "natural" or sort_key == "series"
                           or sort_key == "percent_natural"
     local needs_percent = sort_key == "percent_unopened_first"
                           or sort_key == "percent_unopened_last"
@@ -1287,13 +1329,18 @@ function Repo.getAll(path, limit, offset, opts)
                     local cached = light_cache[e.fp]
                     if cached then
                         if cached.title then title = cached.title end
+                        if sort_key == "author" then
+                            e._author = cached.author
+                        end
                         if sort_key == "series" then
                             e._series_name = cached.series_name
                             e._series_num  = cached.series_num
                         end
                     end
                 end
-                if not title or (sort_key == "series" and not e._series_name) then
+                if not title
+                        or (sort_key == "series" and not e._series_name)
+                        or (sort_key == "author" and not e._author) then
                     -- pcall: a single corrupt BIM row must not abort the
                     -- whole prefetch sweep — fall back to filename for the
                     -- failing entry and keep going. get_cover=false skips
@@ -1303,16 +1350,21 @@ function Repo.getAll(path, limit, offset, opts)
                         if info.title and info.title ~= "" then
                             title = info.title
                         end
-                        if sort_key == "series" then
+                        if sort_key == "series" or sort_key == "author" then
                             local b = _buildLightMetaFromInfo(e.fp, info)
-                            e._series_name = b and b.series_name
-                            e._series_num  = b and b.series_num
+                            if sort_key == "series" then
+                                e._series_name = b and b.series_name
+                                e._series_num  = b and b.series_num
+                            end
+                            if sort_key == "author" then
+                                e._author = b and b.author
+                            end
                         end
                     elseif not ok then
                         logger.warn("[bookshelf] getBookInfo failed for", e.fp, ":", info)
                     end
                 end
-                e.doc_props = { display_title = title or e.name }
+                e.doc_props = { display_title = title or e.name, author = e._author }
             else
                 e.doc_props = { display_title = e.name }
                 if sort_key == "series" then e._series_name = e.name end
@@ -1566,32 +1618,6 @@ end
 -- cached SHAPE (with .filepaths) or a freshly-built group (with .books) —
 -- so the same comparator can sort _series_cache entries at HIT time and
 -- in-memory groups at MISS time without a second helper.
-local AUTHOR_SURNAME_PARTICLES = {
-    da = true, de = true, del = true, der = true, di = true,
-    la = true, le = true, van = true, von = true,
-}
-
-local function _authorSortKey(name)
-    name = tostring(name or ""):match("^%s*(.-)%s*$")
-    name = name:gsub("%s+", " ")
-    if name:find(",", 1, true) then return name:lower() end
-
-    local parts = {}
-    for part in name:gmatch("%S+") do parts[#parts + 1] = part end
-    if #parts <= 1 then return name:lower() end
-
-    local surname_start = #parts
-    local prev = parts[surname_start - 1]
-    if prev and AUTHOR_SURNAME_PARTICLES[prev:lower():gsub("%.", "")] then
-        surname_start = surname_start - 1
-    end
-
-    local surname, given = {}, {}
-    for i = surname_start, #parts do surname[#surname + 1] = parts[i] end
-    for i = 1, surname_start - 1 do given[#given + 1] = parts[i] end
-    return (table.concat(surname, " ") .. ", " .. table.concat(given, " ")):lower()
-end
-
 local function _groupNameSortKey(group)
     if group and group.kind == "author" then
         return _authorSortKey(group.series_name)
