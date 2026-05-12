@@ -101,7 +101,7 @@ function BookshelfWidget:_hasNextPaginationTarget()
 end
 
 function BookshelfWidget:_simpleUIPageLabel()
-    return string.format("Page %d of %d", self.page or 1, self._total_pages or 1)
+    return string.format("%d of %d", self.page or 1, self._total_pages or 1)
 end
 
 function BookshelfWidget:_getSimpleUIBarContext()

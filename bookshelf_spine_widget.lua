@@ -65,14 +65,9 @@ end
 -- cover so it doesn't crowd the title text below.
 local GLYPH_TOP_LIFT_REGULAR  = 1.10
 local GLYPH_TOP_LIFT_EXPANDED = 1.55
-local COMPLETE_GLYPH_TOP_LIFT_REGULAR = 1.55
 local function _glyphTopLift(show_titles)
     if show_titles then return GLYPH_TOP_LIFT_EXPANDED end
     return GLYPH_TOP_LIFT_REGULAR
-end
-local function _completeGlyphTopLift(show_titles)
-    if show_titles then return GLYPH_TOP_LIFT_EXPANDED end
-    return COMPLETE_GLYPH_TOP_LIFT_REGULAR
 end
 
 -- Horizontal inset of the glyph from the card's left edge.
@@ -437,8 +432,7 @@ function SpineWidget:_renderShadowedCard(inner)
     children[#children + 1] = inner
 
     -- 4. Finished glyph (IN FRONT of inner): same lower-left anchor language
-    --    as in-progress, but kept fully inside regular grid covers so it
-    --    does not collide with Bookshelf's pagination strip.
+    --    as in-progress.
     if indicators.glyph == "complete" then
         local glyph_h = _glyphSize(card_w)
         local glyph_w = self:_glyphWidth(glyph_h)
@@ -449,7 +443,7 @@ function SpineWidget:_renderShadowedCard(inner)
             -- Offset by -halo_w so the glyph's CENTRE aligns with the
             -- in-progress glyph's position (outlined widget is 2*halo_w
             -- larger on each axis).
-            local lift = _completeGlyphTopLift(self.show_titles)
+            local lift = _glyphTopLift(self.show_titles)
             local y_offset = card_h - math.floor(glyph_h * lift + 0.5)
             children[#children + 1] = FrameContainer:new{
                 bordersize   = 0,
