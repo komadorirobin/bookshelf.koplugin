@@ -19,9 +19,8 @@ local logger = require("logger")
 -- ImageWidget with image_disposable = false. The cache frees evicted bbs
 -- via bb:free() (FFI finalizer cleared, memory released immediately).
 --
--- Invalidation: none required during a session — BookInfoManager only
--- re-extracts thumbnails on user-initiated metadata refresh, which is
--- out-of-band. clear() exists for plugin teardown.
+-- Invalidation: call remove(filepath) after a user-initiated metadata refresh;
+-- clear() exists for plugin teardown.
 
 local ScaledCoverCache = {
     _capacity = 32,    -- ~3.4 MiB at 271×410×4 bytes; covers 4 full pages without eviction
@@ -88,6 +87,23 @@ function ScaledCoverCache:put(filepath, w, h, bb)
     logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: MISS scaled %dx%d size=%d/%d hits=%d puts=%d",
         w, h, #self._order, self._capacity, self._hits, self._puts))
     self:_evictIfNeeded()
+end
+
+-- remove(filepath) — drop all cached scaled variants for one book. Used when
+-- KOReader re-extracts metadata/covers so Bookshelf does not keep drawing the
+-- previous scaled thumbnail.
+function ScaledCoverCache:remove(filepath)
+    if not filepath or filepath == "" then return end
+    local prefix = filepath .. ":"
+    for i = #self._order, 1, -1 do
+        local key = self._order[i]
+        if key:sub(1, #prefix) == prefix then
+            local bb = self._cache[key]
+            self._cache[key] = nil
+            table.remove(self._order, i)
+            if bb and bb.free then pcall(function() bb:free() end) end
+        end
+    end
 end
 
 -- clear — drop everything. Call from plugin teardown if you want the
