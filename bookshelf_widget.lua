@@ -2889,6 +2889,7 @@ end
 -- both produce identical state transitions.
 function BookshelfWidget:_setActiveChip(key)
     if not key or key == self.chip then return end
+    self:_clearDpadFocus()
     -- Pre-paint feedback on the destination chip: same affordance taps
     -- get, so a swipe-driven tab change feels just as responsive even
     -- when the new tab is slow to fetch (Genres / Authors). The strip
@@ -3521,6 +3522,7 @@ end
 -- explicit cover tap (_previewBook) updates self._preview_book.
 function BookshelfWidget:_drillInto(entry)
     if not entry or not entry.kind then return end
+    self:_clearDpadFocus()
     -- Stash the page the *outer* context was showing so a later pop can
     -- restore it. Without this, drilling into a folder on page 3 and then
     -- backing out drops you on page 1 of the parent listing — disorienting
@@ -3545,6 +3547,7 @@ end
 -- only the first crumb; etc.
 function BookshelfWidget:_drillBackTo(depth)
     depth = math.max(0, depth or 0)
+    self:_clearDpadFocus()
     -- The first entry we're about to pop carries `parent_page` — the page
     -- the level we're returning to was on before this drill. Snapshot it
     -- before tearing the entry down. When popping multiple levels at once
