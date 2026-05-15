@@ -1485,6 +1485,24 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     if hero_fp then maybe_queue(hero_fp) end
     logger.dbg(string.format("[bookshelf perf] _kickOffMeta: queued=%d displayed=%d",
         #files, #(items or {})))
+    -- Per-extension breakdown of what's being queued: helps confirm whether
+    -- the new v1.1.2 extensions (.docx/.doc/.rtf/.odt/.azw) are dominating
+    -- the queue on this device (which would make BIM extraction far heavier
+    -- than on v1.1.1).
+    do
+        local ext_count = {}
+        for _, q in ipairs(files) do
+            local ext = (q.filepath or ""):match("%.([^%.]+)$")
+            if ext then
+                ext = ext:lower()
+                ext_count[ext] = (ext_count[ext] or 0) + 1
+            end
+        end
+        local parts = {}
+        for ext, n in pairs(ext_count) do
+            parts[#parts + 1] = ext .. "=" .. n
+        end
+    end
     if #files > 0 then
         UIManager:nextTick(function()
             -- If CoverBrowser already has a background job running, don't
@@ -1538,7 +1556,10 @@ end
 function BookshelfWidget:_pollExtraction()
     self._bim_poll_fn = nil
     local files = self._bim_poll_files
-    if not files or #files == 0 then return end
+    if not files or #files == 0 then
+        return
+    end
+    local poll_t0 = os.time()
     local ok, BIM = pcall(require, "bookinfomanager")
     if not ok or not BIM or not BIM.getBookInfo then
         self._bim_poll_files = nil
@@ -1608,6 +1629,7 @@ function BookshelfWidget:_pollExtraction()
         end
         return
     end
+    local poll_t1 = os.time()
     if self._bim_poll_files then
         self:_scheduleExtractionPoll()
     end
@@ -2660,11 +2682,25 @@ function BookshelfWidget:softRefresh()
         UIManager:setDirty(self, "ui")
         return
     end
-    -- Hero now: the current book's progress / last-read time / cover
-    -- almost always changed during the reader session, and the swap is
-    -- cheap (one HeroCard build, no fetch).
-    self:_swapHeroInPlace()
-    UIManager:setDirty(self, "ui")
+    -- Right-column-only swap: the hero cover doesn't change on book close
+    -- (same book is still "currently reading"), so rebuilding the cover is
+    -- wasted work AND the broad setDirty(self, "ui") it triggers causes
+    -- the full-screen e-ink flash users report in issue #35. The
+    -- right-column path scopes setDirty to the changed rect only,
+    -- removing the flash. Falls back to the whole-hero rebuild for
+    -- expanded mode (where the hero is a different widget without
+    -- replaceRightColumn) and book-switch cases.
+    local hero = self._hero_card or (self._hero_parent and self._hero_parent[1])
+    local right_col_ok = false
+    if hero and hero.replaceRightColumn and not self._expanded then
+        local Regions = require("bookshelf_hero_regions")
+        right_col_ok = self:_swapHeroRightColumnInPlace(Regions.read(), nil)
+    end
+    if not right_col_ok then
+        -- Fallback: full hero rebuild with broad refresh.
+        self:_swapHeroInPlace()
+        UIManager:setDirty(self, "ui")
+    end
     if self._startStatusTimer then self:_startStatusTimer() end
     if not self:_needsReaderReturnShelfRefresh() then
         return

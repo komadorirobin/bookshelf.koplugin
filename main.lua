@@ -49,6 +49,13 @@ require("bookshelf_colour_palette").attach(Bookshelf)
 -- exit, so the UIManager window stack can drain to zero.
 local _live_widget = nil
 local _preserve_live_widget_on_reader_close = false
+-- Suppresses Bookshelf:onCloseDocument's nextTick(show) for the duration
+-- of a _safeShow call. _safeShow already schedules its own show() after
+-- onClose+showFileManager, so onCloseDocument's parallel schedule would
+-- be a duplicate, producing an extra EPDC commit (visible as an extra
+-- flash on colour panels). Set true during the gesture-exit critical
+-- section, false again before our deferred work runs the show. (Pattern
+-- adapted from komadorirobin's fork.)
 local _suppress_close_document_show = false
 
 -- Close a TouchMenu we received as the first callback argument. Used
@@ -746,85 +753,93 @@ function Bookshelf:_raiseInPlace()
         local entry = table.remove(stack, idx)
         table.insert(stack, entry)
     end
+    -- "ui" rather than "partial": on Colorsoft, "partial" of a full-
+    -- screen region gets promoted to a full flash refresh by the EPDC
+    -- driver. "ui" uses a smoother waveform that doesn't get promoted.
+    -- Same type the create path uses (UIManager:show(self._widget, "ui")
+    -- at line 454). (#35.)
     UIManager:setDirty(_live_widget, function()
-        return "partial", _live_widget.dimen
+        return "ui", _live_widget.dimen
     end)
     return true
 end
 
--- _safeShow — show bookshelf, doing the right thing depending on whether
--- the action was invoked from FM or Reader.
+-- _safeShow — exit the reader and show bookshelf.
 --
--- In reader context we always go via ReaderUI:onHome → showFileManager,
--- which re-instantiates FileManager underneath us. Required for two
--- reasons:
---   a. BookshelfWidget forwards top-zone menu gestures to
---      FileManager.instance; with no FM underneath, those gestures would
---      have nowhere to land.
---   b. _openBook → ReaderUI:showReader broadcasts ShowingReader, which
---      causes FileManager:onShowingReader to close FM and nil
---      FileManager.instance for the duration of the read. If we just
---      called ui:onClose(false), we'd also nil ReaderUI.instance —
---      leaving both nil. Screensaver:setup picks
---      `ReaderUI.instance or FileManager.instance` on lock, finds nil,
---      and silently bails. Bookshelf stays on screen instead of the
---      lockscreen. (Issue #27.)
+-- Adapted from komadorirobin's fork pattern with one Colorsoft-targeted
+-- tweak: replace ui:onHome() with ui:onClose(false) + showFileManager(file)
+-- so the reader's internal UIManager:close(self.dialog, "full") doesn't
+-- queue a full-flash refresh that the merged EPDC commit would inherit.
+-- We get the same effect (close reader, restore FM.instance for the
+-- screensaver host check, raise bookshelf) but the merged refresh type
+-- on commit is "ui" instead of "full" — significantly less visible
+-- on colour panels (#35).
 --
--- Fast path: if bookshelf is already on the UIManager stack, raise it
--- to the top and queue a paint BEFORE running the slow teardown. The
--- user sees bookshelf in one EPDC cycle (~700ms) instead of staring at
--- the reader through the full ~2–4s onClose + rebuild. The disk-I/O
--- portion of onClose still blocks the main loop, so bookshelf is
--- visible-but-frozen for ~1–3s after the first paint; the wait is the
--- same magnitude but no longer invisible.
---
--- The "Returning to Bookshelf…" notification is shown unconditionally
--- (both fast and cold-boot paths). Two reasons: (i) the toast confirms
--- the gesture landed, which the bookshelf-on-stack fast path's silent
--- paint did not; (ii) consistency between paths — the cold-boot toast
--- was felt as better UX than the silent fast path, so we surface the
--- same signal everywhere.
+-- A "Closing book…" InfoMessage shows synchronously for feedback during
+-- the 1–3s onClose disk-I/O block. _suppress_close_document_show stops
+-- onCloseDocument's parallel nextTick(show) so we don't double-trigger.
 function Bookshelf:_safeShow(profile_key)
     if not (self.ui and self.ui.document and self.ui.onHome) then
         self:show(profile_key)
         return
     end
-    -- Mark bookshelf for raise (no forceRePaint inside — we drain once
-    -- below after queueing the notification too, so a single EPDC cycle
-    -- commits both).
-    self:_raiseInPlace()
-    local Notification = require("ui/widget/notification")
-    Notification:notify(_("Returning to Bookshelf…"),
-        Notification.SOURCE_ALWAYS_SHOW)
-    -- Drain the queued paints NOW so the EPDC starts committing before
-    -- we hand the main thread to ReaderUI:onClose. Without this, setDirty
-    -- would just queue paints that the main loop won't drain until after
-    -- the (blocking) close completes — defeating the fast path entirely.
-    UIManager:forceRePaint()
-    -- Defer onHome so the paint we just forced has a clear run at the
-    -- EPDC. On slow Kindle storage the EPDC commit hasn't fully started
-    -- before the main thread is consumed by fdatasync if we don't yield.
+    local file = self.ui.document.file
+    -- Feedback: centered InfoMessage with scoped partial refresh so the
+    -- show doesn't trigger a full-screen flash. Skip when:
+    --   a. SimpleUI is set to "always" mode (it'll show its own
+    --      equivalent — avoid doubling up).
+    --   b. The user has disabled our notice in Settings > Advanced
+    --      (escape hatch for colour-panel users who see flashing from
+    --      the message itself; the close still happens, just silently).
+    local our_close_msg = nil
+    local sui_mode = G_reader_settings:readSetting("simpleui_hs_closing_notice_mode")
+    local show_msg = G_reader_settings:nilOrTrue("bookshelf_show_close_msg")
+    if show_msg and sui_mode ~= "always" then
+        local InfoMessage = require("ui/widget/infomessage")
+        our_close_msg = InfoMessage:new{
+            text = _("Closing book…"),
+            timeout = 0.0,
+        }
+        UIManager:show(our_close_msg)
+        UIManager:setDirty(our_close_msg, function()
+            return "partial", our_close_msg.dimen
+        end)
+    end
+    UIManager:forceRePaint()  -- commit the InfoMessage before onClose blocks
     _preserve_live_widget_on_reader_close = true
     _suppress_close_document_show = true
     UIManager:nextTick(function()
-        self.ui:onHome()
-        -- onHome added FM at the top of the stack, putting bookshelf
-        -- back underneath. Re-raise immediately before FM gets a visible
-        -- paint, then let show(profile_key) refresh the existing shelf.
-        _suppress_close_document_show = false
-        _preserve_live_widget_on_reader_close = false
+        self.ui:onClose(false)
+        if self.ui and self.ui.showFileManager then
+            self.ui:showFileManager(file)
+        end
         self:_raiseInPlace()
         self:show(profile_key)
+        if our_close_msg then
+            UIManager:close(our_close_msg, "partial", our_close_msg.dimen)
+        end
+        -- Keep the suppress flag set through the NEXT nextTick too so the
+        -- FM-side _takeOver (scheduled by the freshly-instantiated FM
+        -- plugin in showFileManager → FM:init → Bookshelf:init) sees it
+        -- and skips its own self:show() call. Without this, _takeOver
+        -- fires one iteration after ours, calls softRefresh again, and
+        -- queues a separate EPDC commit visible as a second flash.
+        UIManager:nextTick(function()
+            _preserve_live_widget_on_reader_close = false
+            _suppress_close_document_show = false
+        end)
     end)
 end
 
 -- Wrap the reader-side filemanager tab callback so it routes through
--- _safeShow — same fast-path + notification UX as the gesture path.
+-- bookshelf's path WHEN bookshelf is the user's home (start_with =
+-- "bookshelf"). For users who have start_with set to the file browser,
+-- the FM tab should take them to plain FM, not bookshelf.
 --
 -- The default tab callback (readermenu.lua:47-54) inlines
--- onTapCloseMenu + onClose + showFileManager. We keep the menu-close
--- step (otherwise the menu overlay stays visible on top of the new
--- shelf) and replace the rest with _safeShow.
+-- onTapCloseMenu + onClose + showFileManager. We keep onTapCloseMenu
+-- (otherwise the menu overlay lingers above the new layer) and replace
+-- the rest with the appropriate path based on start_with.
 function Bookshelf:_wireFastFileBrowserTab()
     if not (self.ui and self.ui.document and self.ui.menu) then return end
     local menu_ref = self.ui.menu
@@ -834,7 +849,25 @@ function Bookshelf:_wireFastFileBrowserTab()
     local plugin = self
     items.filemanager.callback = function()
         if menu_ref.onTapCloseMenu then menu_ref:onTapCloseMenu() end
-        plugin:_safeShow()
+        if G_reader_settings:readSetting("start_with") == "bookshelf" then
+            -- Bookshelf is home: same fast-path as the gesture.
+            plugin:_safeShow()
+        else
+            -- File browser is home: plain go-to-FM, no bookshelf raise.
+            -- onClose(false) to suppress reader's internal full refresh,
+            -- showFileManager re-instantiates FM. Bookshelf may still be
+            -- on the stack from earlier gestures, but FM lands on top.
+            local file = plugin.ui and plugin.ui.document
+                and plugin.ui.document.file
+            UIManager:nextTick(function()
+                if plugin.ui and plugin.ui.onClose then
+                    plugin.ui:onClose(false)
+                end
+                if plugin.ui and plugin.ui.showFileManager then
+                    plugin.ui:showFileManager(file)
+                end
+            end)
+        end
     end
     menu_ref._bookshelf_fm_tab_wrapped = true
 end
@@ -921,6 +954,15 @@ function Bookshelf:onOpenBookshelfAuto()
 end
 
 function Bookshelf:_takeOver(fm_instance)
+    -- Skip when _safeShow has already shown bookshelf in the current
+    -- close-cycle. showFileManager re-instantiated FM, which spun up
+    -- this fresh plugin instance and scheduled us via init's
+    -- nextTick(_takeOver). _safeShow's show() already painted; calling
+    -- show() again here would softRefresh + queue an extra EPDC commit
+    -- (visible as a second flash on colour panels). (#35.)
+    if _suppress_close_document_show then
+        return
+    end
     -- Leave FileManager loaded *underneath* Bookshelf — don't close it. Two
     -- reasons:
     --   1. KOReader's standard menu (FileManagerMenu top-zone tap/swipe) is
@@ -1019,13 +1061,21 @@ function Bookshelf:onCloseDocument()
     -- FM flash whenever bookshelf wasn't already on the stack.)
     if G_reader_settings:readSetting("start_with") ~= "bookshelf" then return end
     if self.ui and self.ui.tearing_down then return end
-    if _suppress_close_document_show then return end
-    -- If Bookshelf is already on the stack (the typical "open book from
-    -- home, close back to home" flow now that _openBook leaves it there),
-    -- self:show()'s refresh path handles the repaint without ever exposing
-    -- FileManager. Fresh boot path through onCloseDocument (rare) creates
-    -- a new instance.
-    UIManager:nextTick(function() self:show() end)
+    -- _safeShow already scheduled its own show() after the close+showFM
+    -- work; skipping ours here avoids a duplicate show()+softRefresh
+    -- which would queue an extra EPDC commit (visible as a second
+    -- flash on colour panels). Pattern adapted from komadorirobin's
+    -- fork.
+    if _suppress_close_document_show then
+        return
+    end
+    -- Normal path (close-document not via _safeShow, e.g. exit-to-FM
+    -- from KOReader's own menu): schedule show so bookshelf reappears
+    -- on the next tick. self:show()'s refresh path handles the repaint
+    -- without exposing FileManager.
+    UIManager:nextTick(function()
+        self:show()
+    end)
 end
 
 -- ---------------------------------------------------------------------------

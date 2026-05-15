@@ -647,6 +647,25 @@ function Settings:_advancedSubItems()
             callback = function() self:_pickLatestDepth() end,
         },
         {
+            text = _("Closing book notification"),
+            help_text = _("Show a 'Closing book…' message in the centre "
+                .. "of the screen while a book is being closed back to "
+                .. "Bookshelf. The book-close work takes a moment, so "
+                .. "the message confirms your gesture landed during the "
+                .. "wait. Some users on colour e-ink panels see a brief "
+                .. "flash from the message appearing — turn it off here "
+                .. "if you prefer no message and no flash."),
+            checked_func   = function()
+                return G_reader_settings:nilOrTrue("bookshelf_show_close_msg")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = G_reader_settings:nilOrTrue("bookshelf_show_close_msg")
+                G_reader_settings:saveSetting("bookshelf_show_close_msg", not enabled)
+                G_reader_settings:flush()
+            end,
+        },
+        {
             text = _("BETA: Read calibre metadata.calibre"),
             help_text = _("For users with a Calibre-managed library. "
                 .. "Reads the metadata.calibre JSON file at home_dir to "
