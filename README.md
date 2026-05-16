@@ -267,7 +267,7 @@ Selected keys:
 | `tabs` | Ordered list of chip records (id, label, icon, source, filter, sort_priority, enabled). |
 | `hero_regions` | Per-region overrides (sparse). One entry per region (status / rating / title / author / metadata / description / progress) with any subset of template, font_face, font_size, bold, uppercase, alignment, disabled, bar_style, bar_height. |
 | `font_scale` | Global zoom for hero text (50-200%). |
-| `chip_font_scale` | Chip bar font size (100-300%). |
+| `chip_font_scale` | Chip bar font size (50-300%). |
 | `chip_flex_widths` | Boolean. When true, longer-labelled chips get more horizontal space than icon-only ones. |
 | `active_chip` / `active_page` / `drill_path` | Persisted navigation state, restored on KOReader restart. |
 | `progress_bar_enabled` / `progress_bookmark_enabled` / `progress_badge_enabled` / `progress_page_count_enabled` | Cover indicator toggles. |

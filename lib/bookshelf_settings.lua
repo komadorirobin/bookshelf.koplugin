@@ -851,7 +851,7 @@ function Settings:_pickChipFontScale()
 
     local function getValue() return BookshelfSettings.read(key, 100) end
     local function setValue(v)
-        v = math.max(100, math.min(300, v))
+        v = math.max(50, math.min(300, v))
         BookshelfSettings.save(key, v)
     end
     local function rebuild()

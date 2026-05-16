@@ -44,7 +44,8 @@ local Blitbuffer     = require("ffi/blitbuffer")
 local UIManager      = require("ui/uimanager")
 local Screen         = require("device").screen
 
--- Tab-bar font size scale (percent). 100 = built-in baseline, 300 = max.
+-- Tab-bar font size scale (percent). 100 = built-in baseline; nudge dialog
+-- accepts 50-300.
 -- Applied to every font in the strip and to the externally-supplied height
 -- (the widget multiplies chip_h by the same factor). Read on demand so
 -- changes from the settings nudge dialog take effect on the next rebuild
