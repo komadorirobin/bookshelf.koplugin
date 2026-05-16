@@ -77,10 +77,17 @@ end
 function ScaledCoverCache:put(filepath, w, h, bb)
     if not filepath or filepath == "" then return end
     local key = key_for(filepath, w, h)
+    -- If a different bb already exists at this key, ALWAYS remove the
+    -- stale order-list entry before appending the new one -- otherwise
+    -- the same key appears twice in self._order and _evictIfNeeded
+    -- double-counts the slot, prematurely evicting a live bb that
+    -- another widget is about to paint (use-after-free). Freeing the old
+    -- bb is conditional on existing.free because some test stubs may
+    -- not implement it, but the order-list cleanup is unconditional.
     local existing = self._cache[key]
-    if existing and existing ~= bb and existing.free then
-        pcall(function() existing:free() end)
+    if existing and existing ~= bb then
         self:_removeKey(key)
+        if existing.free then pcall(function() existing:free() end) end
     end
     self._cache[key] = bb
     self._order[#self._order + 1] = key
