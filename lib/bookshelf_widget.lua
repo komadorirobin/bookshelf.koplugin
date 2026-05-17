@@ -4336,6 +4336,94 @@ function BookshelfWidget:_showFullDescription(book)
     UIManager:show(viewer)
 end
 
+function BookshelfWidget:_refreshBookMetadata(book)
+    if not (book and book.filepath) then return end
+
+    local InfoMessage = require("ui/widget/infomessage")
+    local lfs = require("libs/libkoreader-lfs")
+    if lfs.attributes(book.filepath, "mode") ~= "file" then
+        UIManager:show(InfoMessage:new{
+            text    = _("File no longer exists. The bookshelf entry is stale."),
+            timeout = 3,
+        })
+        return
+    end
+
+    local ok_bim, BIM = pcall(require, "bookinfomanager")
+    if not ok_bim or not BIM or type(BIM.deleteBookInfo) ~= "function"
+            or type(BIM.extractInBackground) ~= "function" then
+        UIManager:show(InfoMessage:new{
+            text    = _("Book information manager is not available."),
+            timeout = 3,
+        })
+        return
+    end
+
+    local deleted = pcall(function()
+        BIM:deleteBookInfo(book.filepath)
+    end)
+    if not deleted then
+        UIManager:show(InfoMessage:new{
+            text    = _("Could not clear cached book information."),
+            timeout = 3,
+        })
+        return
+    end
+
+    if Repo.invalidateProgressCache then
+        Repo.invalidateProgressCache(book.filepath)
+    end
+    if Repo.invalidateWalkCache then
+        Repo.invalidateWalkCache()
+    end
+    if Repo.invalidateBookCache then
+        Repo.invalidateBookCache("refreshBookMetadata")
+    end
+
+    local ok_cache, ScaledCoverCache = pcall(require, "lib/bookshelf_scaled_cover_cache")
+    if ok_cache and ScaledCoverCache and type(ScaledCoverCache.remove) == "function" then
+        ScaledCoverCache:remove(book.filepath)
+    end
+
+    local d = self._shelf_dims or {}
+    local n_cols = self:_nCols()
+    local slot_w
+    if d.content_w and d.PAD then
+        slot_w = math.floor((d.content_w - d.PAD * (n_cols - 1)) / n_cols)
+    else
+        slot_w = math.floor((self.width or Screen:getWidth()) / math.max(1, n_cols))
+    end
+    local slot_h = math.floor(slot_w * 1.5)
+    local files = {
+        {
+            filepath = book.filepath,
+            cover_specs = {
+                max_cover_w = math.max(slot_w, d.hero_cover_w or slot_w),
+                max_cover_h = math.max(slot_h, d.hero_cover_h or slot_h),
+            },
+        },
+    }
+
+    UIManager:show(InfoMessage:new{
+        text    = _("Refreshing cached book information..."),
+        timeout = 2,
+    })
+
+    local function extract_when_idle()
+        if type(BIM.isExtractingInBackground) == "function"
+                and BIM:isExtractingInBackground() then
+            UIManager:scheduleIn(BIM_POLL_INTERVAL_S, extract_when_idle)
+            return
+        end
+        pcall(function()
+            BIM:extractInBackground(files)
+        end)
+    end
+
+    UIManager:nextTick(extract_when_idle)
+    self:_armExtractionPoll(files)
+end
+
 -- (from on_series_hold on a SeriesStack). Series groups have a .books field;
 -- we route to a series-specific dialog in that case.
 function BookshelfWidget:_openBookMenu(item)
@@ -4500,6 +4588,10 @@ function BookshelfWidget:_openBookMenu(item)
                 Repo.invalidateBookCache("remove-from-history")
                 bw:_rebuild()
                 UIManager:setDirty(bw, "ui")
+              end) },
+            { text = _("Refresh cached book information"),
+              callback = closing(function()
+                bw:_refreshBookMetadata(book)
               end) },
         },
     }

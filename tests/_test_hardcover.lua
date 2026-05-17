@@ -41,9 +41,11 @@ package.loaded["hardcover/lib/hardcover_api"] = {
         assert(vars.userId == 42, "user id should be fetched and cached")
         assert(#vars.ids == 2, "expected two linked Hardcover ids")
         return {
-            user_books = {
-                { id = 10, book_id = 123, rating = 4.5 },
-                { id = 11, book_id = 999, rating = nil },
+            books = {
+                { id = 123, rating = 4.5, ratings_count = 12,
+                  user_books = { { id = 10, rating = nil } } },
+                { id = 999, rating = nil, ratings_count = 0,
+                  user_books = { { id = 11, rating = nil } } },
             },
         }
     end,

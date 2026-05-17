@@ -2,10 +2,10 @@
 -- Optional integration with hardcoverapp.koplugin.
 --
 -- Hardcover's KOReader plugin stores the local-file -> Hardcover book link in
--- <settings>/hardcoversync_settings.lua, but it does not persist the user's
--- rating there. Bookshelf therefore keeps its own small rating cache, refreshed
--- on demand from Hardcover's API module, and only reads that cache during
--- normal shelf rendering.
+-- <settings>/hardcoversync_settings.lua, but it does not persist Hardcover's
+-- public book rating there. Bookshelf therefore keeps its own small rating
+-- cache, refreshed on demand from Hardcover's API module, and only reads that
+-- cache during normal shelf rendering.
 
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 
@@ -180,33 +180,42 @@ function Hardcover.refreshRatings()
 
     local query = [[
         query ($ids: [Int!], $userId: Int!) {
-          user_books(where: { book_id: { _in: $ids }, user_id: { _eq: $userId }}) {
+          books(where: { id: { _in: $ids }}) {
             id
-            book_id
             rating
+            ratings_count
+            user_books(where: { user_id: { _eq: $userId }}) {
+              id
+              rating
+            }
           }
         }
     ]]
 
     local data, err = Api:query(query, { ids = ids, userId = user_id })
-    if not data or type(data.user_books) ~= "table" then
+    if not data or type(data.books) ~= "table" then
         return false, err and "Hardcover rating refresh failed" or "No response from Hardcover"
     end
 
+    local now = os.time()
     local cache = {}
     for _, id in ipairs(ids) do
-        cache[tostring(id)] = { rating = false, fetched_at = os.time() }
+        cache[tostring(id)] = { rating = false, fetched_at = now }
     end
 
     local rated = 0
-    for _, row in ipairs(data.user_books) do
-        if type(row) == "table" and row.book_id then
+    for _, row in ipairs(data.books) do
+        if type(row) == "table" and row.id then
             local rating = tonumber(row.rating)
+            local user_book = type(row.user_books) == "table" and row.user_books[1] or nil
+            local user_rating = user_book and tonumber(user_book.rating) or nil
             if rating then rated = rated + 1 end
-            cache[tostring(row.book_id)] = {
-                user_book_id = row.id,
+            cache[tostring(row.id)] = {
                 rating = rating or false,
-                fetched_at = os.time(),
+                ratings_count = tonumber(row.ratings_count) or 0,
+                user_book_id = user_book and user_book.id or nil,
+                user_rating = user_rating or false,
+                fetched_at = now,
             }
         end
     end
@@ -215,7 +224,7 @@ function Hardcover.refreshRatings()
     return true, {
         linked = #ids,
         rated = rated,
-        updated = #data.user_books,
+        updated = #data.books,
     }
 end
 
