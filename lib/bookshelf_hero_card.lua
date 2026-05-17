@@ -29,6 +29,7 @@ local SpineWidget     = require("lib/bookshelf_spine_widget")
 local Tokens          = require("lib/bookshelf_tokens")
 local Regions         = require("lib/bookshelf_hero_regions")
 local HeroBar         = require("lib/bookshelf_hero_bar")
+local TextSegments    = require("lib/bookshelf_text_segments")
 
 local HeroCard = InputContainer:extend{
     book                = nil,
@@ -130,48 +131,9 @@ local function regionFace(region)
     return fontFace(region.font_face, region.font_size)
 end
 
--- _labelSegments(text) -- classify a UTF-8 string into runs of "ascii"
--- (bytes < 0x80, plain text) and "icon" (multi-byte sequences, typically
--- nerd-font / emoji glyphs). Mirrors the same helper in
--- bookshelf_chip_bar.lua. Used so a bold region containing icon glyphs
--- can render the text segments bold while leaving the icons at the
--- font's native weight -- faux-bolding nerd-font glyphs renders them as
--- a blobby mess on e-ink.
-local function _labelSegments(label)
-    local segments = {}
-    local current = nil
-    local i = 1
-    while i <= #label do
-        local b = string.byte(label, i)
-        local class, chunk_len
-        if b < 0x80 then
-            class, chunk_len = "ascii", 1
-        elseif b < 0xC0 then
-            -- Continuation byte at start = malformed UTF-8. Consume one
-            -- byte so we don't infinite-loop on bad input.
-            class, chunk_len = "icon", 1
-        elseif b < 0xE0 then
-            class, chunk_len = "icon", 2
-        elseif b < 0xF0 then
-            class, chunk_len = "icon", 3
-        else
-            class, chunk_len = "icon", 4
-        end
-        local chunk = label:sub(i, i + chunk_len - 1)
-        if current and current.class == class then
-            current.text = current.text .. chunk
-        else
-            current = { class = class, text = chunk }
-            segments[#segments + 1] = current
-        end
-        i = i + chunk_len
-    end
-    return segments
-end
-
 -- _buildSegmentedInline(text, face, bold) -- returns a single widget
 -- (TextWidget if homogeneous, HorizontalGroup of TextWidgets if the
--- text mixes ascii + icon segments). When bold is false the function
+-- text mixes text + icon segments). When bold is false the function
 -- short-circuits to a plain TextWidget regardless of content -- the
 -- whole point of segmenting is to keep glyphs out of the bold path,
 -- so non-bold lines have nothing to gain. The returned widget always
@@ -180,7 +142,7 @@ local function _buildSegmentedInline(text, face, bold)
     if not bold or not text:find("[\x80-\xFF]") then
         return TextWidget:new{ text = text, face = face, bold = bold or false }
     end
-    local segments = _labelSegments(text)
+    local segments = TextSegments.labelSegments(text)
     if #segments <= 1 then
         return TextWidget:new{ text = text, face = face, bold = bold }
     end
@@ -189,7 +151,7 @@ local function _buildSegmentedInline(text, face, bold)
         hg[#hg + 1] = TextWidget:new{
             text = seg.text,
             face = face,
-            bold = seg.class == "ascii",
+            bold = seg.class == "text",
         }
     end
     return hg
@@ -210,14 +172,14 @@ local function buildText(text, region, width)
     local face = regionFace(region)
     local is_bold = region.bold or false
     if is_bold and rendered:find("[\x80-\xFF]") and not rendered:find("\n") then
-        local segments = _labelSegments(rendered)
+        local segments = TextSegments.labelSegments(rendered)
         if #segments > 1 then
             local hg = HorizontalGroup:new{ align = "center" }
             for _i, seg in ipairs(segments) do
                 hg[#hg + 1] = TextWidget:new{
                     text    = seg.text,
                     face    = face,
-                    bold    = seg.class == "ascii",
+                    bold    = seg.class == "text",
                     fgcolor = Blitbuffer.COLOR_BLACK,
                 }
             end
