@@ -617,10 +617,122 @@ function Settings:_settingsSubItems()
             end,
         },
         {
+            text                = _("Hardcover integration"),
+            sub_item_table_func = function()
+                return self:_hardcoverSubItems()
+            end,
+        },
+        {
             text                = _("Advanced settings"),
             sub_item_table_func = function()
                 return self:_advancedSubItems()
             end,
+        },
+    }
+end
+
+local function _formatCacheTime(ts)
+    ts = tonumber(ts)
+    if not ts then return _("never") end
+    return os.date("%Y-%m-%d %H:%M", ts)
+end
+
+function Settings:_hardcoverSubItems()
+    local Hardcover = require("lib/bookshelf_hardcover")
+    return {
+        {
+            text_func = function()
+                local stats = Hardcover.getCacheStats()
+                return string.format(_("Cached ratings: %d/%d · %s"),
+                    stats.rated or 0,
+                    stats.linked or 0,
+                    _formatCacheTime(stats.fetched_at))
+            end,
+            enabled_func = function() return false end,
+        },
+        {
+            text = _("Show Hardcover ratings in hero"),
+            help_text = _("When enabled, the Hero rating row shows the cached Hardcover rating instead of KOReader's local rating. Enabling this also turns on the Hero rating row. Ratings are read from the cache; use Refresh Hardcover ratings after changing ratings in Hardcover."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("hardcover_hero_rating")
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local enabled = BookshelfSettings.isTrue("hardcover_hero_rating")
+                BookshelfSettings.save("hardcover_hero_rating", not enabled)
+                if enabled == false then
+                    local Regions = require("lib/bookshelf_hero_regions")
+                    local regions = Regions.read()
+                    if regions.rating and regions.rating.disabled then
+                        regions.rating.disabled = false
+                        Regions.write("rating", regions.rating)
+                    end
+                end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+                if self._bw and self._bw._rebuild then
+                    self._bw:_rebuild()
+                    UIManager:setDirty(self._bw, "ui")
+                end
+            end,
+        },
+        {
+            text = _("Refresh Hardcover ratings"),
+            help_text = _("Reads the book links created by hardcoverapp.koplugin, fetches ratings for those Hardcover books, and stores them in Bookshelf's local cache. Normal Bookshelf rendering never performs network calls."),
+            callback = function(touchmenu_instance)
+                if touchmenu_instance then UIManager:close(touchmenu_instance) end
+                UIManager:show(InfoMessage:new{
+                    text = _("Fetching Hardcover ratings…"),
+                    timeout = 1,
+                })
+                UIManager:nextTick(function()
+                    local ok, result = Hardcover.refreshRatings()
+                    if ok then
+                        local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
+                        if ok_repo and Repo then
+                            if Repo.invalidateBookCache then
+                                Repo.invalidateBookCache("hardcover ratings")
+                            end
+                            if Repo.invalidateProgressCache then
+                                Repo.invalidateProgressCache()
+                            end
+                        end
+                        if self._bw and self._bw._rebuild then
+                            self._bw:_rebuild()
+                            UIManager:setDirty(self._bw, "ui")
+                        end
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Hardcover ratings refreshed: %d rated of %d linked books"),
+                                result.rated or 0,
+                                result.linked or 0),
+                            timeout = 3,
+                        })
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Hardcover ratings could not be refreshed: ") .. tostring(result),
+                            icon = "notice-warning",
+                            timeout = 5,
+                        })
+                    end
+                end)
+            end,
+        },
+        {
+            text = _("Clear cached Hardcover ratings"),
+            callback = function(touchmenu_instance)
+                BookshelfSettings.save("hardcover_ratings", {})
+                BookshelfSettings.delete("hardcover_ratings_fetched_at")
+                Hardcover.invalidate()
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+                if self._bw and self._bw._rebuild then
+                    self._bw:_rebuild()
+                    UIManager:setDirty(self._bw, "ui")
+                end
+            end,
+            keep_menu_open = true,
         },
     }
 end

@@ -34,6 +34,8 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%format",           description = "Format (EPUB/PDF/…)" },
     { category = "Book",     token = "%description",      description = "Book blurb (HTML stripped)" },
     { category = "Book",     token = "%lang",             description = "Language" },
+    { category = "External", token = "%hardcover_rating", description = "Hardcover rating (cached)" },
+    { category = "External", token = "%hardcover_stars",  description = "Hardcover rating as stars (cached)" },
     { category = "Progress", token = "%book_pct",         description = "Percent read" },
     { category = "Progress", token = "%book_pct_left",    description = "Percent left" },
     { category = "Progress", token = "%page_num",         description = "Current page" },
@@ -89,6 +91,37 @@ Tokens.expanders.series_num  = metaToken("series_num")
 Tokens.expanders.filename    = metaToken("filename")
 Tokens.expanders.lang        = metaToken("lang")
 Tokens.expanders.format      = metaToken("format")
+
+local HC_STAR      = "\xef\x80\x85" -- Nerd Font nf-fa-star, matches hardcoverapp.koplugin
+local HC_HALF_STAR = "\xef\x82\x89" -- Nerd Font nf-fa-star_half
+
+local function formatHardcoverRating(rating)
+    rating = tonumber(rating)
+    if not rating or rating <= 0 then return "" end
+    local text = string.format("%.1f", rating)
+    return text:gsub("%.0$", "")
+end
+
+local function hardcoverStars(rating)
+    rating = tonumber(rating)
+    if not rating or rating <= 0 then return "" end
+    local whole = math.floor(rating)
+    local out = string.rep(HC_STAR, whole)
+    if rating - whole >= 0.5 then
+        out = out .. HC_HALF_STAR
+    end
+    return out
+end
+
+Tokens.formatHardcoverRating = formatHardcoverRating
+Tokens.hardcoverStars = hardcoverStars
+
+Tokens.expanders.hardcover_rating = function(book)
+    return book and formatHardcoverRating(book.hardcover_rating) or ""
+end
+Tokens.expanders.hardcover_stars = function(book)
+    return book and hardcoverStars(book.hardcover_rating) or ""
+end
 
 local function codepointToUtf8(n)
     n = tonumber(n)

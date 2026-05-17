@@ -11,6 +11,7 @@ local Repo = {}
 
 local logger = require("logger")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
+local Hardcover = require("lib/bookshelf_hardcover")
 -- Wall-clock timer. Falls back to os.clock() (CPU-only) if LuaSocket absent.
 local _gettime
 do
@@ -419,7 +420,7 @@ function Repo.buildBookMeta(filepath)
         genres = splitGenreTags(info.keywords)
     end
 
-    return {
+    local book = {
         filepath    = filepath,
         filename    = filename,
         format      = (filepath:match("%.([^.]+)$") or ""):upper(),
@@ -454,6 +455,7 @@ function Repo.buildBookMeta(filepath)
                        or nil,
         page_count  = info.pages,
     }
+    return Hardcover.enrichBook(book)
 end
 
 -- Text-only metadata for the library walk phases of getSeriesGroups /
