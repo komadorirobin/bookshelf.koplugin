@@ -982,8 +982,10 @@ function Settings:_about()
 
     -- Hard-coded English URL; not translatable. Display form drops the
     -- https:// prefix for compactness; the bare host+path reads as a
-    -- URL on its own.
-    local GITHUB_URL = "github.com/AndyHazz/bookshelf.koplugin"
+    -- URL on its own. Full URL with scheme is what Device:openLink and
+    -- the clipboard receive on tap.
+    local GITHUB_URL_DISPLAY = "github.com/AndyHazz/bookshelf.koplugin"
+    local GITHUB_URL         = "https://github.com/AndyHazz/bookshelf.koplugin"
 
     local Device           = require("device")
     local Screen           = Device.screen
@@ -1035,22 +1037,51 @@ function Settings:_about()
         end
     end
 
+    -- Version-only line below the logo. "Bookshelf" would duplicate the
+    -- name baked into the logo; the version digits stand alone. Sourced
+    -- live from _meta.lua so any release that touches version=... in
+    -- that file flows through automatically -- there's no other
+    -- string to keep in sync.
     column[#column + 1] = TextWidget:new{
-        text = name .. " v" .. version,
-        face = Font:getFace("smalltfont", 22),
-        bold = true,
+        text = "v" .. version,
+        face = Font:getFace("cfont", 16),
     }
-    column[#column + 1] = VerticalSpan:new{ width = Size.padding.small }
+    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
     column[#column + 1] = TextBoxWidget:new{
         text      = description,
         face      = Font:getFace("cfont", 16),
         width     = content_w,
         alignment = "center",
     }
-    column[#column + 1] = VerticalSpan:new{ width = Size.padding.default }
-    column[#column + 1] = TextWidget:new{
-        text = GITHUB_URL,
-        face = Font:getFace("cfont", 14),
+    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+    -- Tappable URL: tries Device:openLink (works on SDL / Android), then
+    -- falls back to copying to KOReader's internal clipboard + a brief
+    -- Notification. On Kindle there's no native browser so the
+    -- clipboard path is the user-meaningful one (paste into a Send-to-
+    -- Kindle-style helper, or just read the URL clearly).
+    local Button = require("ui/widget/button")
+    local function open_github()
+        local ok = false
+        if Device.openLink then
+            local _ok, ret = pcall(function() return Device:openLink(GITHUB_URL) end)
+            if _ok and ret then ok = true end
+        end
+        if not ok and Device.input and Device.input.setClipboardText then
+            pcall(function() Device.input.setClipboardText(GITHUB_URL) end)
+            local Notification = require("ui/widget/notification")
+            UIManager:show(Notification:new{
+                text = _("Link copied to clipboard"),
+            })
+        end
+    end
+    column[#column + 1] = Button:new{
+        text       = GITHUB_URL_DISPLAY,
+        bordersize = 0,
+        padding    = 0,
+        margin     = 0,
+        text_font_face = "cfont",
+        text_font_size = 14,
+        callback   = open_github,
     }
 
     local frame = FrameContainer:new{
