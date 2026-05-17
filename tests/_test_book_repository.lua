@@ -193,6 +193,43 @@ test("getLatest: orders by mtime desc, respects limit and depth", function()
     assert(latest[3].title == "Old")
 end)
 
+test("getFolderChoices: lists book-containing ancestor folders under home_dir", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 4 }
+    local tree = {
+        ["/lib"] = { ".", "..", "Fiction", "Manga", "loose.epub" },
+        ["/lib/Fiction"] = { ".", "..", "A", "standalone.epub" },
+        ["/lib/Fiction/A"] = { ".", "..", "book.epub" },
+        ["/lib/Manga"] = { ".", "..", "vol.cbz" },
+    }
+    local dirs = {
+        ["/lib"] = true,
+        ["/lib/Fiction"] = true,
+        ["/lib/Fiction/A"] = true,
+        ["/lib/Manga"] = true,
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = tree[path] or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        local attr = {
+            mode = dirs[fp] and "directory" or "file",
+            modification = 1,
+            size = 123,
+        }
+        if key then return attr[key] end
+        return attr
+    end
+
+    local choices = Repo.getFolderChoices()
+    assert(#choices == 3, "expected 3 choices, got " .. #choices)
+    assert(choices[1].value == "/lib/Fiction")
+    assert(choices[2].value == "/lib/Fiction/A")
+    assert(choices[3].value == "/lib/Manga")
+end)
+
 -- ============================================================================
 -- Task 2.4: getFavorites + getSeriesGroups
 -- ============================================================================

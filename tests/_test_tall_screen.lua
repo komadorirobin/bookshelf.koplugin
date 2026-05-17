@@ -173,21 +173,21 @@ test("_nCols: tall screen = 3", function()
 end)
 
 -- ── _pageSize tests ────────────────────────────────────────────────────────
-test("_pageSize: standard screen = 8 (regardless of expanded)", function()
+test("_pageSize: standard screen tracks visible rows", function()
     eq(bw(750, 1024, false):_pageSize(), 8)
-    eq(bw(750, 1024, true):_pageSize(),  8)
+    eq(bw(750, 1024, true):_pageSize(),  12)
 end)
 
-test("_pageSize: tall PW-aspect (1080x2400) = 9 (regardless of expanded)", function()
+test("_pageSize: tall PW-aspect tracks visible rows", function()
     eq(bw(1080, 2400, false):_pageSize(), 9)
-    eq(bw(1080, 2400, true):_pageSize(),  9)
+    eq(bw(1080, 2400, true):_pageSize(),  12)
 end)
 
-test("_pageSize: phone-tall (Palma 824x1648) = 6 (regardless of expanded)", function()
+test("_pageSize: phone-tall (Palma 824x1648) tracks visible rows", function()
     -- _baseShelves dropped to 2 to keep hero share >= 30%, so the page
-    -- advance step is 2 rows * 3 cols = 6.
+    -- advance step follows the visible row count in each mode.
     eq(bw(824, 1648, false):_pageSize(), 6)
-    eq(bw(824, 1648, true):_pageSize(),  6)
+    eq(bw(824, 1648, true):_pageSize(),  9)
 end)
 
 -- ── _viewSize tests ────────────────────────────────────────────────────────

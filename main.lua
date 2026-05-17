@@ -36,6 +36,14 @@ local _               = require("lib/bookshelf_i18n").gettext
 local T               = require("ffi/util").template
 local Profiles        = require("lib/bookshelf_profiles")
 
+local _gettime
+do
+    local ok, s = pcall(require, "socket")
+    _gettime = (ok and s and type(s.gettime) == "function")
+        and function() return s.gettime() end
+        or  os.clock
+end
+
 local Bookshelf = WidgetContainer:extend{
     name        = "bookshelf",
     is_doc_only = false, -- must be false: hook fires in Reader context
@@ -478,6 +486,8 @@ end
 -- across the plugin's lifetime so opening a book and closing it doesn't
 -- require destroying + recreating + flashing the FileManager underneath.
 function Bookshelf:show(profile_key)
+    local diag_t0 = _gettime()
+    local diag_branch
     -- Discard a stale self._widget without a stack walk. _live_widget
     -- is the canonical "what's actually on screen" pointer (set/cleared
     -- in sync with the widget's _on_close_callback), so anything else
@@ -540,11 +550,18 @@ function Bookshelf:show(profile_key)
         -- softRefresh splits the warm-path update so the existing tree
         -- paints immediately and the heavier shelf re-sort runs ~150ms
         -- later — much snappier than the previous full _rebuild() inline.
+        diag_branch = "warm-softRefresh"
         self._widget:softRefresh()
+        logger.info(string.format(
+            "[bookshelf perf] Bookshelf:show: branch=%s elapsed=%.0fms",
+            diag_branch, (_gettime() - diag_t0) * 1000))
         return
     end
+    diag_branch = "cold-create"
     local BookshelfWidget = require("lib/bookshelf_widget")
+    local t_pre_new = _gettime()
     self._widget = BookshelfWidget:new{ profile_key = profile_key }
+    local t_post_new = _gettime()
     -- Clear our reference if the widget is dismissed for any reason, so a
     -- subsequent show() falls back to the create path.
     local outer = self
@@ -566,6 +583,11 @@ function Bookshelf:show(profile_key)
     -- existing-widget path below already uses setDirty(..., "ui"); this
     -- keeps the fresh-create path consistent. (Issue #18.)
     UIManager:show(self._widget, "ui")
+    logger.info(string.format(
+        "[bookshelf perf] Bookshelf:show: branch=%s init+rebuild=%.0fms TOTAL=%.0fms (paint follows)",
+        diag_branch,
+        (t_post_new - t_pre_new) * 1000,
+        (_gettime() - diag_t0) * 1000))
 end
 
 function Bookshelf:_showAfterReaderReturn(profile_key)

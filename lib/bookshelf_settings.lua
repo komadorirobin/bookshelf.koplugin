@@ -694,6 +694,47 @@ function Settings:_advancedSubItems()
             end,
         },
         {
+            text     = _("Reset chip bar to defaults"),
+            help_text = _("Clears your custom chip layout (which chips are "
+                .. "shown, their order, their labels and icons, their "
+                .. "sources and filters and sorts) and restores the "
+                .. "fresh-install chip set: Home / Recent / Series / "
+                .. "Favourites enabled, the rest available to toggle on. "
+                .. "Also returns the active chip to Home and the page "
+                .. "indicator to 1. Other settings (hero text, fonts, "
+                .. "colours) are unaffected."),
+            callback = function(touchmenu_instance)
+                local ConfirmBox = require("ui/widget/confirmbox")
+                UIManager:show(ConfirmBox:new{
+                    text = _("Reset the chip bar to default settings?\n\n"
+                        .. "All custom chips you have created or edited "
+                        .. "will be lost. Other Bookshelf settings (hero "
+                        .. "text, fonts, colours) are unaffected."),
+                    ok_text = _("Reset"),
+                    ok_callback = function()
+                        BookshelfSettings.delete("tabs")
+                        BookshelfSettings.save("active_chip",   "all")
+                        BookshelfSettings.save("active_cursor", 1)
+                        BookshelfSettings.save("active_page",   1)
+                        BookshelfSettings.flush()
+                        if touchmenu_instance then
+                            UIManager:close(touchmenu_instance)
+                        end
+                        if self._bw and self._bw._rebuild then
+                            self._bw.chip    = "all"
+                            self._bw._cursor = 1
+                            if self._bw._syncPageFromCursor then
+                                self._bw:_syncPageFromCursor()
+                            end
+                            self._bw._drilldown_path = {}
+                            self._bw:_rebuild()
+                            UIManager:setDirty(self._bw, "ui")
+                        end
+                    end,
+                })
+            end,
+        },
+        {
             text = _("BETA: Read calibre metadata.calibre"),
             help_text = _("For users with a Calibre-managed library. "
                 .. "Reads the metadata.calibre JSON file at home_dir to "
@@ -945,22 +986,140 @@ function Settings:_pickLatestDepth()
 end
 
 function Settings:_about()
-    -- Load our own _meta.lua by absolute path. `require("_meta")` is
-    -- ambiguous because every koplugin has a _meta and they all collide
-    -- in package.path — whichever plugin loaded first wins, so the about
-    -- box was showing some OTHER plugin's metadata.
-    local plugin_dir = debug.getinfo(1, "S").source:match("@(.*/)")
+    local src = debug.getinfo(1, "S").source:match("@(.*)$")
+    local plugin_dir = src and src:match("^(.*)/lib/[^/]+%.lua$")
     local meta
     if plugin_dir then
-        local ok, m = pcall(dofile, plugin_dir .. "_meta.lua")
+        local ok, m = pcall(dofile, plugin_dir .. "/_meta.lua")
         if ok then meta = m end
     end
-    local name    = (meta and meta.fullname)    or "Bookshelf"
-    local version = (meta and meta.version)     or "0.1.0"
-    local desc    = (meta and meta.description) or ""
-    UIManager:show(InfoMessage:new{
-        text = string.format("%s  v%s\n\n%s", name, version, desc),
-    })
+    local version     = (meta and meta.version)     or "?"
+    local description = (meta and meta.description) or ""
+
+    local GITHUB_URL_DISPLAY = "github.com/komadorirobin/bookshelf.koplugin"
+    local GITHUB_URL         = "https://github.com/komadorirobin/bookshelf.koplugin"
+
+    local Device           = require("device")
+    local Screen           = Device.screen
+    local Font             = require("ui/font")
+    local Geom             = require("ui/geometry")
+    local Size             = require("ui/size")
+    local Blitbuffer       = require("ffi/blitbuffer")
+    local FrameContainer   = require("ui/widget/container/framecontainer")
+    local CenterContainer  = require("ui/widget/container/centercontainer")
+    local MovableContainer = require("ui/widget/container/movablecontainer")
+    local InputContainer   = require("ui/widget/container/inputcontainer")
+    local VerticalGroup    = require("ui/widget/verticalgroup")
+    local VerticalSpan     = require("ui/widget/verticalspan")
+    local TextBoxWidget    = require("ui/widget/textboxwidget")
+    local TextWidget       = require("ui/widget/textwidget")
+    local GestureRange     = require("ui/gesturerange")
+
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local frame_w = math.min(math.floor(sw * 0.8), Screen:scaleBySize(420))
+    local FRAME_PAD = Screen:scaleBySize(24)
+    local content_w = frame_w - FRAME_PAD * 2
+
+    local column = VerticalGroup:new{ align = "center" }
+
+    local LOGO_NATIVE_W, LOGO_NATIVE_H = 900, 380
+    if plugin_dir then
+        local logo_path = plugin_dir .. "/assets/bookshelf-logo.png"
+        local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+        if ok_lfs and lfs and lfs.attributes and lfs.attributes(logo_path) then
+            local ImageWidget = require("ui/widget/imagewidget")
+            local logo_w = math.min(content_w, Screen:scaleBySize(220))
+            local logo_h = math.floor(logo_w * LOGO_NATIVE_H / LOGO_NATIVE_W)
+            column[#column + 1] = ImageWidget:new{
+                file         = logo_path,
+                width        = logo_w,
+                height       = logo_h,
+                scale_factor = 0,
+                alpha        = true,
+            }
+            column[#column + 1] = VerticalSpan:new{ width = Size.padding.default }
+        end
+    end
+
+    column[#column + 1] = TextWidget:new{
+        text = "v" .. version,
+        face = Font:getFace("cfont", 16),
+    }
+    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+    column[#column + 1] = TextBoxWidget:new{
+        text      = description,
+        face      = Font:getFace("cfont", 16),
+        width     = content_w,
+        alignment = "center",
+    }
+    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+
+    local Button = require("ui/widget/button")
+    local function open_github()
+        local ok = false
+        if Device.openLink then
+            local _ok, ret = pcall(function() return Device:openLink(GITHUB_URL) end)
+            if _ok and ret then ok = true end
+        end
+        if not ok and Device.input and Device.input.setClipboardText then
+            pcall(function() Device.input.setClipboardText(GITHUB_URL) end)
+            local Notification = require("ui/widget/notification")
+            UIManager:show(Notification:new{
+                text = _("Link copied to clipboard"),
+            })
+        end
+    end
+    column[#column + 1] = Button:new{
+        text       = GITHUB_URL_DISPLAY,
+        bordersize = 0,
+        padding    = 0,
+        margin     = 0,
+        text_font_face = "cfont",
+        text_font_size = 14,
+        callback   = open_github,
+    }
+
+    local frame = FrameContainer:new{
+        radius        = Size.radius.window,
+        padding       = FRAME_PAD,
+        padding_top   = math.floor(FRAME_PAD * 0.5),
+        margin        = 0,
+        background    = Blitbuffer.COLOR_WHITE,
+        column,
+    }
+
+    local dialog
+    dialog = InputContainer:new{
+        align = "center",
+        dimen = Geom:new{ x = 0, y = 0, w = sw, h = sh },
+        CenterContainer:new{
+            dimen = Geom:new{ w = sw, h = sh },
+            MovableContainer:new{ frame },
+        },
+    }
+    if Device:isTouchDevice() then
+        dialog.ges_events = {
+            TapClose = { GestureRange:new{
+                ges   = "tap",
+                range = Geom:new{ x = 0, y = 0, w = sw, h = sh },
+            } },
+        }
+        dialog.onTapClose = function(self_d, _arg, ges_ev)
+            if not frame.dimen or ges_ev.pos:notIntersectWith(frame.dimen) then
+                UIManager:close(self_d)
+            end
+            return true
+        end
+    end
+    if Device:hasKeys() then
+        dialog.key_events = { Close = { { Device.input.group.Back } } }
+        dialog.onClose = function(self_d)
+            UIManager:close(self_d)
+            return true
+        end
+    end
+
+    UIManager:show(dialog)
 end
 
 -- _updateSubItems() — drill-down menu for the in-app updater. Mirrors

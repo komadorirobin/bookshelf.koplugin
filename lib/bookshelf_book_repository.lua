@@ -753,6 +753,10 @@ local _light_meta_cache = {}  -- { [key] = { map = {[fp]=record}, expires_at = n
 local PROGRESS_CACHE_TTL = 120  -- seconds
 local _progress_cache    = {}   -- filepath → { pct, status, expires_at }
 local _folder_read_cache = {}   -- folder-key → { summary = table, expires_at = number }
+-- Forward declarations so invalidation resets the same module-local memo
+-- tables that the reader functions consult later in this file.
+local _folderHasBooks_cache
+local _normalize_genre_cache
 
 function Repo.invalidateWalkCache()
     _walk_cache       = {}
@@ -1331,7 +1335,7 @@ end
 -- folderHasBooks(path): true if `path` (recursively) contains at least one
 -- supported book file. Short-circuits on first hit; memoized per-session.
 -- Used by getAll to suppress empty folder cards before the user sees them.
-local _folderHasBooks_cache = {}
+_folderHasBooks_cache = {}
 
 function Repo.folderHasBooks(path)
     if not path or path == "" then return false end
@@ -1730,8 +1734,12 @@ function Repo.getFavorites(limit, offset)
         local titles = {}
         for _, item in ipairs(items) do
             local fp = item.file
-            local info = bim:getBookInfo(fp, false) or {}
-            titles[fp] = (info.title or (fp and fp:match("([^/]+)$")) or ""):lower()
+            local title
+            if bim then
+                local info = bim:getBookInfo(fp, false) or {}
+                title = info.title
+            end
+            titles[fp] = (title or (fp and fp:match("([^/]+)$")) or ""):lower()
         end
         table.sort(items, function(a, b) return titles[a.file] < titles[b.file] end)
     elseif key == "recently_read" then
@@ -2115,7 +2123,7 @@ end
 -- Only applied for group_kind == "genre" in _buildGroups. Authors keep
 -- their case-sensitive identity (case is part of an author's identity
 -- on some libraries with stylized spellings).
-local _normalize_genre_cache = {}
+_normalize_genre_cache = {}
 local function _normalizeGenre(s)
     if not s or s == "" then return "" end
     local cached = _normalize_genre_cache[s]
@@ -2403,6 +2411,35 @@ function Repo.getGroupChoices(kind)
             count = s.filepaths and #s.filepaths or 0,
         }
     end
+    return out
+end
+
+-- getFolderChoices: every directory under home_dir that contains a book at any
+-- depth, surfaced as picker choices for the "Specific folder..." chip source.
+-- Walks the cached library file list and collects every ancestor of every book
+-- between home_dir (exclusive) and the book's filename.
+function Repo.getFolderChoices()
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local cands = cachedWalk(home, depth)
+    local home_norm = home == "/" and "/" or home:gsub("/+$", "")
+
+    local seen = {}
+    for _, c in ipairs(cands) do
+        local fp = c.fp or ""
+        local parent = fp:match("^(.*)/[^/]+$")
+        while parent and parent ~= "" and parent ~= home_norm do
+            seen[parent] = true
+            parent = parent:match("^(.*)/[^/]+$")
+        end
+    end
+
+    local out = {}
+    for path in pairs(seen) do
+        local basename = path:match("([^/]+)$") or path
+        out[#out + 1] = { value = path, label = basename, subtitle = path }
+    end
+    table.sort(out, function(a, b) return a.value:lower() < b.value:lower() end)
     return out
 end
 
@@ -3015,11 +3052,19 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope)
     -- ratings) ARE early-returned because the filter is per-book and
     -- a group view returns groups, not books.
     local has_status_filter = filter and filter.statuses and next(filter.statuses) ~= nil
+    local has_custom_sort   = sort_priority and #sort_priority > 0
     if not has_status_filter then
-        if kind == "all"       then return Repo.getAll(nil, limit, offset)         end
-        if kind == "recent"    then return Repo.getRecent(limit, offset)           end
-        if kind == "latest"    then return Repo.getLatest(limit, offset, scope)    end
-        if kind == "favorites" then return Repo.getFavorites(limit, offset)        end
+        if kind == "all" then
+            return Repo.getAll(nil, limit, offset, { sort_priority = sort_priority })
+        end
+        if kind == "folder" then
+            return Repo.getAll(source.id, limit, offset, { sort_priority = sort_priority })
+        end
+        if not has_custom_sort then
+            if kind == "recent"    then return Repo.getRecent(limit, offset)        end
+            if kind == "latest"    then return Repo.getLatest(limit, offset, scope) end
+            if kind == "favorites" then return Repo.getFavorites(limit, offset)     end
+        end
     end
     if kind == "series"    then return Repo.getSeriesGroups(limit, offset, sort_priority, scope) end
     if kind == "authors"   then return Repo.getAuthors(limit, offset, sort_priority, scope)      end
@@ -3150,7 +3195,7 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope)
                 return set[b.filepath]
             end)
         elseif kind == "folder" then
-            local prefix = source.id or ""
+            local prefix = (source.id or ""):gsub("/+$", "") .. "/"
             candidates = loadCandidatesByPredicate(function(b)
                 return type(b.filepath) == "string" and b.filepath:sub(1, #prefix) == prefix
             end)
@@ -3167,8 +3212,8 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope)
         elseif kind == "tag" then
             local target = source.id
             candidates = loadCandidatesByPredicate(function(b)
-                if type(b.tags) ~= "table" then return false end
-                for _, t in ipairs(b.tags) do if t == target then return true end end
+                if type(b.genres) ~= "table" then return false end
+                for _, t in ipairs(b.genres) do if t == target then return true end end
                 return false
             end)
         elseif kind == "genre" then

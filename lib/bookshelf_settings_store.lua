@@ -31,7 +31,7 @@ local SETTINGS_PATH = DataStorage:getSettingsDir() .. "/bookshelf.lua"
 -- G_reader_settings starting with X".
 local LEGACY_KEYS = {
     -- Navigation state (chip / page / drill path)
-    "active_chip", "active_page", "drill_path",
+    "active_chip", "active_page", "active_cursor", "drill_path",
     -- Tab schema + legacy disabled-set
     "tabs", "chips_disabled",
     -- Font + chip-strip sizing
