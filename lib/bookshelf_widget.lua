@@ -4275,7 +4275,7 @@ function BookshelfWidget:_buildBookMenuHeader(book)
     local fresh = Repo.buildBookMeta(book.filepath) or book
     local thumb_widget
     if fresh.cover_bb then
-        thumb_widget = FrameContainer:new{
+        local thumb_frame = FrameContainer:new{
             bordersize = Size.border.thin,
             padding    = 0,
             margin     = 0,
@@ -4287,6 +4287,34 @@ function BookshelfWidget:_buildBookMenuHeader(book)
                 scale_factor     = 0,
             },
         }
+        -- Wrap in an InputContainer so a tap on the thumbnail opens a
+        -- full-screen preview. The bb above is one-shot (ImageWidget
+        -- frees it after first paint), so the tap handler rebuilds the
+        -- record to get a fresh bb for ImageViewer. ImageViewer takes
+        -- ownership of the new bb via image_disposable=true.
+        local fp = book.filepath
+        local title_for_viewer = book.title or book.filename or ""
+        thumb_widget = InputContainer:new{
+            dimen = Geom:new{
+                w = thumb_w + 2 * Size.border.thin,
+                h = thumb_h + 2 * Size.border.thin,
+            },
+            thumb_frame,
+        }
+        thumb_widget.ges_events = {
+            Tap = { GestureRange:new{ ges = "tap", range = thumb_widget.dimen } },
+        }
+        thumb_widget.onTap = function()
+            local preview = Repo.buildBookMeta(fp)
+            if not preview or not preview.cover_bb then return true end
+            UIManager:show(require("ui/widget/imageviewer"):new{
+                image            = preview.cover_bb,
+                image_disposable = true,
+                title_text       = title_for_viewer,
+                fullscreen       = true,
+            })
+            return true
+        end
     end
 
     local text_w = thumb_widget and (header_w - thumb_w - gap_w) or header_w
@@ -4316,14 +4344,30 @@ function BookshelfWidget:_buildBookMenuHeader(book)
         }
     end
 
-    if not thumb_widget then
-        return text_stack
+    local body
+    if thumb_widget then
+        body = HorizontalGroup_:new{
+            align = "top",
+            thumb_widget,
+            HorizontalSpan_:new{ width = gap_w },
+            text_stack,
+        }
+    else
+        body = text_stack
     end
-    return HorizontalGroup_:new{
-        align = "top",
-        thumb_widget,
-        HorizontalSpan_:new{ width = gap_w },
-        text_stack,
+    -- Vertical padding matches the existing horizontal frame padding so
+    -- the cover doesn't sit flush against the dialog's top / bottom
+    -- edges. ButtonDialog's title_group already contributes ~5dp of
+    -- info_padding all around; this FrameContainer adds Size.padding.large
+    -- on top + bottom so the cover gets a balanced visual frame
+    -- (matching the left gap from dialog edge to cover).
+    return FrameContainer:new{
+        bordersize     = 0,
+        margin         = 0,
+        padding        = 0,
+        padding_top    = Size.padding.large,
+        padding_bottom = Size.padding.large,
+        body,
     }
 end
 
@@ -4400,6 +4444,16 @@ function BookshelfWidget:_openBookMenu(item)
     end)
     local fav_label = (ok_fav and in_fav)
         and "Remove from favourites" or "Add to favourites"
+    -- TBR ("To Be Read") quick-toggle. Mirrors the SimpleUI book menu's
+    -- "Add to To Be Read" affordance: a one-tap collection toggle for
+    -- the most common reading-list collection beyond Favourites.
+    -- Internal collection name is "tbr" (lowercase, no space) so it
+    -- round-trips through ReadCollection cleanly; display is "TBR".
+    local TBR_COLL = "tbr"
+    local ok_tbr, in_tbr = pcall(function()
+        return ReadCollection:isFileInCollection(book.filepath, TBR_COLL)
+    end)
+    local tbr_label = (ok_tbr and in_tbr) and "Remove from TBR" or "Add to TBR"
     -- ButtonDialog does NOT auto-close on a button tap — each callback has to
     -- call UIManager:close itself. Wrap with a closing helper so all callbacks
     -- close the dialog after their action runs.
@@ -4482,10 +4536,22 @@ function BookshelfWidget:_openBookMenu(item)
     -- folder drilldown works regardless of which chips the user has
     -- enabled (it goes through _expandFolder, not through a chip).
     -- Truncate the displayed basename so deeply-named Calibre folders
-    -- (e.g. "Proof of Heaven_ A Neurosurgeon's Journey Into the
-    -- Afterlife") don't push the button text past the dialog edge.
+    -- don't push the button text past the dialog edge. Hidden entirely
+    -- when the book sits at home_dir's top level -- "Go to folder:
+    -- <home_basename>" would just bounce back to the same Home view
+    -- the user is already on.
     local parent_dir = book.filepath and book.filepath:match("^(.*)/[^/]+$")
-    if parent_dir and parent_dir ~= "" then
+    local home_dir
+    do
+        local ok_gs, gs = pcall(function() return G_reader_settings end)
+        if ok_gs and gs then
+            home_dir = gs:readSetting("home_dir")
+            if type(home_dir) == "string" then
+                home_dir = home_dir:gsub("/+$", "")  -- trim trailing slash for comparison
+            end
+        end
+    end
+    if parent_dir and parent_dir ~= "" and parent_dir ~= home_dir then
         local folder_label = parent_dir:match("([^/]+)$") or parent_dir
         local display_label = folder_label
         if #display_label > 32 then
@@ -4533,6 +4599,31 @@ function BookshelfWidget:_openBookMenu(item)
             else
                 FileManagerBookInfo:new{}:show(book.filepath)
             end
+        end),
+    }
+
+    local tbr_button = {
+        text = tbr_label,
+        callback = closing(function()
+            -- Same persist-quirk workaround as the favourites toggle
+            -- (ReadCollection:removeItem's :write call passes the
+            -- literal "collection_name" key instead of the variable's
+            -- value; do an explicit :write({ [coll] = true }) so
+            -- removals actually persist).
+            local already = false
+            local ok = pcall(function()
+                already = ReadCollection:isFileInCollection(book.filepath, TBR_COLL) or false
+            end)
+            if ok and already then
+                ReadCollection:removeItem(book.filepath, TBR_COLL)
+                ReadCollection:write({ [TBR_COLL] = true })
+            else
+                ReadCollection:addItem(book.filepath, TBR_COLL)
+                ReadCollection:write({ [TBR_COLL] = true })
+            end
+            Repo.invalidateBookCache("tbr-toggle")
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
         end),
     }
 
@@ -4626,8 +4717,13 @@ function BookshelfWidget:_openBookMenu(item)
     -- five star options + Clear; tap commits via the existing
     -- _setBookRating method.
     local function _ratingLabel()
+        -- Always render five star glyphs (filled + empty) so the
+        -- current rating is visible at a glance, even when unset.
+        -- Clamps weird values (NaN, negative, >5) to the valid range.
         local r = tonumber(book.rating) or 0
-        if r < 1 or r > 5 then return _("Rating: not set") end
+        if r < 0 then r = 0 end
+        if r > 5 then r = 5 end
+        r = math.floor(r)
         local filled = ("\xE2\x98\x85"):rep(r)
         local empty  = ("\xE2\x98\x86"):rep(5 - r)
         return _("Rating") .. ": " .. filled .. empty
@@ -4783,13 +4879,19 @@ function BookshelfWidget:_openBookMenu(item)
         end,
     }
 
-    -- Final assembly: state actions at the top, then info / tag / refresh,
-    -- then rating / remove-from-history, destructive at the bottom of
-    -- the action block, navigation rows below, Cancel last.
+    -- Final assembly. Order:
+    --   1. Status row (Reading / On hold / Finished / Mark as new)
+    --   2. Tags / Favourites / TBR  -- the membership row, all three
+    --      collection-adjacent toggles grouped per user feedback
+    --   3. Show info / Refresh metadata  -- info + cache ops
+    --   4. Rating / Remove from history
+    --   5. Reset / Delete
+    --   ...nav rows...
+    --   Cancel
     local buttons = {
         status_row,
-        { show_info_button, fav_button },
-        { tags_button, refresh_button },
+        { tags_button, fav_button, tbr_button },
+        { show_info_button, refresh_button },
         { rating_button, remove_history_button },
         { reset_btn, delete_btn },
     }
