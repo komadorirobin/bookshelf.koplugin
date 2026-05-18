@@ -16,6 +16,7 @@ local CACHE_KEY        = "hardcover_ratings"
 local CACHE_TIME_KEY   = "hardcover_ratings_fetched_at"
 
 local _hc_settings
+local _hc_settings_object
 local _hc_books
 local _ratings_cache
 
@@ -68,6 +69,7 @@ function Hardcover.invalidate()
     _hc_books = nil
     _ratings_cache = nil
     _hc_settings = nil
+    _hc_settings_object = nil
 end
 
 function Hardcover.getCachedAt()
@@ -143,6 +145,35 @@ local function _loadPickerModules()
         DialogManager = DialogManager,
         Book = Book,
     }
+end
+
+local function _openHardcoverSettingsObject()
+    if _hc_settings_object then return _hc_settings_object end
+    local ok, HardcoverSettings = pcall(require, "hardcover/lib/hardcover_settings")
+    if not ok or not HardcoverSettings or type(HardcoverSettings.new) ~= "function" then
+        return nil, "Hardcover settings module could not be loaded"
+    end
+    local ok_obj, obj = pcall(function()
+        return HardcoverSettings:new(_settingsPath(), { document = { file = nil } })
+    end)
+    if not ok_obj or not obj then
+        return nil, "Could not open Hardcover settings"
+    end
+    _hc_settings_object = obj
+    return _hc_settings_object
+end
+
+local function _openPickerContext()
+    local modules, mod_err = _loadPickerModules()
+    if not modules then return nil, nil, nil, mod_err end
+    local settings, settings_err = _openHardcoverSettingsObject()
+    if not settings then return nil, nil, nil, settings_err end
+    modules.User.settings = settings
+    local ok_user, user_id = pcall(modules.User.getId, modules.User)
+    if not ok_user or not user_id then
+        return nil, nil, nil, "Could not fetch Hardcover user id"
+    end
+    return modules, settings, user_id
 end
 
 local function _shallowCopy(t)
@@ -277,7 +308,8 @@ function Hardcover.getEmbeddedIdentifiers(book)
             return book.identifiers
         end
     end
-    local ids = _readEmbeddedIdentifiersFromEpub(book.filepath)
+    local ok_epub_ids, ids = pcall(_readEmbeddedIdentifiersFromEpub, book.filepath)
+    if not ok_epub_ids then ids = nil end
     if ids and ids ~= "" then
         book.identifiers = ids
         return ids
@@ -435,11 +467,8 @@ function Hardcover.linkFromEmbeddedIdentifiers(book, opts)
     local identifiers = Hardcover.getEmbeddedIdentifiers(book)
     if not identifiers then return false, "No embedded Hardcover identifier found" end
 
-    local modules, mod_err = _loadPickerModules()
-    if not modules then return false, mod_err end
-    local settings_ok, settings = pcall(_openHardcoverSettings)
-    if not settings_ok or not settings then return false, "Could not open Hardcover settings" end
-    local user_id = modules.User:getId()
+    local modules, _settings, user_id, ctx_err = _openPickerContext()
+    if not modules then return false, ctx_err end
     local hc_book = _findBookByIdentifiers(modules, identifiers, user_id)
     if not hc_book then return false, "No Hardcover match found for embedded identifier" end
 
@@ -452,11 +481,8 @@ end
 function Hardcover.showBookPicker(book, opts)
     opts = opts or {}
     if not (book and book.filepath) then return false, "Missing local book" end
-    local modules, mod_err = _loadPickerModules()
-    if not modules then return false, mod_err end
-    local ok_settings, settings = pcall(_openHardcoverSettings)
-    if not ok_settings or not settings then return false, "Could not open Hardcover settings" end
-    local user_id = modules.User:getId()
+    local modules, settings, user_id, ctx_err = _openPickerContext()
+    if not modules then return false, ctx_err end
     local title = book.title or _filenameTitle(book.filepath)
     local author = _authorString(book)
     local books, err
@@ -495,11 +521,8 @@ function Hardcover.showEditionPicker(book, book_id, opts)
     if not (book and book.filepath and book_id) then
         return false, "Missing Hardcover book id"
     end
-    local modules, mod_err = _loadPickerModules()
-    if not modules then return false, mod_err end
-    local ok_settings, settings = pcall(_openHardcoverSettings)
-    if not ok_settings or not settings then return false, "Could not open Hardcover settings" end
-    local user_id = modules.User:getId()
+    local modules, settings, user_id, ctx_err = _openPickerContext()
+    if not modules then return false, ctx_err end
     local editions = modules.Api:findEditions(book_id, user_id)
     if not editions then return false, "Could not fetch Hardcover editions" end
 

@@ -37,6 +37,21 @@ package.loaded["luasettings"] = {
 
 package.loaded["hardcover/lib/hardcover_api"] = {
     me = function() return { id = 42 } end,
+    findBooks = function(_, title, author, user_id)
+        assert(title == "Example", "expected picker title search")
+        assert(author == "Author", "expected picker author search")
+        assert(user_id == 42, "expected picker user id")
+        return {
+            { book_id = 222, edition_id = 333, title = "Example" },
+        }
+    end,
+    findEditions = function(_, book_id, user_id)
+        assert(book_id == 222, "expected edition picker book id")
+        assert(user_id == 42, "expected edition picker user id")
+        return {
+            { book_id = 222, edition_id = 444, title = "Example", edition_format = "E-Book" },
+        }
+    end,
     query = function(_, _query, vars)
         assert(vars.userId == 42, "user id should be fetched and cached")
         assert(#vars.ids == 2, "expected two linked Hardcover ids")
@@ -49,6 +64,54 @@ package.loaded["hardcover/lib/hardcover_api"] = {
             },
         }
     end,
+}
+
+package.loaded["hardcover/lib/hardcover_settings"] = {
+    new = function(_, path, _ui)
+        assert(path == "/settings/hardcoversync_settings.lua", "unexpected wrapped settings path")
+        return {
+            readSetting = function(_, key) return hc_settings[key] end,
+            updateSetting = function(_, key, value) hc_settings[key] = value end,
+            compatibilityMode = function() return true end,
+        }
+    end,
+}
+
+package.loaded["hardcover/lib/user"] = {
+    getId = function(self)
+        assert(self.settings and type(self.settings.updateSetting) == "function",
+            "picker must use HardcoverSettings, not raw LuaSettings")
+        local user_id = self.settings:readSetting("user_id")
+        if not user_id then
+            user_id = 42
+            self.settings:updateSetting("user_id", user_id)
+        end
+        return user_id
+    end,
+}
+
+local picker_state = {}
+package.loaded["hardcover/lib/ui/dialog_manager"] = {
+    new = function(_, o)
+        local manager = o or {}
+        function manager:buildSearchDialog(title, items, active_item, _book_callback, search_callback, search)
+            picker_state.title = title
+            picker_state.items = items
+            picker_state.active_item = active_item
+            picker_state.search_callback = search_callback
+            picker_state.search = search
+            picker_state.settings = self.settings
+        end
+        function manager:updateSearchResults(search)
+            picker_state.updated_search = search
+        end
+        return manager
+    end,
+}
+
+package.loaded["hardcover/lib/book"] = {
+    editionFormatName = function(_, edition_format) return edition_format end,
+    parseIdentifiers = function() return {} end,
 }
 
 local Hardcover = dofile("lib/bookshelf_hardcover.lua")
@@ -130,6 +193,23 @@ test("table identifiers can expose embedded Hardcover ids", function()
     assert(ids:find("hardcover%-id:777"), ids)
     assert(ids:find("hardcover%-edition:888"), ids)
     assert(Hardcover.hasHardcoverIdentifiers(book))
+end)
+
+test("showBookPicker uses Hardcover settings wrapper for Hardcover dialogs", function()
+    Hardcover.invalidate()
+    picker_state = {}
+    local ok, err = Hardcover.showBookPicker({
+        filepath = "/books/e.epub",
+        title = "Example",
+        author = "Author",
+        identifiers = "isbn:1234567890",
+    })
+    assert(ok, tostring(err))
+    eq(picker_state.title, "Select Hardcover book")
+    eq(picker_state.search, "Example")
+    assert(picker_state.settings, "picker settings missing")
+    assert(type(picker_state.settings.compatibilityMode) == "function",
+        "dialog settings must expose compatibilityMode()")
 end)
 
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
