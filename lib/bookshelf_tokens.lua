@@ -30,6 +30,7 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%authors",          description = "All authors" },
     { category = "Book",     token = "%series_name",      description = "Series name" },
     { category = "Book",     token = "%series_num",       description = "Series number" },
+    { category = "Book",     token = "%rating",           description = "Star rating (★★★☆☆), empty when unrated" },
     { category = "Book",     token = "%filename",         description = "File name" },
     { category = "Book",     token = "%format",           description = "Format (EPUB/PDF/…)" },
     { category = "Book",     token = "%description",      description = "Book blurb (HTML stripped)" },
@@ -91,6 +92,19 @@ Tokens.expanders.series_num  = metaToken("series_num")
 Tokens.expanders.filename    = metaToken("filename")
 Tokens.expanders.lang        = metaToken("lang")
 Tokens.expanders.format      = metaToken("format")
+-- %rating -> N filled stars + (5-N) empty stars. Rating is stored
+-- 1-5 (integer) in the DocSettings summary; book.rating is hydrated
+-- by Repo.readProgress via buildBook. Returns empty for unrated /
+-- nil so [if:rating]…[/if] can gate the display in the hero line.
+Tokens.expanders.rating = function(book)
+    if not book or not book.rating then return "" end
+    local r = math.floor(tonumber(book.rating) or 0)
+    if r < 1 then return "" end
+    if r > 5 then r = 5 end
+    local filled = "\xE2\x98\x85"  -- ★ U+2605
+    local empty  = "\xE2\x98\x86"  -- ☆ U+2606
+    return filled:rep(r) .. empty:rep(5 - r)
+end
 
 local HC_STAR      = "\xef\x80\x85" -- Nerd Font nf-fa-star, matches hardcoverapp.koplugin
 local HC_HALF_STAR = "\xef\x82\x89" -- Nerd Font nf-fa-star_half

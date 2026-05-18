@@ -162,14 +162,14 @@ local SOURCE_LABEL = {
     series        = function() return _("Series")             end,
     authors       = function() return _("Authors")            end,
     genres        = function() return _("Genres")             end,
-    tags          = function() return _("Tags")               end,
+    tags          = function() return _("Collections")        end,
     formats       = function() return _("Formats")            end,
     ratings       = function() return _("Ratings")            end,
     favorites     = function() return _("Favourites")         end,
     -- "Specific X" kinds carry an id; the resolver appends it.
     folder        = function() return _("Folder")             end,
-    collection    = function() return _("Tag")                end,
-    tag           = function() return _("Tag")                end,
+    collection    = function() return _("Collection")         end,
+    tag           = function() return _("Collection")         end,
     genre         = function() return _("Genre")              end,
     author        = function() return _("Author")             end,
     single_series = function() return _("Series")             end,
@@ -950,58 +950,12 @@ function Editor:_pickSource(draft, on_close)
                     end,
                     item_count   = function() return #visible end,
                     item_at      = function(idx) return visible[idx] end,
+                    -- Shared cell renderer: same visual treatment in every
+                    -- picker (folder, author, series, genre, format, rating,
+                    -- collection) AND in the Collection Manager. No selected
+                    -- state here -- pickers are one-shot select-and-close.
                     cell_renderer = function(item, dimen)
-                        local VerticalGroup_ = require("ui/widget/verticalgroup")
-                        local VerticalSpan_  = require("ui/widget/verticalspan")
-                        -- padding INSIDE the dimen; FrameContainer's padding
-                        -- is 0 so the rendered cell size == dimen.w exactly.
-                        -- This is the pattern IconsLibrary uses and is the
-                        -- only way to avoid the cells spilling over the
-                        -- modal's right edge by 2*padding + 2*bordersize.
-                        local content_inset = Screen_:scaleBySize(8)
-                        local content_w     = dimen.w - 2 * content_inset
-                        local label_tw = TextWidget:new{
-                            text      = item.label or "",
-                            face      = Font:getFace("cfont", 18),
-                            bold      = true,
-                            fgcolor   = Blitbuffer_.COLOR_BLACK,
-                            max_width = content_w,
-                        }
-                        local children = { label_tw }
-                        -- Secondary line: either a book count (series/authors/
-                        -- genres/etc.) or a freeform subtitle string (folder
-                        -- paths). count + subtitle are mutually exclusive at
-                        -- the callsite; if both arrive, subtitle wins because
-                        -- it carries more information.
-                        local sub_text
-                        if item.subtitle and item.subtitle ~= "" then
-                            sub_text = item.subtitle
-                        elseif item.count and item.count > 0 then
-                            sub_text = tostring(item.count) .. " "
-                                .. (item.count == 1 and _("book") or _("books"))
-                        end
-                        if sub_text then
-                            children[#children + 1] = VerticalSpan_:new{ width = Screen_:scaleBySize(4) }
-                            children[#children + 1] = TextWidget:new{
-                                text      = sub_text,
-                                face      = Font:getFace("cfont", 12),
-                                fgcolor   = Blitbuffer_.COLOR_DARK_GRAY or Blitbuffer_.COLOR_BLACK,
-                                max_width = content_w,
-                            }
-                        end
-                        local stack = VerticalGroup_:new{ align = "center" }
-                        for _i, c in ipairs(children) do stack[#stack + 1] = c end
-                        return FrameContainer_:new{
-                            bordersize = Size.border.thin,
-                            radius     = Size.radius.default,
-                            padding    = 0,
-                            margin     = 0,
-                            background = Blitbuffer_.COLOR_WHITE,
-                            CenterContainer_:new{
-                                dimen = Geom:new{ w = dimen.w, h = dimen.h },
-                                stack,
-                            },
-                        }
+                        return require("lib/bookshelf_picker_cell").render(item, dimen)
                     end,
                     on_cell_tap = function(item)
                         UIManager:close(modal)
@@ -1109,13 +1063,25 @@ function Editor:_pickSource(draft, on_close)
 
     local function open_tag_picker()
         local ReadCollection = require("readcollection")
+        local default_name = ReadCollection.default_collection_name
         local choices = {}
-        for name in pairs(ReadCollection.coll or {}) do
-            choices[#choices + 1] = { value = name, label = name }
+        for name, coll in pairs(ReadCollection.coll or {}) do
+            -- Localised label so the favourites collection reads as
+            -- "Favourites" rather than its raw internal key. Count is
+            -- picked up by the shared cell renderer and rendered below
+            -- the label as "n book(s)".
+            local label = (name == default_name) and _("Favourites") or name
+            local count = 0
+            for _ in pairs(coll) do count = count + 1 end
+            choices[#choices + 1] = {
+                value = name,
+                label = label,
+                count = count,
+            }
         end
         table.sort(choices, function(a, b) return a.label:lower() < b.label:lower() end)
         UIManager:close(d)
-        pickById("tag", choices, function(picked)
+        pickById("collection", choices, function(picked)
             if not picked then
                 Editor:_pickSource(draft, on_close)
                 return
@@ -1191,8 +1157,8 @@ function Editor:_pickSource(draft, on_close)
                 function() open_group_picker("genre", "genre", "genre") end),
         },
         {
-            btn("tags",      _("Tags")),
-            specific_btn("collection", _("Specific tag\xE2\x80\xA6"), open_tag_picker),
+            btn("tags",      _("Collections")),
+            specific_btn("collection", _("Specific collection\xE2\x80\xA6"), open_tag_picker),
         },
         {
             btn("formats",   _("Formats")),

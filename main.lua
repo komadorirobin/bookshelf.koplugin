@@ -338,6 +338,7 @@ function Bookshelf:_extendMenuOrder()
         "bookshelf_toggle",
         "bookshelf_hero_card",
         "bookshelf_shelf_tabs",
+        "bookshelf_collections",
         "bookshelf_settings",
         "bookshelf_updates",
         "bookshelf_about",
@@ -454,8 +455,26 @@ function Bookshelf:addToMainMenu(menu_items)
             S._bw = _live_widget
             return S:_tabsMenuItems()
         end,
-        -- Visually separate the customisation entries above from the
-        -- broader Settings / Updates / About cluster below.
+    }
+
+    menu_items.bookshelf_collections = {
+        text     = _("Manage collections\xE2\x80\xA6"),
+        callback = function()
+            S._bw = _live_widget
+            local CollectionManager = require("lib/bookshelf_collection_manager")
+            CollectionManager.show{
+                bw = _live_widget,
+                on_close = function()
+                    if _live_widget and _live_widget._rebuild then
+                        _live_widget:_rebuild()
+                        UIManager:setDirty(_live_widget, "ui")
+                    end
+                end,
+            }
+        end,
+        -- Visually separate the customisation entries above (chip
+        -- editor, collection manager) from the broader Settings /
+        -- Updates / About cluster below.
         separator = true,
     }
 

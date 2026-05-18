@@ -55,15 +55,20 @@ local function _glyphSize(card_w)
 end
 
 -- Vertical placement of the in-progress glyph relative to the card.
--- The glyph's top sits at (card_h - glyph_h * GLYPH_TOP_LIFT_*).
---   * < 1.0 -> glyph dangles below the card (1 - lift fraction of glyph_h)
+-- The glyph's top sits at (card_h - widget_h * GLYPH_TOP_LIFT_*),
+-- where widget_h is the TextWidget's MEASURED height (accounts for
+-- font ascent/descent + line-height overhead, ~1.3-1.4 × face size).
+--   * < 1.0 -> glyph dangles below the card (1 - lift fraction of widget_h)
 --   * = 1.0 -> glyph bottom touches card bottom
---   * > 1.0 -> glyph fully inside card, lift-1 fraction above card bottom
--- Regular grid: a bit of dangle gives the cover a marker-sticking-out
--- character. Expanded (title) view: keep the glyph fully inside the
--- cover so it doesn't crowd the title text below.
-local GLYPH_TOP_LIFT_REGULAR  = 1.10
-local GLYPH_TOP_LIFT_EXPANDED = 1.55
+--   * > 1.0 -> glyph fully inside card, (lift-1) fraction above bottom
+--
+-- Both regular and expanded (3-row) modes share the same 0.50 lift:
+-- the progress bar paints on top of the glyph, hiding the in-card
+-- portion, so visibility relies entirely on the dangle. 50% of the
+-- widget below card_h gives a recognisable bookmark shape (V-cut tip
+-- + a slab of the rectangular body) at every DPI, in every mode.
+local GLYPH_TOP_LIFT_REGULAR  = 0.50
+local GLYPH_TOP_LIFT_EXPANDED = 0.50
 local function _glyphTopLift(show_titles)
     if show_titles then return GLYPH_TOP_LIFT_EXPANDED end
     return GLYPH_TOP_LIFT_REGULAR
@@ -465,8 +470,16 @@ function SpineWidget:_renderShadowedCard(inner)
         if glyph_w <= card_w * 0.4 then
             local glyph = CoverProgress.buildGlyphWidget(
                 CoverProgress.GLYPH_BOOKMARK, glyph_h, colours.fill)
+            -- Use the TextWidget's ACTUAL rendered height for the
+            -- offset math, not the nominal face size. A
+            -- Font:getFace("symbols", N) widget paints at roughly
+            -- N * 1.3-1.4 (ascent + descent + line-height padding),
+            -- so a lift computed from N alone over-shoots and the
+            -- glyph dangles below the card. Measuring after build
+            -- keeps the lift math accurate at any DPI.
+            local widget_h = glyph:getSize().h
             local lift = _glyphTopLift(self.show_titles)
-            local y_offset = card_h - math.floor(glyph_h * lift + 0.5)
+            local y_offset = card_h - math.floor(widget_h * lift + 0.5)
             children[#children + 1] = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,

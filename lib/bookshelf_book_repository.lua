@@ -787,9 +787,53 @@ function Repo.invalidateSeriesCache()
     _light_meta_cache = {}
 end
 
+-- _resetLightMetaProgress(filepath)  -- nil-internal helper. The
+-- predicate path in getBySource mutates _progress_fetched / _status /
+-- _pct / rating ON the cached light-meta records (it caches the
+-- "did we already read DocSettings for this candidate" flag so a
+-- subsequent sort-needs pass doesn't repeat the work). Those
+-- mutations persist for the cache's lifetime; the predicate then
+-- reuses the stale snapshot on the next run.
+--
+-- Pre-v2.0.4 the bug was masked because _light_meta_cache had
+-- WALK_CACHE_TTL=0 and was effectively always-MISS, so every fetch
+-- rebuilt fresh records. Bumping the TTL exposed the mutation as a
+-- stale-data regression: a book whose status had been changed via
+-- the long-press menu (or from anywhere else) stayed in the
+-- previous status-filtered chip until KOReader restart, because the
+-- cached record's _progress_fetched=true short-circuited the
+-- re-read. Fix: when invalidateProgressCache fires (which happens
+-- on every status change and metadata edit), strip the
+-- per-DocSettings mutations from any cached light-meta record for
+-- the same filepath so the next predicate run reads fresh state.
+-- Targets issue #40.
+local function _resetLightMetaProgress(rec)
+    rec._progress_fetched = nil
+    rec._status           = nil
+    rec._pct              = nil
+    rec.rating            = nil
+    rec.read_status       = nil
+end
+
 function Repo.invalidateProgressCache(filepath)
-    if filepath then _progress_cache[filepath] = nil
-    else _progress_cache = {} end
+    if filepath then
+        _progress_cache[filepath] = nil
+        for _key, entry in pairs(_light_meta_cache) do
+            if entry and entry.map then
+                local rec = entry.map[filepath]
+                if rec then _resetLightMetaProgress(rec) end
+            end
+        end
+    else
+        _progress_cache = {}
+        for _key, entry in pairs(_light_meta_cache) do
+            if entry and entry.map then
+                for _fp, rec in pairs(entry.map) do
+                    _resetLightMetaProgress(rec)
+                end
+            end
+        end
+    end
     _folder_read_cache = {}
 end
 

@@ -731,8 +731,11 @@ function LibraryModal:_renderGridArea(content_width, area_height)
         cols = math.max(3, math.floor(content_width / target_cell_w))
     end
     local rows = math.ceil(cells_per_page / cols)
-    -- Cell height divides the area after subtracting inter-row MARGIN gaps.
-    local cell_w = math.floor(content_width / cols)
+    -- Cell dimensions subtract MARGIN gaps in both axes so the grid has
+    -- visible breathing room horizontally as well as vertically. Without
+    -- the (cols-1)*MARGIN subtraction the columns butt right up against
+    -- each other and the cards lose their card-ness.
+    local cell_w = math.floor((content_width - (cols - 1) * MARGIN) / cols)
     local cell_h = math.floor((area_height - (rows - 1) * MARGIN) / rows)
 
     local start_idx = (self.page - 1) * cells_per_page + 1
@@ -777,6 +780,9 @@ function LibraryModal:_renderGridArea(content_width, area_height)
                     end
                 end
                 cell_widget = ic
+            end
+            if in_row > 0 then
+                table.insert(hg, HorizontalSpan:new{ width = MARGIN })
             end
             table.insert(hg, cell_widget)
             in_row = in_row + 1
