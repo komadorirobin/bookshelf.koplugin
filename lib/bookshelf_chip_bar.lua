@@ -43,6 +43,7 @@ local Font           = require("ui/font")
 local Blitbuffer     = require("ffi/blitbuffer")
 local UIManager      = require("ui/uimanager")
 local Screen         = require("device").screen
+local TextSegments   = require("lib/bookshelf_text_segments")
 
 -- Tab-bar font size scale (percent). 100 = built-in baseline; nudge dialog
 -- accepts 50-300.
@@ -57,51 +58,11 @@ local function _scaled(n)
     return math.floor(n * _fontScale() / 100 + 0.5)
 end
 
--- Classify a label string into runs of "ascii" (bytes < 0x80 -> text) and
--- "icon" (multi-byte UTF-8 sequences -> nerd-font / emoji glyph). Used to
--- render mixed chip labels with bold-only on the text characters; glyphs
--- stay regular so the font's own stroke weight isn't faux-bolded into a
--- blobby mess. ASCII punctuation/spaces classify as "ascii" too -- a space
--- between glyph and word stays inside the bold side of the split so it
--- doesn't visibly thin out (the bold-vs-regular width difference is mostly
--- invisible on a space).
-local function _labelSegments(label)
-    local segments = {}
-    local current  = nil
-    local i = 1
-    while i <= #label do
-        local b = string.byte(label, i)
-        local class, chunk_len
-        if b < 0x80 then
-            class, chunk_len = "ascii", 1
-        elseif b < 0xC0 then
-            -- Continuation byte at start = malformed UTF-8; consume one
-            -- byte and keep going so the iteration doesn't infinite-loop.
-            class, chunk_len = "icon", 1
-        elseif b < 0xE0 then
-            class, chunk_len = "icon", 2
-        elseif b < 0xF0 then
-            class, chunk_len = "icon", 3
-        else
-            class, chunk_len = "icon", 4
-        end
-        local chunk = label:sub(i, i + chunk_len - 1)
-        if current and current.class == class then
-            current.text = current.text .. chunk
-        else
-            current = { class = class, text = chunk }
-            segments[#segments + 1] = current
-        end
-        i = i + chunk_len
-    end
-    return segments
-end
-
 -- Build the cell-content widget for a chip label. Returns either a single
 -- TextWidget (when the label is all-text or all-icon) or a HorizontalGroup
 -- of TextWidgets with mixed bold settings (text bold, icons regular).
 local function _buildLabelContent(label, size, max_w)
-    local segments = _labelSegments((label or ""):upper())
+    local segments = TextSegments.labelSegments((label or ""):upper())
     if #segments == 0 then
         return TextWidget:new{
             text    = "",
@@ -113,7 +74,7 @@ local function _buildLabelContent(label, size, max_w)
         return TextWidget:new{
             text      = segments[1].text,
             face      = Font:getFace("infofont", size),
-            bold      = segments[1].class == "ascii",
+            bold      = segments[1].class == "text",
             fgcolor   = Blitbuffer.COLOR_BLACK,
             max_width = max_w,
         }
@@ -126,7 +87,7 @@ local function _buildLabelContent(label, size, max_w)
         hg[#hg + 1] = TextWidget:new{
             text    = seg.text,
             face    = Font:getFace("infofont", size),
-            bold    = seg.class == "ascii",
+            bold    = seg.class == "text",
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
     end
@@ -138,12 +99,12 @@ end
 -- (no max_width) so the returned size reflects actual glyph metrics.
 local function _measureLabel(label, size)
     local total = 0
-    local segments = _labelSegments((label or ""):upper())
+    local segments = TextSegments.labelSegments((label or ""):upper())
     for _i, seg in ipairs(segments) do
         local tw = TextWidget:new{
             text = seg.text,
             face = Font:getFace("infofont", size),
-            bold = seg.class == "ascii",
+            bold = seg.class == "text",
         }
         total = total + tw:getSize().w
         tw:free()
@@ -559,7 +520,7 @@ function ChipBar:_initChips()
                 height = icon_size,
             }
         else
-            -- Mixed text + icon label: text chars render bold, non-ASCII
+            -- Mixed text + icon label: text chars render bold, icon-like
             -- glyphs render regular. Avoids the faux-bold "blobby" look
             -- on nerd-font / emoji glyphs while keeping "FAVOURITES" the
             -- usual chip-text weight. max_width is honoured for the
