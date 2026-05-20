@@ -43,6 +43,12 @@ local PickerCell = {}
 -- dimen = Geom{ w = cell_w, h = cell_h }
 -- opts = {
 --   selected = bool,                -- true = inverted (filled) cell
+--   tint     = bool,                -- true = light-gray fill (mutually
+--                                   --       exclusive with selected; used
+--                                   --       to flag a staged action that
+--                                   --       isn't a "filled / in" state,
+--                                   --       e.g. stage-remove on a
+--                                   --       collection that's currently in).
 -- }
 function PickerCell.render(item, dimen, opts)
     opts = opts or {}
@@ -98,13 +104,19 @@ function PickerCell.render(item, dimen, opts)
     local stack = VerticalGroup:new{ align = "center" }
     for _i, c in ipairs(children) do stack[#stack + 1] = c end
 
+    -- tint takes precedence over selected: a tinted cell paints the
+    -- gray background literally rather than relying on invert (so it
+    -- reads as a third, distinct state next to plain white and inverted
+    -- black).
+    local bg     = opts.tint and Blitbuffer.COLOR_LIGHT_GRAY or Blitbuffer.COLOR_WHITE
+    local invert = opts.selected and not opts.tint
     return FrameContainer:new{
         bordersize = Size.border.thin,
         radius     = Size.radius.default,
         padding    = 0,
         margin     = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        invert     = opts.selected,  -- flips pixels inside the border
+        background = bg,
+        invert     = invert,
         CenterContainer:new{
             dimen = Geom:new{ w = dimen.w, h = dimen.h },
             stack,

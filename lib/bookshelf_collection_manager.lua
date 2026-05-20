@@ -169,10 +169,39 @@ end
 --   on_close  -- optional callback invoked after the dialog closes.
 --   bw        -- optional BookshelfWidget reference for chip-pin side
 --                effects + reusing _buildBookMenuHeader.
+--
+--   bulk            -- when true, ignore `book`; operate on `paths`
+--                      (array of filepaths). Cells become tri-state
+--                      against the selection set. Save returns a diff
+--                      via `on_save(diff)`; no ReadCollection writes.
+--   paths           -- (bulk mode) array of filepaths to operate on.
+--   stage_only      -- (single-book) skip persistence; Save returns
+--                      a `{add, remove}` diff via `on_save(diff)` so
+--                      the per-book menu can fold the change into its
+--                      outer stage-and-apply draft.
+--   initial_add     -- (bulk + stage_only) `{[name]=true}` resume set:
+--                      collection names already staged for add. Used
+--                      by the per-book menu's reopen flow so a return
+--                      from Cancel / Save still shows the prior diff.
+--   initial_remove  -- (bulk + stage_only) `{[name]=true}` resume set
+--                      for staged remove.
+--   on_save(diff)   -- (bulk + stage_only) called with
+--                      `{add = set|nil, remove = set|nil}`. Each side
+--                      is the set of collection names whose membership
+--                      should change; nil = "no change" on that side.
+--   on_cancel       -- (bulk + stage_only) called when the user taps
+--                      Cancel. Diff is dropped.
 function CollectionManager.show(opts)
     opts = opts or {}
     local book      = opts.book
-    local book_mode = book ~= nil
+    -- Mode flags. `bulk_mode` ignores `book` entirely. `stage_only`
+    -- requires `book` and behaves like book_mode except Save returns
+    -- a diff via on_save instead of writing through to ReadCollection.
+    -- book_mode (the existing single-book-persist path) is unchanged
+    -- when neither bulk nor stage_only is set.
+    local bulk_mode  = opts.bulk == true
+    local stage_only = opts.stage_only == true and book ~= nil and not bulk_mode
+    local book_mode  = book ~= nil and not bulk_mode and not stage_only
 
     -- Width / layout constants. Match the book menu's ButtonDialog
     -- (default width_factor = 0.9 of min(W, H)) so the manager sits at
@@ -196,17 +225,44 @@ function CollectionManager.show(opts)
     -- current membership so the first paint shows accurate checkboxes;
     -- mutated locally on tap; written to disk on Save. We never mutate
     -- ReadCollection.coll until Save fires.
-    local draft = {}
+    --
+    -- book_mode (persist) uses `draft` as a single membership hash.
+    -- bulk / stage_only modes use `draft_add` + `draft_remove` instead:
+    -- each is a `{[name]=true}` set of collections the user has STAGED
+    -- to add to / remove from the operating set (selection for bulk,
+    -- single book for stage_only). Baseline membership is computed
+    -- per-cell from ReadCollection so the staged diff layers ON TOP of
+    -- whatever the live state is at paint time -- no need to
+    -- pre-populate from current membership the way book_mode does.
+    local draft        = {}
+    local draft_add    = {}
+    local draft_remove = {}
     if book_mode then
         local current = ReadCollection:getCollectionsWithFile(book.filepath)
         for name in pairs(ReadCollection.coll) do
             draft[name] = current[name] == true
         end
     end
+    if bulk_mode or stage_only then
+        if opts.initial_add then
+            for name in pairs(opts.initial_add) do draft_add[name] = true end
+        end
+        if opts.initial_remove then
+            for name in pairs(opts.initial_remove) do draft_remove[name] = true end
+        end
+    end
     -- Internal hand-off so rebuild() preserves in-progress checkbox
-    -- state across the close + reopen cycle.
+    -- state across the close + reopen cycle. Each mode preserves its
+    -- own draft shape: book_mode carries `_draft`, bulk/stage_only
+    -- carry `_draft_add` + `_draft_remove`.
     if opts._draft then
         for k, v in pairs(opts._draft) do draft[k] = v end
+    end
+    if opts._draft_add then
+        for k, v in pairs(opts._draft_add) do draft_add[k] = v end
+    end
+    if opts._draft_remove then
+        for k, v in pairs(opts._draft_remove) do draft_remove[k] = v end
     end
 
     local dialog  -- forward decl so callbacks can close + reopen
@@ -223,11 +279,18 @@ function CollectionManager.show(opts)
     local function rebuild()
         close()
         CollectionManager.show{
-            book     = book,
-            on_close = opts.on_close,
-            bw       = opts.bw,
-            _draft   = book_mode and draft or nil,
-            _page    = cur_page,
+            book           = book,
+            on_close       = opts.on_close,
+            bw             = opts.bw,
+            bulk           = bulk_mode or nil,
+            paths          = opts.paths,
+            stage_only     = stage_only or nil,
+            on_save        = opts.on_save,
+            on_cancel      = opts.on_cancel,
+            _draft         = book_mode and draft or nil,
+            _draft_add     = (bulk_mode or stage_only) and draft_add or nil,
+            _draft_remove  = (bulk_mode or stage_only) and draft_remove or nil,
+            _page          = cur_page,
         }
     end
 
@@ -276,6 +339,14 @@ function CollectionManager.show(opts)
                             draft[new_name]  = draft[coll_name]
                             draft[coll_name] = nil
                         end
+                        if draft_add[coll_name] then
+                            draft_add[new_name]  = true
+                            draft_add[coll_name] = nil
+                        end
+                        if draft_remove[coll_name] then
+                            draft_remove[new_name]  = true
+                            draft_remove[coll_name] = nil
+                        end
                         UIManager:close(input)
                         rebuild()
                       end },
@@ -294,7 +365,9 @@ function CollectionManager.show(opts)
                 ok_callback = function()
                     ReadCollection:removeCollection(coll_name)
                     ReadCollection:write()
-                    draft[coll_name] = nil
+                    draft[coll_name]        = nil
+                    draft_add[coll_name]    = nil
+                    draft_remove[coll_name] = nil
                     rebuild()
                 end,
             })
@@ -368,7 +441,16 @@ function CollectionManager.show(opts)
                     end
                     ReadCollection:addCollection(name)
                     ReadCollection:write()
-                    if book_mode then draft[name] = true end  -- auto-tick
+                    -- Auto-tick the new collection in whatever editing
+                    -- mode we're in. book_mode = persisted membership;
+                    -- bulk + stage_only = stage an add diff so Save will
+                    -- propagate it.
+                    if book_mode then
+                        draft[name] = true
+                    elseif bulk_mode or stage_only then
+                        draft_add[name]    = true
+                        draft_remove[name] = nil
+                    end
                     UIManager:close(input)
                     rebuild()
                   end },
@@ -385,7 +467,35 @@ function CollectionManager.show(opts)
     -- because there's nothing destructive to pair Close with -- one
     -- compact action bar reads as the natural floor of the dialog.
     local buttons = {}
-    if book_mode then
+    if bulk_mode or stage_only then
+        -- Stage-and-return path. Save emits the {add, remove} diff via
+        -- on_save; Cancel discards via on_cancel. on_close (if any)
+        -- runs in BOTH branches as a "dialog finished" hook.
+        buttons[#buttons + 1] = {
+            { text = "+ " .. _("New collection"), callback = newCollection },
+        }
+        buttons[#buttons + 1] = {
+            { text = _("Cancel"), callback = function()
+                close()
+                if opts.on_cancel then opts.on_cancel() end
+                if opts.on_close then opts.on_close() end
+            end },
+            { text = _("Save"), is_enter_default = true,
+              callback = function()
+                -- Pack the staged sets into the diff shape consumers
+                -- expect: nil-vs-empty distinction matters because the
+                -- outer draft uses `nil` to mean "no change staged"
+                -- and any non-nil table (even empty) reads as "user
+                -- went here". So we collapse empty -> nil.
+                local diff = { add = nil, remove = nil }
+                if next(draft_add)    then diff.add    = draft_add    end
+                if next(draft_remove) then diff.remove = draft_remove end
+                close()
+                if opts.on_save then opts.on_save(diff) end
+                if opts.on_close then opts.on_close() end
+              end },
+        }
+    elseif book_mode then
         buttons[#buttons + 1] = {
             { text = "+ " .. _("New collection"), callback = newCollection },
         }
@@ -447,14 +557,51 @@ function CollectionManager.show(opts)
         }
     end
 
-    if book_mode and opts.bw and opts.bw._buildBookMenuHeader then
-        -- Book mode: render the SAME book menu header here, including
-        -- the nav pill strip -- pills mirror the live DRAFT state so
-        -- a user can see the pill row update in real time as they
-        -- toggle cells. Tapping a pill closes the manager (draft
+    if bulk_mode then
+        -- Bulk header: count of selected books + intro paragraph.
+        -- No book record to render a thumbnail header from, and the
+        -- selection set spans arbitrarily many books so reusing the
+        -- single-book header would be misleading. Mirror manage-mode's
+        -- titled-panel layout instead.
+        local n_paths = (opts.paths and #opts.paths) or 0
+        local title_row = HorizontalGroup:new{ align = "center" }
+        title_row[#title_row + 1] = FrameContainer:new{
+            bordersize = 0,
+            padding    = 0,
+            margin     = 0,
+            TextBoxWidget:new{
+                text  = string.format(_("Collections \xC2\xB7 %d books"), n_paths),
+                face  = Font:getFace("tfont", 20),
+                bold  = true,
+                width = inner_w,
+            },
+        }
+        content[#content + 1] = title_row
+        content[#content + 1] = VerticalSpan:new{ width = Size.padding.default }
+        content[#content + 1] = _divider()
+        content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
+        content[#content + 1] = TextBoxWidget:new{
+            text  = _("Tap a collection to cycle through: no change, "
+                .. "add to all, remove from all. Save returns the diff "
+                .. "to the bulk menu."),
+            face  = Font:getFace("infofont", 16),
+            width = inner_w,
+        }
+        content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
+        content[#content + 1] = _divider()
+        content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
+    elseif (book_mode or stage_only) and opts.bw and opts.bw._buildBookMenuHeader then
+        -- Book mode (persist OR stage_only): render the SAME book menu
+        -- header here, including the nav pill strip. In persist mode
+        -- pills mirror the live `draft` membership; in stage_only the
+        -- pill specs reflect current persisted state because the diff
+        -- is held externally and not visible in the live ReadCollection.
+        -- For now stage_only passes nil pill specs (the per-book menu
+        -- carries its own outline marker via the Collections button
+        -- text_func). Tapping a pill closes the manager (draft
         -- discarded) and drills into the relevant facet view.
         local pill_specs
-        if opts.bw._buildPillSpecs then
+        if book_mode and opts.bw._buildPillSpecs then
             pill_specs = opts.bw:_buildPillSpecs(book, draft, function()
                 UIManager:close(dialog)
             end)
@@ -507,10 +654,57 @@ function CollectionManager.show(opts)
     -- - In book mode, `selected = draft[name]` inverts the cell when
     --   the book is in that collection (filled black with white text);
     --   no checkbox glyph, the inverted block IS the selected cue.
+    -- - In bulk mode, baseline is computed across opts.paths ("all" /
+    --   "some" / "none"). Staged intent is read from draft_add /
+    --   draft_remove and surfaced via a subtitle override ("Add to all"
+    --   / "Remove from all"). "all" baseline shows as the inverted
+    --   cell; "some" shows as not-inverted plus a "(Mixed)" subtitle.
+    -- - In stage_only mode, baseline is the single book's current
+    --   membership, layered with draft_add / draft_remove to compute
+    --   the EFFECTIVE membership shown. Tap cycles the diff relative
+    --   to the persisted state (current=in + draft_remove -> "remove"
+    --   pending; current=out + draft_add -> "add" pending).
     -- - In manage mode, no cell is "selected" (the action on tap is to
     --   open the edit menu, not toggle membership).
     local PickerCell = require("lib/bookshelf_picker_cell")
     local names      = _orderedNames()
+
+    -- Baseline membership for a collection across the operating set.
+    -- bulk: scan opts.paths via ReadCollection. stage_only: single book.
+    -- Returns "all" | "some" | "none". Cached per collection name for
+    -- this rebuild so we don't rescan paths once per cell tap reroute.
+    local _baseline_cache = {}
+    local function _baselineState(name)
+        if _baseline_cache[name] then return _baseline_cache[name] end
+        local state
+        if bulk_mode then
+            local paths = opts.paths or {}
+            if #paths == 0 then
+                state = "none"
+            else
+                local hits = 0
+                for _i, fp in ipairs(paths) do
+                    if ReadCollection:isFileInCollection(fp, name) then
+                        hits = hits + 1
+                    end
+                end
+                if hits == 0 then
+                    state = "none"
+                elseif hits == #paths then
+                    state = "all"
+                else
+                    state = "some"
+                end
+            end
+        elseif stage_only then
+            state = ReadCollection:isFileInCollection(book.filepath, name)
+                and "all" or "none"
+        else
+            state = "none"
+        end
+        _baseline_cache[name] = state
+        return state
+    end
     -- Compact card height: enough room for two text lines + breathing
     -- space, without making the dialog feel like it's full of giant
     -- tiles. The picker grid pages sit on a fullscreen modal and can
@@ -522,14 +716,70 @@ function CollectionManager.show(opts)
         if not name then
             return HorizontalSpan:new{ width = cell_w }
         end
+
+        -- Compute the cell's visual state. `selected` -> inverted cell
+        -- background (PickerCell.invert). `subtitle` overrides the
+        -- count-of-books footer with whatever staged status we want to
+        -- surface (e.g. "Add to all"). The label may also get a
+        -- staged-action prefix arrow for redundancy when the inverted
+        -- pixel state alone could be ambiguous.
+        local selected = false
+        local tint     = false
+        local subtitle_override
+        local label = _displayName(name)
+        if book_mode then
+            selected = draft[name] == true
+        elseif bulk_mode then
+            local baseline = _baselineState(name)
+            local staged_add    = draft_add[name]    == true
+            local staged_remove = draft_remove[name] == true
+            -- Effective membership = baseline ± staged.
+            local effective = baseline
+            if staged_add then
+                effective = "all"
+            elseif staged_remove then
+                effective = "none"
+            end
+            selected = (effective == "all")
+            -- Stage-remove gets a gray fill so it's visually distinct
+            -- from a plain "out" cell (which also has effective=none).
+            -- Stage-add keeps the inverted-black look from selected=true
+            -- (effective=all) — the inversion alone is unambiguous.
+            tint = staged_remove
+            if staged_add then
+                subtitle_override = _("Add to all") .. " +"
+            elseif staged_remove then
+                subtitle_override = _("Remove from all") .. " \xE2\x88\x92"  -- −
+            elseif baseline == "some" then
+                subtitle_override = _("Mixed")
+            end
+        elseif stage_only then
+            -- Effective membership for stage_only is current ± diff.
+            local current = (_baselineState(name) == "all")
+            local staged_add    = draft_add[name]    == true
+            local staged_remove = draft_remove[name] == true
+            local effective     = current
+            if staged_add    then effective = true  end
+            if staged_remove then effective = false end
+            selected = effective
+            tint     = staged_remove
+            if staged_add then
+                subtitle_override = _("Add") .. " +"
+            elseif staged_remove then
+                subtitle_override = _("Remove") .. " \xE2\x88\x92"
+            end
+        end
+
         local cell_dimen  = Geom:new{ w = cell_w, h = cell_h }
+        local item = {
+            label    = label,
+            subtitle = subtitle_override,
+            count    = subtitle_override == nil and _countOf(name) or nil,
+        }
         local cell_widget = PickerCell.render(
-            {
-                label = _displayName(name),
-                count = _countOf(name),
-            },
+            item,
             cell_dimen,
-            { selected = book_mode and draft[name] }
+            { selected = selected, tint = tint }
         )
         -- Wrap the cell in an InputContainer with a fixed dimen so the
         -- enclosing HorizontalGroup measures it at cell_w (not natural
@@ -547,6 +797,45 @@ function CollectionManager.show(opts)
         cell.onTap = function()
             if book_mode then
                 draft[name] = not draft[name]
+                rebuild()
+            elseif bulk_mode then
+                -- Tri-state cycle: no-staged-action -> stage-add ->
+                -- stage-remove -> no-staged-action. The baseline
+                -- (all/some/none) is independent of the staged action;
+                -- both render together so the user sees what they're
+                -- changing FROM and TO.
+                if draft_add[name] then
+                    draft_add[name]    = nil
+                    draft_remove[name] = true
+                elseif draft_remove[name] then
+                    draft_remove[name] = nil
+                else
+                    draft_add[name]    = true
+                end
+                rebuild()
+            elseif stage_only then
+                -- For stage_only the cycle relative to the book's
+                -- CURRENT membership feels more natural than a free
+                -- tri-state: "currently in, tap once -> stage remove,
+                -- tap again -> back to no-change". So we cycle the
+                -- effective membership and recompute the staged diff
+                -- from current.
+                local current        = (_baselineState(name) == "all")
+                local staged_add     = draft_add[name]    == true
+                local staged_remove  = draft_remove[name] == true
+                local effective      = current
+                if staged_add    then effective = true  end
+                if staged_remove then effective = false end
+                local target = not effective
+                draft_add[name]    = nil
+                draft_remove[name] = nil
+                if target ~= current then
+                    if target then
+                        draft_add[name]    = true
+                    else
+                        draft_remove[name] = true
+                    end
+                end
                 rebuild()
             else
                 holdMenu(name)

@@ -79,16 +79,35 @@ local function _buildLabelContent(label, size, max_w)
             max_width = max_w,
         }
     end
-    -- Mixed: HorizontalGroup. max_width is intentionally NOT applied to
-    -- individual segments; truncation in the middle of a glyph run reads
-    -- badly. If the chip is too narrow the row will just clip slightly.
+    -- Mixed: HorizontalGroup. Icons (class != "text") render at their
+    -- natural width — truncating mid-glyph reads badly. Text segments
+    -- DO honour max_width so a label like "📖 NEW CHIP" truncates the
+    -- text portion cleanly with an ellipsis when the chip is too
+    -- narrow, instead of clipping pixels off the right edge.
+    --
+    -- The max_width budget for text is whatever's left after icons +
+    -- inter-segment spacing have claimed their natural widths.
+    local icon_w = 0
+    for _i, seg in ipairs(segments) do
+        if seg.class ~= "text" then
+            local tw = TextWidget:new{
+                text = seg.text,
+                face = Font:getFace("infofont", size),
+            }
+            icon_w = icon_w + tw:getSize().w
+            tw:free()
+        end
+    end
+    local text_budget = math.max(0, max_w - icon_w)
     local hg = HorizontalGroup:new{ align = "center" }
     for _i, seg in ipairs(segments) do
+        local is_text = (seg.class == "text")
         hg[#hg + 1] = TextWidget:new{
-            text    = seg.text,
-            face    = Font:getFace("infofont", size),
-            bold    = seg.class == "text",
-            fgcolor = Blitbuffer.COLOR_BLACK,
+            text      = seg.text,
+            face      = Font:getFace("infofont", size),
+            bold      = is_text,
+            fgcolor   = Blitbuffer.COLOR_BLACK,
+            max_width = is_text and text_budget or nil,
         }
     end
     return hg
@@ -433,9 +452,14 @@ function ChipBar:_initChips()
             total_natural  = total_natural + nat
         end
 
-        if total_natural > 0 and total_natural <= flex_total then
-            -- Naturals fit -- scale proportionally to fill the row. Last
-            -- flex chip absorbs rounding leftover so the sum is exact.
+        if total_natural > 0 then
+            -- Proportional in BOTH directions: when total_natural <
+            -- flex_total there's slack (scale > 1, chips grow); when
+            -- total_natural > flex_total it's overflow (scale < 1,
+            -- chips shrink — but wider labels still get proportionally
+            -- more room than narrower ones). The previous fallback to
+            -- equal share crushed AUTHORS / NEW CHIPS into the same
+            -- slot as HOME / RECENT and truncated the longer labels.
             local scale = flex_total / total_natural
             local accumulated = 0
             for j, idx in ipairs(flex_indices) do
@@ -626,13 +650,86 @@ end
 -- resolves) so the existing tap pipeline keeps working in both modes.
 
 function ChipBar:_initBreadcrumb()
-    -- Layout: chip pill + (parents as CHAINED, OVERLAPPING arrow pills)
-    -- + small gap + the deepest crumb as plain text. When parents are
-    -- truncated to fit the strip width, an ELLIPSIS pill (also chained)
-    -- replaces the dropped run between the chip pill and the first
-    -- visible parent.
+    -- Layout: [optional currently-reading icon] + chip pill + (parents
+    -- as CHAINED, OVERLAPPING arrow pills) + small gap + the deepest
+    -- crumb as plain text. When parents are truncated to fit the strip
+    -- width, an ELLIPSIS pill (also chained) replaces the dropped run
+    -- between the chip pill and the first visible parent.
+    --
+    -- The currently-reading icon (action chip key = "current") stays
+    -- visible across both modes — in drilldown the user otherwise has
+    -- to back out to top level before they can reach it (#55). Tap
+    -- routes to on_change("current") which clears the drill path AND
+    -- resets the hero to the lastfile.
     local face_text = Font:getFace("infofont", _scaled(16))
     local n         = #self.breadcrumb_path
+
+    -- Pull the currently-reading chip from the chips list. Renders as
+    -- a fixed-width icon box matching the chips-mode action width so
+    -- the affordance has the same visual weight in both modes.
+    local current_chip
+    for _i, c in ipairs(self.chips or {}) do
+        if c.action and c.key == "current" then
+            current_chip = c
+            break
+        end
+    end
+    local current_widget, current_w
+    if current_chip then
+        current_w = math.floor(self.height * 1.6)
+        local glyph = TextWidget:new{
+            text    = current_chip.nerd_glyph or "",
+            face    = Font:getFace("infofont", _scaled(18)),
+            fgcolor = Blitbuffer.COLOR_BLACK,
+        }
+        -- Match chips-mode visual exactly: an InvertedFrame body
+        -- (bordersize=0 to avoid the KT6 white-ring-after-invert bug,
+        -- see chips-mode comment at line ~542) wrapped in a thin
+        -- FrameContainer that supplies the visible outline. selected
+        -- (hero == lastfile) flips the body inverted; otherwise the
+        -- icon sits in a white cell with a thin black border.
+        local body = InvertedFrame:new{
+            _invert    = current_chip.selected and true or false,
+            bordersize = 0,
+            margin     = 0,
+            padding    = 0,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{ w = current_w, h = self.height },
+                glyph,
+            },
+        }
+        current_widget = FrameContainer:new{
+            bordersize = Size.border.thin,
+            margin     = 0,
+            padding    = 0,
+            body,
+        }
+        -- Wrapping with FrameContainer adds 2 * bordersize to the
+        -- outer width. Adjust the tap-zone width so it matches the
+        -- painted footprint exactly.
+        current_w = current_w + 2 * Size.border.thin
+        -- Selected-state "up triangle" pointer (same affordance as
+        -- chips-mode): a black roof pointing at the hero cover above,
+        -- anchored via negative y so it paints into the strip's top
+        -- margin. Matches chips-mode dimensions so the same visual
+        -- weight reads in both modes.
+        if current_chip.selected then
+            local pointer_h = math.max(Screen:scaleBySize(5),
+                                       math.floor(self.height * 0.25))
+            local pointer = UpTrianglePointer:new{
+                width  = current_w,
+                height = pointer_h,
+                color  = Blitbuffer.COLOR_BLACK,
+            }
+            pointer.overlap_offset = { 0, -pointer_h }
+            current_widget = OverlapGroup:new{
+                dimen = Geom:new{ w = current_w, h = self.height },
+                current_widget,
+                pointer,
+            }
+        end
+    end
 
     -- Arrow-left prefix is reserved for the explicit Back pill in search
     -- mode — the chevron separator between chained pills already implies
@@ -699,6 +796,14 @@ function ChipBar:_initBreadcrumb()
         local row    = HorizontalGroup:new{}
         local zones  = {}
         local cursor = 0
+        if current_widget then
+            row[#row + 1] = current_widget
+            -- depth = -2 is the sentinel for "currently reading" action.
+            -- The TapStrip handler dispatches it via on_change("current")
+            -- so the same code path runs in both chip-bar modes.
+            zones[#zones + 1] = { x = cursor, w = current_w, depth = -2 }
+            cursor = cursor + current_w
+        end
         if has_back then
             row[#row + 1] = back_pill
             zones[#zones + 1] = { x = cursor, w = back_pill_w, depth = -1 }
@@ -852,7 +957,16 @@ function ChipBar:onTapStrip(_, ges)
     if self._breadcrumb_zones then
         for _i, zone in ipairs(self._breadcrumb_zones) do
             if x >= zone.x and x < zone.x + zone.w then
-                if self.on_breadcrumb then self.on_breadcrumb(zone.depth) end
+                -- depth = -2 is the currently-reading action sentinel;
+                -- route through on_change so the chip behaves the same
+                -- way it does in chips mode (clear preview, restore
+                -- hero, pop drilldown). All other depths fall through
+                -- to on_breadcrumb as before.
+                if zone.depth == -2 then
+                    if self.on_change then self.on_change("current") end
+                else
+                    if self.on_breadcrumb then self.on_breadcrumb(zone.depth) end
+                end
                 return true
             end
         end

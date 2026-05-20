@@ -104,6 +104,23 @@ function TabModel.save(tabs)
     BookshelfSettings.flush()
 end
 
+-- insertAfter(tabs, anchor_id, new_tab): splice `new_tab` into `tabs`
+-- immediately after the entry whose id matches `anchor_id`. Appends to
+-- the end when no anchor is found (anchor_id nil, anchor doesn't exist,
+-- or new chip created from a context with no active chip). Mutates
+-- `tabs` in place; caller still owns persistence via TabModel.save.
+function TabModel.insertAfter(tabs, anchor_id, new_tab)
+    if anchor_id then
+        for i, t in ipairs(tabs) do
+            if t.id == anchor_id then
+                table.insert(tabs, i + 1, new_tab)
+                return
+            end
+        end
+    end
+    tabs[#tabs + 1] = new_tab
+end
+
 -- In-memory override used by the editor to drive live preview without
 -- persisting to disk on every keystroke. setOverride(tab_id, tab) makes
 -- getById(tab_id) / getActive() return the override in place of the

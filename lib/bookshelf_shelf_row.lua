@@ -26,6 +26,8 @@ local Screen          = require("device").screen
 local SpineWidget     = require("lib/bookshelf_spine_widget")
 local SeriesStack     = require("lib/bookshelf_series_stack")
 local FolderStack     = require("lib/bookshelf_folder_stack")
+local Repo            = require("lib/bookshelf_book_repository")
+local BookshelfSettings = require("lib/bookshelf_settings_store")
 local logger          = require("logger")
 
 -- Monotonic wall-clock for perf instrumentation. Matches the helper used
@@ -132,6 +134,78 @@ function ShelfRow.new(opts)
         raw_on_book_tap(b, _t)
     end or nil
 
+    -- Raw selection count for a stack: number of its books currently
+    -- in the selection set. Returns 0 when selection mode is off or no
+    -- books overlap, so call sites can derive:
+    --   * is_bulk_selected = (k > 0)              -> highlight + flag
+    --   * selected_count   = (0 < k < #books)     -> "K/N" badge
+    -- One sweep, two consumers — beats a separate early-exit "any
+    -- selected?" probe for a stack that may already need a full walk.
+    local function stack_sel_count(books)
+        if not opts.selection or not opts.selection.isActive then return 0 end
+        if not opts.selection:isActive() then return 0 end
+        if not books or #books == 0 then return 0 end
+        local k = 0
+        for _i = 1, #books do
+            local fp = books[_i].filepath
+            if fp and opts.selection:contains(fp) then k = k + 1 end
+        end
+        return k
+    end
+    local function partial_count(k, total)
+        if k > 0 and k < total then return k end
+        return nil
+    end
+
+    -- stack_count_badge_mode: off / folders / groups / all. Default
+    -- "groups" preserves pre-v2.2.2 behaviour. Resolved once per row
+    -- build so the per-slot rendering reads from a local boolean
+    -- instead of re-reading the setting per slot.
+    local badge_mode = BookshelfSettings.read("stack_count_badge_mode")
+    if not (badge_mode == "off" or badge_mode == "folders"
+         or badge_mode == "groups" or badge_mode == "all") then
+        badge_mode = "groups"
+    end
+    local show_folder_badge = (badge_mode == "folders" or badge_mode == "all")
+    local show_group_badge  = (badge_mode == "groups"  or badge_mode == "all")
+
+    -- stack_count_badge_format: when the badge is shown, "total" →
+    -- "×N", "finished_total" → "F/N". Selection-partial "K/N" still
+    -- wins above this. Finished is skipped entirely in selection mode
+    -- (user-requested: F/N is an out-of-selection format) and when not
+    -- needed so the cheap path stays cheap.
+    local badge_format = BookshelfSettings.read("stack_count_badge_format")
+    if badge_format ~= "finished_total" then badge_format = "total" end
+    local sel_active_global = opts.selection and opts.selection.isActive
+                              and opts.selection:isActive() or false
+    local show_finished = (badge_format == "finished_total")
+                          and not sel_active_global
+
+    -- finished_count(books_or_paths, items_have_filepath): scans the
+    -- list calling Repo.readProgress on each filepath and counts
+    -- those whose status is "finished". Returns nil when show_finished
+    -- is off so callers can pass the value straight to the widget
+    -- without an extra guard. `is_paths` is true when each entry is a
+    -- bare filepath string (folder case), false when each entry is a
+    -- book record with .filepath (group case).
+    --
+    -- Used as a fallback path: groups now carry pre-computed
+    -- finished_count_total in the hydrated item, so we read that
+    -- directly when available. Folders still sweep their recursive
+    -- paths via this helper.
+    local function finished_count(list, is_paths)
+        if not show_finished or not list then return nil end
+        local f = 0
+        for _i = 1, #list do
+            local fp = is_paths and list[_i] or list[_i].filepath
+            if fp then
+                local _pct, status = Repo.readProgress(fp)
+                if status == "finished" then f = f + 1 end
+            end
+        end
+        return f
+    end
+
     for i = 1, n_slots do
         -- Insert a gap spacer before every slot after the first.
         if i > 1 then
@@ -156,76 +230,179 @@ function ShelfRow.new(opts)
         local non_book_h = opts.show_titles and cover_h or slot_h
 
         if item and item.kind == "folder" then
-            -- Folder record (carries path / label / first_book)
+            -- Folder record (carries path / label / first_book).
+            -- Three pieces of derived data: total recursive book count
+            -- (for the optional badge), how many of those are in the
+            -- current selection (for highlight + partial badge form),
+            -- and a path → "should I look this up?" guard so plain
+            -- browsing doesn't pay for the recursive walk lookup
+            -- unless something needs it.
+            local folder_fp = item.first_book and item.first_book.filepath
+            local sel_active = opts.selection and opts.selection.isActive
+                               and opts.selection:isActive() or false
+            local need_lookup = item.path and
+                                (show_folder_badge or sel_active)
+            local folder_fpaths
+            if need_lookup then
+                folder_fpaths = Repo.getFolderBookPaths(item.path) or {}
+            end
+            local folder_book_count
+            if show_folder_badge and folder_fpaths then
+                folder_book_count = #folder_fpaths
+            end
+            local folder_k = 0
+            if sel_active and folder_fpaths then
+                for _i = 1, #folder_fpaths do
+                    if opts.selection:contains(folder_fpaths[_i]) then
+                        folder_k = folder_k + 1
+                    end
+                end
+            end
+            local folder_bulk = folder_k > 0
+            local folder_cur  = opts.selected_filepath and folder_fp
+                                and folder_fp == opts.selected_filepath or false
+            local folder_finished
+            if show_finished and show_folder_badge and folder_fpaths then
+                folder_finished = finished_count(folder_fpaths, true)
+            end
             row[#row + 1] = wrap_for_title_alignment(FolderStack:new{
-                folder      = item,
-                width       = slot_w,
-                height      = non_book_h,
-                on_tap      = opts.on_folder_tap,
-                on_hold     = opts.on_folder_hold,
-                is_selected = opts.selected_filepath and item.first_book
-                              and item.first_book.filepath == opts.selected_filepath,
+                folder           = item,
+                width            = slot_w,
+                height           = non_book_h,
+                on_tap           = opts.on_folder_tap,
+                on_hold          = opts.on_folder_hold,
+                is_selected      = folder_bulk or folder_cur,
+                is_bulk_selected = folder_bulk,
+                book_count       = folder_book_count,
+                selected_count   = folder_book_count
+                                   and partial_count(folder_k, folder_book_count)
+                                   or nil,
+                finished_count   = folder_finished,
             })
         elseif item and item.kind == "author" then
             -- Author group (SeriesStack visual, author name on the band)
+            local author_fp = item.books and item.books[1] and item.books[1].filepath
+            local author_k    = stack_sel_count(item.books)
+            local author_bulk = author_k > 0
+            local author_cur  = opts.selected_filepath and author_fp
+                                and author_fp == opts.selected_filepath or false
+            local author_finished, author_finished_total
+            if show_finished and show_group_badge then
+                -- Pre-computed at shape build → stack-wide stat that
+                -- ignores the active filter (matches the "Finished of
+                -- Total" framing the user requested). Falls back to a
+                -- live sweep when the hydrated item didn't carry it.
+                author_finished       = finished_count(item.books, false)
+                author_finished_total = nil  -- live sweep gives filtered count; matches #item.books
+            end
             row[#row + 1] = wrap_for_title_alignment(SeriesStack:new{
-                series      = item,
-                width       = slot_w,
-                height      = non_book_h,
-                on_tap      = opts.on_author_tap,
-                on_hold     = opts.on_author_hold,
-                is_selected = opts.selected_filepath and item.books and item.books[1]
-                              and item.books[1].filepath == opts.selected_filepath,
+                series           = item,
+                width            = slot_w,
+                height           = non_book_h,
+                on_tap           = opts.on_author_tap,
+                on_hold          = opts.on_author_hold,
+                is_selected      = author_bulk or author_cur,
+                is_bulk_selected = author_bulk,
+                selected_count   = partial_count(author_k, item.books and #item.books or 0),
+                finished_count   = author_finished,
+                finished_total   = author_finished_total,
+                show_count_badge = show_group_badge,
             })
         elseif item and item.kind == "genre" then
             -- Genre group (SeriesStack visual, genre name on the band)
+            local genre_fp = item.books and item.books[1] and item.books[1].filepath
+            local genre_k    = stack_sel_count(item.books)
+            local genre_bulk = genre_k > 0
+            local genre_cur  = opts.selected_filepath and genre_fp
+                               and genre_fp == opts.selected_filepath or false
+            local genre_finished, genre_finished_total
+            if show_finished and show_group_badge then
+                genre_finished       = finished_count(item.books, false)
+                genre_finished_total = nil
+            end
             row[#row + 1] = wrap_for_title_alignment(SeriesStack:new{
-                series      = item,
-                width       = slot_w,
-                height      = non_book_h,
-                on_tap      = opts.on_genre_tap,
-                on_hold     = opts.on_genre_hold,
-                is_selected = opts.selected_filepath and item.books and item.books[1]
-                              and item.books[1].filepath == opts.selected_filepath,
+                series           = item,
+                width            = slot_w,
+                height           = non_book_h,
+                on_tap           = opts.on_genre_tap,
+                on_hold          = opts.on_genre_hold,
+                is_selected      = genre_bulk or genre_cur,
+                is_bulk_selected = genre_bulk,
+                selected_count   = partial_count(genre_k, item.books and #item.books or 0),
+                finished_count   = genre_finished,
+                finished_total   = genre_finished_total,
+                show_count_badge = show_group_badge,
             })
         elseif item and item.kind == "tag" then
             -- Tag / collection group (SeriesStack visual, collection
             -- name on the band)
+            local tag_fp = item.books and item.books[1] and item.books[1].filepath
+            local tag_k    = stack_sel_count(item.books)
+            local tag_bulk = tag_k > 0
+            local tag_cur  = opts.selected_filepath and tag_fp
+                             and tag_fp == opts.selected_filepath or false
+            local tag_finished, tag_finished_total
+            if show_finished and show_group_badge then
+                tag_finished       = finished_count(item.books, false)
+                tag_finished_total = nil
+            end
             row[#row + 1] = wrap_for_title_alignment(SeriesStack:new{
-                series      = item,
-                width       = slot_w,
-                height      = non_book_h,
-                on_tap      = opts.on_tag_tap,
-                on_hold     = opts.on_tag_hold,
-                is_selected = opts.selected_filepath and item.books and item.books[1]
-                              and item.books[1].filepath == opts.selected_filepath,
+                series           = item,
+                width            = slot_w,
+                height           = non_book_h,
+                on_tap           = opts.on_tag_tap,
+                on_hold          = opts.on_tag_hold,
+                is_selected      = tag_bulk or tag_cur,
+                is_bulk_selected = tag_bulk,
+                selected_count   = partial_count(tag_k, item.books and #item.books or 0),
+                finished_count   = tag_finished,
+                finished_total   = tag_finished_total,
+                show_count_badge = show_group_badge,
             })
         elseif item and item.books then
             -- SeriesGroup (has a .books array; legacy detection — kind
             -- not always set on series records).
+            local series_fp = item.books and item.books[1] and item.books[1].filepath
+            local series_k    = stack_sel_count(item.books)
+            local series_bulk = series_k > 0
+            local series_cur  = opts.selected_filepath and series_fp
+                                and series_fp == opts.selected_filepath or false
+            local series_finished, series_finished_total
+            if show_finished and show_group_badge then
+                series_finished       = finished_count(item.books, false)
+                series_finished_total = nil
+            end
             row[#row + 1] = wrap_for_title_alignment(SeriesStack:new{
-                series      = item,
-                width       = slot_w,
-                height      = non_book_h,
-                on_tap      = opts.on_series_tap,
-                on_hold     = opts.on_series_hold,
-                is_selected = opts.selected_filepath and item.books and item.books[1]
-                              and item.books[1].filepath == opts.selected_filepath,
+                series           = item,
+                width            = slot_w,
+                height           = non_book_h,
+                on_tap           = opts.on_series_tap,
+                on_hold          = opts.on_series_hold,
+                is_selected      = series_bulk or series_cur,
+                is_bulk_selected = series_bulk,
+                selected_count   = partial_count(series_k, item.books and #item.books or 0),
+                finished_count   = series_finished,
+                finished_total   = series_finished_total,
+                show_count_badge = show_group_badge,
             })
         elseif item then
             -- Single book record
+            local book_bulk = opts.selection and item.filepath
+                              and opts.selection:contains(item.filepath) or false
+            local book_cur  = opts.selected_filepath and item.filepath
+                              and item.filepath == opts.selected_filepath or false
             local spine = SpineWidget:new{
-                book        = item,
-                width       = slot_w,
-                height      = cover_h,
+                book             = item,
+                width            = slot_w,
+                height           = cover_h,
                 -- When titles are visible, the InputContainer wrapper below
                 -- handles taps for the whole slot (cover + title) so the
                 -- title area is also tappable; pass nil here so SpineWidget
                 -- doesn't double-fire.
-                on_tap      = (not opts.show_titles) and on_book_tap_stamped or nil,
-                on_hold     = (not opts.show_titles) and opts.on_book_hold or nil,
-                is_selected = opts.selected_filepath
-                              and item.filepath == opts.selected_filepath,
+                on_tap           = (not opts.show_titles) and on_book_tap_stamped or nil,
+                on_hold          = (not opts.show_titles) and opts.on_book_hold or nil,
+                is_selected      = book_bulk or book_cur,
+                is_bulk_selected = book_bulk,
                 -- Grid covers are the only surface that gets progress
                 -- indicators (top-edge bar + bottom-left bookmark glyph).
                 -- Hero card, folder stacks, and series stacks reuse

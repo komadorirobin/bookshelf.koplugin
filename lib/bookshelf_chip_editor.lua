@@ -67,6 +67,12 @@ end
 -- levels. For group sources (series/authors/genres/tags/formats) the
 -- level 1 entry orders the group cards and levels 2+ apply within a
 -- drilled-in group (see BookshelfWidget:_applyWithinGroupSort).
+-- Forward-declared so `_applySourceDefaults` (defined below) can read
+-- it for the auto-rename-new-chip QoL. The actual table populates a
+-- few dozen lines further down; this reservation just makes the local
+-- visible to the function's upvalue capture.
+local SOURCE_LABEL
+
 local SOURCE_SORT_DEFAULTS = {
     -- Book sources (return books, not groups)
     all           = { { key = "filename",        reverse = false } },
@@ -115,14 +121,37 @@ local SOURCE_SORT_DEFAULTS = {
 local function _applySourceDefaults(draft)
     local kind = draft.source and draft.source.kind
     local defaults = kind and SOURCE_SORT_DEFAULTS[kind]
-    if not defaults then return end
-    -- Deep copy so the table in SOURCE_SORT_DEFAULTS isn't mutated when
-    -- the user later toggles a level's reverse via the picker.
-    local copy = {}
-    for i, level in ipairs(defaults) do
-        copy[i] = { key = level.key, reverse = level.reverse }
+    if defaults then
+        -- Deep copy so the SOURCE_SORT_DEFAULTS table isn't mutated when
+        -- the user later toggles a level's reverse via the picker.
+        local copy = {}
+        for i, level in ipairs(defaults) do
+            copy[i] = { key = level.key, reverse = level.reverse }
+        end
+        draft.sort_priority = copy
     end
-    draft.sort_priority = copy
+    -- QoL: if the chip's label is still the default "New chip" (i.e.
+    -- the user hasn't customised it), rename it to match the picked
+    -- source — e.g. picking "Genres" sets the label to "Genres",
+    -- picking a specific author sets it to that author's name. Only
+    -- the untouched default is replaced; user-edited labels are
+    -- preserved as-is.
+    if draft.label == _("New chip") and draft.source then
+        local fresh
+        if draft.source.id and draft.source.id ~= "" then
+            -- Specific-X sources (folder, single_series, etc.): use the
+            -- id as the label, with folder basename special-cased so
+            -- long paths don't blow out the chip pill.
+            if draft.source.kind == "folder" then
+                fresh = draft.source.id:match("([^/]+)/?$") or draft.source.id
+            else
+                fresh = draft.source.id
+            end
+        elseif kind and SOURCE_LABEL and SOURCE_LABEL[kind] then
+            fresh = SOURCE_LABEL[kind]()
+        end
+        if fresh and fresh ~= "" then draft.label = fresh end
+    end
 end
 
 -- Group source kinds. These tabs show GROUP CARDS at the top level
@@ -154,7 +183,7 @@ local GROUP_LEVEL1_LABEL = {
 -- These mirror the source picker's button labels so the user sees the
 -- same wording in both places. Functions because gettext expands at
 -- call time, not module load.
-local SOURCE_LABEL = {
+SOURCE_LABEL = {
     all           = function() return _("Home (folders)")     end,
     library       = function() return _("Home (flattened)")   end,
     recent        = function() return _("Recently read")      end,
@@ -725,7 +754,13 @@ function Editor:editTab(tab_id, opts)
                             n = n + 1
                         end
                         local new_id = "custom_" .. n
-                        fresh[#fresh + 1] = {
+                        -- Splice the new chip right after the chip
+                        -- the user is currently editing rather than
+                        -- appending to the end of the strip. Matches
+                        -- the Pin-from-stack flow and keeps newly
+                        -- created chips visually adjacent to their
+                        -- origin.
+                        TabModel.insertAfter(fresh, tab_id, {
                             id            = new_id,
                             label         = _("New chip"),
                             icon          = nil,
@@ -733,7 +768,7 @@ function Editor:editTab(tab_id, opts)
                             filter        = {},
                             sort_priority = { { key = "title", reverse = false } },
                             enabled       = true,
-                        }
+                        })
                         TabModel.save(fresh)
                         UIManager:close(dialog)
                         if opts.on_change then opts.on_change() end

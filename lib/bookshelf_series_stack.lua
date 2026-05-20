@@ -16,18 +16,13 @@
 -- The count badge is the only thing that distinguishes this widget
 -- visually from FolderStack.
 
-local FrameContainer = require("ui/widget/container/framecontainer")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local OverlapGroup   = require("ui/widget/overlapgroup")
-local TextWidget     = require("ui/widget/textwidget")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
-local Size           = require("ui/size")
-local Font           = require("ui/font")
-local Blitbuffer     = require("ffi/blitbuffer")
-local Screen         = require("device").screen
 local SpineWidget    = require("lib/bookshelf_spine_widget")
 local FolderCard     = require("lib/bookshelf_folder_card")
+local CountBadge     = require("lib/bookshelf_count_badge")
 
 local SeriesStack = InputContainer:extend{
     series      = nil,    -- { series_name, books[] }
@@ -35,7 +30,24 @@ local SeriesStack = InputContainer:extend{
     height      = nil,
     on_tap      = nil,
     on_hold     = nil,
-    is_selected = false,
+    is_selected      = false,
+    is_bulk_selected = false,
+    -- selected_count: nil (default) renders "×N"; an integer K renders
+    -- "K/N" to surface the Venn-diagram partial state (set by shelf_row
+    -- only when 0 < K < N and selection mode is active).
+    selected_count   = nil,
+    -- finished_count: out-of-selection-mode badge override. Renders
+    -- "F/N" when set and selected_count is nil. Set by shelf_row only
+    -- when stack_count_badge_format = "finished_total".
+    finished_count   = nil,
+    -- finished_total: unfiltered stack size (the N in F/N). Defaults
+    -- to #books when omitted. Provided so F/N stays stack-wide even
+    -- when the chip is filtered (visible #books is filtered count).
+    finished_total   = nil,
+    -- show_count_badge: false suppresses the badge entirely (the
+    -- stack_count_badge_mode setting routes this from shelf_row).
+    -- Default true preserves legacy behaviour for any direct callers.
+    show_count_badge = true,
 }
 
 function SeriesStack:init()
@@ -47,22 +59,24 @@ function SeriesStack:init()
     local book_widget
     if front then
         book_widget = SpineWidget:new{
-            book            = front,
-            width           = self.width,
-            height          = self.height,
-            cover_fill      = true,
-            suppress_badges = true,
-            is_selected = self.is_selected,
+            book             = front,
+            width            = self.width,
+            height           = self.height,
+            cover_fill       = true,
+            suppress_badges  = true,
+            is_selected      = self.is_selected,
+            is_bulk_selected = self.is_bulk_selected,
         }
     else
         -- Empty group: SpineWidget's fallback path with the group name
         -- as the title (analogous to FolderStack's empty-folder path).
         book_widget = SpineWidget:new{
-            book            = { title = self.series and self.series.series_name or "" },
-            width           = self.width,
-            height          = self.height,
-            suppress_badges = true,
-            is_selected = self.is_selected,
+            book             = { title = self.series and self.series.series_name or "" },
+            width            = self.width,
+            height           = self.height,
+            suppress_badges  = true,
+            is_selected      = self.is_selected,
+            is_bulk_selected = self.is_bulk_selected,
         }
     end
 
@@ -83,27 +97,20 @@ function SeriesStack:init()
         folder_widget,
         label_widget,
     }
-    if books and #books > 0 then
-        local badge = FrameContainer:new{
-            bordersize     = Size.border.thin,
-            background     = Blitbuffer.COLOR_WHITE,
-            radius         = Screen:scaleBySize(3),
-            padding_left   = Size.padding.default,
-            padding_right  = Size.padding.default,
-            padding_top    = Size.padding.small,
-            padding_bottom = Size.padding.small,
-            TextWidget:new{
-                text = "\xc3\x97" .. tostring(#books),  -- × (UTF-8 U+00D7)
-                face = Font:getFace("smallinfofont", 12),
-                bold = true,
-            }
-        }
-        local badge_w = badge:getSize().w
-        local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
-        local badge_x = math.max(0, math.min(self.width - badge_w,
-                                             cover_right_x - math.floor(badge_w / 2)))
-        badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
-        children[#children + 1] = badge
+    -- show_count_badge: caller-controlled (shelf_row reads
+    -- stack_count_badge_mode and decides per-kind). nil/true keeps
+    -- legacy behaviour (always show); false suppresses.
+    local show_badge = (self.show_count_badge ~= false)
+    if show_badge and books and #books > 0 then
+        local badge = CountBadge.render(#books, self.selected_count, self.finished_count, self.finished_total)
+        if badge then
+            local badge_w = badge:getSize().w
+            local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
+            local badge_x = math.max(0, math.min(self.width - badge_w,
+                                                 cover_right_x - math.floor(badge_w / 2)))
+            badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
+            children[#children + 1] = badge
+        end
     end
 
     children.dimen = self.dimen

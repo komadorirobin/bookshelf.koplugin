@@ -340,6 +340,7 @@ function Bookshelf:_extendMenuOrder()
         "bookshelf_shelf_tabs",
         "bookshelf_collections",
         "bookshelf_settings",
+        "bookshelf_selection_mode",
         "bookshelf_updates",
         "bookshelf_about",
     }
@@ -484,6 +485,26 @@ function Bookshelf:addToMainMenu(menu_items)
             S._bw = _live_widget
             return S:_settingsSubItems()
         end,
+    }
+
+    menu_items.bookshelf_selection_mode = {
+        text_func = function()
+            local bw = _live_widget
+            if bw and bw._selection and bw._selection:isActive() then
+                return _("Selection mode") .. "  \xE2\x9C\x93"
+            else
+                return _("Selection mode")
+            end
+        end,
+        callback = function()
+            if not outer:_isShowing() then
+                outer:show()
+            end
+            if _live_widget then
+                _live_widget:onBookshelfToggleSelectionMode()
+            end
+        end,
+        separator = true,
     }
 
     menu_items.bookshelf_updates = {
@@ -713,11 +734,35 @@ function Bookshelf:onDispatcherRegisterActions()
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_toggle_hero", {
+        category = "none",
+        event    = "BookshelfToggleHero",
+        title    = _("Bookshelf: expand or collapse hero"),
+        general  = true,
+    })
+    Dispatcher:registerAction("bookshelf_toggle_selection_mode", {
         category  = "none",
-        event     = "BookshelfToggleHero",
-        title     = _("Bookshelf: expand or collapse hero"),
+        event     = "BookshelfToggleSelectionMode",
+        title     = _("Bookshelf: toggle selection mode"),
         general   = true,
         separator = true,
+    })
+    Dispatcher:registerAction("bookshelf_select_focused_book", {
+        category = "none",
+        event    = "BookshelfSelectFocusedBook",
+        title    = _("Bookshelf: toggle selection on focused book"),
+        general  = true,
+    })
+    Dispatcher:registerAction("bookshelf_add_focused_stack_to_selection", {
+        category = "none",
+        event    = "BookshelfAddFocusedStackToSelection",
+        title    = _("Bookshelf: add focused stack to selection"),
+        general  = true,
+    })
+    Dispatcher:registerAction("bookshelf_open_bulk_menu", {
+        category = "none",
+        event    = "BookshelfOpenBulkMenu",
+        title    = _("Bookshelf: open bulk action menu"),
+        general  = true,
     })
 end
 
@@ -1335,6 +1380,22 @@ function Bookshelf:onBookMetadataChanged(prop_updated)
         end)
     else
         _live_widget._metadata_dirty_force_full_refresh = true
+    end
+end
+
+-- KOReader fires SetMixedSorting via the dispatcher (gesture / action)
+-- path but NOT from the File Browser's Sort menu — that callback
+-- writes G_reader_settings:collate_mixed directly and calls
+-- FileChooser:refreshPath() without dispatching an Event. So this
+-- hook only covers the dispatcher path; the menu path is caught by
+-- BookshelfWidget:paintTo, which fires when the FM menu closes and
+-- bookshelf returns to the top of the widget stack. Both paths end
+-- up calling _rebuild, whose internal polling check is the single
+-- source of truth for cache invalidation.
+function Bookshelf:onSetMixedSorting(toggle)
+    if _live_widget and self:_isShowing() and _live_widget._rebuild then
+        _live_widget:_rebuild()
+        UIManager:setDirty(_live_widget, "ui")
     end
 end
 

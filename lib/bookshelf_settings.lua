@@ -608,6 +608,105 @@ function Settings:_progressIndicatorsSubItems()
                 end,
             }
         end)(),
+        -- Stack count badge mode: four-state. Decides whether the
+        -- "×N" / "K/N" count badge renders on (a) filesystem folder
+        -- cards, (b) group stacks (series/author/genre/tag/format/
+        -- rating), (c) both, or (d) neither. Default "groups"
+        -- preserves the pre-v2.2.2 behaviour where only group stacks
+        -- carried the badge. Folder badges added in v2.2.2 are an
+        -- opt-in for users who want at-a-glance counts on file
+        -- folders too.
+        (function()
+            local function readMode()
+                local v = BookshelfSettings.read("stack_count_badge_mode")
+                if v == "off" or v == "folders" or v == "groups" or v == "all" then
+                    return v
+                end
+                return "groups"
+            end
+            local function setMode(mode, touchmenu_instance)
+                BookshelfSettings.save("stack_count_badge_mode", mode)
+                markDirty()
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end
+            local labels = {
+                off     = _("Off"),
+                folders = _("Folders only"),
+                groups  = _("Groups only"),
+                all     = _("All stacks"),
+            }
+            local function optionRow(mode, label)
+                return {
+                    text           = label,
+                    checked_func   = function() return readMode() == mode end,
+                    radio          = true,
+                    keep_menu_open = true,
+                    callback       = function(touchmenu_instance)
+                        setMode(mode, touchmenu_instance)
+                    end,
+                }
+            end
+            return {
+                text_func = function()
+                    return _("Stack count badge") .. ": " .. labels[readMode()]
+                end,
+                sub_item_table_func = function()
+                    return {
+                        optionRow("off",     labels.off),
+                        optionRow("folders", labels.folders),
+                        optionRow("groups",  labels.groups),
+                        optionRow("all",     labels.all),
+                    }
+                end,
+            }
+        end)(),
+        -- Stack count format: when the badge is shown, choose what the
+        -- numerator counts outside of selection mode. "total" (default)
+        -- → "×N"; "finished_total" → "F/N" where F is the count of
+        -- books in the stack marked finished. In selection mode the
+        -- partial-overlap "K/N" still wins regardless of this setting.
+        (function()
+            local function readMode()
+                local v = BookshelfSettings.read("stack_count_badge_format")
+                if v == "total" or v == "finished_total" then return v end
+                return "total"
+            end
+            local function setMode(mode, touchmenu_instance)
+                BookshelfSettings.save("stack_count_badge_format", mode)
+                markDirty()
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end
+            local labels = {
+                total          = _("Total"),
+                finished_total = _("Finished / Total"),
+            }
+            local function optionRow(mode, label)
+                return {
+                    text           = label,
+                    checked_func   = function() return readMode() == mode end,
+                    radio          = true,
+                    keep_menu_open = true,
+                    callback       = function(touchmenu_instance)
+                        setMode(mode, touchmenu_instance)
+                    end,
+                }
+            end
+            return {
+                text_func = function()
+                    return _("Stack count format") .. ": " .. labels[readMode()]
+                end,
+                sub_item_table_func = function()
+                    return {
+                        optionRow("total",          labels.total),
+                        optionRow("finished_total", labels.finished_total),
+                    }
+                end,
+            }
+        end)(),
         -- 'Show progress bars' sits with the colour rows so it's
         -- clear what 'Read color' / 'Unread color' apply to.
         toggleRow("progress_bar_enabled",

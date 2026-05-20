@@ -30,6 +30,7 @@ local Tokens          = require("lib/bookshelf_tokens")
 local Regions         = require("lib/bookshelf_hero_regions")
 local HeroBar         = require("lib/bookshelf_hero_bar")
 local TextSegments    = require("lib/bookshelf_text_segments")
+local RenderText      = require("ui/rendertext")
 
 local HC_STAR       = "\xef\x80\x85" -- Nerd Font nf-fa-star
 local HC_HALF_STAR  = "\xef\x82\x89" -- Nerd Font nf-fa-star_half
@@ -61,6 +62,7 @@ local HeroCard = InputContainer:extend{
     -- rendering perform network work.
     on_hardcover_reviews_tap = nil,
     is_selected         = false,
+    is_bulk_selected    = false,
 }
 
 -- Reads the user's font-scale setting (% of nominal). Applied on top of
@@ -165,6 +167,119 @@ local function _buildSegmentedInline(text, face, bold)
     return hg
 end
 
+-- balanceLines(text, face, max_width, bold) — redistribute words across
+-- wrapped lines so each line is roughly the same width. Avoids the
+-- "widow" effect where a long title's last line is one or two words.
+-- TextBoxWidget wraps greedily (fill each line to capacity); this
+-- rebalances by enumerating valid break-point combinations and picking
+-- the one that minimises the *widest* resulting line.
+--
+-- Returns text with manual "\n" inserted at the chosen break points,
+-- or the original text when balancing isn't possible (single line,
+-- words too long to fit, line count > 3 — for which the search space
+-- explodes and the natural wrap is usually acceptable).
+local function balanceLines(text, face, max_width, bold)
+    if not text or text == "" or text:find("\n") then return text end
+    -- Tokenize on whitespace. Drop any pre-existing manual breaks above.
+    local words = {}
+    for w in text:gmatch("%S+") do words[#words + 1] = w end
+    local nw = #words
+    if nw < 2 then return text end
+
+    -- Measure each word once. Space width is constant for the face.
+    local widths = {}
+    for i = 1, nw do
+        widths[i] = RenderText:sizeUtf8Text(0, max_width, face, words[i], true, bold).x
+    end
+    local space_w = RenderText:sizeUtf8Text(0, false, face, " ", true, bold).x
+
+    -- line_w(i, j) — width of joined words[i..j] with single spaces.
+    local function line_w(i, j)
+        local w = 0
+        for k = i, j do w = w + widths[k] end
+        return w + (j - i) * space_w
+    end
+
+    -- Greedy wrap to determine natural line count. If everything fits on
+    -- one line, nothing to balance.
+    local n_lines = 0
+    do
+        local i = 1
+        while i <= nw do
+            local j = i
+            while j < nw and line_w(i, j + 1) <= max_width do
+                j = j + 1
+            end
+            -- If a single word doesn't fit, give up — TextBoxWidget will
+            -- glyph-truncate it and balancing wouldn't help.
+            if j < i then return text end
+            n_lines = n_lines + 1
+            i = j + 1
+        end
+    end
+    if n_lines < 2 then return text end
+    if n_lines > 3 then return text end
+
+    -- Brute-force search over break combinations. For n_lines = 2 we
+    -- choose 1 break in [1..nw-1]; for n_lines = 3 we choose 2 breaks.
+    -- Picks the configuration that minimises max line width while still
+    -- satisfying every line ≤ max_width. Ties broken by smallest sum-
+    -- of-squared-deviations from the mean (lightly favours the visually
+    -- "tightest" balance).
+    local best_breaks
+    local best_max  = math.huge
+    local best_dev  = math.huge
+    local function consider(breaks)
+        local prev = 0
+        local mx, sum = 0, 0
+        local line_ws = {}
+        for _i, b in ipairs(breaks) do
+            local w = line_w(prev + 1, b)
+            if w > max_width then return end
+            line_ws[#line_ws + 1] = w
+            if w > mx then mx = w end
+            sum = sum + w
+            prev = b
+        end
+        local last = line_w(prev + 1, nw)
+        if last > max_width then return end
+        line_ws[#line_ws + 1] = last
+        sum = sum + last
+        if last > mx then mx = last end
+        local mean = sum / (#breaks + 1)
+        local dev = 0
+        for _i, w in ipairs(line_ws) do
+            local d = w - mean
+            dev = dev + d * d
+        end
+        if mx < best_max or (mx == best_max and dev < best_dev) then
+            best_max    = mx
+            best_dev    = dev
+            best_breaks = breaks
+        end
+    end
+    if n_lines == 2 then
+        for k = 1, nw - 1 do consider({ k }) end
+    else  -- n_lines == 3
+        for k1 = 1, nw - 2 do
+            for k2 = k1 + 1, nw - 1 do
+                consider({ k1, k2 })
+            end
+        end
+    end
+    if not best_breaks then return text end
+
+    -- Reassemble with manual newlines at the chosen break points.
+    local parts = {}
+    local prev = 0
+    for _i, b in ipairs(best_breaks) do
+        parts[#parts + 1] = table.concat(words, " ", prev + 1, b)
+        prev = b
+    end
+    parts[#parts + 1] = table.concat(words, " ", prev + 1, nw)
+    return table.concat(parts, "\n")
+end
+
 -- Build a widget for a single region using the resolved settings. Uses
 -- TextBoxWidget for the normal multi-line wrapping case. Switches to a
 -- segmented HorizontalGroup when the region is bold AND the rendered
@@ -207,11 +322,15 @@ local function buildText(text, region, width)
         end
     end
     return TextBoxWidget:new{
-        text      = rendered,
-        face      = face,
-        bold      = is_bold,
-        width     = width,
-        alignment = region.alignment or "left",
+        text        = rendered,
+        face        = face,
+        bold        = is_bold,
+        width       = width,
+        alignment   = region.alignment or "left",
+        -- region.line_height (em multiplier) overrides TextBoxWidget's
+        -- 0.3 default. Only the title region sets this today; other
+        -- regions fall through to the default leading.
+        line_height = region.line_height,
     }
 end
 
@@ -525,11 +644,18 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         end
     end
 
-    -- Title (rendered after rating so the stars sit at a fixed y above it)
+    -- Title (rendered after rating so the stars sit at a fixed y above it).
+    -- Pre-balance the title text when it would wrap to 2-3 lines, so the
+    -- last line isn't a one- or two-word widow. Single-line titles and
+    -- titles long enough to span 4+ lines fall through to the natural
+    -- greedy wrap.
     if not regions.title.disabled then
         local title_text = Tokens.expand(regions.title.template, book, state)
         title_text = title_text:gsub("%[/?[biu]%]", "")
         if not Tokens.isEmpty(title_text) then
+            local face = regionFace(regions.title)
+            title_text = balanceLines(title_text, face, right_w,
+                                      regions.title.bold or false)
             right_top[#right_top + 1] = buildLine(title_text, regions.title, right_w, book)
         end
     end
@@ -727,7 +853,8 @@ function HeroCard:_renderFull()
         height      = cover_h,
         on_tap      = self.on_tap,
         on_hold     = self.on_hold,
-        is_selected = self.is_selected,
+        is_selected      = self.is_selected,
+        is_bulk_selected = self.is_bulk_selected,
     }
     local cover_widget = cover
 

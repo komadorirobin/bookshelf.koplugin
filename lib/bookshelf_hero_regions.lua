@@ -28,6 +28,13 @@ Regions.DEFAULTS = {
         bold      = true,
         uppercase = false,
         alignment = "left",
+        -- Tight leading: titles are the dominant visual element, and
+        -- TextBoxWidget's 0.3em default puts so much space between
+        -- wrapped title lines that it exceeds the title→author gap —
+        -- the reverse of what reads well. 0.05em gives the lines a
+        -- small but discernible breather without breaking the
+        -- title-as-unit feel.
+        line_height = 0.05,
     },
     -- Metadata: an extra line between author and description. EPUB has no
     -- formal subtitle/metadata field, but the dominant use case is showing

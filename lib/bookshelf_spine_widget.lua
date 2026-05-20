@@ -289,6 +289,55 @@ function RoundedCornerCard:paintTo(bb, x, y)
     end
 end
 
+-- _renderCornerFlag helper widget: paints the top-left bulk-select
+-- corner flag (black isoceles triangle) with a concentric badge
+-- (white ring, black dot). Returns a widget the caller can append to
+-- the SpineWidget's overlap group.
+--
+-- Geometry: the triangle's legs are min(scaleBySize(28), 0.18*card_w)
+-- so the flag scales sanely on PW5 grid covers (~110px wide → ~20px
+-- leg) and never dominates a small thumbnail.
+local CornerFlag = Widget:extend{
+    width  = nil,   -- card width
+    height = nil,   -- card height
+}
+
+function CornerFlag:getSize()
+    return Geom:new{ w = self.width, h = self.height }
+end
+
+function CornerFlag:paintTo(bb, x, y)
+    -- Flag scaled so the black "glass corner" reads from across the room
+    -- on e-ink. Cap raised to 64dp; the 0.28 ratio scales down sanely on
+    -- small thumbnails.
+    local leg = math.min(Screen:scaleBySize(64), math.floor(self.width * 0.28))
+    -- Fill the triangle by rasterising one horizontal line per row,
+    -- shrinking the line width as we move down. Row i (0..leg-1) fills
+    -- pixels from x..x+(leg-1-i) at y+i.
+    for i = 0, leg - 1 do
+        bb:paintRect(x, y + i, leg - i, 1, Blitbuffer.COLOR_BLACK)
+    end
+    -- Badge: concentric white outer / black inner discs along the
+    -- right-angle bisector (y=x). r_max is the largest disc that fits
+    -- exactly inscribed in the triangle (tangent to all three sides
+    -- with a 1px margin):
+    --   r_max = (leg - 2) / (2 + sqrt(2))
+    -- We render at ~80% of r_max so there's a visible black "glass
+    -- corner" between the white ring and the triangle's edges.
+    --
+    -- Center positioned so the white ring has a 1px margin from the
+    -- cover's left/top edges — closer to the corner than the geometric
+    -- incentre (which sits too far inside the triangle visually) but
+    -- not so close that the circle bleeds out into the cover's frame.
+    local r_max = math.max(2, math.floor((leg - 2) / 3.41421))
+    local r_out = math.max(2, math.floor(r_max * 0.80))
+    local cx    = x + r_out + 1
+    local cy    = y + r_out + 1
+    local r_in  = math.max(1, math.floor(r_out * 0.5))
+    bb:paintCircle(cx, cy, r_out, Blitbuffer.COLOR_WHITE)
+    bb:paintCircle(cx, cy, r_in,  Blitbuffer.COLOR_BLACK)
+end
+
 local SpineWidget = InputContainer:extend{
     book        = nil,
     width       = nil,
@@ -303,6 +352,13 @@ local SpineWidget = InputContainer:extend{
     -- ShelfRow when the spine's filepath matches the BookshelfWidget's
     -- preview filepath.
     is_selected = false,
+    -- When true, the card additionally paints a black diagonal
+    -- corner flag in the top-left with a concentric white/black
+    -- target badge. The flag distinguishes "this is in the bulk
+    -- selection" from "this is the currently-open document" --
+    -- both share the thick black border via is_selected, but only
+    -- bulk-selected carries the flag. See spec §2.
+    is_bulk_selected = false,
     -- Cover rendering mode. Mutually exclusive:
     --   cover_fill   = true (default)  → stretch to fill (object-fit: fill)
     --   cover_native = true            → render bb at its native size,
@@ -747,6 +803,18 @@ function SpineWidget:_renderShadowedCard(inner)
                                   cover_right_x - math.floor(badge_w / 2)))
         badge.overlap_offset = { badge_x, -SHADOW_OFFSET }
         children[#children + 1] = badge
+    end
+
+    -- Bulk-select corner flag (top-left). Appended last so it paints
+    -- ABOVE the cover artwork. The flag's size is fully contained
+    -- within the cover's footprint (top-left corner only) and does
+    -- not collide with the top-right series badge / bottom-left
+    -- bookmark glyph / bottom-right page count.
+    if self.is_bulk_selected then
+        children[#children + 1] = CornerFlag:new{
+            width  = card_w,
+            height = card_h,
+        }
     end
 
     return OverlapGroup:new{

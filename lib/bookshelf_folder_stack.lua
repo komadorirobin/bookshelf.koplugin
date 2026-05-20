@@ -23,6 +23,7 @@ local Screen         = require("device").screen
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local SpineWidget    = require("lib/bookshelf_spine_widget")
 local FolderCard     = require("lib/bookshelf_folder_card")
+local CountBadge     = require("lib/bookshelf_count_badge")
 
 local FADED_FINISHED_FOLDER_AMOUNT = 0.5
 
@@ -51,7 +52,23 @@ local FolderStack = InputContainer:extend{
     height      = nil,
     on_tap      = nil,
     on_hold     = nil,
-    is_selected = false,
+    is_selected      = false,
+    is_bulk_selected = false,
+    -- book_count: total recursive books under this folder. nil
+    -- suppresses the badge entirely. shelf_row supplies it (or not)
+    -- based on the stack_count_badge_mode setting.
+    book_count       = nil,
+    -- selected_count: K when 0 < K < book_count → renders "K/book_count"
+    -- instead of "×book_count" (Venn-diagram partial-selection state).
+    selected_count   = nil,
+    -- finished_count: out-of-selection format. Renders "F/N" when set
+    -- and selected_count is nil. Driven by
+    -- stack_count_badge_format = "finished_total".
+    finished_count   = nil,
+    -- finished_total: unfiltered total for the F/N denominator. Falls
+    -- back to book_count when omitted. Separate field so F/N stays
+    -- stack-wide even when book_count reflects a filtered count.
+    finished_total   = nil,
 }
 
 function FolderStack:init()
@@ -64,22 +81,24 @@ function FolderStack:init()
     local book_widget
     if self.folder and self.folder.first_book then
         book_widget = SpineWidget:new{
-            book            = self.folder.first_book,
-            width           = self.width,
-            height          = self.height,
-            cover_fill      = true,
-            is_selected     = self.is_selected,
-            suppress_badges = true,
+            book             = self.folder.first_book,
+            width            = self.width,
+            height           = self.height,
+            cover_fill       = true,
+            is_selected      = self.is_selected,
+            is_bulk_selected = self.is_bulk_selected,
+            suppress_badges  = true,
         }
     else
         -- Empty folder: SpineWidget's fallback path with the folder's
         -- label as the title so the "?" placeholder reads correctly.
         book_widget = SpineWidget:new{
-            book            = { title = self.folder and self.folder.label or "" },
-            width           = self.width,
-            height          = self.height,
-            is_selected     = self.is_selected,
-            suppress_badges = true,
+            book             = { title = self.folder and self.folder.label or "" },
+            width            = self.width,
+            height           = self.height,
+            is_selected      = self.is_selected,
+            is_bulk_selected = self.is_bulk_selected,
+            suppress_badges  = true,
         }
     end
 
@@ -90,13 +109,13 @@ function FolderStack:init()
     }
 
     local children = {
-        dimen = self.dimen,
         book_widget,           -- 0: book card + book's own drop shadow
         folder_widget,         -- 1: cardboard front (covers book bottom)
         label_widget,          -- 2: folder name on body
     }
 
-    local book_count = self.folder and tonumber(self.folder.book_count)
+    local book_count = tonumber(self.book_count)
+        or (self.folder and tonumber(self.folder.book_count))
     local unread_count = self.folder and tonumber(self.folder.unread_count)
     local all_read = self.folder and self.folder.all_read
     if all_read and book_count and book_count > 0 and fadeFinishedFoldersEnabled() then
@@ -107,38 +126,29 @@ function FolderStack:init()
         }
     end
 
-    local function makeBadge(text, size)
-        return FrameContainer:new{
-            bordersize     = Size.border.thin,
-            background     = Blitbuffer.COLOR_WHITE,
-            radius         = Screen:scaleBySize(3),
-            padding_left   = Size.padding.default,
-            padding_right  = Size.padding.default,
-            padding_top    = Size.padding.small,
-            padding_bottom = Size.padding.small,
-            TextWidget:new{
-                text = text,
-                face = Font:getFace("smallinfofont", size or 12),
-                bold = true,
-            },
-        }
-    end
-
     if book_count and book_count > 0 then
-        local badge = makeBadge("\195\151" .. tostring(book_count), 12)
-        local badge_w = badge:getSize().w
-        local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
-        local badge_x = math.max(0, math.min(self.width - badge_w,
-                                             cover_right_x - math.floor(badge_w / 2)))
-        badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
-        children[#children + 1] = badge
+        local badge = CountBadge.render(
+            book_count,
+            self.selected_count,
+            self.finished_count,
+            self.finished_total)
+        if badge then
+            local badge_w = badge:getSize().w
+            local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
+            local badge_x = math.max(0, math.min(self.width - badge_w,
+                                                 cover_right_x - math.floor(badge_w / 2)))
+            badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
+            children[#children + 1] = badge
+        end
     end
 
-    if unread_count and unread_count > 0 then
-        local badge = makeBadge(tostring(unread_count) .. " kvar", 10)
-        badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }
-        children[#children + 1] = badge
-    elseif all_read and book_count and book_count > 0 then
+    if unread_count and unread_count > 0 and not self.selected_count then
+        local badge = CountBadge.render(unread_count)
+        if badge then
+            badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }
+            children[#children + 1] = badge
+        end
+    elseif all_read and book_count and book_count > 0 and not self.selected_count then
         local card_w = self.width - FolderCard.SHADOW_OFFSET
         local card_h = self.height - FolderCard.SHADOW_OFFSET
         local glyph = SpineWidget.newStatusGlyphOverlay{
@@ -151,6 +161,7 @@ function FolderStack:init()
         end
     end
 
+    children.dimen = self.dimen
     self[1] = OverlapGroup:new(children)
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
