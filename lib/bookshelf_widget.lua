@@ -328,8 +328,10 @@ function BookshelfWidget:_buildSimpleUIPaginationOverlay()
     -- whole reserved navbar area. When SimpleUI's bar grows taller (e.g. icon
     -- labels), anchoring to total_h pushes this label up into the last shelf.
     local sep_y = self.height - ctx.total_h + (ctx.top_sp or 0) - (ctx.sep_h or 0)
-    local overlay_gap = Screen:scaleBySize(2)
-    local overlay_y = math.max(0, sep_y - overlay_h - overlay_gap)
+    -- Optical correction: the bottom shelf shadows make the true midpoint feel
+    -- a little high, so let the label sit slightly closer to the navbar rule.
+    local optical_drop = Screen:scaleBySize(4)
+    local overlay_y = math.max(0, sep_y - overlay_h + optical_drop)
     local label = TextWidget:new{
         text = self:_simpleUIPageLabel(),
         face = Font:getFace("smallinfofont", 13),
