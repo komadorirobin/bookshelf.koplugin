@@ -1128,6 +1128,31 @@ function Settings:_advancedSubItems()
             callback = function() self:_pickLatestDepth() end,
         },
         {
+            text = _("Double tap to open books"),
+            help_text = _("When enabled, opening a book from the hero "
+                .. "card or from a shelf cover in expanded mode requires "
+                .. "two taps -- the first selects the cover (focus "
+                .. "ring), the second commits. Useful if you tend to "
+                .. "open books accidentally while browsing. Regular "
+                .. "shelf covers (with the hero visible) already work "
+                .. "this way -- tap stages the book as the hero "
+                .. "preview, tap the hero opens it -- and are "
+                .. "unaffected by this setting."),
+            checked_func   = function()
+                return BookshelfSettings.isTrue("tap_to_open_double")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.isTrue("tap_to_open_double")
+                BookshelfSettings.save("tap_to_open_double", not enabled)
+                BookshelfSettings.flush()
+                -- Clear any pending tap-selection on the live widget so
+                -- toggling the setting off mid-session doesn't leave a
+                -- stale focus ring on the hero / shelf cover.
+                if self._bw then self._bw._tap_selected_fp = nil end
+            end,
+        },
+        {
             text = _("Closing book notification"),
             help_text = _("Show a 'Closing book…' message in the centre "
                 .. "of the screen while a book is being closed back to "

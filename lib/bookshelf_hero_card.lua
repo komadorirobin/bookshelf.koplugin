@@ -847,16 +847,39 @@ end
 function HeroCard:_renderFull()
     local cover_h = self.cover_h or self.height
 
+    -- SpineWidget's BorderOverlay (drawn when is_selected) paints at
+    -- (-SHADOW_OFFSET, -SHADOW_OFFSET) relative to its own origin -- it
+    -- extends OUTSIDE the spine widget on the top and left edges,
+    -- relying on the parent context having that much outer breathing
+    -- room available. Shelf rows accommodate this naturally; the hero
+    -- cover sits flush against the hero card's top-left with nothing
+    -- outside, so the top and left edges of the selection border got
+    -- clipped (reporter on the test branch).
+    --
+    -- Reserve the SHADOW_OFFSET on top + left by wrapping the
+    -- SpineWidget in a FrameContainer that pushes the cover down-right
+    -- by SHADOW_OFFSET. The BorderOverlay's outward paint then lands
+    -- inside the wrapper's bounds. Shrink the SpineWidget by
+    -- SHADOW_OFFSET in each dimension so the outer cover footprint
+    -- stays unchanged (the hero layout was sized for cover_w x cover_h).
+    local SHADOW_OFFSET = Screen:scaleBySize(4)
+
     local cover = SpineWidget:new{
         book        = self.book,
-        width       = self.cover_w,
-        height      = cover_h,
+        width       = self.cover_w - SHADOW_OFFSET,
+        height      = cover_h - SHADOW_OFFSET,
         on_tap      = self.on_tap,
         on_hold     = self.on_hold,
         is_selected      = self.is_selected,
         is_bulk_selected = self.is_bulk_selected,
     }
-    local cover_widget = cover
+    local cover_widget = FrameContainer:new{
+        bordersize   = 0,
+        padding      = 0,
+        padding_top  = SHADOW_OFFSET,
+        padding_left = SHADOW_OFFSET,
+        cover,
+    }
 
     local text_padding = self.pad or Size.padding.fullscreen
     local right_w = self.width - self.cover_w - text_padding

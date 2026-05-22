@@ -1209,56 +1209,15 @@ function BookshelfWidget:_rebuild()
     -- disabled AND no drill-down) so the hero can claim the slot.
     local breadcrumb_path = nil
     local in_search_mode  = false
-    -- Prefix the breadcrumb label with the kind so a deep view reads
-    -- as "Author: VanderMeer", "Series: Southern Reach", "Genre:
-    -- Horror" etc. -- it's otherwise ambiguous which facet you're
-    -- inside when the same name could plausibly be e.g. a series or a
-    -- collection. Search entries keep their bare label (the chip pill
-    -- itself already says "Search results").
-    --
-    -- Exception: when the active chip's source is the same kind as the
-    -- crumb (e.g. drilling from a Series chip into a series), the
-    -- "Series:" prefix duplicates the chip pill's label. Strip it so
-    -- the crumb reads cleanly. Chip kinds are plural ("authors") while
-    -- drill kinds are singular ("author"); the alias map handles both.
-    local _BREADCRUMB_KIND_LABEL = {
-        author = _("Author"),
-        series = _("Series"),
-        genre  = _("Genre"),
-        tag    = _("Collection"),
-        folder = _("Folder"),
-        format = _("Format"),
-        rating = _("Rating"),
-    }
-    local _CHIP_KIND_TO_DRILL_KIND = {
-        authors = "author",
-        series  = "series",
-        genres  = "genre",
-        tags    = "tag",
-        formats = "format",
-        ratings = "rating",
-        folder  = "folder",
-    }
-    local _chip_drill_kind
-    do
-        local tab = TabModel.getById(self.chip)
-        local src_kind = tab and tab.source and tab.source.kind
-        _chip_drill_kind = src_kind and _CHIP_KIND_TO_DRILL_KIND[src_kind]
-    end
+    -- Each crumb is just its label. The chip pill already conveys what
+    -- kind of drill the user is in (Authors / Series / Genres / etc.),
+    -- the chevron separators make the nesting obvious, and the names
+    -- themselves are clear enough in context that prefixing every
+    -- crumb with "Author: ", "Series: ", "Folder: " read as noise.
     if #self._drilldown_path > 0 then
         breadcrumb_path = {}
         for i, entry in ipairs(self._drilldown_path) do
-            local kind_label = _BREADCRUMB_KIND_LABEL[entry.kind]
-            local crumb_label = entry.label
-            -- Suppress the prefix when it would duplicate the chip
-            -- pill's implied context. Subsequent crumbs at a deeper
-            -- level still keep their prefix — useful when drilling
-            -- author → series picks up a fresh facet.
-            local redundant = (entry.kind == _chip_drill_kind)
-            if kind_label and not redundant then
-                crumb_label = kind_label .. ": " .. entry.label
-            end
-            breadcrumb_path[i] = { label = crumb_label }
+            breadcrumb_path[i] = { label = entry.label }
             if entry.kind == "search" then in_search_mode = true end
         end
     end
@@ -1835,8 +1794,18 @@ end
 
 -- ─── Background metadata extraction ──────────────────────────────────────────
 
-local BIM_POLL_INTERVAL_S  = 3
-local BIM_POLL_MAX_ATTEMPTS = 20
+-- Adaptive polling for BIM extraction completion. The subprocess
+-- commits to SQLite per-book (bookinfomanager.lua's set_stmt:step at
+-- line ~484), so we can observe per-book progress and refresh covers
+-- as they appear instead of batching at the end. Start fast for
+-- perceived real-time feedback; back off if a poll finds no new
+-- metadata (BIM stuck on a slow book / book skipped). Resets to the
+-- fast end whenever ANY book completes (_armExtractionPoll re-runs
+-- through _swapShelvesInPlace -> _kickOffMissingMetaExtraction). The
+-- 60s total wall-clock budget protects against runaway polling when
+-- BIM has effectively abandoned the queued books.
+local BIM_POLL_INTERVALS_S    = { 0.4, 0.6, 1.0, 2.0, 3.0 }
+local BIM_POLL_TOTAL_BUDGET_S = 60
 
 -- _kickOffMissingMetaExtraction(items, slot_w, slot_h)
 -- BookInfoManager only knows about books KOReader has already indexed. Books
@@ -1876,19 +1845,25 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
         if not fp or seen[fp] then return end
         seen[fp] = true
         local info = BIM:getBookInfo(fp, false)
-        local needs = false
+        local needs   = false
+        local reason  = "?"
+        local inprog  = tonumber(info and info.in_progress) or 0
         if not info then
-            needs = true
-        elseif info.has_meta == nil
-                and (tonumber(info.in_progress) or 0) < max_tries then
-            needs = true
-        elseif info.cover_fetched == nil
-                and (tonumber(info.in_progress) or 0) < max_tries then
+            needs  = true
+            reason = "no-row"
+        elseif info.has_meta == nil and inprog < max_tries then
+            needs  = true
+            reason = "no-meta"
+        elseif info.has_meta == nil then
+            reason = "no-meta-but-max-tries"
+        elseif info.cover_fetched == nil and inprog < max_tries then
             -- Metadata was extracted (e.g. by "Scan all library metadata")
             -- but no cover attempt has been made yet.
-            needs = true
-        elseif info.has_cover == "Y"
-                and (tonumber(info.in_progress) or 0) < max_tries
+            needs  = true
+            reason = "no-cover-attempt"
+        elseif info.cover_fetched == nil then
+            reason = "no-cover-attempt-but-max-tries"
+        elseif info.has_cover == "Y" and inprog < max_tries
                 and BookshelfWidget._coverNeedsResize(info, cover_specs) then
             -- Cached cover was extracted at a smaller spec than the current
             -- slot needs (e.g. the user previously browsed in FM list-mode,
@@ -1896,8 +1871,18 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
             -- so BIM's subprocess overwrites the row with a sharper thumbnail.
             -- The helper applies a tolerance band so we don't thrash on minor
             -- dimension changes — important since extraction is expensive.
-            needs = true
+            needs  = true
+            reason = "cover-too-small"
+        elseif info.has_cover == "Y" then
+            reason = "cover-ok"
+        elseif info.has_cover ~= "Y" then
+            reason = (inprog >= max_tries) and "no-cover-given-up" or "no-cover-fetched"
         end
+        logger.info(string.format(
+            "[bim queue] fp=%s queue=%s reason=%s in_progress=%d has_meta=%s has_cover=%s cover_fetched=%s",
+            fp, tostring(needs), reason, inprog,
+            tostring(info and info.has_meta), tostring(info and info.has_cover),
+            tostring(info and info.cover_fetched)))
         if needs then
             files[#files + 1] = {
                 filepath    = fp,
@@ -1940,48 +1925,129 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     if hero_fp then maybe_queue(hero_fp) end
     logger.dbg(string.format("[bookshelf perf] _kickOffMeta: queued=%d displayed=%d",
         #files, #(items or {})))
-    -- Per-extension breakdown of what's being queued: helps confirm whether
-    -- the new v1.1.2 extensions (.docx/.doc/.rtf/.odt/.azw) are dominating
-    -- the queue on this device (which would make BIM extraction far heavier
-    -- than on v1.1.1).
-    do
-        local ext_count = {}
-        for _, q in ipairs(files) do
-            local ext = (q.filepath or ""):match("%.([^%.]+)$")
-            if ext then
-                ext = ext:lower()
-                ext_count[ext] = (ext_count[ext] or 0) + 1
-            end
-        end
-        local parts = {}
-        for ext, n in pairs(ext_count) do
-            parts[#parts + 1] = ext .. "=" .. n
-        end
-    end
+    logger.info(string.format(
+        "[bim kickoff] queued=%d displayed=%d bim_busy=%s",
+        #files, #(items or {}),
+        tostring(BIM:isExtractingInBackground())))
     if #files > 0 then
         UIManager:nextTick(function()
-            -- If CoverBrowser already has a background job running, don't
-            -- interrupt it (terminateBackgroundJobs + re-fork is what causes
-            -- the "Start-up of background extraction job failed" toast when
-            -- the killed process is still in the table). Schedule a retry
-            -- instead; the poll below catches covers whenever they appear.
-            if BIM:isExtractingInBackground() then
-                UIManager:scheduleIn(BIM_POLL_INTERVAL_S, function()
-                    pcall(function() BIM:extractInBackground(files) end)
-                end)
-            else
-                pcall(function() BIM:extractInBackground(files) end)
+            -- Priority interrupt model:
+            --   * BIM idle -> FIRE (start our extraction).
+            --   * BIM busy + we own a TEXT-ONLY batch -> SKIP. Bulk
+            --     text-only runs at ~30 ms/book and will finish in
+            --     seconds; visible books get their text + series
+            --     indicator from that batch, then the orphan-retry
+            --     fires cover-only extractions for the visible files
+            --     (text is now cached) so covers appear separately.
+            --     This gives the user the "text first, cover next"
+            --     UX. Interrupting here would force a full re-extract
+            --     for visible books and arrive cover + text together,
+            --     making the series indicator wait for the cover.
+            --   * BIM busy + we own a COVER batch -> INTERRUPT. Cover
+            --     work is slow (~300 ms/book) and the user's visible
+            --     page should jump to the front. Whatever was queued
+            --     before stays in the poll watch list (see merge in
+            --     _armExtractionPoll) and the orphan-retry picks the
+            --     leftovers up when BIM idles.
+            --   * BIM busy + NOT owned -> SKIP. Something else (e.g.
+            --     scan-all via extractBooksInDirectory, or another
+            --     plugin) owns BIM; interrupting would kill its work.
+            --     Pre-#68 we'd terminate-and-restart unconditionally
+            --     here, which aborted a 17k-book scan at letter O when
+            --     bookshelf re-paginated mid-scan.
+            local bim_busy = BIM:isExtractingInBackground()
+            if bim_busy then
+                if not self._bim_owned_extraction then
+                    logger.info(string.format(
+                        "[bim extract] SKIP files=%d (BIM busy, not owned)",
+                        #files))
+                    return
+                end
+                -- Owned text-only batches (bulk-refresh) finish fast
+                -- enough that interrupting to slot in a visible-page
+                -- cover fire wasn't worth the added complexity --
+                -- subjectively felt worse than just waiting for the
+                -- text-only pass to finish.
+                if not self._bim_owned_has_covers then
+                    logger.info(string.format(
+                        "[bim extract] SKIP files=%d (owned text-only batch)",
+                        #files))
+                    return
+                end
+                -- Subset check: if every visible file is already in
+                -- BIM's current queue, don't re-fire -- re-firing kills
+                -- BIM's in-flight book and we'd thrash through the
+                -- N..N-1..N-2 sequence as each render-cycle after a
+                -- book completes re-kickoffs with one fewer file.
+                if self._bim_submitted_set then
+                    local all_in_queue = true
+                    for _i, f in ipairs(files) do
+                        if not self._bim_submitted_set[f.filepath] then
+                            all_in_queue = false
+                            break
+                        end
+                    end
+                    if all_in_queue then
+                        logger.info(string.format(
+                            "[bim extract] SKIP files=%d (all already in BIM queue)",
+                            #files))
+                        return
+                    end
+                end
             end
+            self:_fireBimExtraction(files,
+                bim_busy and "kickoff-interrupt" or "kickoff")
         end)
     end
     self:_armExtractionPoll(files)
 end
 
+-- _fireBimExtraction(files, label): wrapper around BIM:extractInBackground
+-- that sets the ownership flag so subsequent kickoffs can tell the
+-- current BIM job is ours (safe to interrupt for higher-priority work)
+-- vs. someone else's (don't kill it). Also tracks whether the current
+-- job is doing covers: a text-only batch (no cover_specs) finishes
+-- ~10x faster than a cover batch, so the kickoff path lets text-only
+-- runs complete and only interrupts cover work. `label` is for log
+-- readability.
+function BookshelfWidget:_fireBimExtraction(files, label)
+    if not files or #files == 0 then return false end
+    local ok_bim, BIM = pcall(require, "bookinfomanager")
+    if not (ok_bim and BIM and BIM.extractInBackground) then return false end
+    local has_covers   = false
+    local submitted    = {}
+    for _i, f in ipairs(files) do
+        if f.cover_specs then has_covers = true end
+        submitted[f.filepath] = true
+    end
+    logger.info(string.format(
+        "[bim extract] FIRE files=%d label=%s covers=%s",
+        #files, label or "?", tostring(has_covers)))
+    local ok, err = pcall(function() BIM:extractInBackground(files) end)
+    if ok then
+        self._bim_owned_extraction = true
+        self._bim_owned_has_covers = has_covers
+        -- Set of filepaths in BIM's current queue. Kickoff uses this
+        -- to detect "no new context": if every visible file is already
+        -- being processed (subset of submitted), skip the kickoff to
+        -- avoid the thrash where each render-cycle after one book
+        -- completes re-fires extractInBackground for the N-1 still
+        -- pending, killing BIM's in-flight book each time.
+        self._bim_submitted_set = submitted
+        return true
+    end
+    logger.warn(string.format(
+        "[bim extract] FAILED files=%d label=%s err=%s",
+        #files, label or "?", tostring(err)))
+    return false
+end
+
 -- _armExtractionPoll(files): start a polling loop that watches BIM for
 -- the queued filepaths and refreshes the shelf when their metadata
--- appears. Polls every BIM_POLL_INTERVAL_S seconds for up to
--- BIM_POLL_MAX_ATTEMPTS attempts (≈ 60s) — the typical extraction
--- subprocess completes well within that window. Cancels any earlier
+-- appears. Adaptive cadence (see BIM_POLL_INTERVALS_S) -- fast at the
+-- start so covers appear in near-real-time as the subprocess commits
+-- them, backs off if successive polls find nothing new, total
+-- wall-clock budget of BIM_POLL_TOTAL_BUDGET_S. Cancels any earlier
 -- polling timer so consecutive renders don't stack timers.
 function BookshelfWidget:_armExtractionPoll(pending_files)
     if self._bim_poll_fn then
@@ -1989,23 +2055,64 @@ function BookshelfWidget:_armExtractionPoll(pending_files)
         self._bim_poll_fn = nil
     end
     if not pending_files or #pending_files == 0 then
-        self._bim_poll_files = nil
+        -- Don't drop the existing watch list -- callers that arm with
+        -- zero new files should be no-ops on the watch state. The
+        -- previous behaviour (clear-on-empty) caused orphans from a
+        -- prior bulk-refresh to be forgotten when a subsequent
+        -- rebuild's kickoff had nothing new to queue.
         return
     end
-    self._bim_poll_files    = pending_files
-    self._bim_poll_attempts = 0
+    -- Merge into the existing watch list, de-duped by filepath. New
+    -- entries' cover_specs win when both are present so the latest
+    -- visible context (a kickoff arming with the user's current slot
+    -- size) overrides a text-only bulk-refresh arming. This keeps the
+    -- watch list as the union of "everything we want BIM to process,
+    -- not yet observed complete" -- the orphan-retry path in
+    -- _pollExtraction fires this list when BIM goes idle.
+    local existing  = self._bim_poll_files or {}
+    local idx_by_fp = {}
+    for i, f in ipairs(existing) do
+        idx_by_fp[f.filepath] = i
+    end
+    local added = 0
+    for _i, nf in ipairs(pending_files) do
+        local i = idx_by_fp[nf.filepath]
+        if i then
+            if nf.cover_specs then
+                existing[i].cover_specs = nf.cover_specs
+            end
+        else
+            existing[#existing + 1] = nf
+            idx_by_fp[nf.filepath] = #existing
+            added = added + 1
+        end
+    end
+    self._bim_poll_files        = existing
+    self._bim_poll_started_at   = os.time()  -- reset budget on every arm
+    self._bim_poll_empty_streak = 0          -- and the burst-poll cadence
+    logger.info(string.format(
+        "[bim arm] watching %d files (added %d)", #existing, added))
     self:_scheduleExtractionPoll()
 end
 
 function BookshelfWidget:_scheduleExtractionPoll()
     if not self._bim_poll_files then return end
-    if self._bim_poll_attempts >= BIM_POLL_MAX_ATTEMPTS then
+    local elapsed = os.time() - (self._bim_poll_started_at or os.time())
+    if elapsed >= BIM_POLL_TOTAL_BUDGET_S then
+        logger.info(string.format(
+            "[bim sched] budget exhausted elapsed=%ds pending=%d -- giving up",
+            elapsed, #(self._bim_poll_files or {})))
         self._bim_poll_files = nil
         return
     end
-    self._bim_poll_attempts = self._bim_poll_attempts + 1
+    local streak   = self._bim_poll_empty_streak or 0
+    local idx      = math.min(streak + 1, #BIM_POLL_INTERVALS_S)
+    local interval = BIM_POLL_INTERVALS_S[idx]
+    logger.info(string.format(
+        "[bim sched] next=%.1fs streak=%d elapsed=%ds pending=%d",
+        interval, streak, elapsed, #(self._bim_poll_files or {})))
     self._bim_poll_fn = function() self:_pollExtraction() end
-    UIManager:scheduleIn(BIM_POLL_INTERVAL_S, self._bim_poll_fn)
+    UIManager:scheduleIn(interval, self._bim_poll_fn)
 end
 
 function BookshelfWidget:_pollExtraction()
@@ -2023,7 +2130,8 @@ function BookshelfWidget:_pollExtraction()
     local max_tries = BIM.max_extract_tries or 3
     local ready_paths   = {}
     local still_pending = {}
-    for _, f in ipairs(files) do
+    local gave_up_count = 0
+    for _i, f in ipairs(files) do
         local info = BIM:getBookInfo(f.filepath, false)
         local inprog = tonumber(info and info.in_progress) or 0
         local meta_ready = info and info.has_meta == "Y"
@@ -2047,15 +2155,58 @@ function BookshelfWidget:_pollExtraction()
                 cover_ready = not BookshelfWidget._coverNeedsResize(info, f.cover_specs)
             end
         end
+        local outcome
         if meta_ready and inprog == 0 and cover_ready then
             ready_paths[f.filepath] = true
+            outcome = "READY"
         elseif info and inprog >= max_tries then
             -- BIM gave up on this file; stop watching it.
+            outcome = "GAVE-UP"
+            gave_up_count = gave_up_count + 1
         else
             still_pending[#still_pending + 1] = f
+            outcome = "PENDING"
         end
+        logger.info(string.format(
+            "[bim poll] %s fp=%s in_progress=%d has_meta=%s has_cover=%s cover_fetched=%s cover_ready=%s",
+            outcome, f.filepath, inprog,
+            tostring(info and info.has_meta), tostring(info and info.has_cover),
+            tostring(info and info.cover_fetched), tostring(cover_ready)))
     end
+    local ready_count = 0
+    for _k in pairs(ready_paths) do ready_count = ready_count + 1 end
+    local bim_busy_now = BIM:isExtractingInBackground()
+    logger.info(string.format(
+        "[bim poll] SUMMARY ready=%d pending=%d gave_up=%d bim_busy=%s",
+        ready_count, #still_pending, gave_up_count, tostring(bim_busy_now)))
     self._bim_poll_files = #still_pending > 0 and still_pending or nil
+    -- Clear ownership state when BIM is observed idle. These flags
+    -- describe "the BIM job we last fired" -- once that job ends,
+    -- they're stale and would mislead the kickoff path's interrupt /
+    -- subset decisions on the next fire.
+    if not bim_busy_now and self._bim_owned_extraction then
+        self._bim_owned_extraction = nil
+        self._bim_owned_has_covers = nil
+        self._bim_submitted_set    = nil
+    end
+    -- Orphan-retry: when BIM is idle and our watch list still has
+    -- pending files, fire them. These are typically the leftovers
+    -- from a previous fire that got interrupted by a higher-priority
+    -- kickoff (priority interrupt model), or files armed by
+    -- bulk-refresh that the kickoff path never saw. Without this
+    -- step the leftovers sit unfetched forever.
+    if #still_pending > 0 and not bim_busy_now then
+        local fire_list = still_pending
+        UIManager:nextTick(function()
+            if BIM:isExtractingInBackground() then
+                logger.info(string.format(
+                    "[bim retry] SKIP files=%d (BIM busy at fire time)",
+                    #fire_list))
+                return
+            end
+            self:_fireBimExtraction(fire_list, "orphan-retry")
+        end)
+    end
     if next(ready_paths) and self._inner_vgroup and self._shelf_dims then
         -- _swapShelvesInPlace re-fetches Book records (which re-query
         -- BIM) and re-arms polling for whatever is still missing.
@@ -2084,7 +2235,13 @@ function BookshelfWidget:_pollExtraction()
         end
         return
     end
-    local poll_t1 = os.time()
+    -- Poll completed with no books transitioning to ready. Bump the
+    -- empty-streak counter so _scheduleExtractionPoll backs off the
+    -- next interval (cheap on a quiet BIM, snappy when a book lands
+    -- next tick). Progress polls don't reach here -- they early-return
+    -- via the ready_paths branch above, which re-runs _kickOff via
+    -- _swapShelvesInPlace and _armExtractionPoll resets the streak.
+    self._bim_poll_empty_streak = (self._bim_poll_empty_streak or 0) + 1
     if self._bim_poll_files then
         self:_scheduleExtractionPoll()
     end
@@ -2250,6 +2407,25 @@ function BookshelfWidget:_buildDeviceState()
             local ok, v = pcall(function() return PowerD:frontlightIntensity() end)
             if ok then light = v end
         end
+        -- PowerD keeps fl_intensity at its prior value when the user
+        -- toggles the frontlight OFF -- only is_fl_on flips and the
+        -- HW gets setIntensityHW(fl_min). frontlightIntensity() reads
+        -- self.fl_intensity directly (no live HW probe), so a fresh
+        -- read after toggle-off returns the same non-zero value the
+        -- light had before. Override to 0 in the off state so:
+        --   * [if:light] gates the status section out cleanly,
+        --   * %light_icon picks the lightbulb-outline (off) glyph
+        --     (s.light > 0 check in Tokens.expanders.light_icon),
+        --   * %light_pct calculates to 0 ("0%" in custom templates).
+        local fl_on
+        if PowerD.isFrontlightOn then
+            local ok, v = pcall(function() return PowerD:isFrontlightOn() end)
+            if ok then fl_on = v end
+        end
+        if fl_on == nil and PowerD.is_fl_on ~= nil then
+            fl_on = PowerD.is_fl_on
+        end
+        if fl_on == false then light = 0 end
         -- Kindle PW5 frontlight maxes out at 24, Kobo varies. Mirror
         -- bookends's normalisation so users get a familiar 0–100 scale
         -- via %light_pct (the raw %light is still available).
@@ -2381,11 +2557,18 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
         cover_h      = hero_cover_h,
         pad          = PAD,
         device_state = device_state,
-        -- The "Require double-tap to open" setting only gates SHELF
-        -- cover taps. The hero cover already represents the user's
-        -- current selection (preview or lastfile), so a double-tap
-        -- requirement here was redundant -- it forced the user to
-        -- "select" what was already selected. Single-tap commits.
+        -- Tap gating:
+        --   * selection mode: toggle the book in/out of the bucket.
+        --   * tap_to_open_double setting ON: first tap stages the
+        --     hero as "tap-selected" (focus ring around the cover),
+        --     second tap on the same book opens. Mirrors the
+        --     preview-then-open pattern shelf covers use in non-
+        --     expanded mode, for users who tend to fat-finger the
+        --     hero while browsing.
+        --   * otherwise: single tap opens. The hero already
+        --     represents the user's current selection, so requiring
+        --     a confirmation tap is redundant when the user has
+        --     opted out of the setting.
         on_tap       = function(b)
             if self._selection:isActive() then
                 self._selection:toggle(b.filepath)
@@ -2393,6 +2576,13 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
                 self:_refreshBucket()
                 return
             end
+            if BookshelfSettings.isTrue("tap_to_open_double")
+                    and self._tap_selected_fp ~= b.filepath then
+                self._tap_selected_fp = b.filepath
+                self:_swapHeroInPlace()
+                return
+            end
+            self._tap_selected_fp = nil
             self:_openBook(b)
         end,
         on_hold      = function(b)
@@ -2405,7 +2595,8 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
         on_rating_change   = function(b, r) self:_setBookRating(b, r) end,
         on_hardcover_reviews_tap = function(b) self:_showHardcoverReviews(b) end,
         is_selected      = (self._focus_zone == "hero")
-                           or (current and self._selection:contains(current.filepath) or false),
+                           or (current and self._selection:contains(current.filepath) or false)
+                           or (current and self._tap_selected_fp == current.filepath or false),
         is_bulk_selected = current and self._selection:contains(current.filepath) or false,
     }
     local _perf_t4 = _gettime()
@@ -2516,6 +2707,13 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
     if not selected_filepath and not self._expanded and self._preview_book then
         selected_filepath = self._preview_book.filepath
     end
+    -- In expanded mode the hero is hidden, so there's no preview to
+    -- highlight. When tap_to_open_double is enabled and the user has
+    -- tapped a cover once (waiting for the confirm tap), surface that
+    -- here so the cover paints with its focus ring.
+    if not selected_filepath and self._expanded and self._tap_selected_fp then
+        selected_filepath = self._tap_selected_fp
+    end
     -- on_book_tap branches on _expanded so a tap on a shelf book in
     -- expanded mode auto-restores the full hero AND stages the tapped
     -- book as the preview — single tap collapses-back-and-shows-it. In
@@ -2566,6 +2764,13 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
                 return
             end
             if bw._expanded then
+                if BookshelfSettings.isTrue("tap_to_open_double")
+                        and bw._tap_selected_fp ~= b.filepath then
+                    bw._tap_selected_fp = b.filepath
+                    bw:_refreshCoverFrame(b.filepath)
+                    return
+                end
+                bw._tap_selected_fp = nil
                 bw:_openBook(b)
             else
                 bw:_previewBook(b, tap_t)
@@ -6239,7 +6444,6 @@ function BookshelfWidget:_openBookMenu(item)
         rating              = false,  -- false = no change | nil = clear | 1..5 = set
         collections_add     = nil,    -- nil | table<name, true>
         collections_remove  = nil,    -- nil | table<name, true>
-        refresh_metadata    = false,
         remove_from_history = false,
     }
     -- Recover a draft stashed by a previous invocation that closed
@@ -6254,7 +6458,6 @@ function BookshelfWidget:_openBookMenu(item)
             draft.rating              = stashed.rating
             draft.collections_add     = stashed.collections_add
             draft.collections_remove  = stashed.collections_remove
-            draft.refresh_metadata    = stashed.refresh_metadata
             draft.remove_from_history = stashed.remove_from_history
         end
     end
@@ -6263,7 +6466,6 @@ function BookshelfWidget:_openBookMenu(item)
             or draft.rating ~= false
             or draft.collections_add ~= nil
             or draft.collections_remove ~= nil
-            or draft.refresh_metadata
             or draft.remove_from_history
     end
 
@@ -6413,7 +6615,6 @@ function BookshelfWidget:_openBookMenu(item)
                     rating              = draft.rating,
                     collections_add     = draft.collections_add,
                     collections_remove  = draft.collections_remove,
-                    refresh_metadata    = draft.refresh_metadata,
                     remove_from_history = draft.remove_from_history,
                 },
             }
@@ -6453,18 +6654,33 @@ function BookshelfWidget:_openBookMenu(item)
         end),
     }
 
-    -- Refresh metadata: staged boolean. Gray-fill background appears
-    -- when staged; the actual deleteBookInfo + cache invalidation runs
-    -- from Apply.
-    local refresh_button
-    refresh_button = {
+    -- Refresh metadata: immediate action. Unlike status / rating /
+    -- collections (which stage and commit on Apply so the user can
+    -- preview the new state in the menu), refresh has no in-menu
+    -- preview -- there's nothing visual to stage. Pre-v2.2 this was a
+    -- one-tap action; v2.2.0's staged-Apply rework swept it into the
+    -- staged pattern for consistency, but reporters read the gray
+    -- staged background as "the button stopped working" (issue #57).
+    -- Restore the immediate behaviour: tap deletes BIM's cached row,
+    -- invalidates progress + book caches, fires a notification, and
+    -- closes the dialog. Bulk selection still stages refresh -- that's
+    -- where batching across many books earns its keep.
+    local refresh_button = {
         text = _("Refresh metadata"),
-        background = draft.refresh_metadata and STAGED_BG or nil,
-        callback = function()
-            draft.refresh_metadata = not draft.refresh_metadata
-            refresh_button.background = draft.refresh_metadata and STAGED_BG or nil
-            _reinitDialog()
-        end,
+        callback = closing(function()
+            local ok_bim, BIM = pcall(require, "bookinfomanager")
+            if ok_bim and BIM and BIM.deleteBookInfo then
+                pcall(function() BIM:deleteBookInfo(book.filepath) end)
+            end
+            Repo.invalidateProgressCache(book.filepath)
+            Repo.invalidateBookCache("refresh-metadata")
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+            UIManager:show(require("ui/widget/notification"):new{
+                text    = _("Metadata refresh queued"),
+                timeout = 2,
+            })
+        end),
     }
 
     -- Rating button + sub-dialog. Sub-dialog writes draft.rating
@@ -6756,8 +6972,10 @@ function BookshelfWidget:_openBookMenu(item)
     --   Cancel  -- closes the dialog; draft is local so it's dropped
     --             automatically.
     --   Apply   -- enabled iff anything is staged; commits in
-    --             deterministic order (spec §6: refresh -> status ->
-    --             rating -> collections remove/add -> remove-history).
+    --             deterministic order: status -> rating ->
+    --             collections remove/add -> remove-history. Refresh
+    --             metadata is no longer in this list -- it's an
+    --             immediate action above (see refresh_button).
     --             Each step pcall-wrapped so a single failure doesn't
     --             abort the rest. Single _rebuild + setDirty at the
     --             end.
@@ -6800,8 +7018,10 @@ function BookshelfWidget:_openBookMenu(item)
                 return
             end
             UIManager:close(dialog)
-            -- Apply order (spec §6): refresh -> status -> rating ->
-            -- collections (remove first, then add) -> remove_history.
+            -- Apply order: status -> rating -> collections (remove
+            -- first, then add) -> remove_history. (refresh_metadata is
+            -- no longer staged -- it fires immediately from its button
+            -- and isn't recorded in `draft`.)
             -- pcall-wrap each step; failures logged via logger.warn so
             -- a single failing mutation doesn't abort the others.
             local logger = require("logger")
@@ -6810,16 +7030,6 @@ function BookshelfWidget:_openBookMenu(item)
                 if not ok then
                     logger.warn("bookshelf draft apply:", name, book.filepath, err)
                 end
-            end
-            if draft.refresh_metadata then
-                safe("refresh", function()
-                    local ok_bim, BIM = pcall(require, "bookinfomanager")
-                    if ok_bim and BIM and BIM.deleteBookInfo then
-                        BIM:deleteBookInfo(book.filepath)
-                    end
-                    Repo.invalidateProgressCache(book.filepath)
-                    Repo.invalidateBookCache("apply-refresh")
-                end)
             end
             if draft.status then
                 safe("status", function()

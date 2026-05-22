@@ -643,7 +643,11 @@ function SpineWidget:_renderShadowedCard(inner)
         -- page-count pill: ~half the outer height for a subtler badge
         -- now that the heavy v2.1 design got Reddit pushback.
         local ref = TextWidget:new{
-            text = "p1",
+            -- Match the page-count pill's actual text (hair space
+            -- between "p" and the digits) so any future width-aware
+            -- measurement here stays in sync. Only the height is
+            -- consumed today, but the parity guards against drift.
+            text = "p\xe2\x80\x8a1",
             face = Font:getFace("smallinfofont", _badgeSize(12)),
             bold = true,
         }
@@ -735,7 +739,11 @@ function SpineWidget:_renderShadowedCard(inner)
                 padding_top    = 0,
                 padding_bottom = 0,
                 TextWidget:new{
-                    text = "p" .. tostring(self.book.page_count),
+                    -- HAIR SPACE between "p" and the page count for the
+                    -- same readability reason as the series pill above:
+                    -- the lowercase "p" and the leading digit otherwise
+                    -- collide at smallinfofont(12).
+                    text = "p\xe2\x80\x8a" .. tostring(self.book.page_count),
                     face = Font:getFace("smallinfofont", _badgeSize(12)),
                     bold = true,
                 },
@@ -801,7 +809,25 @@ function SpineWidget:_renderShadowedCard(inner)
             padding_top    = Size.padding.small,
             padding_bottom = Size.padding.small,
             TextWidget:new{
-                text = "#" .. tostring(self.book.series_num),
+                -- "#\u{200A}N": HAIR SPACE between the hash and the
+                -- index for readability inside the small bold pill --
+                -- full word-space split it visually into two columns,
+                -- no space ran them together at smallinfofont(12),
+                -- and a THIN SPACE (\u{2009}) read as too wide. HAIR
+                -- SPACE is the narrowest standard typographic space
+                -- (~half of thin space), giving a hairline separation
+                -- that preserves the pill's compact silhouette
+                -- (issue #69).
+                -- "#\u{200A}N": HAIR SPACE between the hash and the
+                -- index for readability inside the small bold pill --
+                -- full word-space split it visually into two columns,
+                -- no space ran them together at smallinfofont(12),
+                -- and a THIN SPACE (\u{2009}) read as too wide. HAIR
+                -- SPACE is the narrowest standard typographic space
+                -- (~half of thin space), giving a hairline separation
+                -- that preserves the pill's compact silhouette
+                -- (issue #69). Mirrors the page-count pill below.
+                text = "#\xe2\x80\x8a" .. tostring(self.book.series_num),
                 face = Font:getFace("smallinfofont", _badgeSize(12)),
                 bold = true,
             },

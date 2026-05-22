@@ -43,13 +43,22 @@ end
 --                    "finished out of all" statistic.
 function CountBadge.render(total, selected_count, finished_count, finished_total)
     if not total or total <= 0 then return nil end
+    -- HAIR SPACE (U+200A, "\xe2\x80\x8a") between the separator and
+    -- the adjacent digits: matches the page-count "p" pill and the
+    -- series "#" pill (see lib/bookshelf_spine_widget.lua) where a
+    -- full word-space split the pill visually but no space ran the
+    -- glyphs together at smallinfofont(12) bold. Hair space gives a
+    -- hairline gap without breaking the compact pill silhouette.
+    local HAIR = "\xe2\x80\x8a"
     local text
     if selected_count then
-        text = tostring(selected_count) .. "/" .. tostring(total)
+        text = tostring(selected_count) .. HAIR .. "/" .. HAIR .. tostring(total)
     elseif finished_count then
-        text = tostring(finished_count) .. "/" .. tostring(finished_total or total)
+        text = tostring(finished_count) .. HAIR .. "/" .. HAIR
+            .. tostring(finished_total or total)
     else
-        text = "\xc3\x97" .. tostring(total)  -- × (UTF-8 U+00D7)
+        -- "×N" (UTF-8 U+00D7 multiplication sign + hair + digits)
+        text = "\xc3\x97" .. HAIR .. tostring(total)
     end
     return FrameContainer:new{
         bordersize     = Size.border.thin,

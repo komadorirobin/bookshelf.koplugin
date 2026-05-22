@@ -388,6 +388,20 @@ function BulkActions.show(opts)
             local logger = require("logger")
             local function _do_apply()
                 local applied, failed = 0, 0
+                -- Paths whose BIM row gets wiped by the refresh action.
+                -- After the per-file mutation loop we hand this list to
+                -- BIM:extractInBackground in one batch so the books are
+                -- actually re-extracted, not just deleted. Without this
+                -- final step, _rebuild's _kickOff only re-queues the
+                -- visible page; off-page selections stay deleted in BIM
+                -- until the user happens to navigate to them, and
+                -- meanwhile drop out of any view that queries BIM by
+                -- series / author / genre. Confirmed by the
+                -- "[bim mutation] deleteBookInfo" log trace: 80 rows
+                -- deleted per bulk-refresh apply, only ~27 re-extracted
+                -- by the kickoff fallback (the visible pages), leaving
+                -- ~53 books in BIM-row limbo.
+                local refresh_paths = {}
                 local function safe(action_name, fn, fp)
                     local ok, err = pcall(fn)
                     if not ok then
@@ -403,6 +417,7 @@ function BulkActions.show(opts)
                             local ok_bim, BIM = pcall(require, "bookinfomanager")
                             if ok_bim and BIM and BIM.deleteBookInfo then
                                 BIM:deleteBookInfo(fp)
+                                refresh_paths[#refresh_paths + 1] = fp
                             end
                         end, fp) and ok
                     end
@@ -461,6 +476,34 @@ function BulkActions.show(opts)
                 Repo.invalidateBookCache("bulk-apply")
                 bw:_rebuild()
                 UIManager:setDirty(bw, "ui")
+                -- Queue refresh-deleted paths for TEXT-ONLY metadata
+                -- re-extraction (title, author, series, etc.). No
+                -- cover_specs means BIM's extractBookInfo skips the
+                -- image-decode + scale + blob-compress path entirely
+                -- -- text extraction is roughly 10x faster per book
+                -- (~30ms vs ~300ms), so refreshing 30 books finishes
+                -- in ~1s instead of ~9s.
+                --
+                -- Covers come back via the kickoff path: as each book
+                -- becomes visible during the user's normal browsing,
+                -- _kickOffMissingMetaExtraction sees cover_fetched=nil
+                -- (text-only extraction leaves this unset) and queues
+                -- it with cover_specs sized to the current slot. With
+                -- the priority-interrupt model in _kickOff, that
+                -- visible-page extraction terminates BIM's running
+                -- bulk text-pass so the user's current covers appear
+                -- immediately; the bulk leftovers stay in the watch
+                -- list (see _armExtractionPoll's merge) and the
+                -- orphan-retry in _pollExtraction picks them up when
+                -- BIM goes idle.
+                if #refresh_paths > 0 then
+                    local extract_list = {}
+                    for _i, fp in ipairs(refresh_paths) do
+                        extract_list[#extract_list + 1] = { filepath = fp }
+                    end
+                    bw:_fireBimExtraction(extract_list, "bulk-refresh")
+                    bw:_armExtractionPoll(extract_list)
+                end
                 if failed > 0 then
                     UIManager:show(require("ui/widget/notification"):new{
                         text    = string.format(_("Applied to %d of %d books \xC2\xB7 %d failed"), applied, n, failed),

@@ -73,6 +73,16 @@ local function getCollections()  return require("readcollection") end
 -- main.lua also shows a one-time notification explaining the dependency.
 local _bim_cache
 local _bim_loaded_ref
+
+-- Last-good Book records keyed by filepath, used by buildBookMeta to
+-- mask BIM's transient "in_progress=1" wipe of metadata fields during
+-- a re-extraction. Persists across renders and across invalidateBookCache
+-- (the per-chip caches clear, but each book's record stays so a refresh
+-- cycle doesn't flicker to fallback rendering). Memory: one record per
+-- visited filepath; typical session sees a few hundred entries at
+-- ~500 bytes each, so well under 1 MB on a 17k-book library.
+local _meta_record_cache = {}
+
 local function getBookInfoMgr()
     local loaded = package.loaded["bookinfomanager"]
     if loaded and loaded ~= _bim_loaded_ref then
@@ -377,6 +387,19 @@ function Repo.buildBookMeta(filepath)
                     tostring(info_or_err))
     end
     local info = (ok_bim and info_or_err) or {}
+    -- Sticky-record cache. BIM's getBookInfo SELECT has a "WHERE
+    -- in_progress=0" guard, so a row that's mid-extraction returns
+    -- nil. Without this fallback, every cover-only re-extraction
+    -- nulls the row briefly while BIM writes its "in_progress"
+    -- placeholder, this function returns a minimal record, and the
+    -- spine widget downgrades to fallback (filename) rendering --
+    -- the user sees title/author/series flicker out and back in
+    -- around the moment the cover finishes loading. Return the last
+    -- good record we built for this file when BIM doesn't currently
+    -- have usable metadata for it.
+    if not info.has_meta and _meta_record_cache[filepath] then
+        return _meta_record_cache[filepath]
+    end
     -- Calibre is the PRIMARY source for textual metadata when a
     -- metadata.calibre file is available — it already has clean,
     -- user-curated title / authors / series / tags / description that
@@ -472,7 +495,29 @@ function Repo.buildBookMeta(filepath)
                        or nil,
         page_count  = info.pages,
     }
-    return Hardcover.enrichBook(book)
+    book = Hardcover.enrichBook(book)
+    -- Cache fresh records whose text metadata is present, with the
+    -- cover_bb stripped. ImageWidget marks the cover_bb's
+    -- image_disposable=true after first paint -- it's a one-shot
+    -- BlitBuffer. Caching the bb pointer and returning it on the
+    -- next call (when BIM's in_progress=1 wipe makes this function
+    -- fall back to the cache) reads freed C memory and corrupts the
+    -- render -- visible as folder cover garbage on the home screen.
+    -- Strip the bb here; the cache serves only text fields, and a
+    -- nil cover_bb on the cached path makes the spine fall back to
+    -- the paper-tone "no cover" state for that brief in-progress
+    -- window. That's a far smaller visual change than the previous
+    -- text-disappears flicker, and BIM's next successful commit
+    -- restores the full record (with a fresh bb) on the very next
+    -- poll.
+    if info.has_meta == "Y" then
+        local cached = {}
+        for k, v in pairs(book) do
+            if k ~= "cover_bb" then cached[k] = v end
+        end
+        _meta_record_cache[filepath] = cached
+    end
+    return book
 end
 
 -- Text-only metadata for the library walk phases of getSeriesGroups /
