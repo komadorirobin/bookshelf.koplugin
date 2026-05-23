@@ -13,9 +13,7 @@ local BookshelfSettings = require("lib/bookshelf_settings_store")
 local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
-local TopContainer    = require("ui/widget/container/topcontainer")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
-local LeftContainer   = require("ui/widget/container/leftcontainer")
 local RightContainer  = require("ui/widget/container/rightcontainer")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local ImageWidget     = require("ui/widget/imagewidget")
@@ -31,6 +29,15 @@ local FADED_FINISHED_AMOUNT = 0.5
 
 local function fadeFinishedBooksEnabled()
     return BookshelfSettings.isTrue("fade_finished_books")
+end
+
+-- Lazy reference to bookshelf_book_repository for the lazy-cover-decode
+-- path (Repo.getCoverBB). Lazy to keep the module load order flexible —
+-- same pattern bookshelf_cover_progress uses for its own Repo lookup.
+local _Repo
+local function _getRepo()
+    if not _Repo then _Repo = require("lib/bookshelf_book_repository") end
+    return _Repo
 end
 
 -- Shadow geometry shared by both render paths.
@@ -79,14 +86,12 @@ local function _glyphLeftInset()
     return Size.padding.small + Screen:scaleBySize(2)
 end
 
--- Cover-badge font scale. Affects the page-count "pN" badge, the
--- series "#N" badge, and the completed-tickbox glyph. Read inline
--- (not memoised) so settings menu nudge dialogs see the new value
--- without a fresh require.
-local function _badgeSize(base)
-    local scale = BookshelfSettings.read("cover_badge_font_scale") or 100
-    return math.floor(base * scale / 100 + 0.5)
-end
+-- Cover-badge font scale alias: delegates to CoverProgress.badgeSize so
+-- the page-count badge, series-number badge, count badge, and tickbox
+-- glyph share one source of truth for the user's cover_badge_font_scale
+-- nudge setting. Keep the short local alias so the call sites below
+-- stay terse.
+local _badgeSize = CoverProgress.badgeSize
 
 -- Pixel thickness of the progress bar (rounded pill on top of cover).
 -- Bookends-style rounded look needs more vertical room than a stripe.
@@ -428,8 +433,15 @@ end
 
 function SpineWidget:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
+    -- Render-cover conditions:
+    --   * book.has_cover (BIM says a cover exists)
+    --   * AND either we already hold a bb (eager path: self.cover_bb
+    --     override, or book.cover_bb populated by buildBookMeta with the
+    --     default want_cover=true) OR we have a filepath to drive the
+    --     lazy path (ScaledCoverCache hit or Repo.getCoverBB on miss).
     local effective_bb = self.cover_bb or (self.book and self.book.cover_bb)
-    if self.book and self.book.has_cover and effective_bb then
+    local can_lazy     = self.book and self.book.filepath
+    if self.book and self.book.has_cover and (effective_bb or can_lazy) then
         self[1] = self:_renderCover(effective_bb)
     else
         self[1] = self:_renderFallback()
@@ -894,96 +906,143 @@ function SpineWidget:_renderCover(bb)
     local border = CARD_BORDER
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
+    local fp = self.book and self.book.filepath
 
-    -- Bar overlays the cover artwork (rounded pill on top); no image
-    -- shrinking required. The image fills the card normally.
-
-    local bb_w  = bb:getWidth()
-    local bb_h  = bb:getHeight()
-
-    -- RenderImage:scaleBlitBuffer / ImageWidget's internal MuPDF scaler
-    -- corrupts on UPSCALE on Kindle (horizontal stripe static); downscale
-    -- is clean. Both shelf and hero use the BIM thumbnail (book.cover_bb)
-    -- and route any required upscale through bb:scale — Lua-side nearest
-    -- neighbour in ffi/blitbuffer.lua, which sidesteps MuPDF entirely.
-    -- KOReader exposes the same escape hatch as the legacy_image_scaling
-    -- user setting; we pick it surgically here.
-    local would_upscale = bb_w < img_w or bb_h < img_h
-
-    -- Disposable: with the cover_bb override the caller owns the bb's
-    -- lifetime; with the default path the bb is BookInfoManager's fresh-
-    -- from-zstd copy, safe for ImageWidget to free after scaling.
-    -- ImageWidget disposes when:
-    --   * default path (no override) — bb is BookInfoManager's fresh-from-
-    --     zstd copy; safe to free after scaling.
-    --   * override + cover_bb_disposable=true — caller hands us an owned
-    --     one-shot bb (e.g. a series_stack:copy()); we transfer ownership
-    --     to ImageWidget so it can free via scaleBlitBuffer/on free.
-    -- Otherwise (override + caller still owns), ImageWidget must NOT free.
-    local img_disposable = (self.cover_bb == nil) or self.cover_bb_disposable
-
-    local cover_inner
-    if would_upscale and self.cover_fill then
-        -- Stretch a small cover to fill the slot. bb:scale is the only
-        -- Kindle-safe upscale path (sidesteps MuPDF's broken scaler) but
-        -- a ~111k pixel-op pass per render — cache by filepath so chip
-        -- switches and page flips that keep the same book on screen reuse
-        -- the work. ScaledCoverCache owns the scaled bb's lifetime; we
-        -- pass image_disposable=false so ImageWidget doesn't fight it.
-        local fp = self.book and self.book.filepath
-        local cached = ScaledCoverCache:get(fp, img_w, img_h)
-        if cached then
+    -- Cache-first. ScaledCoverCache is keyed by filepath only (one bb
+    -- per book at canonical/max-seen dims). On hit, if the cached bb
+    -- is at least as large as our slot in BOTH axes, we can paint from
+    -- cache directly and let ImageWidget downscale at paint time
+    -- (MuPDF, Kindle-safe in this direction). A cached bb smaller than
+    -- our slot would require upscale via ImageWidget (Kindle-unsafe);
+    -- fall through to the source-bb path which uses bb:scale (Lua
+    -- nearest-neighbour, corruption-free in both directions) and the
+    -- result will replace the cache entry per the put policy.
+    if fp then
+        local cached = ScaledCoverCache:get(fp)
+        if cached
+                and cached:getWidth()  >= img_w
+                and cached:getHeight() >= img_h then
             -- Source bb isn't needed; release if we owned it.
-            if img_disposable then bb:free() end
-            cover_inner = ImageWidget:new{
-                image            = cached,
-                image_disposable = false,
-                scale_factor     = 1,
-            }
-        else
-            local scaled_bb = bb:scale(img_w, img_h)
-            if img_disposable then bb:free() end
-            if fp then
-                ScaledCoverCache:put(fp, img_w, img_h, scaled_bb)
-                cover_inner = ImageWidget:new{
-                    image            = scaled_bb,
-                    image_disposable = false,    -- cache owns lifetime
-                    scale_factor     = 1,
-                }
-            else
-                -- No filepath to key on (rare). Hand ownership to the
-                -- ImageWidget so the bb is freed at widget teardown.
-                cover_inner = ImageWidget:new{
-                    image            = scaled_bb,
-                    image_disposable = true,
-                    scale_factor     = 1,
-                }
+            if bb and ((self.cover_bb == nil) or self.cover_bb_disposable) then
+                bb:free()
             end
+            local img_args = {
+                image            = cached,
+                image_disposable = false,    -- cache owns lifetime
+                width            = img_w,
+                height           = img_h,
+            }
+            if not self.cover_fill then
+                img_args.scale_factor = 0   -- aspect-preserving downscale
+            end
+            return self:_wrapCoverInCard(
+                ImageWidget:new(img_args), card_w, card_h, border)
         end
-    elseif would_upscale then
-        -- cover_fill=false (aspect-preserving): keep the bb at native
-        -- size and centre it. No scaling = no corruption risk.
-        cover_inner = CenterContainer:new{
-            dimen = Geom:new{ w = img_w, h = img_h },
-            ImageWidget:new{
-                image            = bb,
-                image_disposable = img_disposable,
-                scale_factor     = 1,
-            },
-        }
-    else
-        local img_args = {
-            image            = bb,
-            image_disposable = img_disposable,
-            width            = img_w,
-            height           = img_h,
-        }
-        if not self.cover_fill then
-            img_args.scale_factor = 0   -- aspect-preserving downscale
-        end
-        cover_inner = ImageWidget:new(img_args)
     end
 
+    -- No usable cached bb. We need a source bb to scale or paint at
+    -- native size. Lazy path: caller may have skipped buildBookMeta's
+    -- cover decode (want_cover=false) because the upstream check saw
+    -- a cache hit; recover by asking Repo for the bb synchronously.
+    -- We own the returned bb; mark img_disposable accordingly.
+    local img_disposable = (self.cover_bb == nil) or self.cover_bb_disposable
+    if not bb then
+        bb = fp and _getRepo().getCoverBB(fp)
+        if not bb then
+            -- BIM has no usable cover row. Fall back to the no-cover
+            -- render so the slot doesn't crash on bb:getWidth() below.
+            return self:_renderFallback()
+        end
+        img_disposable = true
+    end
+
+    -- ImageWidget's internal MuPDF scaler corrupts on UPSCALE on Kindle
+    -- (horizontal stripe static); bb:scale is the Lua-side nearest-
+    -- neighbour path in ffi/blitbuffer.lua which sidesteps MuPDF
+    -- entirely and is corruption-free in BOTH directions. For
+    -- cover_fill=true (the standard shelf/hero path) we scale to exactly
+    -- (img_w, img_h) and cache the result keyed by filepath; subsequent
+    -- consumers at the same OR smaller dims will hit cache, larger
+    -- consumers will re-scale and replace per the prefer-larger put
+    -- policy.
+    local cover_inner
+    if self.cover_fill then
+        local scaled_bb = bb:scale(img_w, img_h)
+        if img_disposable then bb:free() end
+        if fp then
+            -- put() returns the bb now serving as the cache entry: our
+            -- new scaled_bb if it was inserted/upgraded, or the
+            -- existing entry if it was at least as large. In the
+            -- "existing kept" case scaled_bb is unused; mark it
+            -- disposable on the ImageWidget below ONLY when we use it
+            -- (we never do — we always use the return value).
+            local effective = ScaledCoverCache:put(fp, scaled_bb)
+            local img_args = {
+                image            = effective,
+                image_disposable = false,  -- cache owns lifetime
+                width            = img_w,
+                height           = img_h,
+            }
+            -- Effective bb might be larger than (img_w, img_h) if put
+            -- kept an existing canonical-sized entry; ImageWidget
+            -- downscales via MuPDF (safe direction). Effective bb at
+            -- exactly (img_w, img_h) renders 1:1, no scaling.
+            cover_inner = ImageWidget:new(img_args)
+            -- If put kept existing and discarded our scaled_bb, the
+            -- local scaled_bb has no cache reference and no widget
+            -- reference. LuaJIT's FFI finalizer reclaims it after the
+            -- local goes out of scope. Don't free explicitly — the
+            -- finalizer handles it once truly unreachable, avoiding
+            -- the use-after-free risk that explicit frees historically
+            -- caused (the bb might transiently be inspected by
+            -- consumers we don't track).
+        else
+            -- No filepath to key on (rare). Hand ownership to the
+            -- ImageWidget so the bb is freed at widget teardown.
+            cover_inner = ImageWidget:new{
+                image            = scaled_bb,
+                image_disposable = true,
+                scale_factor     = 1,
+            }
+        end
+    else
+        -- Aspect-preserving paths skip the cache: the rendered output
+        -- depends on per-slot dimensions in a way the cache contract
+        -- (single canonical entry per book) doesn't capture cleanly.
+        -- Not used by any current bookshelf code path (cover_fill
+        -- defaults true; only direct SpineWidget caller overrides flip
+        -- it).
+        local bb_w = bb:getWidth()
+        local bb_h = bb:getHeight()
+        local would_upscale = bb_w < img_w or bb_h < img_h
+        if would_upscale then
+            cover_inner = CenterContainer:new{
+                dimen = Geom:new{ w = img_w, h = img_h },
+                ImageWidget:new{
+                    image            = bb,
+                    image_disposable = img_disposable,
+                    scale_factor     = 1,
+                },
+            }
+        else
+            cover_inner = ImageWidget:new{
+                image            = bb,
+                image_disposable = img_disposable,
+                width            = img_w,
+                height           = img_h,
+                scale_factor     = 0,
+            }
+        end
+    end
+
+    return self:_wrapCoverInCard(cover_inner, card_w, card_h, border)
+end
+
+-- Wrap a cover_inner widget (ImageWidget or CenterContainer of one) in
+-- the RoundedCornerCard shell with selection / shadow chrome. Extracted
+-- from _renderCover so the cache-hit and bb-rendering paths share the
+-- same trailing wrap.
+function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
     local cover_args = {
         inner       = cover_inner,
         width       = card_w,

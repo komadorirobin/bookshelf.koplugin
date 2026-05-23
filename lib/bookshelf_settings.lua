@@ -5,7 +5,6 @@
 -- Public API: Settings:show()
 -- All persisted keys use the bookshelf_* prefix.
 
-local InfoMessage  = require("ui/widget/infomessage")
 local Menu         = require("ui/widget/menu")
 local SpinWidget   = require("ui/widget/spinwidget")
 local UIManager    = require("ui/uimanager")

@@ -137,13 +137,33 @@ end
 
 -- read() — returns a fully-resolved table keyed by region name. Always
 -- has every region populated; sparse stored fields fall through to defaults.
+--
+-- Memoised behind a private cache invalidated by write() / restore().
+-- HeroCard:_buildRightColumn calls this once per hero rebuild and the
+-- result feeds six Tokens.expand calls — the resolved table doesn't
+-- change between calls unless the user opens the line editor and saves
+-- a region. Returns the SHARED cached table; callers must not mutate.
+local _read_cache
+local _read_cache_raw
 function Regions.read()
     local raw = readRaw()
+    if _read_cache and raw == _read_cache_raw then
+        return _read_cache
+    end
     local out = {}
     for _i, key in ipairs(Regions.ORDER) do
         out[key] = resolveOne(key, raw[key])
     end
+    _read_cache = out
+    _read_cache_raw = raw
     return out
+end
+
+-- Drop the cache. Called from write() so the next read() reflects the
+-- new state; exposed for tests / one-off cache invalidation.
+function Regions.invalidateCache()
+    _read_cache = nil
+    _read_cache_raw = nil
 end
 
 -- resolve(key, raw_entry) — exposed for tests / one-off use; same logic
@@ -161,6 +181,7 @@ function Regions.write(key, entry)
     stored[key] = entry
     G_reader_settings:saveSetting(Regions.SETTINGS_KEY, stored)
     G_reader_settings:flush()
+    Regions.invalidateCache()
 end
 
 -- snapshot(key) — deep-copy the *raw* stored entry for a region (or nil

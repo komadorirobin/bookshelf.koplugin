@@ -22,7 +22,6 @@ local Geom            = require("ui/geometry")
 local Size            = require("ui/size")
 local Font            = require("ui/font")
 local Blitbuffer      = require("ffi/blitbuffer")
-local Screen          = require("device").screen
 local SpineWidget     = require("lib/bookshelf_spine_widget")
 local SeriesStack     = require("lib/bookshelf_series_stack")
 local FolderStack     = require("lib/bookshelf_folder_stack")

@@ -478,11 +478,19 @@ local function expandConditionals(format, book, state)
 end
 
 -- Match longest token names first so %book_pct_left wins over %book_pct.
+-- Token names + ordering are fixed at module load (no expanders are added
+-- after this file finishes loading), so memoise the sorted list once.
+-- Tokens.expand previously rebuilt and re-sorted this every call —
+-- ~6 calls per hero build × 30 tokens worth of allocation + sort.
 local function compareLengthDesc(a, b) return #a > #b end
+local _token_names_cache
+
 local function tokenNamesByLengthDesc()
+    if _token_names_cache then return _token_names_cache end
     local names = {}
     for k in pairs(Tokens.expanders) do names[#names + 1] = k end
     table.sort(names, compareLengthDesc)
+    _token_names_cache = names
     return names
 end
 
@@ -494,6 +502,11 @@ end
 
 function Tokens.expand(format, book, state)
     if not format or format == "" then return "" end
+    -- Plain-text templates (no %tokens, no [tags], no {datetime}) are
+    -- common enough — region defaults, user-typed labels — that a
+    -- single :find pays off vs the full conditional + datetime + 30-
+    -- token gsub pipeline below. Cheap (~0.5µs) when there ARE tokens.
+    if not format:find("[%%[{]") then return format end
     local result = expandDatetimeBraces(format, state)
     result = expandConditionals(result, book, state)
     local names = tokenNamesByLengthDesc()

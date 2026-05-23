@@ -1,39 +1,60 @@
 -- bookshelf_scaled_cover_cache.lua
--- LRU of upscaled cover bbs for the small-cover branch in spine_widget.
+-- LRU of scaled cover bbs, keyed by filepath only ("canonical-dim"
+-- caching). One entry per book, sized to the LARGEST render dims seen
+-- across hero / shelf / expanded-shelf in this session.
 local logger = require("logger")
 --
--- Why this exists: BookInfoManager only DOWNSCALES when caching a cover
--- (see plugins/coverbrowser.koplugin/bookinfomanager.lua:536) — publisher
--- thumbnails smaller than its target are stored at native size. When such
--- a cover lands in our shelf slot, spine_widget calls bb:scale() (Lua
--- nearest-neighbour) to fill the slot — the only Kindle-safe upscale path,
--- but a ~111k pixel-op pass per render. Without caching, every chip switch
--- and page flip that keeps the same small-cover book on screen redoes the
--- scale from scratch.
+-- Why filepath-only: the same book renders into slots of different
+-- dimensions across the UI:
+--   * hero cover     (~500 × 750 typical)
+--   * standard shelf (~250 × 375 typical)
+--   * expanded shelf (slot_h grown by row budget; slot_w usually
+--                     unchanged but can shrink on small screens)
 --
--- Cache key includes target dimensions so the rare case where the same
--- bb is rendered into different-sized slots (e.g. hero vs shelf) doesn't
--- collide. Capacity caps RSS at ~capacity × img_w × img_h × bpp.
+-- A (filepath, w, h) cache key produced 2-3 entries per book and
+-- defeated cross-mode hits — hero ↔ shelf transitions and
+-- expanded ↔ standard toggles missed entirely. With a single
+-- canonical entry per book, consumers below the canonical size let
+-- ImageWidget downscale at paint time (MuPDF, Kindle-safe in this
+-- direction — the corruption was upscale-specific).
 --
--- Lifetime: the cache OWNS each scaled bb. Callers should pass it to
--- ImageWidget with image_disposable = false. The cache frees evicted bbs
--- via bb:free() (FFI finalizer cleared, memory released immediately).
+-- Put policy: prefer-larger. On put, if an existing entry has at
+-- least as many pixels as the incoming bb, the incoming bb is ignored
+-- and the existing entry kept. If the incoming bb is larger, it
+-- replaces. This means the FIRST consumer (often shelf) seeds the
+-- cache at its size; HERO's later put overwrites with bigger; shelf
+-- thereafter reads the larger hero bb and downscales. Stable.
 --
--- Invalidation: call remove(filepath) after a user-initiated metadata refresh;
--- clear() exists for plugin teardown.
+-- Get returns whatever bb is cached. Consumers check the returned
+-- bb's dimensions: if cached >= target in both axes, use it (with
+-- ImageWidget downscale when smaller); if cached < target, fall
+-- through to a fresh decode+scale (which will then replace the
+-- cache entry per the prefer-larger rule).
+--
+-- Lifetime: the cache holds a strong reference to each cached bb.
+-- Callers pass to ImageWidget with image_disposable=false. When the
+-- cache drops an entry (eviction or prefer-larger replace) it just
+-- nils its own reference — it does NOT call bb:free(). Other live
+-- ImageWidgets may still hold the bb (e.g. a shelf SpineWidget whose
+-- cover entry got upgraded to hero dims when the user tapped that
+-- book into the hero); explicit free would yank C memory out from
+-- under those widgets and the next partial repaint would render
+-- garbage pixels. Blitbuffer sets up an ffi.gc finalizer at allocate
+-- time (see ffi/blitbuffer.lua setAllocated(1)), so the C memory is
+-- reclaimed automatically when the last Lua reference goes away.
+--
+-- clear() and remove() also don't free explicitly — they just drop the
+-- cache's references and let GC do its thing. Existing widgets that are
+-- still holding bbs keep working.
 
 local ScaledCoverCache = {
-    _capacity = 32,    -- ~3.4 MiB at 271×410×4 bytes; covers 4 full pages without eviction
-    _cache    = {},    -- string key → bb
-    _order    = {},    -- list of keys, oldest at front, MRU at back
+    _capacity = 32,    -- ~6 MiB at 500×750×4 bytes; well within Kindle RAM
+    _cache    = {},    -- filepath → bb
+    _order    = {},    -- list of filepaths, oldest at front, MRU at back
     _hits     = 0,     -- perf: cache hits this session
     _puts     = 0,     -- perf: cache misses (scales) this session
     _evictions= 0,     -- perf: evictions this session
 }
-
-local function key_for(filepath, w, h)
-    return filepath .. ":" .. w .. "x" .. h
-end
 
 function ScaledCoverCache:_removeKey(key)
     for i, k in ipairs(self._order) do
@@ -47,80 +68,69 @@ end
 function ScaledCoverCache:_evictIfNeeded()
     while #self._order > self._capacity do
         local key = table.remove(self._order, 1)
-        local bb  = self._cache[key]
         self._cache[key] = nil
-        if bb and bb.free then pcall(function() bb:free() end) end
         self._evictions = self._evictions + 1
-        logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: EVICT key=%s size=%d/%d",
+        logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: EVICT fp=%s size=%d/%d",
             key, #self._order, self._capacity))
     end
 end
 
--- get(filepath, w, h) — returns the cached scaled bb or nil. On hit, the
--- entry is promoted to MRU so it survives further eviction.
-function ScaledCoverCache:get(filepath, w, h)
+function ScaledCoverCache:get(filepath)
     if not filepath or filepath == "" then return nil end
-    local key = key_for(filepath, w, h)
-    local bb  = self._cache[key]
+    local bb = self._cache[filepath]
     if not bb then return nil end
     self._hits = self._hits + 1
-    self:_removeKey(key)
-    self._order[#self._order + 1] = key
+    self:_removeKey(filepath)
+    self._order[#self._order + 1] = filepath
     return bb
 end
 
--- put(filepath, w, h, bb) — inserts or replaces. The cache takes ownership
--- of `bb`: callers must NOT free it (and should pass image_disposable=false
--- to ImageWidget). If a previous bb was cached at the same key, it's
--- freed before the new one replaces it.
-function ScaledCoverCache:put(filepath, w, h, bb)
-    if not filepath or filepath == "" then return end
-    local key = key_for(filepath, w, h)
-    -- If a different bb already exists at this key, ALWAYS remove the
-    -- stale order-list entry before appending the new one -- otherwise
-    -- the same key appears twice in self._order and _evictIfNeeded
-    -- double-counts the slot, prematurely evicting a live bb that
-    -- another widget is about to paint (use-after-free). Freeing the old
-    -- bb is conditional on existing.free because some test stubs may
-    -- not implement it, but the order-list cleanup is unconditional.
-    local existing = self._cache[key]
-    if existing and existing ~= bb then
-        self:_removeKey(key)
-        if existing.free then pcall(function() existing:free() end) end
-    end
-    self._cache[key] = bb
-    self._order[#self._order + 1] = key
-    self._puts = self._puts + 1
-    logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: MISS scaled %dx%d size=%d/%d hits=%d puts=%d",
-        w, h, #self._order, self._capacity, self._hits, self._puts))
-    self:_evictIfNeeded()
+function ScaledCoverCache:has(filepath)
+    if not filepath or filepath == "" then return false end
+    return self._cache[filepath] ~= nil
 end
 
--- remove(filepath) — drop all cached scaled variants for one book. Used when
--- KOReader re-extracts metadata/covers so Bookshelf does not keep drawing the
--- previous scaled thumbnail.
+function ScaledCoverCache:put(filepath, bb)
+    if not filepath or filepath == "" then return bb end
+    local existing = self._cache[filepath]
+    if existing == bb then
+        return bb
+    end
+    if existing then
+        local ex_px = (existing.getWidth and existing:getWidth() or 0)
+                    * (existing.getHeight and existing:getHeight() or 0)
+        local new_px = (bb.getWidth and bb:getWidth() or 0)
+                     * (bb.getHeight and bb:getHeight() or 0)
+        if ex_px >= new_px then
+            self:_removeKey(filepath)
+            self._order[#self._order + 1] = filepath
+            return existing
+        end
+        self:_removeKey(filepath)
+    end
+    self._cache[filepath] = bb
+    self._order[#self._order + 1] = filepath
+    self._puts = self._puts + 1
+    logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: PUT fp=%s %dx%d size=%d/%d hits=%d puts=%d",
+        filepath,
+        (bb.getWidth and bb:getWidth() or 0),
+        (bb.getHeight and bb:getHeight() or 0),
+        #self._order, self._capacity, self._hits, self._puts))
+    self:_evictIfNeeded()
+    return bb
+end
+
+-- Drop one book's cached canonical cover. Used by metadata-refresh paths
+-- so the next render rebuilds from the new thumbnail.
 function ScaledCoverCache:remove(filepath)
     if not filepath or filepath == "" then return end
-    local prefix = filepath .. ":"
-    for i = #self._order, 1, -1 do
-        local key = self._order[i]
-        if key:sub(1, #prefix) == prefix then
-            local bb = self._cache[key]
-            self._cache[key] = nil
-            table.remove(self._order, i)
-            if bb and bb.free then pcall(function() bb:free() end) end
-        end
-    end
+    self._cache[filepath] = nil
+    self:_removeKey(filepath)
 end
 
--- clear — drop everything. Call from plugin teardown if you want the
--- session's cache memory back before KOReader exits.
 function ScaledCoverCache:clear()
     logger.dbg(string.format("[bookshelf perf] ScaledCoverCache: clear hits=%d puts=%d evictions=%d",
         self._hits, self._puts, self._evictions))
-    for _i, bb in pairs(self._cache) do
-        if bb and bb.free then pcall(function() bb:free() end) end
-    end
     self._cache     = {}
     self._order     = {}
     self._hits      = 0

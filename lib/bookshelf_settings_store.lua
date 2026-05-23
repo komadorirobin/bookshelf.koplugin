@@ -101,6 +101,16 @@ local function _open()
     return _settings
 end
 
+-- Monotonic counter bumped on every save / delete. Lets downstream
+-- modules memoise expensive derived state (e.g. CoverProgress colour
+-- resolution) and invalidate cheaply by comparing the cached counter
+-- against the current one. Cheap to read (single field access) and
+-- cheap to bump (one add per user-action settings write — same cadence
+-- as the existing flush()).
+local _generation = 0
+
+function Store.generation() return _generation end
+
 function Store.read(key, default)
     local v = _open():readSetting(key)
     if v == nil then return default end
@@ -118,12 +128,14 @@ function Store.save(key, value)
     -- save call sits at a boundary where durability matters more
     -- than the cost of one file write, so flush here.
     s:flush()
+    _generation = _generation + 1
 end
 
 function Store.delete(key)
     local s = _open()
     s:delSetting(key)
     s:flush()
+    _generation = _generation + 1
 end
 
 function Store.flush()

@@ -343,15 +343,30 @@ function LineEditor.show(region_key, bw, settings_module, touchmenu_instance)
 
     -- In-memory draft. Mutated on every keystroke / button tap; written
     -- to settings only on Save.
+    --
+    -- IMPORTANT: every field the renderer reads from a region MUST be
+    -- carried through here, even if the line editor doesn't expose UI
+    -- for editing it. previewRegions() below substitutes this whole
+    -- draft for the active region, so any field missing from the draft
+    -- becomes nil at render time — defeating Regions.read's
+    -- defaults-merge in resolveOne. The title region specifically
+    -- relies on line_height = 0.05 for its tight leading; dropping it
+    -- from the draft produces visibly looser title wrapping the moment
+    -- the user toggles anything (bold, font size, etc.).
+    --
+    -- Reset-to-defaults (further down in this function) and Save both
+    -- copy draft fields wholesale, so they're affected too: line_height
+    -- needs to be set BEFORE either of those runs.
     local draft = {
-        template  = current.template,
-        font_face = current.font_face,
-        font_size = current.font_size,
-        bold      = current.bold,
-        uppercase = current.uppercase,
-        alignment = current.alignment,
-        bar_height= current.bar_height,
-        bar_style = current.bar_style,
+        template    = current.template,
+        font_face   = current.font_face,
+        font_size   = current.font_size,
+        bold        = current.bold,
+        uppercase   = current.uppercase,
+        alignment   = current.alignment,
+        line_height = current.line_height,
+        bar_height  = current.bar_height,
+        bar_style   = current.bar_style,
     }
 
     local dialog
@@ -535,14 +550,15 @@ function LineEditor.show(region_key, bw, settings_module, touchmenu_instance)
             text     = _("Default"),
             callback = function()
                 local d = Regions.DEFAULTS[region_key]
-                draft.template  = d.template
-                draft.font_face = d.font_face
-                draft.font_size = d.font_size
-                draft.bold      = d.bold
-                draft.uppercase = d.uppercase
-                draft.alignment = d.alignment
-                draft.bar_height= d.bar_height
-                draft.bar_style = d.bar_style
+                draft.template    = d.template
+                draft.font_face   = d.font_face
+                draft.font_size   = d.font_size
+                draft.bold        = d.bold
+                draft.uppercase   = d.uppercase
+                draft.alignment   = d.alignment
+                draft.line_height = d.line_height
+                draft.bar_height  = d.bar_height
+                draft.bar_style   = d.bar_style
                 if dialog and dialog.setInputText then dialog:setInputText(d.template) end
                 applyLivePreview()
                 if dialog then dialog:reinit() end

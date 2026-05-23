@@ -35,7 +35,6 @@
 -- nil-index panic in ReadCollection:addItem.
 
 local ButtonDialog    = require("ui/widget/buttondialog")
-local CheckMark       = require("ui/widget/checkmark")
 local ConfirmBox      = require("ui/widget/confirmbox")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")

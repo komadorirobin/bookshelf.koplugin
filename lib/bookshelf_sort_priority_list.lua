@@ -11,7 +11,6 @@
 local Button         = require("ui/widget/button")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local HorizontalGroup= require("ui/widget/horizontalgroup")
-local HorizontalSpan = require("ui/widget/horizontalspan")
 local TextWidget     = require("ui/widget/textwidget")
 local VerticalGroup  = require("ui/widget/verticalgroup")
 local CenterContainer= require("ui/widget/container/centercontainer")
@@ -19,7 +18,6 @@ local Geom           = require("ui/geometry")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
 local Screen         = require("device").screen
-local _              = require("lib/bookshelf_i18n").gettext
 
 local List = {}
 List.__index = List

@@ -180,8 +180,8 @@ local SYSTEM_DIR_NAMES = {
 -- because its book set is restricted to ones the user has successfully
 -- opened, but Home iterates every file under home_dir and so is exposed.
 -- Returns the book on success; nil + warn on failure.
-local function _safeBuildBookMeta(fp)
-    local ok, b = pcall(Repo.buildBookMeta, fp)
+local function _safeBuildBookMeta(fp, opts)
+    local ok, b = pcall(Repo.buildBookMeta, fp, opts)
     if ok then return b end
     logger.warn("[bookshelf] buildBookMeta failed for", fp, ":", b)
     return nil
@@ -366,8 +366,21 @@ function Repo.getSortKey(chip)
     return _SORT_DEFAULT[chip]
 end
 
-function Repo.buildBookMeta(filepath)
+-- buildBookMeta(filepath [, opts])
+-- opts.want_cover: when false, ask BIM with get_cover=false so the zstd
+-- decompression + Blitbuffer allocation are skipped entirely (see
+-- bookinfomanager.lua line 376-379). Callers who already know the
+-- scaled cover is cached elsewhere (ScaledCoverCache) pass false to
+-- avoid the wasted decode-then-immediately-free dance on warm-cache
+-- pagination. Cover-needing callers (hero, series stack, folder card)
+-- omit opts and get the default true.
+--
+-- The returned record's cover_bb is nil when want_cover=false. SpineWidget
+-- handles a nil cover_bb by checking ScaledCoverCache first, then falling
+-- back to Repo.getCoverBB(filepath) for a synchronous lazy decode.
+function Repo.buildBookMeta(filepath, opts)
     if not filepath then return nil end
+    local want_cover = not opts or opts.want_cover ~= false
     local bim  = getBookInfoMgr()
     if not bim then return nil end  -- CoverBrowser disabled (#49)
     -- BIM opens / queries its own SQLite database here. The DB can be
@@ -381,7 +394,7 @@ function Repo.buildBookMeta(filepath)
     -- (Calibre JSON, filename-derived title) still populate the
     -- record; a later rebuild after BIM finishes will fill in the
     -- gaps.
-    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, true)
+    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, want_cover)
     if not ok_bim then
         logger.warn("[bookshelf] BIM getBookInfo failed for", filepath, ":",
                     tostring(info_or_err))
@@ -518,6 +531,28 @@ function Repo.buildBookMeta(filepath)
         _meta_record_cache[filepath] = cached
     end
     return book
+end
+
+-- Repo.getCoverBB(filepath) — lazy cover accessor for callers that
+-- skipped the cover decode in buildBookMeta(opts.want_cover=false). Hands
+-- back BIM's freshly-decoded BlitBuffer (or nil if BIM has no cover row
+-- or its row is mid-extraction). The caller OWNS the returned bb; pass
+-- it to ImageWidget with image_disposable=true or free() it explicitly
+-- after use. Same pcall guard as buildBookMeta for the import-window
+-- crash path.
+function Repo.getCoverBB(filepath)
+    if not filepath then return nil end
+    local bim = getBookInfoMgr()
+    if not bim then return nil end
+    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, true)
+    if not ok_bim then
+        logger.warn("[bookshelf] BIM getBookInfo (cover only) failed for",
+                    filepath, ":", tostring(info_or_err))
+        return nil
+    end
+    local info = info_or_err or {}
+    if info.ignore_cover then return nil end
+    return info.cover_bb
 end
 
 -- Text-only metadata for the library walk phases of getSeriesGroups /
@@ -709,11 +744,18 @@ end
 -- to avoid hero+slot-1 duplication; that exchange wasn't worth the
 -- shelves jumping around as the user browsed previews.
 
-function Repo.getRecent(limit, offset)
+-- opts.lazy_cover: when true, per-book ScaledCoverCache probe; on
+-- cache hit, pass want_cover=false to buildBookMeta to skip the BIM
+-- zstd decompress.
+function Repo.getRecent(limit, offset, opts)
     local rh   = getReadHistory()
     offset     = offset or 0
     limit      = limit or 8
     local out  = {}
+    local ScaledCoverCache
+    if opts and opts.lazy_cover then
+        ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+    end
     -- entry.dim is ReadHistory's marker for files deleted via the
     -- KOReader file manager when autoremove_deleted_items_from_history
     -- is off (the default). Stock History dims them; bookshelf treats
@@ -728,7 +770,11 @@ function Repo.getRecent(limit, offset)
         if not entry.dim then
             total = total + 1
             if total > offset and #out < limit then
-                local book = Repo.buildBookMeta(entry.file)
+                local meta_opts
+                if ScaledCoverCache and ScaledCoverCache:has(entry.file) then
+                    meta_opts = { want_cover = false }
+                end
+                local book = Repo.buildBookMeta(entry.file, meta_opts)
                 if book then
                     book.last_read_time = entry.time
                     out[#out + 1] = book
@@ -1325,7 +1371,18 @@ local function _lightMetaForFp(cache, fp)
     return _buildBookMetaLight(fp)
 end
 
-function Repo.getLatest(limit, offset, scope)
+local function _resolveScopeAndOpts(scope_or_opts, maybe_opts)
+    if type(scope_or_opts) == "table" and type(scope_or_opts.roots) == "table" then
+        return scope_or_opts, maybe_opts
+    end
+    if type(scope_or_opts) == "table" then
+        return nil, scope_or_opts
+    end
+    return nil, maybe_opts
+end
+
+function Repo.getLatest(limit, offset, scope_or_opts, maybe_opts)
+    local scope, opts = _resolveScopeAndOpts(scope_or_opts, maybe_opts)
     local _t0 = _gettime()
     local home       = G_reader_settings:readSetting("home_dir") or "/"
     local depth      = BookshelfSettings.read("latest_walk_depth") or 3
@@ -1337,8 +1394,17 @@ function Repo.getLatest(limit, offset, scope)
     local total = #candidates
     local out   = {}
     local stop  = math.min(offset + (limit or 8), total)
+    local ScaledCoverCache
+    if opts and opts.lazy_cover then
+        ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+    end
     for i = offset + 1, stop do
-        local book = Repo.buildBookMeta(candidates[i].fp)
+        local fp = candidates[i].fp
+        local meta_opts
+        if ScaledCoverCache and ScaledCoverCache:has(fp) then
+            meta_opts = { want_cover = false }
+        end
+        local book = Repo.buildBookMeta(fp, meta_opts)
         if book then
             book.added_time = candidates[i].mtime
             out[#out + 1] = book
@@ -1584,7 +1650,11 @@ local function _makeAllSort(_sort_key, sort_priority)
     return SortEngine.chainedComparator(sort_priority or Repo.getSortPriority("all"))
 end
 
--- getAll(path, limit, offset) -> (items, total)
+-- Repo.getAll(path, limit, offset, sort_priority_or_opts, filter, opts)
+--
+-- Supports both the newer positional form (sort_priority, filter, opts)
+-- and the fork's options-table form ({ sort_priority=..., reverse=...,
+-- mixed=..., folder_read_summary=..., filter=..., lazy_cover=true }).
 -- limit/offset let callers fetch a single page slice without hydrating the
 -- full list. total is always the full item count (from cache or fresh scan)
 -- so callers can compute total_pages without a second trip.
@@ -1641,9 +1711,15 @@ local function _filterAllShapes(shapes, filter)
     return out, #out
 end
 
-function Repo.getAll(path, limit, offset, opts_or_sort_priority, filter)
+-- opts.lazy_cover — when true, the HIT hydration path probes
+-- ScaledCoverCache by filepath for each book in the slice and passes
+-- want_cover=false to buildBookMeta for books whose cover is already
+-- cached. Avoids the wasted BIM zstd decompress on warm-cache
+-- pagination. Ignored on the MISS path (full library walk) because
+-- the cache hasn't seen those shapes yet.
+function Repo.getAll(path, limit, offset, opts_or_sort_priority, filter, opts)
     local _t0 = _gettime()
-    local opts = {}
+    opts = opts or {}
     local sort_priority = opts_or_sort_priority
     if type(opts_or_sort_priority) == "table"
             and (opts_or_sort_priority.sort_priority ~= nil
@@ -1651,7 +1727,8 @@ function Repo.getAll(path, limit, offset, opts_or_sort_priority, filter)
                 or opts_or_sort_priority.reverse ~= nil
                 or opts_or_sort_priority.mixed ~= nil
                 or opts_or_sort_priority.folder_read_summary ~= nil
-                or opts_or_sort_priority.filter ~= nil) then
+                or opts_or_sort_priority.filter ~= nil
+                or opts_or_sort_priority.lazy_cover ~= nil) then
         opts = opts_or_sort_priority
         sort_priority = opts.sort_priority
         filter = filter or opts.filter
@@ -1699,10 +1776,22 @@ function Repo.getAll(path, limit, offset, opts_or_sort_priority, filter)
         local shapes_for_slice, total = _filterAllShapes(entry.shapes, filter)
         local out   = {}
         local stop  = limit and math.min(offset + limit, total) or total
+        -- Lazy-cover probe: per-book ScaledCoverCache check, skip the
+        -- BIM zstd decode when a cover is already cached for the
+        -- filepath. SpineWidget reads from the cache directly.
+        local ScaledCoverCache
+        if opts and opts.lazy_cover then
+            ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+        end
         for i = offset + 1, stop do
             local shape = shapes_for_slice[i]
             if shape.kind == "folder" then
-                local fb = shape.first_book_fp and _safeBuildBookMeta(shape.first_book_fp)
+                local fb_opts
+                if ScaledCoverCache and shape.first_book_fp
+                        and ScaledCoverCache:has(shape.first_book_fp) then
+                    fb_opts = { want_cover = false }
+                end
+                local fb = shape.first_book_fp and _safeBuildBookMeta(shape.first_book_fp, fb_opts)
                 local read_summary = opts.folder_read_summary
                                      and Repo.getFolderReadSummary(shape.path, 3) or nil
                 out[#out + 1] = {
@@ -1716,7 +1805,11 @@ function Repo.getAll(path, limit, offset, opts_or_sort_priority, filter)
                     all_read     = read_summary and read_summary.all_read or nil,
                 }
             else
-                local b = _safeBuildBookMeta(shape.fp)
+                local meta_opts
+                if ScaledCoverCache and ScaledCoverCache:has(shape.fp) then
+                    meta_opts = { want_cover = false }
+                end
+                local b = _safeBuildBookMeta(shape.fp, meta_opts)
                 if b then out[#out + 1] = b end
             end
         end
@@ -2015,7 +2108,7 @@ end
 -- Returns up to `limit` Book records from ReadCollection favorites collection,
 -- sorted by access time descending (most recently accessed first).
 
-function Repo.getFavorites(limit, offset)
+function Repo.getFavorites(limit, offset, opts)
     local rc    = getCollections()
     local items = {}
     for _file, item in pairs(rc.coll and rc.coll.favorites or {}) do
@@ -2062,8 +2155,17 @@ function Repo.getFavorites(limit, offset)
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     local out   = {}
+    local ScaledCoverCache
+    if opts and opts.lazy_cover then
+        ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+    end
     for i = offset + 1, stop do
-        local book = Repo.buildBookMeta(items[i].file)
+        local fp = items[i].file
+        local meta_opts
+        if ScaledCoverCache and ScaledCoverCache:has(fp) then
+            meta_opts = { want_cover = false }
+        end
+        local book = Repo.buildBookMeta(fp, meta_opts)
         if book then
             book.in_favorites = true
             out[#out + 1] = book
@@ -3522,7 +3624,12 @@ end
 -- functions (they already apply sort + filter internally). For the new
 -- kinds, the resolver walks the BIM via a predicate filter, then applies
 -- sort_priority via SortEngine and a per-tab status filter.
-function Repo.getBySource(source, filter, sort_priority, offset, limit, scope)
+--
+-- scope is the fork's profile-scope table ({ roots = {...} }).
+-- opts is forwarded to Repo.getAll / Repo.getRecent / Repo.getLatest /
+-- Repo.getFavorites so upstream lazy-cover skips remain active.
+function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or_opts, maybe_opts)
+    local scope, opts = _resolveScopeAndOpts(scope_or_opts, maybe_opts)
     if not source or not source.kind then return {}, 0 end
     local kind = source.kind
 
@@ -3568,27 +3675,19 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope)
     local has_status_filter = filter and filter.statuses and next(filter.statuses) ~= nil
     local has_custom_sort   = sort_priority and #sort_priority > 0
     if not has_status_filter then
-        if kind == "all" then
-            return Repo.getAll(nil, limit, offset, { sort_priority = sort_priority })
-        end
-        if kind == "folder" then
-            return Repo.getAll(source.id, limit, offset, { sort_priority = sort_priority })
-        end
+        if kind == "all"       then return Repo.getAll(nil, limit, offset, sort_priority, nil, opts)       end
+        if kind == "folder"    then return Repo.getAll(source.id, limit, offset, sort_priority, nil, opts) end
         if not has_custom_sort then
-            if kind == "recent"    then return Repo.getRecent(limit, offset)        end
-            if kind == "latest"    then return Repo.getLatest(limit, offset, scope) end
-            if kind == "favorites" then return Repo.getFavorites(limit, offset)     end
+            if kind == "recent"    then return Repo.getRecent(limit, offset, opts)       end
+            if kind == "latest"    then return Repo.getLatest(limit, offset, scope, opts) end
+            if kind == "favorites" then return Repo.getFavorites(limit, offset, opts)    end
         end
     else
         -- Folder views with an active status filter still produce folder
         -- cards, but only those with at least one matching book. getAll
         -- handles the filter natively below (see Phase 1 work).
-        if kind == "all" then
-            return Repo.getAll(nil, limit, offset, { sort_priority = sort_priority, filter = filter })
-        end
-        if kind == "folder" then
-            return Repo.getAll(source.id, limit, offset, { sort_priority = sort_priority, filter = filter })
-        end
+        if kind == "all"    then return Repo.getAll(nil, limit, offset, sort_priority, filter, opts)       end
+        if kind == "folder" then return Repo.getAll(source.id, limit, offset, sort_priority, filter, opts) end
     end
     if kind == "series"    then return Repo.getSeriesGroups(limit, offset, sort_priority, scope, filter) end
     if kind == "authors"   then return Repo.getAuthors(limit, offset, sort_priority, scope, filter)      end
