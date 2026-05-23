@@ -1844,7 +1844,16 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     local function maybe_queue(fp)
         if not fp or seen[fp] then return end
         seen[fp] = true
-        local info = BIM:getBookInfo(fp, false)
+        -- pcall-guarded: BIM can throw a SQLite error when its DB is being
+        -- recreated mid-import (issue #71, same family as #63). Without this
+        -- the error escapes _rebuild and crashes KOReader.
+        local ok_bim, info_or_err = pcall(BIM.getBookInfo, BIM, fp, false)
+        if not ok_bim then
+            logger.warn("[bookshelf] BIM getBookInfo failed for", fp, ":",
+                        tostring(info_or_err))
+            return
+        end
+        local info = info_or_err
         local needs   = false
         local reason  = "?"
         local inprog  = tonumber(info and info.in_progress) or 0
@@ -2132,7 +2141,13 @@ function BookshelfWidget:_pollExtraction()
     local still_pending = {}
     local gave_up_count = 0
     for _i, f in ipairs(files) do
-        local info = BIM:getBookInfo(f.filepath, false)
+        -- pcall-guarded; see maybe_queue comment for rationale (#71/#63).
+        local ok_bim, info_or_err = pcall(BIM.getBookInfo, BIM, f.filepath, false)
+        if not ok_bim then
+            logger.warn("[bookshelf] BIM getBookInfo (poll) failed for",
+                        f.filepath, ":", tostring(info_or_err))
+        end
+        local info = ok_bim and info_or_err or nil
         local inprog = tonumber(info and info.in_progress) or 0
         local meta_ready = info and info.has_meta == "Y"
         -- Cover-readiness check: matters for *re-extractions*. A pre-existing

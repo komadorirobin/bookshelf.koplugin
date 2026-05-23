@@ -646,7 +646,13 @@ local function _buildBookMetaLight(fp)
     if not fp then return nil end
     local bim  = getBookInfoMgr()
     if not bim then return nil end  -- CoverBrowser disabled (#49)
-    local info = bim:getBookInfo(fp, false) or {}
+    -- pcall-guarded; see buildBookMeta for rationale (#63/#71).
+    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, fp, false)
+    if not ok_bim then
+        logger.warn("[bookshelf] BIM getBookInfo (light) failed for", fp, ":",
+                    tostring(info_or_err))
+    end
+    local info = (ok_bim and info_or_err) or {}
     return _buildLightMetaFromInfo(fp, info)
 end
 
@@ -2124,7 +2130,13 @@ function Repo.getFavorites(limit, offset, opts)
             local fp = item.file
             local title
             if bim then
-                local info = bim:getBookInfo(fp, false) or {}
+                -- pcall-guarded; see buildBookMeta for rationale (#63/#71).
+                local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, fp, false)
+                if not ok_bim then
+                    logger.warn("[bookshelf] BIM getBookInfo (fav sort) failed for",
+                                fp, ":", tostring(info_or_err))
+                end
+                local info = (ok_bim and info_or_err) or {}
                 title = info.title
             end
             titles[fp] = (title or (fp and fp:match("([^/]+)$")) or ""):lower()
