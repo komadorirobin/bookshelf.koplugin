@@ -41,6 +41,24 @@ local DEFAULT_HEX = {
     metro_fill  = "#000000",
     text_color  = nil,        -- "book text colour" — clear rather than default
     symbol_color = nil,       -- "match text" — clear rather than default
+    -- Cover-indicator colours (bookshelf-specific). bookmark matches
+    -- progress_fill's default so the in-progress glyph keeps its pre-2.2.5
+    -- "darkish" look when the field is unset. badge_fg / badge_bg match the
+    -- hard-coded pill defaults (black text on a white fill) plus the
+    -- halo'd-check defaults (black outline, white centre) — see
+    -- bookshelf_cover_progress.M.buildOutlinedGlyphWidget.
+    bookmark    = "#404040",
+    badge_fg    = "#000000",
+    badge_bg    = "#FFFFFF",
+    -- Folder overlay defaults match the colour-mode appearance of the
+    -- FolderCard module's CARDBOARD / CARDBOARD_EDGE constants. On B&W
+    -- devices the picker is replaced by a % black nudge dialog so this
+    -- hex is only ever shown as the picker's "default" swatch on colour
+    -- screens. Field names match rawColours().folder_bg / .folder_fg so
+    -- the settings menu's pickColour helper can pass the same string to
+    -- both lookups.
+    folder_bg   = "#E7C9A9",
+    folder_fg   = "#000000",
 }
 
 function Colour.defaultHexFor(field) return DEFAULT_HEX[field] end

@@ -459,11 +459,39 @@ buildLine = function(expanded, region, width, book)
         local bar_pct   = region.bar_height or 100
         local bar_h     = math.max(2, math.floor(face_size * bar_pct / 100 + 0.5))
         local pct       = book and book.book_pct or 0
+        local style     = region.bar_style or "bordered"
+        -- Resolve user-chosen Progress bar / Progress bar track colours for
+        -- the hero strip:
+        --
+        -- * Pacman has a fixed identity baked into bookends's render path
+        --   (yellow body, peach pellets) and ignores per-bar colour
+        --   overrides. Skip the colour plumbing entirely for this style
+        --   so the user's bar-colour picks don't bleed in.
+        --
+        -- * For every other style, only pass the colour fields when the
+        --   user has actually picked something. Each bookends style has
+        --   its own internal defaults; passing bookshelf's default fill /
+        --   track values (dark grey + white) would wash those out for
+        --   users who never opened the colours menu.
+        local colors
+        if style ~= "pacman" then
+            local custom_fill  = BookshelfSettings.read("progress_fill")
+            local custom_track = BookshelfSettings.read("progress_track")
+            if custom_fill or custom_track then
+                local Colour    = require("lib/bookshelf_colour")
+                local is_colour = Screen:isColorEnabled()
+                colors = {
+                    fill = custom_fill and Colour.parseColorValue(custom_fill, is_colour) or nil,
+                    bg   = custom_track and Colour.parseColorValue(custom_track, is_colour) or nil,
+                }
+            end
+        end
         elastic_widget = HeroBar:new{
             width      = elastic_w,
             height     = bar_h,
             percentage = pct,
-            style      = region.bar_style or "bordered",
+            style      = style,
+            colors     = colors,
         }
     else  -- "spacer"
         elastic_widget = HorizontalSpan:new{ width = elastic_w }

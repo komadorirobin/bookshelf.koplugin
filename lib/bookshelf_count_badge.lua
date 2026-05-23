@@ -12,13 +12,13 @@
 -- Returns a FrameContainer. Callers position it via overlap_offset
 -- relative to their slot — this module is layout-agnostic.
 
-local Blitbuffer     = require("ffi/blitbuffer")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local TextWidget     = require("ui/widget/textwidget")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
 local Screen         = require("device").screen
 local BookshelfSettings = require("lib/bookshelf_settings_store")
+local CoverProgress  = require("lib/bookshelf_cover_progress")
 
 local CountBadge = {}
 
@@ -60,9 +60,11 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
         -- "×N" (UTF-8 U+00D7 multiplication sign + hair + digits)
         text = "\xc3\x97" .. HAIR .. tostring(total)
     end
+    local colours = CoverProgress.resolvedColours()
     return FrameContainer:new{
         bordersize     = Size.border.thin,
-        background     = Blitbuffer.COLOR_WHITE,
+        background     = colours.badge_bg,
+        color          = colours.badge_fg,
         radius         = Screen:scaleBySize(3),
         padding_left   = Size.padding.default,
         padding_right  = Size.padding.default,
@@ -72,6 +74,7 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
             text = text,
             face = Font:getFace("smallinfofont", _badgeSize(12)),
             bold = true,
+            fgcolor = colours.badge_fg,
         },
     }
 end

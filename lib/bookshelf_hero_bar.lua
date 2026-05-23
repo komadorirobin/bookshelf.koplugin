@@ -33,20 +33,47 @@ local function loadBookendsPaint()
     return mod.paintProgressBar
 end
 
--- Style sets exposed in the line editor's bar-style cycle button. The
--- bookends list is a superset; the fallback keeps it to two real styles.
--- Radial / radial_hollow are deliberately excluded — bookshelf's hero
--- progress bar is a horizontal-strip context where a circle dial reads
--- as out-of-place; bookends still has them for its own status-line use.
-HeroBar.BOOKENDS_STYLES = {
-    "bordered", "solid", "rounded", "metro", "wavy",
+-- Styles excluded from bookshelf's hero strip even when bookends supports
+-- them. Radial / radial_hollow are circular dials and look out of place
+-- in a horizontal strip context. Anything not listed here flows through
+-- automatically as bookends adds new styles.
+HeroBar.EXCLUDED_STYLES = {
+    radial        = true,
+    radial_hollow = true,
 }
+
+-- Snapshot of bookends's BAR_STYLES at the time this version of bookshelf
+-- shipped. Used as a fallback when the installed bookends version is too
+-- old to export OverlayWidget.BAR_STYLES (anything pre-v2.x). Bookends
+-- versions that DO export the table get read directly — new styles
+-- bookends adds in the future show up here without a bookshelf change.
+HeroBar.BOOKENDS_FALLBACK = {
+    "bordered", "solid", "rounded", "metro", "wavy",
+    "radial", "radial_hollow", "pacman",
+}
+
 HeroBar.FALLBACK_STYLES = { "bordered", "solid" }
 
--- Returns the cycle-list applicable for the active backend.
+-- Returns the cycle-list applicable for the active backend. When bookends
+-- is installed and exports BAR_STYLES, use that (so any future novelty
+-- style auto-appears); otherwise the local snapshot. Either way, filter
+-- through EXCLUDED_STYLES.
 function HeroBar.availableStyles()
-    if loadBookendsPaint() then return HeroBar.BOOKENDS_STYLES end
-    return HeroBar.FALLBACK_STYLES
+    if not loadBookendsPaint() then return HeroBar.FALLBACK_STYLES end
+    local all
+    local ok, mod = pcall(require, "bookends_overlay_widget")
+    if ok and type(mod) == "table" and type(mod.BAR_STYLES) == "table" then
+        all = mod.BAR_STYLES
+    else
+        all = HeroBar.BOOKENDS_FALLBACK
+    end
+    local out = {}
+    for _, s in ipairs(all) do
+        if not HeroBar.EXCLUDED_STYLES[s] then
+            out[#out + 1] = s
+        end
+    end
+    return out
 end
 
 -- Paintable widget that delegates to bookends's paintProgressBar.
@@ -88,16 +115,19 @@ end
 
 function BookendsBar:free() end -- nothing to release; pure painter
 
--- new{ width, height, percentage, style } -> a paintable widget.
+-- new{ width, height, percentage, style, colors } -> a paintable widget.
 -- `style` is the user's saved choice; we silently downgrade to whatever
 -- the active backend supports (paintProgressBar tolerates unknown
--- styles by rendering bordered).
+-- styles by rendering bordered). `colors` is the bookends paintProgressBar
+-- colour table ({ fill = ..., bg = ... } at minimum); when bookends isn't
+-- installed the fallback ProgressWidget ignores it.
 function HeroBar:new(o)
     o = o or {}
     local width      = o.width or 0
     local height     = math.max(1, o.height or 5)
     local percentage = math.max(0, math.min(1, o.percentage or 0))
     local style      = o.style or "bordered"
+    local colors     = o.colors
 
     local paint = loadBookendsPaint()
     if paint then
@@ -107,12 +137,17 @@ function HeroBar:new(o)
             fraction = percentage,
             ticks    = {},
             style    = style,
+            colors   = colors,
             paint    = paint,
         }
     end
 
     -- Fallback: KOReader ProgressWidget. Only bordered / solid are
     -- meaningful; saved styles like wavy render as the default look.
+    -- ProgressWidget doesn't expose per-instance fill/bg overrides, so
+    -- user colour picks have no effect along this path — acceptable as
+    -- the fallback only triggers when bookends isn't installed, and the
+    -- user can install bookends to unlock themed bars.
     local ProgressWidget = require("ui/widget/progresswidget")
     return ProgressWidget:new{
         width      = width,

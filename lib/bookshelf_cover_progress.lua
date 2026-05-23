@@ -137,6 +137,40 @@ local Widget         = require("ui/widget/widget")
 local Geom           = require("ui/geometry")
 local _BlitbufferBar = require("ffi/blitbuffer")
 local _ScreenBar     = require("device").screen
+local ok_ffi, ffi_mod = pcall(require, "ffi")
+local ffi = ok_ffi and ffi_mod or {
+    typeof = function(name) return name end,
+    istype = function(kind, value)
+        return kind == "ColorRGB32"
+            and type(value) == "table"
+            and value._kind == "ColorRGB32"
+    end,
+}
+local ColorRGB32_t   = ffi.typeof("ColorRGB32")
+
+-- Blitbuffer's plain paintRoundedRect / paintBorder flatten their colour
+-- argument to luminance via getColor8() before painting, so a ColorRGB32
+-- like red goes down as its grey luminance on a colour buffer. KOReader
+-- exposes parallel *RGB32 variants that preserve true colour; dispatch by
+-- type so the call sites stay shape-agnostic. (Same pattern bookends uses
+-- in bookends_overlay_widget.lua.)
+local function _paintRoundedRect(bb, x, y, w, h, c, r)
+    if not c then return end
+    if ffi.istype(ColorRGB32_t, c) then
+        bb:paintRoundedRectRGB32(x, y, w, h, c, r)
+    else
+        bb:paintRoundedRect(x, y, w, h, c, r)
+    end
+end
+
+local function _paintBorder(bb, x, y, w, h, bw, c, r)
+    if not c then return end
+    if ffi.istype(ColorRGB32_t, c) then
+        bb:paintBorderRGB32(x, y, w, h, bw, c, r)
+    else
+        bb:paintBorder(x, y, w, h, bw, c, r)
+    end
+end
 
 local ProgressBarWidget = Widget:extend{
     width  = 0,
@@ -159,11 +193,9 @@ function ProgressBarWidget:paintTo(bb, x, y)
     local border = math.max(1, _ScreenBar:scaleBySize(1))
     local radius = math.floor(h / 2)
     -- 1. Track background (rounded rect, full bar)
-    if self.track then
-        bb:paintRoundedRect(x, y, w, h, self.track, radius)
-    end
+    _paintRoundedRect(bb, x, y, w, h, self.track, radius)
     -- 2. Dark border outlining the track
-    bb:paintBorder(x, y, w, h, border, _BlitbufferBar.COLOR_BLACK, radius)
+    _paintBorder(bb, x, y, w, h, border, _BlitbufferBar.COLOR_BLACK, radius)
     -- 3. Inner fill (rounded), inset by border + padding, width scales with pct
     local clamped = self.pct
     if clamped < 0 then clamped = 0 end
@@ -177,7 +209,7 @@ function ProgressBarWidget:paintTo(bb, x, y)
     local inner_w = math.floor(inner_max_w * clamped + 0.5)
     if inner_w < 1 then return end
     local inner_r = math.max(0, radius - inset)
-    bb:paintRoundedRect(x + inset, y + inset, inner_w, inner_h, self.fill, inner_r)
+    _paintRoundedRect(bb, x + inset, y + inset, inner_w, inner_h, self.fill, inner_r)
 end
 
 -- Build a ProgressBarWidget. `fill` and `track` are Blitbuffer colour
@@ -216,21 +248,26 @@ function M.buildGlyphWidget(glyph_char, size, colour)
     }
 end
 
--- Build a white-with-black-halo glyph. The glyph is painted in BLACK
--- at every cell of a (2*halo_w + 1) x (2*halo_w + 1) offset grid
--- (skipping the centre), then in WHITE at the centre. The offset paints
--- create the outline; the white centre fills the strokes. Used for the
+-- Build a halo'd glyph. The glyph is painted in `halo_color` at every
+-- cell of a (2*halo_w + 1) x (2*halo_w + 1) offset grid (skipping the
+-- centre), then in `centre_color` at the centre. The offset paints
+-- create the outline; the centre paint fills the strokes. Used for the
 -- 'completed' indicator so the bookmark-check stays legible against any
 -- cover artwork without the heavy 'sticker' look of the old badge.
-function M.buildOutlinedGlyphWidget(glyph_char, size, halo_w)
+-- `halo_color` / `centre_color` are Blitbuffer colour objects; both
+-- default to the legacy BLACK halo / WHITE centre pair so callers that
+-- don't pass them keep their existing render.
+function M.buildOutlinedGlyphWidget(glyph_char, size, halo_w, halo_color, centre_color)
     halo_w = halo_w or 1
+    halo_color   = halo_color   or Blitbuffer.COLOR_BLACK
+    centre_color = centre_color or Blitbuffer.COLOR_WHITE
     local widget_w = size + 2 * halo_w
     local widget_h = size + 2 * halo_w
     local FrameContainer = require("ui/widget/container/framecontainer")
     local group = OverlapGroup:new{
         dimen = Geom:new{ w = widget_w, h = widget_h },
     }
-    -- Black offsets in all 8 directions around the centre.
+    -- Halo offsets in all 8 directions around the centre.
     for dy = -halo_w, halo_w do
         for dx = -halo_w, halo_w do
             if dx ~= 0 or dy ~= 0 then
@@ -239,18 +276,18 @@ function M.buildOutlinedGlyphWidget(glyph_char, size, halo_w)
                     padding      = 0,
                     padding_top  = halo_w + dy,
                     padding_left = halo_w + dx,
-                    M.buildGlyphWidget(glyph_char, size, Blitbuffer.COLOR_BLACK),
+                    M.buildGlyphWidget(glyph_char, size, halo_color),
                 }
             end
         end
     end
-    -- White centre glyph.
+    -- Centre glyph.
     group[#group + 1] = FrameContainer:new{
         bordersize   = 0,
         padding      = 0,
         padding_top  = halo_w,
         padding_left = halo_w,
-        M.buildGlyphWidget(glyph_char, size, Blitbuffer.COLOR_WHITE),
+        M.buildGlyphWidget(glyph_char, size, centre_color),
     }
     return group
 end
@@ -262,32 +299,71 @@ end
 local Colour   = require("lib/bookshelf_colour")
 local Device   = require("device")
 
-local DEFAULT_FILL  = { grey = 0x40 }
+local DEFAULT_FILL     = { grey = 0x40 }
 -- Track defaults to pure white so the bar stays clearly distinct from
 -- the cover's drop shadow (mid-grey) on monochrome devices.
-local DEFAULT_TRACK = { grey = 0xFF }
+local DEFAULT_TRACK    = { grey = 0xFF }
+-- Bookmark (in-progress glyph) keeps the pre-2.2.5 look — same dark-grey
+-- value the glyph picked up when it used to read from progress_fill.
+local DEFAULT_BOOKMARK = { grey = 0x40 }
+-- Badge defaults preserve the existing hard-coded pill look (black text on
+-- a white fill, thin black border) and the halo'd completed-bookmark look
+-- (black outline around a white check). Mapping:
+--   pill  : background = badge_bg, text + border = badge_fg
+--   check : halo       = badge_fg, centre        = badge_bg
+local DEFAULT_BADGE_FG = { grey = 0x00 }
+local DEFAULT_BADGE_BG = { grey = 0xFF }
 
 -- Returns colour values resolved to Blitbuffer objects for the current
 -- screen mode. Called per cover paint; relies on bookshelf_colour's
 -- internal hex cache to keep the work cheap.
+--
+-- folder_bg / folder_fg differ from the other fields: they return nil
+-- when the setting is unset so the FolderCard render path can fall back
+-- to its existing device-aware defaults (manilla on colour panels, dark
+-- grey on B&W e-ink, see lib/bookshelf_folder_card.lua's CARDBOARD
+-- constant). A static hex default here can't represent that split, and
+-- mapping it through parseColorValue's Rec.601 luminance fold would land
+-- B&W users on light grey (~0xCE) instead of the dark grey they have
+-- today.
 function M.resolvedColours()
-    local is_colour = Device.screen:isColorEnabled()
-    local fill_raw  = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL
-    local track_raw = BookshelfSettings.read("progress_track") or DEFAULT_TRACK
+    local is_colour    = Device.screen:isColorEnabled()
+    local fill_raw     = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL
+    local track_raw    = BookshelfSettings.read("progress_track") or DEFAULT_TRACK
+    local bookmark_raw = BookshelfSettings.read("bookmark_color") or DEFAULT_BOOKMARK
+    local badge_fg_raw = BookshelfSettings.read("badge_fg")       or DEFAULT_BADGE_FG
+    local badge_bg_raw = BookshelfSettings.read("badge_bg")       or DEFAULT_BADGE_BG
+    local folder_bg_raw = BookshelfSettings.read("folder_overlay_bg")
+    local folder_fg_raw = BookshelfSettings.read("folder_overlay_fg")
     return {
-        fill  = Colour.parseColorValue(fill_raw,  is_colour),
-        track = Colour.parseColorValue(track_raw, is_colour),
+        fill      = Colour.parseColorValue(fill_raw,     is_colour),
+        track     = Colour.parseColorValue(track_raw,    is_colour),
+        bookmark  = Colour.parseColorValue(bookmark_raw, is_colour),
+        badge_fg  = Colour.parseColorValue(badge_fg_raw, is_colour),
+        badge_bg  = Colour.parseColorValue(badge_bg_raw, is_colour),
+        folder_bg = folder_bg_raw and Colour.parseColorValue(folder_bg_raw, is_colour) or nil,
+        folder_fg = folder_fg_raw and Colour.parseColorValue(folder_fg_raw, is_colour) or nil,
     }
 end
 
 -- Returns the raw setting values (storage shape, not Blitbuffer). For the
--- settings menu's "currently set to..." label rendering.
+-- settings menu's "currently set to..." label rendering. Folder colours
+-- return the raw value or nil (no static default) so the menu's
+-- valueLabel helper can show "default" when unset.
 function M.rawColours()
     return {
-        fill  = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL,
-        track = BookshelfSettings.read("progress_track") or DEFAULT_TRACK,
-        fill_default  = DEFAULT_FILL,
-        track_default = DEFAULT_TRACK,
+        fill      = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL,
+        track     = BookshelfSettings.read("progress_track") or DEFAULT_TRACK,
+        bookmark  = BookshelfSettings.read("bookmark_color") or DEFAULT_BOOKMARK,
+        badge_fg  = BookshelfSettings.read("badge_fg")       or DEFAULT_BADGE_FG,
+        badge_bg  = BookshelfSettings.read("badge_bg")       or DEFAULT_BADGE_BG,
+        folder_bg = BookshelfSettings.read("folder_overlay_bg"),
+        folder_fg = BookshelfSettings.read("folder_overlay_fg"),
+        fill_default     = DEFAULT_FILL,
+        track_default    = DEFAULT_TRACK,
+        bookmark_default = DEFAULT_BOOKMARK,
+        badge_fg_default = DEFAULT_BADGE_FG,
+        badge_bg_default = DEFAULT_BADGE_BG,
     }
 end
 

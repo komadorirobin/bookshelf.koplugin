@@ -86,6 +86,7 @@ function FolderPolygon:paintTo(bb, x, y)
     local tw    = self.tab_w
     local th    = self.tab_h
     local fill  = self.fill_color
+    local edge  = self.edge_color
     local r     = self.radius or 0
     local r_sq  = r * r
     local tr    = self.tab_radius or 0
@@ -106,6 +107,14 @@ function FolderPolygon:paintTo(bb, x, y)
     -- returning nil. Cheaper to just always go through the RGB path.
     local function fillRect(rx, ry, rw, rh)
         bb:paintRectRGB32(rx, ry, rw, rh, fill)
+    end
+    -- Same story for the edge — when the user picks a ColorRGB32 edge
+    -- through the Folder overlay foreground setting, the plain paintRect
+    -- would flatten it to luminance. Route every edge stroke through
+    -- paintRectRGB32 (Color8 still works because it implements
+    -- getColorRGB32 as r=g=b).
+    local function edgeRect(rx, ry, rw, rh)
+        bb:paintRectRGB32(rx, ry, rw, rh, edge)
     end
 
     -- Tab fill: small rectangle in the top-left, with rounded top corners
@@ -161,15 +170,14 @@ function FolderPolygon:paintTo(bb, x, y)
         end
     end
 
-    if self.edge_color then
-        local b    = CARD_BORDER
-        local edge = self.edge_color
-        bb:paintRect(x, y + tr, b, h - r - tr, edge)            -- left wall
-        bb:paintRect(x + tr, y, tw - 2 * tr, b, edge)           -- tab top
-        bb:paintRect(x + tw - b, y + tr, b, th - tr, edge)      -- tab right wall
-        bb:paintRect(x + tw, y + th, w - tw, b, edge)           -- body top right of tab
-        bb:paintRect(x + w - b, y + th, b, h - th - r, edge)    -- body right wall
-        bb:paintRect(x + r, y + h - b, w - 2 * r, b, edge)      -- body bottom
+    if edge then
+        local b = CARD_BORDER
+        edgeRect(x, y + tr, b, h - r - tr)            -- left wall
+        edgeRect(x + tr, y, tw - 2 * tr, b)           -- tab top
+        edgeRect(x + tw - b, y + tr, b, th - tr)      -- tab right wall
+        edgeRect(x + tw, y + th, w - tw, b)           -- body top right of tab
+        edgeRect(x + w - b, y + th, b, h - th - r)    -- body right wall
+        edgeRect(x + r, y + h - b, w - 2 * r, b)      -- body bottom
         if tr > 0 then
             for i = 0, tr - 1 do
                 local dy   = tr - 1 - i
@@ -178,8 +186,8 @@ function FolderPolygon:paintTo(bb, x, y)
                 while cutoff < tr and (tr - cutoff) * (tr - cutoff) + i_sq > tr_sq do
                     cutoff = cutoff + 1
                 end
-                bb:paintRect(x + cutoff, y + dy, b, b, edge)
-                bb:paintRect(x + tw - cutoff - b, y + dy, b, b, edge)
+                edgeRect(x + cutoff, y + dy, b, b)
+                edgeRect(x + tw - cutoff - b, y + dy, b, b)
             end
         end
         if r > 0 then
@@ -190,8 +198,8 @@ function FolderPolygon:paintTo(bb, x, y)
                 while cutoff < r and (r - cutoff) * (r - cutoff) + i_sq > r_sq do
                     cutoff = cutoff + 1
                 end
-                bb:paintRect(x + cutoff, y + dy, b, b, edge)
-                bb:paintRect(x + w - cutoff - b, y + dy, b, b, edge)
+                edgeRect(x + cutoff, y + dy, b, b)
+                edgeRect(x + w - cutoff - b, y + dy, b, b)
             end
         end
     end
@@ -205,6 +213,20 @@ function FolderCard.build(opts)
     local slot_w = opts.width
     local slot_h = opts.height
     local label_text = (opts.label or ""):gsub("/$", "")
+
+    -- Pull the user's Folder overlay colours, falling back to the
+    -- device-aware module defaults when either is unset. CARDBOARD itself
+    -- already resolves to manilla on colour panels / dark grey on B&W, so
+    -- leaving it as the fallback preserves the per-device look exactly
+    -- for users who haven't picked anything. The require happens lazily
+    -- because bookshelf_cover_progress requires bookshelf_settings_store
+    -- and bookshelf_colour, and pulling those at module load creates a
+    -- cycle with bookshelf_widget's require ordering.
+    local CoverProgress = require("lib/bookshelf_cover_progress")
+    local indicator_colours = CoverProgress.resolvedColours()
+    local fill_color = indicator_colours.folder_bg or CARDBOARD
+    local edge_color = indicator_colours.folder_fg or CARDBOARD_EDGE
+    local label_fg   = indicator_colours.folder_fg or Blitbuffer.COLOR_BLACK
 
     local card_w        = slot_w - SHADOW_OFFSET
     local face          = Font:getFace("infofont", 16)
@@ -246,8 +268,8 @@ function FolderCard.build(opts)
         height     = card_h,
         tab_w      = tab_w,
         tab_h      = tab_h,
-        fill_color = CARDBOARD,
-        edge_color = CARDBOARD_EDGE,
+        fill_color = fill_color,
+        edge_color = edge_color,
         radius     = CARD_RADIUS,
         tab_radius = CARD_RADIUS,
     }
@@ -259,12 +281,17 @@ function FolderCard.build(opts)
         folder,
     }
 
+    -- CardboardTextBox.alpha=true trips appearance.koplugin's _renderText
+    -- escape hatch (it gates on `not self.alpha`), so the user's chosen
+    -- fgcolor / bgcolor survive themes that otherwise repaint text in
+    -- their own palette. Passing user colours through here doesn't change
+    -- that contract — the alpha flag still governs the appearance gate.
     local label_widget = CardboardTextBox:new{
         text                          = label_text,
         face                          = face,
         bold                          = true,
-        fgcolor                       = Blitbuffer.COLOR_BLACK,
-        bgcolor                       = CARDBOARD,
+        fgcolor                       = label_fg,
+        bgcolor                       = fill_color,
         width                         = label_w_avail,
         alignment                     = "left",
         height                        = label_h,
