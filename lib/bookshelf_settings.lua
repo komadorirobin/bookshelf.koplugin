@@ -1019,7 +1019,12 @@ function Settings:_hardcoverSubItems()
                     timeout = 1,
                 })
                 UIManager:nextTick(function()
-                    local ok, result = Hardcover.refreshRatings()
+                    local ok_call, ok, result = pcall(Hardcover.refreshRatings)
+                    if not ok_call then
+                        local err = ok
+                        ok = false
+                        result = err
+                    end
                     if ok then
                         local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
                         if ok_repo and Repo then
@@ -1031,8 +1036,13 @@ function Settings:_hardcoverSubItems()
                             end
                         end
                         if self._bw and self._bw._rebuild then
-                            self._bw:_rebuild()
-                            UIManager:setDirty(self._bw, "ui")
+                            local ok_rebuild = pcall(function()
+                                self._bw:_rebuild()
+                                UIManager:setDirty(self._bw, "ui")
+                            end)
+                            if not ok_rebuild and Repo and Repo.invalidateBookCache then
+                                Repo.invalidateBookCache("hardcover ratings rebuild failed")
+                            end
                         end
                         UIManager:show(InfoMessage:new{
                             text = string.format(_("Hardcover ratings refreshed: %d rated of %d linked books"),

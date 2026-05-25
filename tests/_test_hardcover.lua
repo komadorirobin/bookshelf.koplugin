@@ -184,6 +184,30 @@ test("refreshRatings fetches linked book ratings and caches them", function()
     eq(store.hardcover_ratings["999"].rating, false)
 end)
 
+test("refreshRatings returns an error when user lookup throws", function()
+    Hardcover.invalidate()
+    hc_settings.user_id = nil
+    local Api = package.loaded["hardcover/lib/hardcover_api"]
+    local old_me = Api.me
+    Api.me = function() error("user lookup exploded") end
+    local ok, err = Hardcover.refreshRatings()
+    Api.me = old_me
+    eq(ok, false)
+    assert(tostring(err):find("user lookup exploded", 1, true), tostring(err))
+end)
+
+test("refreshRatings returns an error when ratings query throws", function()
+    Hardcover.invalidate()
+    hc_settings.user_id = 42
+    local Api = package.loaded["hardcover/lib/hardcover_api"]
+    local old_query = Api.query
+    Api.query = function() error("ratings query exploded") end
+    local ok, err = Hardcover.refreshRatings()
+    Api.query = old_query
+    eq(ok, false)
+    assert(tostring(err):find("ratings query exploded", 1, true), tostring(err))
+end)
+
 test("enrichBook adds Hardcover link and cached rating", function()
     Hardcover.invalidate()
     local book = { filepath = "/books/a.epub" }

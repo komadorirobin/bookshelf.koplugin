@@ -633,15 +633,34 @@ local function _loadApi()
     return Api
 end
 
+local function _errString(err)
+    if type(err) == "table" then
+        if type(err.errors) == "table" and err.errors[1] then
+            local first = err.errors[1]
+            if type(first) == "table" and first.message then
+                return tostring(first.message)
+            end
+            return tostring(first)
+        end
+        if err.error then return tostring(err.error) end
+    end
+    return tostring(err)
+end
+
 local function _getUserId(Api, settings)
     local user_id = settings:readSetting("user_id")
     if user_id then return tonumber(user_id) or user_id end
     if not Api.me then return nil, "Hardcover user id is missing" end
-    local me = Api:me()
+    local ok_me, me = pcall(Api.me, Api)
+    if not ok_me then
+        return nil, "Could not fetch Hardcover user id: " .. _errString(me)
+    end
     user_id = me and me.id
     if not user_id then return nil, "Could not fetch Hardcover user id" end
-    settings:saveSetting("user_id", user_id)
-    settings:flush()
+    pcall(settings.saveSetting, settings, "user_id", user_id)
+    if type(settings.flush) == "function" then
+        pcall(settings.flush, settings)
+    end
     return tonumber(user_id) or user_id
 end
 
@@ -730,9 +749,13 @@ function Hardcover.fetchReviews(book_id, opts)
         }
     ]]
 
-    local data, err = Api:query(query, { id = book_id, limit = limit })
+    local ok_query, data, err = pcall(Api.query, Api, query, { id = book_id, limit = limit })
+    if not ok_query then
+        return false, "Hardcover reviews could not be fetched: " .. _errString(data)
+    end
     if not data or type(data.books_by_pk) ~= "table" then
-        return false, err and "Hardcover reviews could not be fetched" or "No response from Hardcover"
+        return false, err and ("Hardcover reviews could not be fetched: " .. _errString(err))
+            or "No response from Hardcover"
     end
 
     local payload = _normaliseReviewsPayload(data.books_by_pk)
@@ -779,9 +802,13 @@ function Hardcover.refreshRatings()
         }
     ]]
 
-    local data, err = Api:query(query, { ids = ids, userId = user_id })
+    local ok_query, data, err = pcall(Api.query, Api, query, { ids = ids, userId = user_id })
+    if not ok_query then
+        return false, "Hardcover rating refresh failed: " .. _errString(data)
+    end
     if not data or type(data.books) ~= "table" then
-        return false, err and "Hardcover rating refresh failed" or "No response from Hardcover"
+        return false, err and ("Hardcover rating refresh failed: " .. _errString(err))
+            or "No response from Hardcover"
     end
 
     local now = os.time()
