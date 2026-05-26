@@ -661,6 +661,7 @@ function Bookshelf:show(profile_key)
         logger.info(string.format(
             "[bookshelf perf] Bookshelf:show: branch=%s elapsed=%.0fms",
             diag_branch, (_gettime() - diag_t0) * 1000))
+        self:_evictHomescreenOverlay()
         return
     end
     diag_branch = "cold-create"
@@ -694,6 +695,7 @@ function Bookshelf:show(profile_key)
         diag_branch,
         (t_post_new - t_pre_new) * 1000,
         (_gettime() - diag_t0) * 1000))
+    self:_evictHomescreenOverlay()
 end
 
 function Bookshelf:_showAfterReaderReturn(profile_key)
@@ -717,6 +719,7 @@ function Bookshelf:_showAfterReaderReturn(profile_key)
         if self._widget._startStatusTimer then
             self._widget:_startStatusTimer()
         end
+        self:_evictHomescreenOverlay()
         return
     end
     if self._widget.refreshAfterReaderReturn then
@@ -724,6 +727,7 @@ function Bookshelf:_showAfterReaderReturn(profile_key)
     else
         self:show(profile_key)
     end
+    self:_evictHomescreenOverlay()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1383,6 +1387,89 @@ function Bookshelf:onLeaveStandby()
     self:_repaintAfterWake()
 end
 
+-- NetworkConnected / NetworkDisconnected are broadcast by NetworkMgr
+-- on every Wi-Fi state change (manager.lua:68/95/372). Some home-
+-- replacement plugins react to these by re-showing their own
+-- homescreen widget on top of bookshelf -- see
+-- _evictHomescreenOverlay below for the full pattern. Issue #77.
+function Bookshelf:onNetworkConnected()
+    self:_evictHomescreenOverlay()
+end
+
+function Bookshelf:onNetworkDisconnected()
+    self:_evictHomescreenOverlay()
+end
+
+-- Some home-replacement plugins react to system broadcasts
+-- (NetworkConnected, NetworkDisconnected, Resume, LeaveStandby,
+-- ReaderUI close → FM re-init, etc.) by closing and re-showing their
+-- own homescreen widget. The re-show pushes onto the TOP of the
+-- UIManager stack, BURYING bookshelf underneath. The intruder
+-- widget is covers_fullscreen, so it intercepts all input and
+-- bookshelf becomes unreachable until the user manually toggles it
+-- off and on again from the menu. (SimpleUI's _refreshCurrentView
+-- -> _navigate("home", ...) flow is the observed-in-the-wild case;
+-- the same pattern can come from any plugin that competes for the
+-- home-screen slot.)
+--
+-- When start_with == "bookshelf", any covers_fullscreen widget above
+-- us is unwanted -- bookshelf IS the home, and the intruder is
+-- dormant placeholder state that doesn't belong on top. Modals
+-- (InfoMessage, ConfirmBox, InputDialog, KOReader's TouchMenu, etc.)
+-- don't set covers_fullscreen, so they're naturally excluded by the
+-- flag check; we only catch widgets that structurally claim to be a
+-- home-screen replacement.
+--
+-- nextTick deferral is required: the offending plugin's handler and
+-- ours often fire in the same broadcastEvent dispatch in non-
+-- deterministic order. Running inline can hit the stack BEFORE the
+-- intruder has been pushed, finding nothing to close. Deferring
+-- past the current dispatch guarantees we see the post-cascade
+-- state.
+--
+-- Closing the offending widget is sufficient -- UIManager:close
+-- marks its (fullscreen) dimen dirty automatically and uses a nil
+-- refresh type (uimanager.lua:1119) so no explicit refresh is
+-- enqueued. The natural repaint pass renders bookshelf in its
+-- place via incremental refresh. No setDirty / forceRePaint needed
+-- (and "full" would cause an unnecessary flash).
+--
+-- Call sites: network events (onNetworkConnected /
+-- onNetworkDisconnected), wake events (folded into
+-- _repaintAfterWake which fires on onResume / onLeaveStandby), and
+-- the tail of Bookshelf:show() (so every reader-return,
+-- toggle-on, and takeover flow gets defense for free). The walk is
+-- a cheap no-op when nothing's on top, so the redundancy across
+-- multiple trigger paths costs essentially nothing.
+--
+-- Complements the existing homescreen-overlay cleanup in
+-- bookshelf_toggle (main.lua:466-479): that path walks the whole
+-- stack and needs the name=="homescreen" filter to avoid closing FM
+-- or bookshelf themselves. We walk only above bookshelf, so the
+-- index filter already protects the widgets below.
+function Bookshelf:_evictHomescreenOverlay()
+    UIManager:nextTick(function()
+        if not self:_isShowing() then return end
+        if G_reader_settings:readSetting("start_with") ~= "bookshelf" then return end
+        if not UIManager._window_stack then return end
+        local bookshelf_idx
+        for i, entry in ipairs(UIManager._window_stack) do
+            if entry and entry.widget == _live_widget then
+                bookshelf_idx = i
+                break
+            end
+        end
+        if not bookshelf_idx then return end
+        for i = #UIManager._window_stack, bookshelf_idx + 1, -1 do
+            local w = UIManager._window_stack[i]
+                and UIManager._window_stack[i].widget
+            if w and w.covers_fullscreen then
+                UIManager:close(w)
+            end
+        end
+    end)
+end
+
 -- After wake, the BookshelfWidget (when it's the visible home) needs an
 -- explicit setDirty — otherwise the screensaver image sits on the
 -- framebuffer until something else triggers a paint. The user's
@@ -1390,10 +1477,19 @@ end
 -- which incidentally repaints us); now we do it ourselves. "full" forces
 -- a panel-wide e-ink refresh which clears any ghost pixels — the right
 -- hammer right after wake when the framebuffer state may be stale.
+--
+-- We also run _evictHomescreenOverlay because wake events trigger the
+-- same plugin-refresh cascade as network events: a home-replacement
+-- plugin may close and re-show its homescreen widget on top of
+-- bookshelf as part of its onResume / onLeaveStandby handler, burying
+-- us. The eviction logic is cheap when there's nothing on top
+-- (single stack walk), so calling it here is essentially free
+-- defence.
 function Bookshelf:_repaintAfterWake()
     if self:_isShowing() then
         UIManager:setDirty(_live_widget, "full")
     end
+    self:_evictHomescreenOverlay()
 end
 
 -- KOReader broadcasts BookMetadataChanged when a book's metadata is edited

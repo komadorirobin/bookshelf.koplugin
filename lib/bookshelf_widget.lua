@@ -659,12 +659,32 @@ function BookshelfWidget:handleEvent(event)
         if not fm then return false end
         local user_gestures = (fm.gestures and fm.gestures.gestures) or {}
 
-        local zone_lists = {}
-        if fm._ordered_touch_zones then
-            zone_lists[#zone_lists + 1] = fm._ordered_touch_zones
-        end
-        if fm.menu and fm.menu._ordered_touch_zones then
-            zone_lists[#zone_lists + 1] = fm.menu._ordered_touch_zones
+        -- Walk every FM module's touch zones, not just fm + fm.menu.
+        -- KOReader v2026.03 on Kobo / SimpleUI navbar setups registers
+        -- the menu-open zones (filemanager_tap / _ext_tap / _swipe) on
+        -- FM modules other than fm.menu, which the old fm + fm.menu
+        -- walk missed entirely -- leaving the user unable to open the
+        -- KOReader menu from inside bookshelf (issue #79).
+        --
+        -- FileManager:registerModule (filemanager.lua:385) stores each
+        -- module both at self[name] AND via table.insert(self, ...), so
+        -- ipairs(fm) reaches every registered module in registration
+        -- order. We collect each module's _ordered_touch_zones.
+        --
+        -- Explicit exception: fm.file_chooser. It's the Menu widget for
+        -- the file list painted underneath bookshelf; its row-tap /
+        -- row-hold zones cover the body area, so a tap in a gap of
+        -- bookshelf's layout could otherwise open an unintended file.
+        -- The filemanager_* prefix filter below is a secondary safety
+        -- net (file_chooser zones have generic Menu IDs), but excluding
+        -- it explicitly keeps the contract obvious.
+        local zone_lists = { fm._ordered_touch_zones }
+        for _, child in ipairs(fm) do
+            if child ~= fm.file_chooser
+               and type(child) == "table"
+                and child._ordered_touch_zones then
+                zone_lists[#zone_lists + 1] = child._ordered_touch_zones
+            end
         end
         for _i, zones in ipairs(zone_lists) do
             for _i, tzone in ipairs(zones) do
@@ -3962,10 +3982,47 @@ end
 function BookshelfWidget:_gatedRepaint(tokens, debounce)
     local function fire()
         self._gated_repaint_pending = nil
-        if UIManager:getTopmostVisibleWidget() ~= self then return end
+        -- Skip ONLY if a covers_fullscreen widget (typically ReaderUI)
+        -- is above us -- in that case bookshelf isn't visible at all
+        -- and the paint would be wasted (KOReader's compositor skips
+        -- widgets under a covers_fullscreen widget anyway). A modal on
+        -- top (KOReader's TouchMenu, an InfoMessage, a ConfirmBox)
+        -- doesn't set covers_fullscreen, and bookshelf remains
+        -- partially visible behind it -- in those cases keep updating
+        -- the widget tree so that when the modal closes, the
+        -- already-current pixels show through, instead of stale state
+        -- that has to wait for the next minute timer to refresh
+        -- (Wi-Fi token was the observed case: toggle Wi-Fi via the
+        -- KOReader Network menu, expect bookshelf's Wi-Fi icon to
+        -- reflect the new state when the menu closes).
+        local stack = UIManager._window_stack
+        if stack then
+            local our_idx
+            for i = 1, #stack do
+                if stack[i].widget == self then our_idx = i; break end
+            end
+            if not our_idx then return end
+            for i = our_idx + 1, #stack do
+                local w = stack[i] and stack[i].widget
+                if w and w.covers_fullscreen then return end
+            end
+        end
         local _hc = self._hero_card or (self._hero_parent and self._hero_parent[1])
         if not (_hc and _hc.replaceRightColumn) then return end
         if not self:_anyActiveRegionUses(tokens) then return end
+        -- Force a fresh _buildDeviceState read at paint time. The event
+        -- handlers above already invalidate the cache when the
+        -- triggering event fires, but any intermediate paint between
+        -- the event and this deferred fire() can re-warm the cache
+        -- before the underlying hardware state has actually settled
+        -- (Wi-Fi was the observed case: NetworkConnected fires, cache
+        -- invalidated, an intermediate paint reads NetMgr:isWifiOn()
+        -- while the radio state still lags by a few ms, caches the
+        -- stale value with a 2s TTL, and the +300ms gated repaint
+        -- then renders the stale cached state). Invalidating right
+        -- before the read guarantees the hardware value used here is
+        -- as up-to-date as it can be.
+        _device_state_expires_at = 0
         local Regions = require("lib/bookshelf_hero_regions")
         -- Every gated repaint here is driven by status-line state
         -- (clock tick / battery / wifi / brightness / nightmode) so the

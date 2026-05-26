@@ -179,15 +179,15 @@ function Updater.check(on_success)
 
     local installed_version = Updater.getInstalledVersion()
 
+    -- runWhenOnline (issue #77) attempts to bring Wi-Fi up if it's
+    -- currently off (prompting per the user's KOReader Wi-Fi prefs)
+    -- and runs the callback once isOnline. If the user cancels the
+    -- prompt the callback never fires -- that's the right cancel UX
+    -- so nothing more is needed here. Also stronger than the previous
+    -- isWifiOn check: catches "Wi-Fi radio on but connection dead",
+    -- which used to fail later with an HTTPS timeout.
     local NetworkMgr = require("ui/network/manager")
-    if not NetworkMgr:isWifiOn() then
-        UIManager:show(InfoMessage:new{
-            text = _("Wi-Fi is not enabled."),
-            timeout = 3,
-        })
-        return
-    end
-
+    NetworkMgr:runWhenOnline(function()
     UIManager:show(InfoMessage:new{
         text = _("Checking for updates..."),
         timeout = 1,
@@ -297,6 +297,7 @@ function Updater.check(on_success)
             add_default_buttons = false,
         }
         UIManager:show(viewer)
+    end)
     end)
 end
 
@@ -412,19 +413,14 @@ end
 -- @param branch string: branch name (e.g. "feature/v5.2-test")
 -- @param on_success function or nil: fired after successful unpack
 function Updater.installBranch(branch, on_success)
+    -- See Updater.check for the runWhenOnline rationale (issue #77).
     local NetworkMgr = require("ui/network/manager")
-    if not NetworkMgr:isWifiOn() then
-        UIManager:show(InfoMessage:new{
-            text = _("Wi-Fi is not enabled."),
-            timeout = 3,
-        })
-        return
-    end
-
-    local installed_version = Updater.getInstalledVersion()
-    local zip_url = Updater.composeBranchUrl(branch)
-    local error_label = _("Could not install branch:") .. " " .. branch
-    Updater.install(zip_url, installed_version, "branch:" .. branch, on_success, error_label)
+    NetworkMgr:runWhenOnline(function()
+        local installed_version = Updater.getInstalledVersion()
+        local zip_url = Updater.composeBranchUrl(branch)
+        local error_label = _("Could not install branch:") .. " " .. branch
+        Updater.install(zip_url, installed_version, "branch:" .. branch, on_success, error_label)
+    end)
 end
 
 --- Install the latest stable (non-prerelease) release, regardless of installed version.
@@ -433,15 +429,9 @@ end
 -- pull the release zip and re-stamp last_install_source = "release".
 -- @param on_success function or nil: fired after successful unpack
 function Updater.installLatestStable(on_success)
+    -- See Updater.check for the runWhenOnline rationale (issue #77).
     local NetworkMgr = require("ui/network/manager")
-    if not NetworkMgr:isWifiOn() then
-        UIManager:show(InfoMessage:new{
-            text = _("Wi-Fi is not enabled."),
-            timeout = 3,
-        })
-        return
-    end
-
+    NetworkMgr:runWhenOnline(function()
     UIManager:show(InfoMessage:new{
         text = _("Downloading latest release..."),
         timeout = 1,
@@ -472,6 +462,7 @@ function Updater.installLatestStable(on_success)
         end
         local new_version = release.tag_name:gsub("^v", "")
         Updater.install(zip_url, installed_version, new_version, on_success)
+    end)
     end)
 end
 
