@@ -41,14 +41,42 @@ local function splitAuthors(s)
     return #t > 0 and t or nil
 end
 
+local function _normaliseAuthorHint(s)
+    if type(s) ~= "string" then return "" end
+    s = s:gsub("%.[^.]+$", "")
+         :gsub("[_%s]+", " ")
+         :gsub("^%s+", "")
+         :gsub("%s+$", "")
+    return s:lower()
+end
+
+local function _authorLooksLikeFilenamePrefix(filepath, author)
+    if type(filepath) ~= "string" or type(author) ~= "string" or author == "" then
+        return true
+    end
+    local filename = filepath:match("([^/]+)$") or filepath
+    local prefix = filename:match("^(.-)%s+%-%s+.+$")
+    if not prefix or prefix == "" then return true end
+    prefix = _normaliseAuthorHint(prefix)
+    author = _normaliseAuthorHint(author)
+    if prefix == "" or author == "" then return true end
+    return prefix:find(author, 1, true) ~= nil
+        or author:find(prefix, 1, true) ~= nil
+end
+
 -- KOReader's BIM flattens every <dc:creator> into the authors string,
 -- regardless of OPF role. Some EPUBs list translators before the real
 -- author, e.g. role="trl" then role="aut", which makes the Authors tab
 -- group the book under the translator. If BIM reports multiple creators,
 -- peek at the OPF and prefer creators explicitly marked as authors.
+-- Some EPUB3 files make this worse by exposing only the first creator
+-- to BIM; when the filename looks like "Author - Title" but the single
+-- BIM author does not match that prefix, we do the same role-aware peek.
 local function authorsFromInfo(filepath, info)
     local authors = splitAuthors(info and info.authors)
-    if authors and #authors > 1 then
+    local should_check_roles = authors
+        and (#authors > 1 or not _authorLooksLikeFilenamePrefix(filepath, authors[1]))
+    if should_check_roles then
         local ok, role_authors = pcall(EpubMetadata.authorCreatorsForFile, filepath)
         if ok and role_authors and #role_authors > 0 then
             return role_authors
