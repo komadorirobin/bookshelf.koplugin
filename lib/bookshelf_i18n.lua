@@ -14,7 +14,14 @@
 
 local logger = require("logger")
 
+-- This module lives in lib/, but the .po files live in the plugin root's
+-- locale/ dir (one level up). Strip a trailing "lib/" so the locale path
+-- resolves to the root whether the module is loaded from lib/ or the
+-- root. Without this, parsePO opened a nonexistent lib/locale/<lang>.po,
+-- translations stayed nil, and every string fell back to ko_gettext --
+-- i.e. all plugin translations were silently dead from v2.0.0 onward.
 local _dir = (debug.getinfo(1, "S").source:match("^@(.+/)") or "./")
+local _base = (_dir:gsub("lib/$", ""))
 
 -- Minimal .po parser
 local function parsePO(path)
@@ -73,7 +80,7 @@ local translations
 local lang = detectLang()
 if lang ~= "en" and lang ~= "en_US" then
     local function try(name)
-        local path = _dir .. "locale/" .. name .. ".po"
+        local path = _base .. "locale/" .. name .. ".po"
         local t = parsePO(path)
         if t and next(t) then
             local n = 0; for _k in pairs(t) do n = n + 1 end
