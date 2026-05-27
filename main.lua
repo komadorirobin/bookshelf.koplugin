@@ -1451,6 +1451,15 @@ function Bookshelf:_evictHomescreenOverlay()
     UIManager:nextTick(function()
         if not self:_isShowing() then return end
         if G_reader_settings:readSetting("start_with") ~= "bookshelf" then return end
+        -- CRITICAL (issue #82): never touch the window stack while a
+        -- book is open. _isShowing() is true even when bookshelf is
+        -- backgrounded UNDER ReaderUI (it only checks stack presence,
+        -- not topmost), and ReaderUI is itself covers_fullscreen and
+        -- sits above bookshelf. _repaintAfterWake fires this on wake;
+        -- without this guard the loop below closed the active reader,
+        -- crashing KOReader on every wake-from-sleep while reading.
+        local ok_rui, ReaderUI = pcall(require, "apps/reader/readerui")
+        if ok_rui and ReaderUI and ReaderUI.instance then return end
         if not UIManager._window_stack then return end
         local bookshelf_idx
         for i, entry in ipairs(UIManager._window_stack) do
@@ -1463,7 +1472,16 @@ function Bookshelf:_evictHomescreenOverlay()
         for i = #UIManager._window_stack, bookshelf_idx + 1, -1 do
             local w = UIManager._window_stack[i]
                 and UIManager._window_stack[i].widget
-            if w and w.covers_fullscreen then
+            -- Only close home-replacement widgets, identified by the
+            -- conventional "homescreen" widget name. covers_fullscreen
+            -- ALONE is too broad -- ReaderUI (name "ReaderUI") and the
+            -- screensaver are also covers_fullscreen and can legitimately
+            -- sit above bookshelf; closing them is exactly the #82 crash.
+            -- The name filter is still generic: any home-replacement
+            -- plugin that names its fullscreen widget "homescreen"
+            -- (SimpleUI's does) is covered, without us having to know
+            -- the plugin.
+            if w and w.covers_fullscreen and w.name == "homescreen" then
                 UIManager:close(w)
             end
         end
