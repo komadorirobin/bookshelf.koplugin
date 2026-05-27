@@ -31,6 +31,18 @@ package.loaded["bookinfomanager"] = {
     getBookInfo = function(_self, fp, _with_cover)
         return _G._test_bim_data and _G._test_bim_data[fp] or nil
     end,
+    openDbConnection = function(self)
+        if _G._test_bim_batch_rows then
+            self.db_conn = {
+                exec = function(_conn, _sql)
+                    _G._test_bim_batch_sql = _sql
+                    return _G._test_bim_batch_rows
+                end,
+            }
+        else
+            self.db_conn = nil
+        end
+    end,
 }
 package.loaded["lib/bookshelf_epub_metadata"] = {
     authorCreatorsForFile = function(fp)
@@ -370,6 +382,51 @@ test("buildBook: uses author-title filename when single BIM author conflicts and
         "expected filename-confirmed author got " .. tostring(book.author))
     assert(_G._test_epub_author_call_count == 0,
         "single-author fallback must not trigger OPF role lookup")
+end)
+
+test("getAuthors: batch light metadata carries description for filename-author fallback", function()
+    Repo.invalidateWalkCache()
+    _G._test_epub_author_call_count = 0
+    _G._test_settings = {
+        home_dir = "/lib",
+        bookshelf_latest_walk_depth = 1,
+    }
+    local fp = "/lib/Karl Ove Knausgård - Min Kamp 5.epub"
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = path == "/lib"
+            and { ".", "..", "Karl Ove Knausgård - Min Kamp 5.epub" }
+            or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        local attrs = {
+            ["/lib"] = { mode = "directory", modification = 10, size = 0 },
+            [fp]     = { mode = "file",      modification = 20, size = 123 },
+        }
+        local attr = attrs[path]
+        if key then return attr and attr[key] end
+        return attr
+    end
+    _G._test_bim_batch_rows = {
+        { "/lib/" },                                  -- directory
+        { "Karl Ove Knausgård - Min Kamp 5.epub" },  -- filename
+        { "Min Kamp 5" },                             -- title
+        { "Rebecca Alsberg" },                        -- authors
+        { "Min kamp" },                               -- series
+        { 5 },                                        -- series_index
+        { nil },                                      -- keywords
+        { "Femte delen av Karl Ove Knausgårds roman." }, -- description
+    }
+    local authors = Repo.getAuthors(10, 0)
+    _G._test_bim_batch_rows = nil
+    assert(_G._test_bim_batch_sql and _G._test_bim_batch_sql:find("description", 1, true),
+        "batch SQL should select description")
+    assert(#authors == 1, "expected one author group got " .. tostring(#authors))
+    assert(authors[1].series_name == "Karl Ove Knausgård",
+        "expected Karl Ove Knausgård got " .. tostring(authors[1].series_name))
+    assert(_G._test_epub_author_call_count == 0,
+        "batch fallback must not trigger OPF role lookup")
 end)
 
 test("buildBook: keeps single BIM author when filename author is not confirmed", function()

@@ -1362,7 +1362,7 @@ local function _loadBatchBookInfoFromBim()
     local conn = bim.db_conn
     if not conn or type(conn.exec) ~= "function" then return nil end
 
-    local sql = "SELECT directory, filename, title, authors, series, series_index, keywords " ..
+    local sql = "SELECT directory, filename, title, authors, series, series_index, keywords, description " ..
                 "FROM bookinfo WHERE in_progress=0;"
     local rows
     local ok, err = pcall(function() rows = conn:exec(sql) end)
@@ -1383,6 +1383,7 @@ local function _loadBatchBookInfoFromBim()
             series       = rows[5][i],
             series_index = rows[6][i],
             keywords     = rows[7][i],
+            description  = rows[8][i],
         }
     end
     return map
