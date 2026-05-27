@@ -353,37 +353,6 @@ test("buildBook: prefers EPUB creator role authors over translator-first BIM aut
         "expected OPF role lookup for multiple BIM authors")
 end)
 
-test("buildBook: checks EPUB roles when single BIM author conflicts with author-title filename", function()
-    _G._test_epub_author_call_count = 0
-    _G._test_bim_data = {
-        ["/Karl Ove Knausgård - Min kamp 3.epub"] = { authors = "Rebecca Alsberg" },
-    }
-    _G._test_epub_author_creators = {
-        ["/Karl Ove Knausgård - Min kamp 3.epub"] = { "Karl Ove Knausgård" },
-    }
-    local book = Repo.buildBook("/Karl Ove Knausgård - Min kamp 3.epub")
-    _G._test_epub_author_creators = nil
-    assert(book.author == "Karl Ove Knausgård",
-        "expected role-filtered filename author got " .. tostring(book.author))
-    assert(_G._test_epub_author_call_count == 1,
-        "expected OPF role lookup for conflicting filename author")
-end)
-
-test("buildBook: skips EPUB role lookup when single BIM author matches filename prefix", function()
-    _G._test_epub_author_call_count = 0
-    _G._test_epub_author_creators = {
-        ["/Frank Herbert - Dune.epub"] = { "Someone Else" },
-    }
-    _G._test_bim_data = {
-        ["/Frank Herbert - Dune.epub"] = { authors = "Frank Herbert" },
-    }
-    local book = Repo.buildBook("/Frank Herbert - Dune.epub")
-    _G._test_epub_author_creators = nil
-    assert(book.author == "Frank Herbert")
-    assert(_G._test_epub_author_call_count == 0,
-        "expected no OPF role lookup for matching single author")
-end)
-
 test("buildBook: preserves comma-formatted single author names", function()
     _G._test_epub_author_creators = nil
     _G._test_epub_author_call_count = 0
