@@ -3,6 +3,15 @@
 
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
+package.loaded["ffi/utf8proc"] = {
+    uppercase_dumb = function(s)
+        return tostring(s or ""):upper()
+    end,
+}
+package.loaded["util"] = {
+    fixUtf8 = function(s) return s end,
+}
+
 local Segments = dofile("lib/bookshelf_text_segments.lua")
 
 local pass, fail = 0, 0

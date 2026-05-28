@@ -1504,6 +1504,17 @@ end
 -- (single stack walk), so calling it here is essentially free
 -- defence.
 function Bookshelf:_repaintAfterWake()
+    -- Stay completely inert while a gesture-unlock screensaver is still
+    -- showing (Device.screen_saver_lock, set by ScreenSaverLockWidget
+    -- when screensaver_delay == "gesture"). In that state KOReader is
+    -- waiting for the user's "Exit sleep screen" gesture; bookshelf
+    -- repainting over the lock's "waiting for gesture" prompt -- or its
+    -- eviction walk touching the stack -- can leave the device stuck,
+    -- unable to register the unlock gesture (issue #84, reproducible on
+    -- Kindle Oasis with a corner-tap exit gesture + bookshelf as home).
+    -- The lock's own onClose does a full panel refresh once the user
+    -- finally unlocks, so bookshelf still gets repainted then.
+    if require("device").screen_saver_lock then return end
     if self:_isShowing() then
         UIManager:setDirty(_live_widget, "full")
     end

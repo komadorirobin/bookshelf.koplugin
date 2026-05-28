@@ -62,7 +62,7 @@ end
 -- TextWidget (when the label is all-text or all-icon) or a HorizontalGroup
 -- of TextWidgets with mixed bold settings (text bold, icons regular).
 local function _buildLabelContent(label, size, max_w)
-    local segments = TextSegments.labelSegments((label or ""):upper())
+    local segments = TextSegments.labelSegments(TextSegments.upper(label or ""))
     if #segments == 0 then
         return TextWidget:new{
             text    = "",
@@ -118,7 +118,7 @@ end
 -- (no max_width) so the returned size reflects actual glyph metrics.
 local function _measureLabel(label, size)
     local total = 0
-    local segments = TextSegments.labelSegments((label or ""):upper())
+    local segments = TextSegments.labelSegments(TextSegments.upper(label or ""))
     for _i, seg in ipairs(segments) do
         local tw = TextWidget:new{
             text = seg.text,
@@ -219,7 +219,7 @@ local function arrowPillFrame(label, h, chained, glyph)
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
         local text_tw = TextWidget:new{
-            text    = label:upper(),
+            text    = TextSegments.upper(label),
             face    = Font:getFace("infofont", _scaled(16)),
             bold    = true,
             fgcolor = Blitbuffer.COLOR_BLACK,
@@ -239,7 +239,7 @@ local function arrowPillFrame(label, h, chained, glyph)
             label_text = glyph
             face       = Font:getFace("infofont", _scaled(18))
         else
-            label_text = (label or ""):upper()
+            label_text = TextSegments.upper(label or "")
             face       = Font:getFace("infofont", _scaled(16))
         end
         content_widget = TextWidget:new{

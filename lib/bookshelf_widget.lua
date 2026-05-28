@@ -641,6 +641,16 @@ function BookshelfWidget:handleEvent(event)
     --      FM gets them via the broadcast loop AND via our forward.
     --      Accepted because the relevant broadcast events are idempotent.
     if event.handler == "onGesture" then
+        -- While a gesture-unlock screensaver is showing, don't touch the
+        -- gesture at all -- let it reach the modal ScreenSaverLock widget
+        -- that's waiting for the "Exit sleep screen" gesture. Consuming
+        -- it here (or firing an FM zone via the walk below) can stop the
+        -- device from waking when bookshelf is the home and the exit
+        -- gesture is a corner tap (issue #84). Device.screen_saver_lock
+        -- is true only in that gesture-lock window, so normal use is
+        -- unaffected.
+        if Device.screen_saver_lock then return false end
+
         -- Children first: let our own widget tree (chevron buttons, chip
         -- strip, hero, shelf covers, swipe zones) consume the gesture
         -- before falling through to FM. KOReader's normal dispatch is

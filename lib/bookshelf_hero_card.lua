@@ -291,7 +291,7 @@ end
 -- icon-bearing region templates.)
 local function buildText(text, region, width)
     local rendered = text
-    if region.uppercase then rendered = rendered:upper() end
+    if region.uppercase then rendered = TextSegments.upper(rendered) end
     local face = regionFace(region)
     local is_bold = region.bold or false
     if is_bold and rendered:find("[\x80-\xFF]") and not rendered:find("\n") then
@@ -415,13 +415,13 @@ buildLine = function(expanded, region, width, book)
     local used_w = 0
     local b_widget = nil
     if before ~= "" then
-        local display = region.uppercase and before:upper() or before
+        local display = region.uppercase and TextSegments.upper(before) or before
         b_widget = _buildSegmentedInline(display, face, region.bold or false)
         used_w = used_w + b_widget:getSize().w
     end
     local a_widget = nil
     if after ~= "" then
-        local display = region.uppercase and after:upper() or after
+        local display = region.uppercase and TextSegments.upper(after) or after
         a_widget = _buildSegmentedInline(display, face, region.bold or false)
         used_w = used_w + a_widget:getSize().w
     end

@@ -5,7 +5,21 @@
 -- in the text class so it can be bolded. Icon-like codepoints (Nerd Font PUA,
 -- dingbats, emoji ranges) are isolated so renderers can leave them regular.
 
+local Utf8Proc = require("ffi/utf8proc")
+local util     = require("util")
+
 local Segments = {}
+
+-- UTF-8-aware uppercase. Lua's string.upper / :upper() only touches
+-- ASCII bytes, so accented characters pass through unchanged --
+-- "séries" uppercases to "SéRIES" instead of "SÉRIES" (issue #81).
+-- Utf8Proc.uppercase_dumb uppercases each codepoint correctly;
+-- util.fixUtf8 guards against malformed input (the same pattern
+-- KOReader's util.lower uses for lowercasing).
+function Segments.upper(str)
+    if not str or str == "" then return str end
+    return Utf8Proc.uppercase_dumb(util.fixUtf8(str, "?"))
+end
 
 local function isContinuation(byte)
     return byte and byte >= 0x80 and byte < 0xC0
