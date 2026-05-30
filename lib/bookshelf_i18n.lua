@@ -84,7 +84,7 @@ if lang ~= "en" and lang ~= "en_US" then
         local t = parsePO(path)
         if t and next(t) then
             local n = 0; for _k in pairs(t) do n = n + 1 end
-            logger.info("bookshelf i18n: loaded " .. path .. " -- " .. n .. " strings")
+            logger.dbg("bookshelf i18n: loaded " .. path .. " -- " .. n .. " strings")
             return t
         end
     end
@@ -94,7 +94,7 @@ if lang ~= "en" and lang ~= "en_US" then
     end)()
 
     if translations then
-        logger.info("bookshelf i18n: installed for language: " .. lang)
+        logger.dbg("bookshelf i18n: installed for language: " .. lang)
     end
 end
 

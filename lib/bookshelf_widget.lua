@@ -562,7 +562,7 @@ function BookshelfWidget:init()
     local diag_init_t_pre_rebuild = _gettime()
     self:_rebuild()
     self:_startStatusTimer()
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf perf] BookshelfWidget:init: pre_rebuild=%.0fms rebuild+timer=%.0fms TOTAL=%.0fms chip=%s",
         (diag_init_t_pre_rebuild - diag_init_t0) * 1000,
         (_gettime() - diag_init_t_pre_rebuild) * 1000,
@@ -1161,12 +1161,22 @@ function BookshelfWidget:_rebuild()
     local hero_cover_w_natural = math.floor(content_w * 0.30)
     local hero_cover_h_natural = math.floor(hero_cover_w_natural * 1.5)
 
-    -- Natural shelf row dimensions: n_cols covers fill content_w with PAD
-    -- gaps, preserving the 2:3 cover aspect ratio. Used in BOTH modes so
-    -- cover size doesn't shift between expanded / collapsed — the hero is
-    -- the only element that flexes. Pagination y stays fixed.
+    -- Natural shelf row dimensions: n_cols covers fill content_w with the
+    -- inter-cover gap, preserving the 2:3 cover aspect ratio. n_cols is the
+    -- same in both modes; the only per-mode difference is the gap (book_gap
+    -- below), so covers are a touch larger in collapsed mode and natural in
+    -- expanded. Pagination y stays fixed within a mode.
     local n_cols         = self:_nCols()
-    local slot_w_natural = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
+    -- book_gap tightens the inter-cover gap at the "small" bookshelf size so
+    -- covers render a touch larger; full PAD at other sizes. Used for the
+    -- shelf-row layout + cover spec only -- outer/inter-row PAD is unchanged.
+    -- Applied in BOTH modes. The expanded row COUNT (_maxRows) deliberately
+    -- stays on full PAD, so a wider book_gap cover doesn't cost a row: instead
+    -- it's filled into the (full-PAD-budgeted) slot, which is a touch shorter
+    -- than the cover's natural 2:3 -- i.e. covers come out wider and slightly
+    -- vertically compressed rather than dropping the bottom row.
+    local book_gap       = self:_bookGap(PAD)
+    local slot_w_natural = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
     local slot_h_natural = math.floor(slot_w_natural * 1.5)
 
     -- Vertical layout (outer-top to outer-bottom):
@@ -1742,7 +1752,7 @@ function BookshelfWidget:_rebuild()
         return
     end
 
-    local rows = self:_buildShelfRows(items, content_w, shelf_h, PAD, n_shelves)
+    local rows = self:_buildShelfRows(items, content_w, shelf_h, book_gap, n_shelves)
     local _perf_t3 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: shelves=%.0fms",
         (_perf_t3 - _perf_t2) * 1000))
@@ -1752,8 +1762,9 @@ function BookshelfWidget:_rebuild()
     -- inner_vgroup.
 
     -- Kick off BIM extraction for any displayed books with no cached
-    -- metadata. Cover-spec dims = single shelf slot.
-    local slot_w  = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
+    -- metadata. Cover-spec dims = single shelf slot (book_gap so the
+    -- extracted cover matches the rendered, slightly-larger small-size slot).
+    local slot_w  = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
     local slot_h  = math.floor(slot_w * 1.5)
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_cover_w, hero_cover_h)
 
@@ -1897,9 +1908,16 @@ function BookshelfWidget:_rebuild()
         FOOTER_H             = FOOTER_H,
         FOOTER_BOTTOM_MARGIN = FOOTER_BOTTOM_MARGIN,
         PAD                  = PAD,
+        book_gap             = book_gap,
         hero_cover_w         = hero_cover_w,
         hero_cover_h         = hero_cover_h,
         n_shelves            = n_shelves,
+        -- Actual cover-area dims this render used (reported by ShelfRow).
+        -- Drives _currentSlotDims so the preload warms next-page covers at the
+        -- exact size the shelf draws -- no re-deriving the stretch/shrink/label
+        -- math here. Falls back to the width-slot computation if absent.
+        cover_w              = rows[1] and rows[1].cover_w,
+        cover_h              = rows[1] and rows[1].cover_h,
         -- Index layout depends on whether the chip strip is in the vgroup
         -- AND on n_shelves. shelf_first_idx is the row-1 index; each row
         -- is followed by a VerticalSpan, so subsequent rows live at +2.
@@ -1947,7 +1965,7 @@ function BookshelfWidget:_rebuild()
     local _perf_t4 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: assemble=%.0fms",
         (_perf_t4 - _perf_t3) * 1000))
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf perf] _rebuild: TOTAL=%.0fms chip=%s page=%d/%d items=%d"
         .. " (hero=%.0f fetch=%.0f shelves=%.0f assemble=%.0f)",
         (_perf_t4 - _perf_t0) * 1000, _perf_chip, _perf_page, total_pages, total,
@@ -1957,6 +1975,17 @@ function BookshelfWidget:_rebuild()
         (_perf_t4 - _perf_t3) * 1000))
     local _perf_persist_t0 = _gettime()
     self:_persistNavState()
+    logger.dbg(string.format("[bookshelf perf] _rebuild: persist=%.0fms",
+        (_gettime() - _perf_persist_t0) * 1000))
+    -- Proactive forward preload. The reactive preload (in _paginateNext/Prev)
+    -- can't arm until a swipe reveals direction, so the FIRST page-turn after
+    -- any rebuild is always a cold cover decode. From a freshly-settled page
+    -- the user's likeliest next action is a forward swipe, so warm the next
+    -- page now. No-op on the last page; _schedulePreload cancels any prior
+    -- preload, re-syncs cache capacity, and is Android-gated internally.
+    if (self._total_pages or 1) > (self.page or 1) then
+        self:_schedulePreload(1)
+    end
 end
 
 -- ─── Background metadata extraction ──────────────────────────────────────────
@@ -2054,7 +2083,7 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
         elseif info.has_cover ~= "Y" then
             reason = (inprog >= max_tries) and "no-cover-given-up" or "no-cover-fetched"
         end
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bim queue] fp=%s queue=%s reason=%s in_progress=%d has_meta=%s has_cover=%s cover_fetched=%s",
             fp, tostring(needs), reason, inprog,
             tostring(info and info.has_meta), tostring(info and info.has_cover),
@@ -2101,7 +2130,7 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     if hero_fp then maybe_queue(hero_fp) end
     logger.dbg(string.format("[bookshelf perf] _kickOffMeta: queued=%d displayed=%d",
         #files, #(items or {})))
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bim kickoff] queued=%d displayed=%d bim_busy=%s",
         #files, #(items or {}),
         tostring(BIM:isExtractingInBackground())))
@@ -2134,7 +2163,7 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
             local bim_busy = BIM:isExtractingInBackground()
             if bim_busy then
                 if not self._bim_owned_extraction then
-                    logger.info(string.format(
+                    logger.dbg(string.format(
                         "[bim extract] SKIP files=%d (BIM busy, not owned)",
                         #files))
                     return
@@ -2145,7 +2174,7 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
                 -- subjectively felt worse than just waiting for the
                 -- text-only pass to finish.
                 if not self._bim_owned_has_covers then
-                    logger.info(string.format(
+                    logger.dbg(string.format(
                         "[bim extract] SKIP files=%d (owned text-only batch)",
                         #files))
                     return
@@ -2164,7 +2193,7 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
                         end
                     end
                     if all_in_queue then
-                        logger.info(string.format(
+                        logger.dbg(string.format(
                             "[bim extract] SKIP files=%d (all already in BIM queue)",
                             #files))
                         return
@@ -2196,7 +2225,7 @@ function BookshelfWidget:_fireBimExtraction(files, label)
         if f.cover_specs then has_covers = true end
         submitted[f.filepath] = true
     end
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bim extract] FIRE files=%d label=%s covers=%s",
         #files, label or "?", tostring(has_covers)))
     local ok, err = pcall(function() BIM:extractInBackground(files) end)
@@ -2266,7 +2295,7 @@ function BookshelfWidget:_armExtractionPoll(pending_files)
     self._bim_poll_files        = existing
     self._bim_poll_started_at   = os.time()  -- reset budget on every arm
     self._bim_poll_empty_streak = 0          -- and the burst-poll cadence
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bim arm] watching %d files (added %d)", #existing, added))
     self:_scheduleExtractionPoll()
 end
@@ -2275,7 +2304,7 @@ function BookshelfWidget:_scheduleExtractionPoll()
     if not self._bim_poll_files then return end
     local elapsed = os.time() - (self._bim_poll_started_at or os.time())
     if elapsed >= BIM_POLL_TOTAL_BUDGET_S then
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bim sched] budget exhausted elapsed=%ds pending=%d -- giving up",
             elapsed, #(self._bim_poll_files or {})))
         self._bim_poll_files = nil
@@ -2284,7 +2313,7 @@ function BookshelfWidget:_scheduleExtractionPoll()
     local streak   = self._bim_poll_empty_streak or 0
     local idx      = math.min(streak + 1, #BIM_POLL_INTERVALS_S)
     local interval = BIM_POLL_INTERVALS_S[idx]
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bim sched] next=%.1fs streak=%d elapsed=%ds pending=%d",
         interval, streak, elapsed, #(self._bim_poll_files or {})))
     self._bim_poll_fn = function() self:_pollExtraction() end
@@ -2349,7 +2378,7 @@ function BookshelfWidget:_pollExtraction()
             still_pending[#still_pending + 1] = f
             outcome = "PENDING"
         end
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bim poll] %s fp=%s in_progress=%d has_meta=%s has_cover=%s cover_fetched=%s cover_ready=%s",
             outcome, f.filepath, inprog,
             tostring(info and info.has_meta), tostring(info and info.has_cover),
@@ -2358,7 +2387,7 @@ function BookshelfWidget:_pollExtraction()
     local ready_count = 0
     for _k in pairs(ready_paths) do ready_count = ready_count + 1 end
     local bim_busy_now = BIM:isExtractingInBackground()
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bim poll] SUMMARY ready=%d pending=%d gave_up=%d bim_busy=%s",
         ready_count, #still_pending, gave_up_count, tostring(bim_busy_now)))
     self._bim_poll_files = #still_pending > 0 and still_pending or nil
@@ -2381,7 +2410,7 @@ function BookshelfWidget:_pollExtraction()
         local fire_list = still_pending
         UIManager:nextTick(function()
             if BIM:isExtractingInBackground() then
-                logger.info(string.format(
+                logger.dbg(string.format(
                     "[bim retry] SKIP files=%d (BIM busy at fire time)",
                     #fire_list))
                 return
@@ -3496,7 +3525,7 @@ function BookshelfWidget:_jumpToLetterPrefix(prefix)
     end
     local _t_fetch = _gettime()
     if not items or #items == 0 then
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf jump] chip=%s sort_key=%s via=%s items=0 fetch=%.0fms",
             tostring(self.chip), tostring(sort_key), tostring(fetched_via),
             (_t_fetch - _t0) * 1000))
@@ -3509,7 +3538,7 @@ function BookshelfWidget:_jumpToLetterPrefix(prefix)
         for i = 1, math.min(5, #items) do
             sample[i] = string.format("%q", SortEngine.sortKeyValue(items[i], sort_key) or "?")
         end
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf jump] chip=%s sort_key=%s via=%s items=%d fetch=%.0fms head=[%s]",
             tostring(self.chip), tostring(sort_key), tostring(fetched_via),
             #items, (_t_fetch - _t0) * 1000, table.concat(sample, ", ")))
@@ -3526,14 +3555,14 @@ function BookshelfWidget:_jumpToLetterPrefix(prefix)
             self:_clampCursor()
             self:_syncPageFromCursor()
             self:_swapShelvesInPlace()
-            logger.info(string.format(
+            logger.dbg(string.format(
                 "[bookshelf jump] matched %q at idx=%d (page0=%d) scan=%.0fms total=%.0fms",
                 v, i, page0, (_gettime() - _t_fetch) * 1000,
                 (_gettime() - _t0) * 1000))
             return
         end
     end
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf jump] NO MATCH for %q scan=%.0fms total=%.0fms",
         p, (_gettime() - _t_fetch) * 1000, (_gettime() - _t0) * 1000))
     UIManager:show(InfoMessage:new{
@@ -3630,20 +3659,25 @@ function BookshelfWidget:_swapShelvesInPlace()
         UIManager:setDirty(self, "ui")
         return
     end
-    -- Fast path only handles the 2-row (standard, non-expanded) layout.
-    -- Expanded mode and tall screens use more rows; fall back to _rebuild.
-    if self:_nShelves() ~= 2 then
+    -- Fast path handles ANY row count, not just the standard 2-row layout --
+    -- as long as the stashed layout still matches the current mode. A changed
+    -- _nShelves (rotation, expand/collapse toggle, cover-size change) means the
+    -- stashed shelf-row indices are stale, so fall back to a full rebuild.
+    -- Expand/collapse and rotation already route through _rebuild anyway; this
+    -- guard just protects against a stale _shelf_dims.
+    local d = self._shelf_dims
+    local n_shelves = self:_nShelves()
+    if n_shelves ~= (d.n_shelves or 2) then
         self:_rebuild()
         UIManager:setDirty(self, "ui")
         return
     end
-    local d = self._shelf_dims
     local VIEW_SIZE = self:_viewSize()
     local MAX_FETCH = 400
     local all_items, _total_hint = self:_fetchChipItems(MAX_FETCH)
     all_items = all_items or {}
     local _perf_t1 = _gettime()
-    logger.info(string.format("[bookshelf perf] _swapShelves: fetch=%.0fms items=%d chip=%s",
+    logger.dbg(string.format("[bookshelf perf] _swapShelves: fetch=%.0fms items=%d chip=%s",
         (_perf_t1 - _perf_t0) * 1000, _total_hint or #all_items, self.chip))
     local total = _total_hint or #all_items
     local total_pages
@@ -3694,10 +3728,15 @@ function BookshelfWidget:_swapShelvesInPlace()
         local clamp_to = last_real > 0 and last_real or 1
         if self._cursor_idx > clamp_to then self._cursor_idx = clamp_to end
     end
-    local rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.PAD, 2)
-    local row_top, row_bottom = rows[1], rows[2]
+    local rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.book_gap or d.PAD, n_shelves)
+    -- Keep the stashed cover-area dims current (layout is unchanged within a
+    -- mode, but cheap to refresh and keeps _currentSlotDims authoritative).
+    if rows[1] then
+        d.cover_w = rows[1].cover_w
+        d.cover_h = rows[1].cover_h
+    end
     local _perf_t2 = _gettime()
-    logger.info(string.format("[bookshelf perf] _swapShelves: shelves=%.0fms",
+    logger.dbg(string.format("[bookshelf perf] _swapShelves: shelves=%.0fms",
         (_perf_t2 - _perf_t1) * 1000))
     -- Rebuild the entire footer row (chev nav + optional bucket+✕),
     -- wrapped in its screen-anchor BottomContainer. Swap it into the
@@ -3717,17 +3756,22 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- cached yet. Same slot + hero dims as _rebuild's call so both
     -- consumers get a single cached cover sized for the bigger of the two.
     local n_slots = self:_nCols()
-    local slot_w  = math.floor((d.content_w - d.PAD * (n_slots - 1)) / n_slots)
+    local slot_w  = math.floor((d.content_w - (d.book_gap or d.PAD) * (n_slots - 1)) / n_slots)
     local slot_h  = math.floor(slot_w * 1.5)
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, d.hero_cover_w, d.hero_cover_h)
 
-    local old_top    = self._inner_vgroup[d.shelf_top_idx]
-    local old_bottom = self._inner_vgroup[d.shelf_bottom_idx]
+    -- Swap each shelf row in place. Rows sit at shelf_top_idx, +2, +4, ...
+    -- (each separated by a VerticalSpan we leave untouched, so inter-row
+    -- spacing -- including expanded mode's even-slack after_row_bonus -- is
+    -- preserved). Capture the old row widgets to free after the next paint.
+    local old_rows = {}
+    for r = 1, n_shelves do
+        local idx = d.shelf_top_idx + 2 * (r - 1)
+        old_rows[r] = self._inner_vgroup[idx]
+        self._inner_vgroup[idx] = rows[r]
+    end
     local old_footer = (self._overlap_group and d.footer_overlap_idx)
         and self._overlap_group[d.footer_overlap_idx] or nil
-
-    self._inner_vgroup[d.shelf_top_idx]    = row_top
-    self._inner_vgroup[d.shelf_bottom_idx] = row_bottom
     if self._overlap_group and d.footer_overlap_idx and new_footer_anchor then
         self._overlap_group[d.footer_overlap_idx] = new_footer_anchor
     end
@@ -3739,13 +3783,18 @@ function BookshelfWidget:_swapShelvesInPlace()
         self._overlap_group:resetLayout()
     end
     UIManager:nextTick(function()
-        for _, w in ipairs({ old_top, old_bottom, old_footer }) do
+        for _i = 1, #old_rows do
+            local w = old_rows[_i]
             if w and w.free then pcall(function() w:free() end) end
         end
+        if old_footer and old_footer.free then
+            pcall(function() old_footer:free() end)
+        end
     end)
-    logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d",
-        (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0))
     self:_refreshSimpleUIPageOverlay()
+    logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d items=%d chip=%s",
+        (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
+        self._total_items or 0, self.chip))
     UIManager:setDirty(self, "ui")
     -- Pagination via _swapShelvesInPlace bypasses _rebuild's persist hook;
     -- repeat the save here so a forward/back swipe is enough to land back
@@ -3844,7 +3893,8 @@ function BookshelfWidget:_repaintSelectionHighlight(old_fp, new_fp)
         end)
     end
 
-    for _, idx in ipairs({ d.shelf_top_idx, d.shelf_bottom_idx }) do
+    for r = 1, (d.n_shelves or 2) do
+        local idx = d.shelf_top_idx + 2 * (r - 1)
         local hg = self._inner_vgroup[idx]
         if hg then
             find_and_swap(hg, old_fp, false)
@@ -3859,7 +3909,7 @@ function BookshelfWidget:_repaintSelectionHighlight(old_fp, new_fp)
     -- highlight. (Happens when preview was set on a different page before
     -- the user paginated.)
     if replaced == 0 then
-        logger.info("[bookshelf perf] _repaintHighlight: no slot match -> fallback _swapShelves")
+        logger.dbg("[bookshelf perf] _repaintHighlight: no slot match -> fallback _swapShelves")
         self:_swapShelvesInPlace()
         return
     end
@@ -3889,7 +3939,8 @@ function BookshelfWidget:_refreshSpineInPlace(fp)
     if not fp or not self._inner_vgroup or not self._shelf_dims then return end
     local d = self._shelf_dims
     local replaced_dimen
-    for _i, idx in ipairs({ d.shelf_top_idx, d.shelf_bottom_idx }) do
+    for r = 1, (d.n_shelves or 2) do
+        local idx = d.shelf_top_idx + 2 * (r - 1)
         local hg = self._inner_vgroup[idx]
         if hg then
             local parent, slot_idx, old_spine = _descendFindSpine(hg, fp, 0)
@@ -4125,7 +4176,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
     -- — first tap marks the spine with the thicker border, second tap
     -- on the same spine commits.
     if self._preview_book and self._preview_book.filepath == book.filepath then
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] _previewBook: branch=open-same tap_gap=%.0fms",
             _perf_gap_ms))
         self:_openBook(book)
@@ -4163,7 +4214,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
     if was_diff ~= is_diff then
         self:_rebuild()
         UIManager:setDirty(self, "ui")
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] _previewBook: branch=rebuild tap_gap=%.0fms TOTAL=%.0fms",
             _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
         return
@@ -4183,7 +4234,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
                 prior_preview_fp, self._preview_book.filepath)
         end
         local _perf_t_end = _gettime()
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] _previewBook: branch=swap tap_gap=%.0fms"
             .. " hero=%.0fms shelves=%.0fms TOTAL=%.0fms",
             _perf_gap_ms,
@@ -4196,7 +4247,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
     -- Cold path: no live tree to swap into yet. Full rebuild.
     self:_rebuild()
     UIManager:setDirty(self, "ui")
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf perf] _previewBook: branch=cold-rebuild tap_gap=%.0fms TOTAL=%.0fms",
         _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
 end
@@ -5254,7 +5305,7 @@ function BookshelfWidget:paintTo(bb, x, y)
         self._diag_first_paint_done = true
         local _diag_paint_t0 = _gettime()
         InputContainer.paintTo(self, bb, x, y)
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] paintTo: FIRST first_paint=%.0fms chip=%s",
             (_gettime() - _diag_paint_t0) * 1000, self.chip))
         return
@@ -5326,6 +5377,22 @@ local function _readHeroSize()
     return "regular"  -- absorbs legacy "small"/"medium" and missing value
 end
 
+-- _bookGap(pad) — horizontal gap BETWEEN covers in a shelf row. The "small"
+-- bookshelf size tightens the standard padding here to 0.75x (only the
+-- inter-cover gap; outer margins and inter-row spacing keep the full pad) so
+-- the otherwise-small covers reclaim a little of that space and render a
+-- touch larger. The column count (_nCols) deliberately stays on the full
+-- pad, so this widens each cover rather than fitting more of them. Must be a
+-- method: _rebuild / _maxRows / _swapShelvesInPlace are defined earlier in
+-- the file and reach it via the metatable, which a module-local declared
+-- here wouldn't allow.
+function BookshelfWidget:_bookGap(pad)
+    if _readCoverSize() == "small" then
+        return math.max(1, math.floor(pad * 0.75))
+    end
+    return pad
+end
+
 -- _maxRows() — max natural-cover rows that fit at the current n_cols
 -- assuming the hero collapses to its minimum (status strip only). Used
 -- as the expanded-mode row count and as the ceiling _baseShelves works
@@ -5334,6 +5401,12 @@ function BookshelfWidget:_maxRows()
     local PAD, content_w, chip_h, footer_h = self:_layoutPrimitives()
     local n_cols = self:_nCols()
     if n_cols < 1 then return 1 end
+    -- Row-count budget uses the FULL pad, not _bookGap: this is the natural
+    -- "how many 2:3 cover rows fit" ceiling. The render fills covers at the
+    -- (wider) book_gap width into these full-PAD-budgeted rows, so a tighter
+    -- gap yields slightly compressed covers rather than dropping a row.
+    -- Computing the budget on book_gap instead inflated slot_h and silently
+    -- cost an expanded row.
     local slot_w = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
     if slot_w < 1 then return 1 end
     local slot_h = math.floor(slot_w * 1.5)
@@ -5521,12 +5594,20 @@ local CHIP_PRELOAD_DELAY_S  = 1.0
 -- complete, short enough that chip preload resumes promptly when idle.
 local CHIP_PRELOAD_YIELD_S  = 0.25
 
--- Keep the cover cache sized to the user's setting. Applied on every page
--- turn (cheap) so it tracks the setting even when preload itself is off --
--- a bigger cache also helps plain back-and-forth browsing.
-function BookshelfWidget:_applyCoverCacheCapacity()
-    local n = BookshelfSettings.read("cover_cache_size") or 32
-    require("lib/bookshelf_scaled_cover_cache"):setCapacity(n)
+-- Apply the user's cover-cache RAM budget (in MB). Called on every page turn
+-- (cheap) so the setting tracks live even when preload is off -- a bigger
+-- budget also helps plain back-and-forth browsing.
+local COVER_CACHE_DEFAULT_MB = 24
+function BookshelfWidget:_applyCoverCacheBudget()
+    -- One-time migration: the cache used to be sized by entry COUNT
+    -- (cover_cache_size). It's now an explicit RAM budget in MB, so discard the
+    -- stale count key -- everyone starts fresh on the MB default. Cheap: the
+    -- read returns nil once deleted, so this no-ops after the first call.
+    if BookshelfSettings.read("cover_cache_size") ~= nil then
+        BookshelfSettings.delete("cover_cache_size")
+    end
+    local mb = BookshelfSettings.read("cover_cache_mb") or COVER_CACHE_DEFAULT_MB
+    require("lib/bookshelf_scaled_cover_cache"):setByteBudget(mb * 1024 * 1024)
 end
 
 function BookshelfWidget:_cancelPreload()
@@ -5546,15 +5627,28 @@ function BookshelfWidget:_cancelChipPreload()
     self._chip_preload_queue = nil
 end
 
--- Current shelf-slot cover dimensions. We warm covers at the full slot size
--- (>= the SpineWidget's inner img size), so the next page's covers are a
--- cache HIT and don't get re-decoded. Returns nil if layout dims aren't ready.
+-- Cover-area dimensions of the shelf slots the LAST render actually produced,
+-- so the preload warms next-page covers at exactly that size and the render
+-- gets a cache HIT instead of a synchronous re-decode. ShelfRow reports the
+-- real dims (cover_w/cover_h) it computed -- already accounting for DPI,
+-- expanded vs collapsed, the stretch/shrink-to-budget logic, and the title
+-- strip -- which is far more robust than re-deriving that math here (it would
+-- drift the moment any of those inputs changed). The cover area is >= the
+-- bordered image SpineWidget paints, so a warm at this size always satisfies
+-- ScaledCoverCache's "cached >= requested" check.
+--
+-- Falls back to the width-based slot only if a render hasn't reported dims yet
+-- (e.g. first preload before the very first shelf build). Returns nil if
+-- layout dims aren't ready at all.
 function BookshelfWidget:_currentSlotDims()
     local d = self._shelf_dims
     if not d or not d.content_w then return nil end
+    if d.cover_w and d.cover_h and d.cover_w >= 1 and d.cover_h >= 1 then
+        return d.cover_w, d.cover_h
+    end
     local n = self:_nCols()
     if not n or n < 1 then return nil end
-    local sw = math.floor((d.content_w - (d.PAD or 0) * (n - 1)) / n)
+    local sw = math.floor((d.content_w - (d.book_gap or d.PAD or 0) * (n - 1)) / n)
     if sw < 1 then return nil end
     return sw, math.floor(sw * 1.5)
 end
@@ -5727,7 +5821,7 @@ function BookshelfWidget:_preloadStep()
         local ok, jobs = pcall(self._buildPhaseJobs, self, "next", self._preload_seen)
         self._preload_queue = (ok and jobs) or {}
         self._preload_total = #self._preload_queue
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] preload-next: built in %.0fms size=%d chip=%s cursor=%d dir=%d",
             (_gettime() - _qb_t0) * 1000, self._preload_total,
             tostring(self.chip), self._cursor or 0, self._preload_dir or 0))
@@ -5739,7 +5833,7 @@ function BookshelfWidget:_preloadStep()
     if not q or #q == 0 then
         if self._preload_total > 0 then
             local c = self._preload_counters
-            logger.info(string.format(
+            logger.dbg(string.format(
                 "[bookshelf perf] preload-next: done warmed=%d already=%d failed=%d folders=%d progress=%d total=%d",
                 c.decoded, c.already, c.failed,
                 c.folders or 0, c.progress or 0, self._preload_total))
@@ -5773,7 +5867,7 @@ function BookshelfWidget:_chipPreloadStep()
         local ok, jobs = pcall(self._buildPhaseJobs, self, "chips", {})
         self._chip_preload_queue = (ok and jobs) or {}
         self._chip_preload_total = #self._chip_preload_queue
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] preload-chips: built in %.0fms size=%d",
             (_gettime() - _qb_t0) * 1000, self._chip_preload_total))
     end
@@ -5784,7 +5878,7 @@ function BookshelfWidget:_chipPreloadStep()
     if not q or #q == 0 then
         if self._chip_preload_total > 0 then
             local c = self._chip_preload_counters
-            logger.info(string.format(
+            logger.dbg(string.format(
                 "[bookshelf perf] preload-chips: done warmed=%d already=%d failed=%d folders=%d progress=%d total=%d",
                 c.decoded, c.already, c.failed,
                 c.folders or 0, c.progress or 0, self._chip_preload_total))
@@ -5811,7 +5905,7 @@ function BookshelfWidget:_maybeStartChipPreload()
     -- cause is pinned; e-ink devices keep the warm-up.
     if Device:isAndroid() then return end
     if #(self._drilldown_path or {}) ~= 0 then return end
-    self:_applyCoverCacheCapacity()
+    self:_applyCoverCacheBudget()
     self._chip_preload_fn = function() self:_chipPreloadStep() end
     UIManager:scheduleIn(CHIP_PRELOAD_DELAY_S, self._chip_preload_fn)
 end
@@ -5924,7 +6018,7 @@ function BookshelfWidget:_filePollTick()
     end
     self._home_dir_mtimes = snap or prev
     if changed then
-        logger.info("[bookshelf] file poll detected dir mtime change; rebuilding")
+        logger.dbg("[bookshelf] file poll detected dir mtime change; rebuilding")
         local Repo = require("lib/bookshelf_book_repository")
         if Repo.invalidateWalkCache then Repo.invalidateWalkCache() end
         -- Defer the rebuild to the next event-loop tick instead of running
@@ -5958,7 +6052,7 @@ end
 -- setting that's now removed).
 function BookshelfWidget:_schedulePreload(direction)
     self:_cancelPreload()
-    self:_applyCoverCacheCapacity()
+    self:_applyCoverCacheBudget()
     if Device:isAndroid() then return end  -- v2.3.1 crash defence; see _maybeStartChipPreload
     self._preload_dir = direction
     self._preload_fn = function() self:_preloadStep() end
@@ -6052,6 +6146,39 @@ function BookshelfWidget:onTakeScreenshotSwipe()
     return self:_dispatchScreenshot()
 end
 
+-- Diagnostic: latency from the swipe gesture's own timestamp (set by the
+-- GestureDetector) to this handler firing -- i.e. the detection + dispatch
+-- portion of a page turn. The pagination work itself is timed separately by
+-- _paginateNext/_paginatePrev's "[bookshelf perf] paginate" line, so the two
+-- together cover swipe-to-repaint.
+--
+-- ges.time's CLOCK SOURCE is platform-dependent: KOReader's GestureDetector
+-- stamps it from whatever InputEvent carries (realtime/epoch on the Kindle MTK
+-- input stack, monotonic on SDL). So we can't assume it matches time.now()
+-- (monotonic) -- subtracting the wrong base gave a -1.7e12 ms reading on the
+-- Kindle. Instead, try each available "now" clock and keep the first delta
+-- that lands in a sane page-turn window; the mismatched clock yields a wildly
+-- out-of-range value and is discarded. dbg level: enable debug logging to see.
+function BookshelfWidget:_logSwipeLatency(dir, ges)
+    if not (ges and ges.time) then return end
+    local ok, ms = pcall(function()
+        local time = require("ui/time")
+        local nows = {}
+        if time.now then nows[#nows + 1] = time.now() end
+        if time.realtime_coarse then nows[#nows + 1] = time.realtime_coarse() end
+        if time.realtime then nows[#nows + 1] = time.realtime() end
+        for _i = 1, #nows do
+            local v = time.to_ms(nows[_i] - ges.time)
+            if v >= 0 and v < 5000 then return v end
+        end
+        return nil
+    end)
+    if ok and ms then
+        logger.dbg(string.format(
+            "[bookshelf swipe] dir=%s gesture->handler=%.0fms", dir, ms))
+    end
+end
+
 function BookshelfWidget:onSwipeNextPage(_, ges)
     if self:_isInSimpleUIBottomBand(ges and ges.pos) then
         return true
@@ -6063,6 +6190,7 @@ function BookshelfWidget:onSwipeNextPage(_, ges)
         self:_previewNeighbourBook(1)
         return true
     end
+    self:_logSwipeLatency("next", ges)
     return self:_paginateNext()
 end
 
@@ -6074,6 +6202,7 @@ function BookshelfWidget:onSwipePrevPage(_, ges)
         self:_previewNeighbourBook(-1)
         return true
     end
+    self:_logSwipeLatency("prev", ges)
     return self:_paginatePrev()
 end
 

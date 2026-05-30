@@ -91,39 +91,6 @@ end
 -- context, plugin reload), we skip the wrap. The wrapper delegates to the
 -- original so other listeners and any future KOReader changes are
 -- unaffected.
--- Wrap BIM:deleteBookInfo and BIM:extractInBackground so every row
--- mutation logs a stack trace. Catches every caller (bookshelf
--- internal, KOReader's CoverBrowser, any other plugin) so a
--- mysterious "books vanished from a view" loss can be traced back
--- to the exact code path that wiped the row. The log line is tagged
--- "[bim mutation]" for easy grepping.
-local function _installBimMutationTracing()
-    local ok_bim, BIM = pcall(require, "bookinfomanager")
-    if not ok_bim or not BIM then return end
-    if BIM._bookshelf_mutation_traced then return end
-    BIM._bookshelf_mutation_traced = true
-    local orig_delete = BIM.deleteBookInfo
-    if orig_delete then
-        BIM.deleteBookInfo = function(self_bim, filepath)
-            logger.info(string.format(
-                "[bim mutation] deleteBookInfo fp=%s\n%s",
-                tostring(filepath), debug.traceback("", 2)))
-            return orig_delete(self_bim, filepath)
-        end
-    end
-    local orig_extract = BIM.extractInBackground
-    if orig_extract then
-        BIM.extractInBackground = function(self_bim, files)
-            local n = files and #files or 0
-            local first_fp = files and files[1] and files[1].filepath
-            logger.info(string.format(
-                "[bim mutation] extractInBackground files=%d first=%s\n%s",
-                n, tostring(first_fp), debug.traceback("", 2)))
-            return orig_extract(self_bim, files)
-        end
-    end
-end
-
 local function _installBroadcastTag()
     if UIManager._bookshelf_broadcast_wrapped then return end
     UIManager._bookshelf_broadcast_wrapped = true
@@ -171,7 +138,7 @@ local function _cleanLegacyLayout()
         end
     end
     if removed > 0 then
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf] cleaned %d legacy v1.1 files from %s",
             removed, plugin_dir))
     end
@@ -179,7 +146,6 @@ end
 
 function Bookshelf:init()
     _installBroadcastTag()
-    _installBimMutationTracing()
     -- Run once per init -- no settings flag needed because the clean is
     -- idempotent and cheap (one lfs.dir scan over the plugin root).
     _cleanLegacyLayout()
@@ -658,7 +624,7 @@ function Bookshelf:show(profile_key)
         -- later — much snappier than the previous full _rebuild() inline.
         diag_branch = "warm-softRefresh"
         self._widget:softRefresh()
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] Bookshelf:show: branch=%s elapsed=%.0fms",
             diag_branch, (_gettime() - diag_t0) * 1000))
         self:_evictHomescreenOverlay()
@@ -690,7 +656,7 @@ function Bookshelf:show(profile_key)
     -- existing-widget path below already uses setDirty(..., "ui"); this
     -- keeps the fresh-create path consistent. (Issue #18.)
     UIManager:show(self._widget, "ui")
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf perf] Bookshelf:show: branch=%s init+rebuild=%.0fms TOTAL=%.0fms (paint follows)",
         diag_branch,
         (t_post_new - t_pre_new) * 1000,

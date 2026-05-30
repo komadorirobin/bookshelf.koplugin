@@ -661,7 +661,7 @@ function Editor:editTab(tab_id, opts)
                         local _t2 = _gettime()
                         if visual_dirty and opts.on_change then opts.on_change() end
                         local _t3 = _gettime()
-                        logger.info(string.format(
+                        logger.dbg(string.format(
                             "[bookshelf perf] editor-cancel: data_dirty=%s visual_dirty=%s clearOverride=%.0fms close=%.0fms on_change=%.0fms TOTAL=%.0fms",
                             tostring(data_dirty), tostring(visual_dirty),
                             (_t1 - _t0) * 1000, (_t2 - _t1) * 1000,
@@ -709,7 +709,7 @@ function Editor:editTab(tab_id, opts)
                         local _t4 = _gettime()
                         if is_dirty() and opts.on_change then opts.on_change() end
                         local _t5 = _gettime()
-                        logger.info(string.format(
+                        logger.dbg(string.format(
                             "[bookshelf perf] editor-save: data_dirty=%s visual_dirty=%s clearOverride=%.0fms TabModel.save=%.0fms invalidate=%.0fms close=%.0fms on_change=%.0fms TOTAL=%.0fms",
                             tostring(data_dirty), tostring(visual_dirty),
                             (_t1 - _t0) * 1000, (_t2 - _t1) * 1000,

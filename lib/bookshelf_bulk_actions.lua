@@ -444,11 +444,10 @@ function BulkActions.show(opts)
                 -- visible page; off-page selections stay deleted in BIM
                 -- until the user happens to navigate to them, and
                 -- meanwhile drop out of any view that queries BIM by
-                -- series / author / genre. Confirmed by the
-                -- "[bim mutation] deleteBookInfo" log trace: 80 rows
-                -- deleted per bulk-refresh apply, only ~27 re-extracted
-                -- by the kickoff fallback (the visible pages), leaving
-                -- ~53 books in BIM-row limbo.
+                -- series / author / genre. (Diagnosed earlier: a
+                -- bulk-refresh of ~80 books deletes all their BIM rows,
+                -- but the kickoff fallback only re-extracts the visible
+                -- page (~27), leaving the rest in BIM-row limbo.)
                 local refresh_paths = {}
                 local function safe(action_name, fn, fp)
                     local ok, err = pcall(fn)

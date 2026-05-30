@@ -1476,17 +1476,19 @@ function Settings:_advancedSubItems()
         },
         {
             text_func = function()
-                return _("Cover cache size") .. ": "
-                    .. tostring(BookshelfSettings.read("cover_cache_size") or 32)
+                return _("Cover cache") .. ": "
+                    .. tostring(BookshelfSettings.read("cover_cache_mb") or 24)
+                    .. " MB"
             end,
-            help_text = _("How many scaled book covers to keep in memory. "
-                .. "A bigger cache keeps more covers ready -- smoother "
-                .. "paging and preloading -- at the cost of RAM (each cover "
-                .. "is roughly 0.2 MB). Default 32. Lower it if memory is "
-                .. "tight; raise it on a device with plenty of RAM."),
+            help_text = _("How much memory to use for ready-scaled book covers. "
+                .. "A bigger cache keeps more covers warm -- smoother paging and "
+                .. "preloading -- at the cost of RAM. Default 24 MB. Lower it if "
+                .. "memory is tight; raise it on a device with plenty of RAM. "
+                .. "(How many covers that holds depends on their size: roughly "
+                .. "200-400 small grayscale covers, fewer large or colour ones.)"),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
-                self:_pickCoverCacheSize(touchmenu_instance)
+                self:_pickCoverCacheBudget(touchmenu_instance)
             end,
         },
         {
@@ -2130,23 +2132,25 @@ function Settings:_pickLatestDepth()
     })
 end
 
-function Settings:_pickCoverCacheSize(touchmenu_instance)
-    local current = BookshelfSettings.read("cover_cache_size") or 32
+function Settings:_pickCoverCacheBudget(touchmenu_instance)
+    local current = BookshelfSettings.read("cover_cache_mb") or 24
     UIManager:show(SpinWidget:new{
         value      = current,
-        value_min  = 16,
+        value_min  = 8,
         value_max  = 128,
         value_step = 8,
-        default_value = 32,
-        title_text = _("Cover cache size"),
-        info_text  = _("Number of scaled book covers kept in memory."
+        default_value = 24,
+        unit       = _("MB"),
+        title_text = _("Cover cache budget"),
+        info_text  = _("Memory budget for ready-scaled book covers (MB)."
                         .. " Higher = smoother paging and preloading, more RAM."
-                        .. " Each cover is roughly 0.2 MB. Default 32."),
+                        .. " Default 24 MB."),
         callback   = function(spin)
-            BookshelfSettings.save("cover_cache_size", spin.value)
+            BookshelfSettings.save("cover_cache_mb", spin.value)
             -- Apply immediately so the change takes effect without a restart
-            -- (shrinking evicts down to the new size right away).
-            require("lib/bookshelf_scaled_cover_cache"):setCapacity(spin.value)
+            -- (shrinking evicts down to the new budget right away).
+            require("lib/bookshelf_scaled_cover_cache")
+                :setByteBudget(spin.value * 1024 * 1024)
             if touchmenu_instance and touchmenu_instance.updateItems then
                 touchmenu_instance:updateItems()
             end

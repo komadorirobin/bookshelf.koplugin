@@ -937,6 +937,11 @@ function HeroCard:_renderFull()
         is_selected      = self.is_selected,
         is_bulk_selected = self.is_bulk_selected,
         suppress_favorite_badge = true,
+        -- Keep the large hero cover out of ScaledCoverCache: it's shown one
+        -- at a time and off the pagination hot path, so caching it only pins
+        -- oversized entries that displace shelf covers (see SpineWidget's
+        -- skip_cover_cache branch).
+        skip_cover_cache = true,
     }
     local cover_widget = FrameContainer:new{
         bordersize   = 0,

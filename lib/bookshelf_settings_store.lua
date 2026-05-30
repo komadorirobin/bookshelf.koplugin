@@ -89,7 +89,7 @@ local function _migrate(s)
     end
     s:saveSetting("migrated", true)
     s:flush()
-    logger.info(string.format(
+    logger.dbg(string.format(
         "[bookshelf] settings migrated to %s (%d keys)",
         SETTINGS_PATH, count))
 end

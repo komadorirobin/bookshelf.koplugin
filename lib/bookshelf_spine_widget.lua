@@ -1106,7 +1106,21 @@ function SpineWidget:_renderCover(bb)
     if self.cover_fill then
         local scaled_bb = bb:scale(img_w, img_h)
         if img_disposable then bb:free() end
-        if fp then
+        if self.skip_cover_cache then
+            -- Hero path: large render (~5x a shelf cover), shown one at a
+            -- time, and OFF the pagination hot path (the hero isn't rebuilt
+            -- by _swapShelvesInPlace). Caching it would pin oversized entries
+            -- that crowd out shelf covers and inflate RAM on colour panels.
+            -- Instead the freshly-scaled bb is owned by this ImageWidget and
+            -- freed at widget teardown (ImageWidget:free, not per-paint), so
+            -- it survives in-place hero repaints; the next _buildHero
+            -- re-fetches a fresh source bb, so there's no shared-bb reuse.
+            cover_inner = ImageWidget:new{
+                image            = scaled_bb,
+                image_disposable = true,
+                scale_factor     = 1,
+            }
+        elseif fp then
             -- put() returns the bb now serving as the cache entry: our
             -- new scaled_bb if it was inserted/upgraded, or the
             -- existing entry if it was at least as large. In the

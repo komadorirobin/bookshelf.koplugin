@@ -65,7 +65,7 @@ Tap the search icon at the right of the chip bar. Search looks across folders, a
 
 The big card at the top of the screen previews the focused book. Tap a cover on the grid to focus it; the card refreshes with its title, author, description, rating, and progress. Tap the hero card cover to open the book.
 
-The hero card has seven sections you can show, hide, or restyle:
+The hero card has eight sections you can show, hide, or restyle:
 
 - **Status line** -- top right; defaults to disk space, battery, frontlight, Wi-Fi, and time.
 - **Rating** -- five tappable stars (off by default; tap a star to set or clear).
@@ -73,6 +73,7 @@ The hero card has seven sections you can show, hide, or restyle:
 - **Author**
 - **Metadata** -- a free-form line; the default shows the series and series number for books in a series.
 - **Description** -- the book blurb. Tap to read the full text in a scrollable viewer.
+- **Tags (interactive)** -- a strip of tappable pills for the book's author, series, genres, collections, and parent folder. Tap a pill to jump straight to that shelf. Off by default.
 - **Progress** -- bottom-anchored line with an inline progress bar.
 
 To edit them, open **menu -> Edit book detail view** (see [Customising the hero card](#customising-the-hero-card) below).
@@ -126,16 +127,45 @@ To put a book into a collection, long-press its cover and tap **Collections (N)�
 
 ---
 
+## Layout
+
+Open **menu -> Settings -> Edit layout…** for a live overlay that resizes the grid without leaving the home screen. Two controls:
+
+- **Bookshelf size** -- how much room the shelves get relative to the hero card.
+- **Book size** -- how large the covers render, which also sets how many fit per row.
+
+The layout auto-fits your screen and orientation, so the same settings adapt between portrait and landscape. Changes preview in real time behind the overlay; **Accept** keeps them, **Cancel** reverts.
+
+---
+
 ## Cover indicators
 
-Each cover can show small badges and bars at the corners. Configure them under **menu -> Settings -> Cover progress indicators**:
+Each cover can show small badges and bars at the corners. Configure them under **menu -> Settings -> Cover display**:
 
 - **Show reading bookmarks** -- a bookmark mark on books you're partway through.
 - **Completed book badge** -- choose None, Bookmark style, or the small tick-box badge at the bottom-left of finished books.
-- **Show progress bars** -- a thin colour bar above the bottom edge for in-progress books.
+- **Show progress bars** -- a thin progress bar above the bottom edge for in-progress books.
 - **Show page count** -- a "pN" pill in the bottom-right. (For EPUBs it works once you've opened the book at least once.)
 - **Show series #** -- a "#3" badge on covers in a series. Tri-state: Always, Within series folder (so mixed shelves stay clean), or Never.
-- **Read colour / Unread colour** -- the two colours used by the progress bar.
+
+The colours of these elements are set separately under **Settings -> Colors** (see below).
+
+---
+
+## Colours
+
+Open **menu -> Settings -> Colors** to recolour the cover chrome. Bookshelf keeps **independent day-mode and night-mode palettes** -- the top row of the menu shows which one you're editing ("Editing day-mode colours" / "Editing night-mode colours") and tapping it flips night mode so you can set each theme. Anything you leave unset uses a sensible default for that mode.
+
+Each colour is chosen as a "% black on screen" value (so it reads the same way in both modes), and long-pressing a row resets just that colour. The pickers:
+
+- **Progress bar** / **Progress bar track** -- the filled and unfilled parts of the cover progress bar.
+- **Bookmark colour** / **Finished bookmark colour** -- the in-progress bookmark glyph and the finished-book check.
+- **Favourite star colour** -- the star on favourited covers.
+- **Badge foreground** / **Badge background** -- the text and fill of the "#N" series and "pN" page-count pills.
+- **Border colour** -- one shared colour for cover frames, badge borders, the bookmark/star halos, the cardboard edge on folder and stack cards, and placeholder (no-image) covers.
+- **Folder overlay background** -- the cardboard fill behind folder and stack cards.
+- **Folder text colour** -- the label text on those cards (the card outline follows Border colour).
+- **Reset to default colours** -- restore the whole palette for the current mode.
 
 ---
 
@@ -143,9 +173,9 @@ Each cover can show small badges and bars at the corners. Configure them under *
 
 Bookshelf can replace the default folder cover (cardboard card with the first book peeking above) and the stack covers (Authors / Series / Genres / Collections) with your own images. Three ways to set one:
 
-- **Long-press the card** -> *Set folder image…* / *Set author image…* / etc. -> pick an image file. The image renders as that folder's or stack's cover with the cardboard tab + label staying on top so the group identity is still visible.
-- **Drop `cover.jpg`, `cover.png`, `folder.jpg`, or `folder.png` into a folder** and Bookshelf picks it up automatically. The image follows the folder when you move it.
-- **Drop named images into an image library** for authors, series, genres, and collections. The default locations are `<your-library>/.bookshelf-images/` and `<your-library>/bookshelf-images/` with subfolders `authors/`, `series/`, `genres/`, and `collections/`. Name each file after the exact stack name (e.g. `authors/Asimov, Isaac.jpg`) or use a slugified form as a fallback. The slug lowercases the name and turns runs of punctuation / whitespace into single dashes, preserving the original order — so `Asimov, Isaac` matches `asimov-isaac.jpg`, and `Isaac Asimov` matches `isaac-asimov.jpg`. Extensions tried in order: `jpg`, `jpeg`, `png`, `gif`, `bmp`, `webp`, `tiff`.
+- **Long-press the card** -> *Set folder image...* / *Set author image...* / etc. -> pick an image file. The image renders as that folder's or stack's cover with the cardboard tab + label staying on top so the group identity is still visible.
+- **Drop `cover.jpg`, `cover.png`, `folder.jpg`, or `folder.png` into a folder** and Bookshelf picks it up automatically. The hidden dot-file variants (`.cover.jpg`, `.cover.png`, `.folder.jpg`, `.folder.png`) work too, for keeping the image out of the visible file listing; a visible file wins if both are present. The image follows the folder when you move it.
+- **Drop named images into an image library** for authors, series, genres, and collections. The default locations are `<your-library>/.bookshelf-images/` and `<your-library>/bookshelf-images/` with subfolders `authors/`, `series/`, `genres/`, and `collections/`. Name each file after the exact stack name (e.g. `authors/Asimov, Isaac.jpg`) or use a slugified form as a fallback. The slug lowercases the name and turns runs of punctuation / whitespace into single dashes, preserving the original order -- so `Asimov, Isaac` matches `asimov-isaac.jpg`, and `Isaac Asimov` matches `isaac-asimov.jpg`. Extensions tried in order: `jpg`, `jpeg`, `png`, `gif`, `bmp`, `webp`, `tiff`.
 
 Pick a different image-library location under **menu -> Settings -> Advanced settings -> Image library**.
 
@@ -153,9 +183,21 @@ Long-press an image-set folder or stack and tap *Clear … image* to revert to t
 
 ---
 
+## Author names
+
+By default Bookshelf shows author names however each book stores them, so the same person can appear two ways (e.g. *Richard Osman* and *Osman, Richard*). Under **menu -> Settings -> Advanced settings -> Author name formatting** you can pick:
+
+- **Auto** -- leave names as stored (the original behaviour; first form found wins).
+- **First Last** -- always *Forename Surname*.
+- **Last, First** -- always *Surname, Forename*.
+
+Whichever you choose, variant spellings of the same author are merged into one entry on the Authors shelf, and the alpha-jump / surname sort uses the surname -- including names with particles like *de Maupassant*, which sort under **M**.
+
+---
+
 ## Customising the hero card
 
-Open **menu -> Edit book detail view** to toggle each of the seven sections on or off. The same menu has a **Font scale** entry at the top for resizing everything in the hero card at once (50-200%). Tap a section's row to open its **line editor**.
+Open **menu -> Edit book detail view** to toggle each of the eight sections on or off. The same menu has a **Font scale** entry at the top for resizing everything in the hero card at once (50-200%). Tap a section's row to open its **line editor** (the Tags section has no editor -- it's a toggle only).
 
 The line editor lets you change the text and styling of one section. You'll see these controls:
 
@@ -201,10 +243,11 @@ The whole download, unpack, and restart sequence runs over Wi-Fi only and needs 
 
 ## Library refresh
 
-After adding new books over USB or via Calibre:
+After adding new books over USB, Calibre, Syncthing, or KOReader's network downloads:
 
-- **Swipe down** on the shelf area for an immediate refresh; a brief "Refreshing library" notice appears.
-- **Tap a chip** -- Bookshelf checks for filesystem changes automatically on chip taps, so new books appear without a manual refresh.
+- **Automatically** -- Bookshelf watches your library folder in the background and picks up newly added books on its own, with no interaction needed.
+- **Tap a chip** -- it also checks for filesystem changes on chip taps.
+- **Swipe down** on the shelf area for an immediate, full refresh; a brief "Refreshing library" notice appears.
 
 ---
 
@@ -225,7 +268,7 @@ Everything beyond this point is the full feature reference. Expand any section y
 | **Tap** | Hero card star | Set / clear the book's rating |
 | **Tap** | Chip | Switch shelf |
 | **Tap** | Search icon | Open the library search |
-| **Tap** | "Page N of M" footer | Open the numeric page-jump dialog |
+| **Tap** | "Page N of M" footer | Open the go-to dialog: jump by page number, jump to the first item starting with a letter, or search the library |
 | **Tap** | First / prev / next / last chevrons | Page navigation |
 | **Long-press** | Chip | Open the chip editor |
 | **Long-press** | Shelf book cover | Open the per-book menu |
@@ -269,7 +312,7 @@ Up to three levels per chip. Available sort keys:
 
 - **Title**, **Filename**
 - **Author surname**, **Author (given name)**
-- **Series name**, **Series index**
+- **Series name**, **Series index**, **Series + index** (series name then number, in one pick)
 - **Last opened** (most-recent-first by default)
 - **Date added** (most-recent-first by default)
 - **Percent read** (most progress first by default)
@@ -286,7 +329,7 @@ Defaults adjust to the source (e.g. Recent defaults to *Last opened*; Latest add
 <details>
 <summary><strong>Hero card line editor</strong></summary>
 
-The book detail card has **seven editable sections**: Status, Rating, Title, Author, Metadata, Description, and Progress.
+The book detail card has **eight editable sections**: Status, Rating, Title, Author, Metadata, Description, Tags (interactive), and Progress. The Tags section shows tappable pills rather than a text template, so it has no line editor; toggle it on or off like the others.
 
 Open **menu -> Edit book detail view** to toggle each section on or off. Tap a section's row (when its toggle is on) to open the **line editor**.
 
@@ -335,10 +378,15 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 |-------|---------|
 | `%title` | *The Great Gatsby* |
 | `%author` | *F. Scott Fitzgerald* (first author) |
+| `%author_2` / `%author_3` | second / third author (empty if absent) |
 | `%authors` | *Neil Gaiman, Terry Pratchett* (all authors) |
+| `%author_count` | *2* (number of authors) |
+| `%authors_short` | first author, or *A and B*, or *A, B, et al.* for three or more |
 | `%series` / `%series_name` | *Dune* |
 | `%series_num` | *1* |
 | `%rating` | *★★★☆☆* (empty when unrated) |
+| `%rating_number` | *3* (1-5, empty when unrated) |
+| `%status` | *reading* (unread / reading / on_hold / finished) |
 | `%filename` | *The_Great_Gatsby* |
 | `%format` | *EPUB* |
 | `%lang` | *en* |
@@ -428,7 +476,9 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `active_chip` / `active_page` / `drill_path` | Persisted navigation state, restored on KOReader restart. |
 | `progress_bar_enabled` / `progress_bookmark_enabled` / `progress_badge_enabled` / `progress_badge_style` / `progress_page_count_enabled` | Cover indicator toggles and completed-badge style. |
 | `show_series_num` | "always" / "in_series" / "never". |
-| `progress_fill` / `progress_track` | Cover-bar colours (% black). |
+| `progress_fill` / `progress_track` / `bookmark_color` / `complete_bookmark_color` / `favorite_star_color` / `badge_fg` / `badge_bg` / `border_color` / `folder_overlay_bg` / `folder_overlay_fg` | Cover-chrome colours (% black). Each also has a `_night` variant for the night-mode palette; unset keys fall back to per-mode defaults. |
+| `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
+| `cover_cache_size` | How many scaled covers to keep in memory (default 32). |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |
 | `show_close_msg` | Show the centred "Closing book…" toast when exiting a book. |
