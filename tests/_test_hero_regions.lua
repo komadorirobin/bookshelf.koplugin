@@ -33,21 +33,24 @@ test("smoke: module loads", function()
 end)
 
 test("ORDER lists all regions in render order", function()
-    eq(#Regions.ORDER, 7)
+    eq(#Regions.ORDER, 8)
     eq(Regions.ORDER[1], "status")
     eq(Regions.ORDER[2], "rating")
     eq(Regions.ORDER[3], "title")
     eq(Regions.ORDER[4], "author")
     eq(Regions.ORDER[5], "metadata")
     eq(Regions.ORDER[6], "description")
-    eq(Regions.ORDER[7], "progress")
+    eq(Regions.ORDER[7], "tags")
+    eq(Regions.ORDER[8], "progress")
 end)
 
-test("DEFAULTS: every region has a template and font_size", function()
+test("DEFAULTS: every region has a template; text regions have font_size", function()
     for _, key in ipairs(Regions.ORDER) do
         local d = Regions.DEFAULTS[key]
         assert(type(d.template) == "string", key .. " missing template")
-        assert(type(d.font_size) == "number", key .. " missing font_size")
+        if key ~= "tags" then
+            assert(type(d.font_size) == "number", key .. " missing font_size")
+        end
     end
 end)
 

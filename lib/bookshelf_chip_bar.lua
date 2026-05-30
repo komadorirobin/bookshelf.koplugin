@@ -163,7 +163,7 @@ local ChipBar = InputContainer:extend{
 -- Small triangular pointer that protrudes ABOVE the chip body, base on
 -- the chip's top edge, apex pointing upward. Used by selected action
 -- chips (currently-reading) so the chip "points at" what it represents
--- in the hero region above the strip. Same colour as the chip's bg, so
+-- in the hero region above the strip. Same color as the chip's bg, so
 -- the triangle reads as an extension of the chip's silhouette rather
 -- than a separate marker. Painted via OverlapGroup overlap_offset with
 -- a negative y so the pixels land in the area above the chip strip's
@@ -479,7 +479,7 @@ function ChipBar:_initChips()
     end
 
     -- Resolve a chip's fill-state — action chips invert via .selected,
-    -- navigable chips via key-equals-active. Used to colour separators
+    -- navigable chips via key-equals-active. Used to color separators
     -- between adjacent inverted chips (otherwise a black separator
     -- between two black chips is invisible and they merge).
     local function isFilled(c)
@@ -676,7 +676,11 @@ function ChipBar:_initBreadcrumb()
     end
     local current_widget, current_w
     if current_chip then
-        current_w = math.floor(self.height * 1.6)
+        local outer_h = self.height
+        local b       = Size.border.thin
+        local inner_h = outer_h - 2 * b  -- so FrameContainer's borders sit INSIDE outer_h
+        current_w = math.floor(outer_h * 1.6)
+        local inner_w = current_w - 2 * b
         local glyph = TextWidget:new{
             text    = current_chip.nerd_glyph or "",
             face    = Font:getFace("infofont", _scaled(18)),
@@ -687,7 +691,10 @@ function ChipBar:_initBreadcrumb()
         -- see chips-mode comment at line ~542) wrapped in a thin
         -- FrameContainer that supplies the visible outline. selected
         -- (hero == lastfile) flips the body inverted; otherwise the
-        -- icon sits in a white cell with a thin black border.
+        -- icon sits in a white cell with a thin black border. Inner
+        -- body is sized inner_h so the FrameContainer's borders bring
+        -- the painted footprint up to outer_h exactly — matches the
+        -- breadcrumb segment height to the pixel.
         local body = InvertedFrame:new{
             _invert    = current_chip.selected and true or false,
             bordersize = 0,
@@ -695,20 +702,16 @@ function ChipBar:_initBreadcrumb()
             padding    = 0,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{ w = current_w, h = self.height },
+                dimen = Geom:new{ w = inner_w, h = inner_h },
                 glyph,
             },
         }
         current_widget = FrameContainer:new{
-            bordersize = Size.border.thin,
+            bordersize = b,
             margin     = 0,
             padding    = 0,
             body,
         }
-        -- Wrapping with FrameContainer adds 2 * bordersize to the
-        -- outer width. Adjust the tap-zone width so it matches the
-        -- painted footprint exactly.
-        current_w = current_w + 2 * Size.border.thin
         -- Selected-state "up triangle" pointer (same affordance as
         -- chips-mode): a black roof pointing at the hero cover above,
         -- anchored via negative y so it paints into the strip's top
@@ -901,7 +904,7 @@ end
 -- the rebuild swaps in a fresh strip.
 --
 -- Why each step is here:
---   * _initChips rebuilds the widget tree because chip colours are
+--   * _initChips rebuilds the widget tree because chip colors are
 --     baked into the FrameContainer at build time, not read at paint
 --     time — flipping _pending_key alone would repaint the same baked
 --     bg/border.

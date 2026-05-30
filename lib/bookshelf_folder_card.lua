@@ -30,7 +30,7 @@ local Screen         = require("device").screen
 -- explicit bgcolor=CARDBOARD and fgcolor=COLOR_BLACK survive third-party
 -- monkey-patching. appearance.koplugin's _renderText patches gate on
 -- `not self.alpha` — alpha=true trips that escape hatch and preserves our
--- colours when a theme is applied. alpha is a no-op for TextBoxWidget
+-- colors when a theme is applied. alpha is a no-op for TextBoxWidget
 -- itself on this KOReader build: _renderBB derives bbtype from
 -- Screen.isColorEnabled only, and paintTo uses plain blitFrom.
 local CardboardTextBox = TextBoxWidget:extend{
@@ -44,7 +44,7 @@ local FolderCard = {}
 -- tab scales with the chosen font size.
 local TAB_WIDTH_FRAC = 0.40
 
--- Cardboard fill colour. Real manilla on colour panels; mid-grey on B&W
+-- Cardboard fill color. Real manilla on color panels; mid-grey on B&W
 -- e-ink (predictable dithering, matches book spine border weight).
 local CARDBOARD
 if Screen.isColorEnabled and Screen:isColorEnabled() then
@@ -214,19 +214,38 @@ function FolderCard.build(opts)
     local slot_h = opts.height
     local label_text = (opts.label or ""):gsub("/$", "")
 
-    -- Pull the user's Folder overlay colours, falling back to the
+    -- Pull the user's Folder overlay colors, falling back to the
     -- device-aware module defaults when either is unset. CARDBOARD itself
-    -- already resolves to manilla on colour panels / dark grey on B&W, so
+    -- already resolves to manilla on color panels / dark grey on B&W, so
     -- leaving it as the fallback preserves the per-device look exactly
     -- for users who haven't picked anything. The require happens lazily
     -- because bookshelf_cover_progress requires bookshelf_settings_store
-    -- and bookshelf_colour, and pulling those at module load creates a
+    -- and bookshelf_color, and pulling those at module load creates a
     -- cycle with bookshelf_widget's require ordering.
     local CoverProgress = require("lib/bookshelf_cover_progress")
-    local indicator_colours = CoverProgress.resolvedColours()
-    local fill_color = indicator_colours.folder_bg or CARDBOARD
-    local edge_color = indicator_colours.folder_fg or CARDBOARD_EDGE
-    local label_fg   = indicator_colours.folder_fg or Blitbuffer.COLOR_BLACK
+    local indicator_colors = CoverProgress.resolvedColors()
+    -- The cardboard fill (manilla on colour panels) and folder label are real
+    -- colours that should read identically in day and night mode, NOT get
+    -- flipped by KOReader's framebuffer night-mode inversion. Same trick as
+    -- the favourite star: when night mode is active and the user hasn't set
+    -- an explicit override, paint the default PRE-inverted so the framework's
+    -- refresh-time inversion (the same per-channel :invert()) lands back on
+    -- the intended colour. User-set overrides are honoured as-is, so day and
+    -- night remain independently customisable.
+    local is_night = G_reader_settings:isTrue("night_mode")
+    local function constantInNight(color)
+        if is_night then return color:invert() end
+        return color
+    end
+    local fill_color = indicator_colors.folder_bg or constantInNight(CARDBOARD)
+    -- Edge is driven by the shared Border color setting. folder_fg used
+    -- to share this slot which conflicted with the Border setting; the
+    -- folder text now owns folder_fg exclusively.
+    local edge_color = indicator_colors.border or CARDBOARD_EDGE
+    -- Label text colour is the only thing folder_fg controls now —
+    -- legibility against the fill is the typical tuning case (e.g. dark
+    -- text on a manilla fill).
+    local label_fg   = indicator_colors.folder_fg or constantInNight(Blitbuffer.COLOR_BLACK)
 
     local card_w        = slot_w - SHADOW_OFFSET
     -- Stack & folder label scale (issue #60): users with long Genre /
@@ -295,7 +314,7 @@ function FolderCard.build(opts)
     -- CardboardTextBox.alpha=true trips appearance.koplugin's _renderText
     -- escape hatch (it gates on `not self.alpha`), so the user's chosen
     -- fgcolor / bgcolor survive themes that otherwise repaint text in
-    -- their own palette. Passing user colours through here doesn't change
+    -- their own palette. Passing user colors through here doesn't change
     -- that contract — the alpha flag still governs the appearance gate.
     local label_widget = CardboardTextBox:new{
         text                          = label_text,

@@ -124,8 +124,19 @@ local function cachedSurname(b)
     local raw = b.author or b.authors or b.author_surname
              or b.series_name or b.name or ""
     if type(raw) ~= "string" then raw = "" end
-    local s = AuthorName and AuthorName.surnameOf(raw) or raw
-    b._surname_cache = s:lower()
+    -- surnameSortKey strips leading particles ("de Maupassant" sorts
+    -- under M, not D) so the alphabetical position matches the user's
+    -- mental model of where the surname lives. surnameOf KEEPS the
+    -- particle for display.
+    local s
+    if AuthorName and AuthorName.surnameSortKey then
+        s = AuthorName.surnameSortKey(raw)
+    elseif AuthorName then
+        s = AuthorName.surnameOf(raw):lower()
+    else
+        s = raw:lower()
+    end
+    b._surname_cache = s
     return b._surname_cache
 end
 
@@ -139,6 +150,38 @@ local function cachedGiven(b)
     local s = AuthorName and AuthorName.givenOf(raw) or raw
     b._given_cache = s:lower()
     return b._given_cache
+end
+
+-- sortKeyValue(item, key): the canonical lowercased string the given sort
+-- key orders by -- the SAME derivation the KEYS comparators use. Callers
+-- like the home screen's "go to letter" jump match against this so the
+-- letter landed on is exactly where the visible sort placed it, rather than
+-- a re-derived approximation that can diverge (e.g. matching the forename
+-- initial when the chip is sorted by surname). author_surname / author_name
+-- reuse the memoised cachedSurname / cachedGiven, which honour Calibre
+-- author_sort and particle stripping. Keys with no string identity (dates,
+-- progress, counts) fall back to a title-ish value so a letter jump still
+-- lands somewhere recognisable.
+function SortEngine.sortKeyValue(item, key)
+    if not item then return nil end
+    local v
+    if key == "author_surname" then
+        v = cachedSurname(item)
+    elseif key == "author_name" then
+        v = cachedGiven(item)
+    elseif key == "title" then
+        v = item.title or (item.doc_props and item.doc_props.display_title) or item.name
+    elseif key == "filename" then
+        v = item.filename or item.file or item.name or item.series_name
+    elseif key == "series_name" or key == "series_combined" then
+        v = item.series_name or item.series
+    end
+    if type(v) ~= "string" or v == "" then
+        v = item.title or (item.doc_props and item.doc_props.display_title)
+            or item.name or item.filename or item.file or item.series_name
+        if type(v) ~= "string" or v == "" then return nil end
+    end
+    return v:lower()
 end
 
 SortEngine.KEYS = {
@@ -172,6 +215,19 @@ SortEngine.KEYS = {
     series_index    = { label = tr("Series index"), short = tr("Series #"),
                         comparator = function(a, b) return cmp(tonumber(a.series_index or a.series_num),
                                                                 tonumber(b.series_index or b.series_num)) end },
+    -- One sort slot that orders by series NAME first, then by INDEX within each
+    -- series. Lets users keep "Series, then within-series numbering" without
+    -- spending two priority levels on it -- so author + series-combined + title
+    -- fits naturally for a typical "by author, by series order, then title"
+    -- whole-library sort (issue #72).
+    series_combined = { label = tr("Series + index"), short = tr("Series + #"),
+                        comparator = function(a, b)
+                            local s = cmp(lower(a.series_name or a.series),
+                                          lower(b.series_name or b.series))
+                            if s ~= 0 then return s end
+                            return cmp(tonumber(a.series_index or a.series_num),
+                                       tonumber(b.series_index or b.series_num))
+                        end },
     -- Book record: a.last_opened
     -- lfs entry:   a._last_read (when last_read prefetch ran)
     -- group shape: a.latest (most-recent last_opened among member books)
@@ -251,7 +307,7 @@ SortEngine.KEYS = {
 -- usefulness on a typical library view, not alphabetically.
 SortEngine.ORDER = {
     "title", "filename", "author_surname", "author_name",
-    "series_name", "series_index",
+    "series_name", "series_index", "series_combined",
     "last_opened", "date_added",
     "percent_read", "rating",
     "read_status", "read_status_active",

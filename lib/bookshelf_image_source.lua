@@ -5,8 +5,8 @@
 --
 --   1. Resolution. For a folder, pick the image to show: an explicit
 --      override the user set via the long-press menu wins, otherwise
---      auto-detect cover.jpg / cover.png / folder.jpg / folder.png at
---      the folder root (Plex / Jellyfin convention). Returning nil
+--      auto-detect cover.* / folder.* (and hidden .cover.* / .folder.*)
+--      at the folder root (Plex / Jellyfin convention). Returning nil
 --      means "fall back to the default rendering".
 --
 --   2. Loading. Wrap RenderImage:renderImageFile with a small mtime-
@@ -30,7 +30,15 @@ local RenderImage = require("ui/renderimage")
 
 local ImageSource = {}
 
-local AUTO_NAMES = { "cover.jpg", "cover.png", "folder.jpg", "folder.png" }
+-- Visible names first (Plex / Jellyfin convention), then hidden dot-file
+-- variants. Some users keep the cover out of the visible file listing as
+-- ".cover.jpg" / ".folder.jpg". resolveFolderImage stats each directly (not
+-- via a directory walk), so dot-files resolve fine; a visible cover.* /
+-- folder.* still wins when both a visible and a hidden variant exist.
+local AUTO_NAMES = {
+    "cover.jpg", "cover.png", "folder.jpg", "folder.png",
+    ".cover.jpg", ".cover.png", ".folder.jpg", ".folder.png",
+}
 local DEFAULT_LIBRARY_NAMES = { ".bookshelf-images", "bookshelf-images" }
 
 local IMAGE_EXTS = { jpg = true, jpeg = true, png = true, gif = true,

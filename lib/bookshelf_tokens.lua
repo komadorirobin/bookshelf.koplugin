@@ -26,11 +26,17 @@ Tokens.DEFAULT_CLOCK_LINE =
 -- plugin enabled; %page_num/%page_count are nil for EPUB on home screen.
 Tokens.CATALOGUE = {
     { category = "Book",     token = "%title",            description = "Title" },
-    { category = "Book",     token = "%author",           description = "First author" },
-    { category = "Book",     token = "%authors",          description = "All authors" },
+    { category = "Authors",  token = "%author",           description = "First author" },
+    { category = "Authors",  token = "%author_2",         description = "Second author" },
+    { category = "Authors",  token = "%author_3",         description = "Third author" },
+    { category = "Authors",  token = "%author_count",     description = "Number of authors (numeric)" },
+    { category = "Authors",  token = "%authors",          description = "All authors, comma-separated" },
+    { category = "Authors",  token = "%authors_short",    description = "First author, or 'A and B', or 'A, B, et al.' for 3+" },
     { category = "Book",     token = "%series_name",      description = "Series name" },
     { category = "Book",     token = "%series_num",       description = "Series number" },
     { category = "Book",     token = "%rating",           description = "Star rating (★★★☆☆), empty when unrated" },
+    { category = "Book",     token = "%rating_number",    description = "Rating as a number 1-5 (empty when unrated)" },
+    { category = "Book",     token = "%status",           description = "Reading status (unread / reading / on_hold / finished)" },
     { category = "Book",     token = "%filename",         description = "File name" },
     { category = "Book",     token = "%format",           description = "Format (EPUB/PDF/…)" },
     { category = "Book",     token = "%description",      description = "Book blurb (HTML stripped)" },
@@ -77,15 +83,93 @@ local function metaToken(field)
     return function(book) return book and book[field] or "" end
 end
 
+-- Author display respects the user's "Author name formatting" setting
+-- (Settings > Advanced > Author name formatting). "auto" leaves the
+-- stored string alone; "first_last" / "last_first" force every author
+-- into the same shape regardless of how each book stored the name.
+local _AuthorName
+local function _formatAuthor(raw)
+    if type(raw) ~= "string" or raw == "" then return raw or "" end
+    local ok_s, BookshelfSettings = pcall(require, "lib/bookshelf_settings_store")
+    if not ok_s or not BookshelfSettings then return raw end
+    local mode = BookshelfSettings.read("author_format") or "auto"
+    if mode == "auto" then return raw end
+    if not _AuthorName then
+        local ok_a, m = pcall(require, "lib/bookshelf_author_name")
+        if ok_a then _AuthorName = m end
+    end
+    if _AuthorName and _AuthorName.formatted then
+        return _AuthorName.formatted(raw, mode)
+    end
+    return raw
+end
+
 Tokens.expanders.title       = metaToken("title")
-Tokens.expanders.author      = metaToken("author")
+Tokens.expanders.author      = function(book)
+    return _formatAuthor(book and book.author or "")
+end
 Tokens.expanders.author_2    = function(book)
-    return book and book.authors and book.authors[2] or ""
+    return _formatAuthor(book and book.authors and book.authors[2] or "")
 end
 Tokens.expanders.authors     = function(book)
     if not book or not book.authors then return "" end
-    return table.concat(book.authors, ", ")
+    local out = {}
+    for i, a in ipairs(book.authors) do out[i] = _formatAuthor(a) end
+    return table.concat(out, ", ")
 end
+Tokens.expanders.author_3    = function(book)
+    return _formatAuthor(book and book.authors and book.authors[3] or "")
+end
+-- Number of authors. Falls back to 1 when only book.author is set
+-- (single-author light meta records have no .authors array).
+Tokens.expanders.author_count = function(book)
+    if not book then return "" end
+    if book.authors and #book.authors > 0 then return tostring(#book.authors) end
+    if book.author and book.author ~= "" then return "1" end
+    return ""
+end
+-- Short list with et al. for 3+. Used for anthology covers where the
+-- user wants "Asimov, Bradbury, et al." rather than a 10-author dump.
+Tokens.expanders.authors_short = function(book)
+    if not book then return "" end
+    local list = book.authors
+    if (not list or #list == 0) and book.author and book.author ~= "" then
+        list = { book.author }
+    end
+    if not list or #list == 0 then return "" end
+    if #list == 1 then return _formatAuthor(list[1]) end
+    if #list == 2 then
+        return _formatAuthor(list[1]) .. " and " .. _formatAuthor(list[2])
+    end
+    return _formatAuthor(list[1]) .. ", "
+        .. _formatAuthor(list[2]) .. ", et al."
+end
+
+-- Reading status, normalised to four canonical strings so
+-- [if:status=finished]…[/if] etc. is reliable:
+--   "unread"   — no DocSettings or status="new"
+--   "reading"  — actively in progress
+--   "on_hold"  — KOReader's "abandoned"
+--   "finished" — KOReader's "complete"
+Tokens.expanders.status = function(book)
+    if not book then return "" end
+    local s = book.status or book._status or book.read_status
+    if s == "complete" then return "finished" end
+    if s == "abandoned" then return "on_hold" end
+    if s == "new" or s == nil or s == "" then return "unread" end
+    return s
+end
+
+-- Rating as a plain number (1-5), empty when unrated. The existing
+-- %rating returns star glyphs; this one is the raw value for users who
+-- want numeric comparisons in conditionals or a different display.
+Tokens.expanders.rating_number = function(book)
+    if not book or not book.rating then return "" end
+    local r = tonumber(book.rating)
+    if not r or r < 1 then return "" end
+    return tostring(math.floor(r))
+end
+
 Tokens.expanders.series      = metaToken("series")
 Tokens.expanders.series_name = metaToken("series_name")
 Tokens.expanders.series_num  = metaToken("series_num")

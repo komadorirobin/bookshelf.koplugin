@@ -1101,18 +1101,19 @@ function Editor:_pickSource(draft, on_close)
         local default_name = ReadCollection.default_collection_name
         local choices = {}
         for name, coll in pairs(ReadCollection.coll or {}) do
-            -- Localised label so the favourites collection reads as
-            -- "Favourites" rather than its raw internal key. Count is
-            -- picked up by the shared cell renderer and rendered below
-            -- the label as "n book(s)".
-            local label = (name == default_name) and _("Favourites") or name
-            local count = 0
-            for _ in pairs(coll) do count = count + 1 end
-            choices[#choices + 1] = {
-                value = name,
-                label = label,
-                count = count,
-            }
+            -- Skip the built-in favourites collection: it has its own
+            -- dedicated "★ Favourites" button at the top of the source
+            -- picker. Showing it here too would be a duplicate entry that
+            -- can't be edited or deleted as a regular collection.
+            if name ~= default_name then
+                local count = 0
+                for _ in pairs(coll) do count = count + 1 end
+                choices[#choices + 1] = {
+                    value = name,
+                    label = name,
+                    count = count,
+                }
+            end
         end
         table.sort(choices, function(a, b) return a.label:lower() < b.label:lower() end)
         UIManager:close(d)
@@ -1160,10 +1161,14 @@ function Editor:_pickSource(draft, on_close)
     end
 
     local rows = {
-        -- Row 1: date-based shortcuts (most-reached-for chips)
+        -- Row 1: the most-reached-for shortcuts — date-based plus the
+        -- favourites curated shortcut. Favourites was previously on its
+        -- own row but it's the same "curated shortcut" tier as Recent /
+        -- Latest, so it earns the same row visually too.
         {
             btn("recent",    _("Recently read")),
             btn("latest",    _("Latest added")),
+            btn("favorites", _("\xE2\x98\x85 Favourites")),  -- ★ Favourites
         },
         -- Row 2: full-library flattened view, full-width (no specific pair)
         {
@@ -1358,7 +1363,10 @@ function Editor:_pickSortLevel(draft, level_index, on_close)
             none_row,
             { key_btn("title"),          key_btn("filename")          },
             { key_btn("author_surname"), key_btn("author_name")       },
-            { key_btn("series_name"),    key_btn("series_index")      },
+            -- Series name / index / combined ("Series + #") share one row
+            -- so the one-tap combined option sits beside the pair it merges.
+            { key_btn("series_name"),    key_btn("series_index"),
+              key_btn("series_combined") },
             { key_btn("last_opened"),    key_btn("date_added")        },
             { key_btn("percent_read"),   key_btn("size")              },
             { key_btn("read_status"),    key_btn("read_status_active")},

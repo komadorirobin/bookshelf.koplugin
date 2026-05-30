@@ -49,7 +49,7 @@ local Bookshelf = WidgetContainer:extend{
     is_doc_only = false, -- must be false: hook fires in Reader context
 }
 
-require("lib/bookshelf_colour_palette").attach(Bookshelf)
+require("lib/bookshelf_color_palette").attach(Bookshelf)
 
 -- Tracks the live BookshelfWidget singleton across plugin instances. Two
 -- Bookshelf instances exist — one attached to FM, one to Reader — but the
@@ -62,7 +62,7 @@ local _preserve_live_widget_on_reader_close = false
 -- of a _safeShow call. _safeShow already schedules its own show() after
 -- onClose+showFileManager, so onCloseDocument's parallel schedule would
 -- be a duplicate, producing an extra EPDC commit (visible as an extra
--- flash on colour panels). Set true during the gesture-exit critical
+-- flash on color panels). Set true during the gesture-exit critical
 -- section, false again before our deferred work runs the show. (Pattern
 -- adapted from komadorirobin's fork.)
 local _suppress_close_document_show = false
@@ -890,7 +890,7 @@ end
 -- We get the same effect (close reader, restore FM.instance for the
 -- screensaver host check, raise bookshelf) but the merged refresh type
 -- on commit is "ui" instead of "full" — significantly less visible
--- on colour panels (#35).
+-- on color panels (#35).
 --
 -- A "Closing book…" InfoMessage shows synchronously for feedback during
 -- the 1–3s onClose disk-I/O block. _suppress_close_document_show stops
@@ -906,7 +906,7 @@ function Bookshelf:_safeShow(profile_key)
     --   a. SimpleUI is set to "always" mode (it'll show its own
     --      equivalent — avoid doubling up).
     --   b. The user has disabled our notice in Settings > Advanced
-    --      (escape hatch for colour-panel users who see flashing from
+    --      (escape hatch for color-panel users who see flashing from
     --      the message itself; the close still happens, just silently).
     local our_close_msg = nil
     local sui_mode = G_reader_settings:readSetting("simpleui_hs_closing_notice_mode")
@@ -1076,7 +1076,7 @@ function Bookshelf:_takeOver(fm_instance)
     -- this fresh plugin instance and scheduled us via init's
     -- nextTick(_takeOver). _safeShow's show() already painted; calling
     -- show() again here would softRefresh + queue an extra EPDC commit
-    -- (visible as a second flash on colour panels). (#35.)
+    -- (visible as a second flash on color panels). (#35.)
     if _suppress_close_document_show then
         return
     end
@@ -1171,6 +1171,16 @@ function Bookshelf:onCloseDocument()
         -- summary.status are now stale for this file specifically.
         if Repo.invalidateProgressCache then Repo.invalidateProgressCache(fp) end
     end
+    -- The just-closed book jumped to the top of ReadHistory and its progress
+    -- moved, so any chip whose SORT depends on read state has a stale cached
+    -- order. The Recent chip is the visible casualty (issue 85): its tab sort
+    -- {last_opened, reverse} routes through the predicate/cache path, so the
+    -- book didn't pop to the top until a manual swipe-down. Drop just those
+    -- read-state-sorted cache entries (walk cache stays warm) so the
+    -- softRefresh shelf-swap on return re-sorts with current read times.
+    if Repo and Repo.invalidateReadStateCache then
+        Repo.invalidateReadStateCache()
+    end
 
     -- Only re-show Bookshelf if the user is actually returning to "home"
     -- — not if the Reader is closing this document only to immediately
@@ -1189,7 +1199,7 @@ function Bookshelf:onCloseDocument()
     -- _safeShow already scheduled its own show() after the close+showFM
     -- work; skipping ours here avoids a duplicate show()+softRefresh
     -- which would queue an extra EPDC commit (visible as a second
-    -- flash on colour panels). Pattern adapted from komadorirobin's
+    -- flash on color panels). Pattern adapted from komadorirobin's
     -- fork.
     if _suppress_close_document_show then
         return
@@ -1590,12 +1600,12 @@ function Bookshelf:onSetMixedSorting(toggle)
     end
 end
 
--- When KOReader toggles colour rendering at runtime, flush the bookshelf_colour
--- hex cache so progress-bar colours pick up the new mode, then rebuild the
+-- When KOReader toggles color rendering at runtime, flush the bookshelf_color
+-- hex cache so progress-bar colors pick up the new mode, then rebuild the
 -- live widget if it is currently shown.
 function Bookshelf:onColorRenderingUpdate()
-    local ok, Colour = pcall(require, "lib/bookshelf_colour")
-    if ok then Colour.flushCache() end
+    local ok, Color = pcall(require, "lib/bookshelf_color")
+    if ok then Color.flushCache() end
     if _live_widget and _live_widget._rebuild then
         _live_widget:_rebuild()
         UIManager:setDirty(_live_widget, "ui")

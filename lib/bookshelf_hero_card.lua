@@ -63,6 +63,13 @@ local HeroCard = InputContainer:extend{
     on_hardcover_reviews_tap = nil,
     is_selected         = false,
     is_bulk_selected    = false,
+    -- Builder callback returning a fresh tappable pill-strip widget for
+    -- the "Tags (interactive)" hero region. BookshelfWidget supplies it
+    -- (it owns _buildPillSpecs + _buildPillGroup); HeroCard calls it on
+    -- every right-column rebuild so a fresh widget tree is wired in
+    -- after each free(), rather than reusing one whose internals have
+    -- been torn down.
+    tags_builder        = nil,
 }
 
 -- Reads the user's font-scale setting (% of nominal). Applied on top of
@@ -460,29 +467,29 @@ buildLine = function(expanded, region, width, book)
         local bar_h     = math.max(2, math.floor(face_size * bar_pct / 100 + 0.5))
         local pct       = book and book.book_pct or 0
         local style     = region.bar_style or "bordered"
-        -- Resolve user-chosen Progress bar / Progress bar track colours for
+        -- Resolve user-chosen Progress bar / Progress bar track colors for
         -- the hero strip:
         --
         -- * Pacman has a fixed identity baked into bookends's render path
-        --   (yellow body, peach pellets) and ignores per-bar colour
-        --   overrides. Skip the colour plumbing entirely for this style
-        --   so the user's bar-colour picks don't bleed in.
+        --   (yellow body, peach pellets) and ignores per-bar color
+        --   overrides. Skip the color plumbing entirely for this style
+        --   so the user's bar-color picks don't bleed in.
         --
-        -- * For every other style, only pass the colour fields when the
+        -- * For every other style, only pass the color fields when the
         --   user has actually picked something. Each bookends style has
         --   its own internal defaults; passing bookshelf's default fill /
         --   track values (dark grey + white) would wash those out for
-        --   users who never opened the colours menu.
+        --   users who never opened the colors menu.
         local colors
         if style ~= "pacman" then
             local custom_fill  = BookshelfSettings.read("progress_fill")
             local custom_track = BookshelfSettings.read("progress_track")
             if custom_fill or custom_track then
-                local Colour    = require("lib/bookshelf_colour")
-                local is_colour = Screen:isColorEnabled()
+                local Color    = require("lib/bookshelf_color")
+                local is_color = Screen:isColorEnabled()
                 colors = {
-                    fill = custom_fill and Colour.parseColorValue(custom_fill, is_colour) or nil,
-                    bg   = custom_track and Colour.parseColorValue(custom_track, is_colour) or nil,
+                    fill = custom_fill and Color.parseColorValue(custom_fill, is_color) or nil,
+                    bg   = custom_track and Color.parseColorValue(custom_track, is_color) or nil,
                 }
             end
         end
@@ -709,6 +716,35 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         end
     end
 
+    -- Tags pill strip (above progress, after description). A fresh
+    -- widget per rebuild — replaceRightColumn frees the previous right
+    -- column, which would tear down the pill widget too if we reused
+    -- one. Gap below so the pills don't run straight into the progress
+    -- text.
+    if regions.tags and not regions.tags.disabled and self.tags_builder then
+        local ok, widget = pcall(self.tags_builder, book)
+        if ok and widget then
+            local sz = widget:getSize()
+            if sz and sz.h and sz.h > 0 then
+                -- BottomContainer (the parent of right_bottom) centers
+                -- its content horizontally. When the pill row is
+                -- narrower than the column, that pushes the row to the
+                -- middle of the bottom slot. Wrapping the pill widget
+                -- in a full-column-width LeftContainer forces the right
+                -- column's effective width to match the column itself,
+                -- so the BottomContainer's centering offset is zero and
+                -- the pills sit flush left.
+                right_bottom[#right_bottom + 1] = LeftContainer:new{
+                    dimen = Geom:new{ w = right_w, h = sz.h },
+                    widget,
+                }
+                right_bottom[#right_bottom + 1] = VerticalSpan:new{
+                    width = Size.padding.default,
+                }
+            end
+        end
+    end
+
     -- Progress (bottom-anchored). If the book has never been opened
     -- (book.book_pct nil — note that 0 is *truthy* in Lua so a
     -- briefly-opened-but-unread book at 0% still keeps its %bar) the
@@ -900,6 +936,7 @@ function HeroCard:_renderFull()
         on_hold     = self.on_hold,
         is_selected      = self.is_selected,
         is_bulk_selected = self.is_bulk_selected,
+        suppress_favorite_badge = true,
     }
     local cover_widget = FrameContainer:new{
         bordersize   = 0,

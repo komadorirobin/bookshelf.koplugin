@@ -1,21 +1,21 @@
 --[[
-Central colour-value helpers.
+Central color-value helpers.
 
-Every colour setting in Bookshelf (text_color, symbol_color, bar_colors.{fill,
+Every color setting in Bookshelf (text_color, symbol_color, bar_colors.{fill,
 bg, track, tick, border, invert, metro_fill}) can be stored in one of three
 shapes:
 
-  - table with .hex = "#RRGGBB"    -- v4.3+ colour-picker authoring
+  - table with .hex = "#RRGGBB"    -- v4.3+ color-picker authoring
   - table with .grey = 0xNN        -- v2+ greyscale nudge (text/symbol)
   - raw byte 0..0xFF               -- legacy bar_colors shape (pre-v4)
 
-parseColorValue folds all three into a Blitbuffer colour object:
-  * Colour-enabled screens: hex → ColorRGB32, grey/byte → Color8.
+parseColorValue folds all three into a Blitbuffer color object:
+  * Color-enabled screens: hex → ColorRGB32, grey/byte → Color8.
   * Greyscale screens: hex → Color8 of the Rec.601 luminance (so presets
-    authored on colour devices still render sensibly on Kindle/older Kobo).
+    authored on color devices still render sensibly on Kindle/older Kobo).
 
-The hex → colour conversion is memoised in a module-local table; toggling
-KOReader's colour-rendering mode at runtime must call flushCache() to drop
+The hex → color conversion is memoised in a module-local table; toggling
+KOReader's color-rendering mode at runtime must call flushCache() to drop
 stale ColorRGB32 values cached from the previous mode (ColorRGB32 on a now-
 greyscale screen would go through Blitbuffer's default 32→8 converter rather
 than our Rec.601 luminance helper, which looks subtly different on photos).
@@ -23,14 +23,14 @@ than our Rec.601 luminance helper, which looks subtly different on photos).
 
 local Blitbuffer = require("ffi/blitbuffer")
 
-local Colour = {}
+local Color = {}
 
 local _hex_cache = {}
 local _last_color_mode = nil  -- tracks last seen is_color_enabled for auto-flush
 
 -- Default hex for each field when the user taps "Default" in the picker.
 -- nil means "clear the setting entirely" (fall back to the field's own
--- default-colour logic in the render path).
+-- default-color logic in the render path).
 local DEFAULT_HEX = {
     fill        = "#404040",  -- matches the 75%-black greyscale default
     bg          = "#BFBFBF",  -- matches the 25%-black greyscale default
@@ -39,36 +39,39 @@ local DEFAULT_HEX = {
     border      = "#000000",
     invert      = "#FFFFFF",
     metro_fill  = "#000000",
-    text_color  = nil,        -- "book text colour" — clear rather than default
+    text_color  = nil,        -- "book text color" — clear rather than default
     symbol_color = nil,       -- "match text" — clear rather than default
-    -- Cover-indicator colours (bookshelf-specific). bookmark matches
+    -- Cover-indicator colors (bookshelf-specific). bookmark matches
     -- progress_fill's default so the in-progress glyph keeps its pre-2.2.5
     -- "darkish" look when the field is unset. badge_fg / badge_bg match the
     -- hard-coded pill defaults (black text on a white fill) plus the
     -- halo'd-check defaults (black outline, white centre) — see
     -- bookshelf_cover_progress.M.buildOutlinedGlyphWidget.
-    bookmark    = "#404040",
-    badge_fg    = "#000000",
-    badge_bg    = "#FFFFFF",
-    -- Folder overlay defaults match the colour-mode appearance of the
+    bookmark           = "#404040",
+    complete_bookmark  = "#FFFFFF",  -- white centre on the finished badge
+    favorite_star      = "#FFD700",  -- yellow on color panels; luminance on B&W
+    badge_fg           = "#000000",
+    badge_bg           = "#FFFFFF",
+    border             = "#000000",  -- cover frame + pill / badge borders
+    -- Folder overlay defaults match the color-mode appearance of the
     -- FolderCard module's CARDBOARD / CARDBOARD_EDGE constants. On B&W
     -- devices the picker is replaced by a % black nudge dialog so this
-    -- hex is only ever shown as the picker's "default" swatch on colour
-    -- screens. Field names match rawColours().folder_bg / .folder_fg so
-    -- the settings menu's pickColour helper can pass the same string to
+    -- hex is only ever shown as the picker's "default" swatch on color
+    -- screens. Field names match rawColors().folder_bg / .folder_fg so
+    -- the settings menu's pickColor helper can pass the same string to
     -- both lookups.
     folder_bg   = "#E7C9A9",
     folder_fg   = "#000000",
 }
 
-function Colour.defaultHexFor(field) return DEFAULT_HEX[field] end
+function Color.defaultHexFor(field) return DEFAULT_HEX[field] end
 
--- Is this hex string a real colour (r != g or g != b), as opposed to a
+-- Is this hex string a real color (r != g or g != b), as opposed to a
 -- neutral that would collapse to {grey=N}? Returns false on malformed input.
--- Used by hasColour() to avoid false-positives when a line contains
+-- Used by hasColor() to avoid false-positives when a line contains
 -- [c=#222]…[/c] — syntactically hex but visually pure grey.
-function Colour.isColourHex(hex)
-    local norm = Colour.normaliseHex(hex)
+function Color.isColorHex(hex)
+    local norm = Color.normaliseHex(hex)
     if not norm then return false end
     local r = tonumber(norm:sub(2, 3), 16)
     local g = tonumber(norm:sub(4, 5), 16)
@@ -79,11 +82,11 @@ end
 -- Return a normalised storage-shape table for a hex value: {grey=N} when
 -- the hex collapses to a neutral (r==g==b), otherwise {hex="#RRGGBB"}.
 -- Returns nil if the hex is malformed. Keeps presets clean on cross-device
--- transfer: a user on a colour device picking #404040 from the palette
--- stores it as {grey=0x40}, so the preset isn't flagged as "uses colour"
--- by hasColour — same visual result on every device.
-function Colour.toStorageShape(hex)
-    local norm = Colour.normaliseHex(hex)
+-- transfer: a user on a color device picking #404040 from the palette
+-- stores it as {grey=0x40}, so the preset isn't flagged as "uses color"
+-- by hasColor — same visual result on every device.
+function Color.toStorageShape(hex)
+    local norm = Color.normaliseHex(hex)
     if not norm then return nil end
     local r = tonumber(norm:sub(2, 3), 16)
     local g = tonumber(norm:sub(4, 5), 16)
@@ -97,7 +100,7 @@ end
 -- Accepts "#RGB", "#RRGGBB", or the same forms without the leading #.
 -- Returns the canonical "#RRGGBB" upper-cased form, or nil if malformed.
 -- CSS-short form expands per the usual rule: "#F0A" → "#FF00AA".
-function Colour.normaliseHex(raw)
+function Color.normaliseHex(raw)
     if type(raw) ~= "string" then return nil end
     local s = raw:match("^%s*(.-)%s*$")  -- trim
     if s:sub(1, 1) == "#" then s = s:sub(2) end
@@ -110,9 +113,9 @@ function Colour.normaliseHex(raw)
     return nil
 end
 
---- Parse a stored colour value into a Blitbuffer colour object.
+--- Parse a stored color value into a Blitbuffer color object.
 --- Returns nil if v is nil, false if v is false (transparent).
-function Colour.parseColorValue(v, is_color_enabled)
+function Color.parseColorValue(v, is_color_enabled)
     -- Defensive auto-flush: if is_color_enabled changed since the last call,
     -- cached Blitbuffer values from the old mode are stale — drop them.
     -- Belt-and-braces against the onColorRenderingUpdate event firing late or
@@ -132,7 +135,7 @@ function Colour.parseColorValue(v, is_color_enabled)
     if type(v) == "table" and v.hex then
         -- Normalise to #RRGGBB so short-form ("#F00") and long-form ("#FF0000")
         -- hit the same cache entry.
-        local hex = Colour.normaliseHex(v.hex)
+        local hex = Color.normaliseHex(v.hex)
         if not hex then return nil end
         local key = hex .. (is_color_enabled and ":c" or ":g")
         local cached = _hex_cache[key]
@@ -164,9 +167,9 @@ function Colour.parseColorValue(v, is_color_enabled)
     return nil
 end
 
-function Colour.flushCache()
+function Color.flushCache()
     _hex_cache = {}
     _last_color_mode = nil  -- reset so next parseColorValue re-seeds the mode
 end
 
-return Colour
+return Color

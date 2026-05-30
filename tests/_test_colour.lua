@@ -1,8 +1,8 @@
 -- tests/_test_colour.lua
--- Pure-Lua unit tests for bookshelf_colour.lua value parsers.
+-- Pure-Lua unit tests for bookshelf_color.lua value parsers.
 -- Usage: cd into the plugin dir, then `lua tests/_test_colour.lua`.
 
--- The colour module requires ffi/blitbuffer for the parseColorValue path;
+-- The color module requires ffi/blitbuffer for the parseColorValue path;
 -- stub it so the module loads without the KOReader environment. We never
 -- call parseColorValue in this file, but `require` evaluates the top of
 -- the module, which includes the require for blitbuffer.
@@ -12,7 +12,7 @@ package.loaded["ffi/blitbuffer"] = {
 }
 
 package.path = "./?.lua;" .. package.path
-local Colour = require("lib/bookshelf_colour")
+local Color = require("lib/bookshelf_color")
 
 local pass, fail = 0, 0
 local function test(name, fn)
@@ -46,74 +46,74 @@ end
 -- normaliseHex ---------------------------------------------------------------
 
 test("normaliseHex: long form upper-cases", function()
-    eq(Colour.normaliseHex("#abcdef"), "#ABCDEF")
+    eq(Color.normaliseHex("#abcdef"), "#ABCDEF")
 end)
 
 test("normaliseHex: long form without #", function()
-    eq(Colour.normaliseHex("abcdef"), "#ABCDEF")
+    eq(Color.normaliseHex("abcdef"), "#ABCDEF")
 end)
 
 test("normaliseHex: short form expands", function()
-    eq(Colour.normaliseHex("#f0a"), "#FF00AA")
+    eq(Color.normaliseHex("#f0a"), "#FF00AA")
 end)
 
 test("normaliseHex: trims whitespace", function()
-    eq(Colour.normaliseHex("  #404040  "), "#404040")
+    eq(Color.normaliseHex("  #404040  "), "#404040")
 end)
 
 test("normaliseHex: rejects 5-char input", function()
-    eq(Colour.normaliseHex("#abcde"), nil)
+    eq(Color.normaliseHex("#abcde"), nil)
 end)
 
 test("normaliseHex: rejects non-hex characters", function()
-    eq(Colour.normaliseHex("#zz0000"), nil)
+    eq(Color.normaliseHex("#zz0000"), nil)
 end)
 
 test("normaliseHex: rejects non-strings", function()
-    eq(Colour.normaliseHex(0x404040), nil)
-    eq(Colour.normaliseHex(nil), nil)
+    eq(Color.normaliseHex(0x404040), nil)
+    eq(Color.normaliseHex(nil), nil)
 end)
 
--- isColourHex ----------------------------------------------------------------
+-- isColorHex ----------------------------------------------------------------
 
-test("isColourHex: pure grey returns false", function()
-    eq(Colour.isColourHex("#404040"), false)
+test("isColorHex: pure grey returns false", function()
+    eq(Color.isColorHex("#404040"), false)
 end)
 
-test("isColourHex: non-neutral returns true", function()
-    eq(Colour.isColourHex("#FF0000"), true)
+test("isColorHex: non-neutral returns true", function()
+    eq(Color.isColorHex("#FF0000"), true)
 end)
 
-test("isColourHex: malformed returns false", function()
-    eq(Colour.isColourHex("not a hex"), false)
+test("isColorHex: malformed returns false", function()
+    eq(Color.isColorHex("not a hex"), false)
 end)
 
 -- toStorageShape -------------------------------------------------------------
 
 test("toStorageShape: pure grey collapses to {grey=N}", function()
-    deepEq(Colour.toStorageShape("#404040"), { grey = 0x40 })
+    deepEq(Color.toStorageShape("#404040"), { grey = 0x40 })
 end)
 
-test("toStorageShape: colour stays as {hex=...}", function()
-    deepEq(Colour.toStorageShape("#FF6600"), { hex = "#FF6600" })
+test("toStorageShape: color stays as {hex=...}", function()
+    deepEq(Color.toStorageShape("#FF6600"), { hex = "#FF6600" })
 end)
 
 test("toStorageShape: short-form expands then collapses", function()
-    deepEq(Colour.toStorageShape("#888"), { grey = 0x88 })
+    deepEq(Color.toStorageShape("#888"), { grey = 0x88 })
 end)
 
 test("toStorageShape: malformed returns nil", function()
-    eq(Colour.toStorageShape("zzz"), nil)
+    eq(Color.toStorageShape("zzz"), nil)
 end)
 
 -- defaultHexFor --------------------------------------------------------------
 
 test("defaultHexFor: fill is #404040", function()
-    eq(Colour.defaultHexFor("fill"), "#404040")
+    eq(Color.defaultHexFor("fill"), "#404040")
 end)
 
 test("defaultHexFor: unknown field returns nil", function()
-    eq(Colour.defaultHexFor("bogus"), nil)
+    eq(Color.defaultHexFor("bogus"), nil)
 end)
 
 -- Report ---------------------------------------------------------------------

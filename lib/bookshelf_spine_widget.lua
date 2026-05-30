@@ -47,10 +47,43 @@ local CARD_BORDER     = Screen:scaleBySize(1)       -- 1dp border on the card
 -- Selected-state border thickness: matches SHADOW_OFFSET so the border's
 -- outer perimeter sits exactly where the unselected-state drop shadow's
 -- outer edge sits. The selected→unselected transition is then just a
--- colour swap (black border → grey shadow) in the same pixel band, with
+-- color swap (black border → grey shadow) in the same pixel band, with
 -- no change in the slot's outer footprint.
 local SELECTED_BORDER = SHADOW_OFFSET
-local SHADOW_GRAY     = Blitbuffer.gray(0.5)        -- grey level for the shadow
+-- Drop-shadow grey, mode-aware. KOReader inverts the framebuffer at refresh
+-- in night mode, so a fixed mid-grey (gray(0.5) = 0x80) inverts to ~0x7F and
+-- reads as a bright halo against the dark night background. Beware gray()'s
+-- direction: its arg is *darkness* (gray(level) = 0xFF - level*0xFF), so a
+-- LOW level paints a near-white pixel. For a dark shadow ON SCREEN in night
+-- mode we must paint near-white (low level) and let the inversion flip it to
+-- dark: gray(0.15) = 0xD9 painted → 0x26 displayed. Day stays mid-grey (no
+-- inversion). No user control — purely a function of the active mode.
+local SHADOW_GRAY_DAY   = Blitbuffer.gray(0.5)
+local SHADOW_GRAY_NIGHT = Blitbuffer.gray(0.15)
+local function _shadowGray()
+    if G_reader_settings:isTrue("night_mode") then
+        return SHADOW_GRAY_NIGHT
+    end
+    return SHADOW_GRAY_DAY
+end
+
+-- Placeholder (no-image) cover backgrounds. In day these are near-white
+-- paper tones; pure white collapses to pure BLACK under night-mode
+-- framebuffer inversion, so the placeholder vanishes against the black
+-- page. In night we paint a light grey (low gray() level) so the
+-- inversion lands on a *slightly grey* card that stays distinct from the
+-- background. Inner stays brighter than outer in both modes (preserving
+-- the day relationship): inner ~0x28 / outer ~0x1E displayed in night.
+local FALLBACK_OUTER_BG_DAY   = Blitbuffer.gray(0.08)
+local FALLBACK_INNER_BG_DAY   = Blitbuffer.COLOR_WHITE
+local FALLBACK_OUTER_BG_NIGHT = Blitbuffer.gray(0.12)
+local FALLBACK_INNER_BG_NIGHT = Blitbuffer.gray(0.16)
+local function _fallbackBgs()
+    if G_reader_settings:isTrue("night_mode") then
+        return FALLBACK_OUTER_BG_NIGHT, FALLBACK_INNER_BG_NIGHT
+    end
+    return FALLBACK_OUTER_BG_DAY, FALLBACK_INNER_BG_DAY
+end
 
 -- Glyph sizing for the in-progress / finished badge on covers.
 -- Scaled with cover width but floored so tiny columns don't render
@@ -123,7 +156,7 @@ function ShadowRect:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
 end
 function ShadowRect:paintTo(bb, x, y)
-    bb:paintRoundedRect(x, y, self.width, self.height, SHADOW_GRAY, CARD_RADIUS)
+    bb:paintRoundedRect(x, y, self.width, self.height, _shadowGray(), CARD_RADIUS)
 end
 
 -- Solid rounded-rect "backdrop" used as the selected-state cue. Sits
@@ -296,9 +329,18 @@ function RoundedCornerCard:paintTo(bb, x, y)
         end
     end
     if self.border_size and self.border_size > 0 then
+        -- Honour the user's "Border color" setting when the SpineWidget
+        -- doesn't set border_color explicitly. resolvedColors().border
+        -- defaults to black + adapts to night mode + color panels per
+        -- the day/night color split.
+        local border_color = self.border_color
+        if not border_color then
+            local ok_cp, c = pcall(CoverProgress.resolvedColors)
+            if ok_cp and c then border_color = c.border end
+        end
         bb:paintBorder(x, y, self.width, self.height,
                        self.border_size,
-                       self.border_color or Blitbuffer.COLOR_BLACK,
+                       border_color or Blitbuffer.COLOR_BLACK,
                        self.radius, true)
     end
 end
@@ -566,28 +608,37 @@ function SpineWidget:_renderShadowedCard(inner)
     --    GLYPH_TOP_LIFT * glyph_h above the card bottom (i.e. the entire
     --    glyph sits inside the cover, bottom at card_h - 0.35*glyph_h).
     if indicators.glyph == "in_progress" then
-        local colours = CoverProgress.resolvedColours()
+        local colors = CoverProgress.resolvedColors()
         local glyph_h = _glyphSize(card_w)
         local glyph_w = self:_glyphWidth(glyph_h)
         if glyph_w <= card_w * 0.4 then
-            local glyph = CoverProgress.buildGlyphWidget(
-                CoverProgress.GLYPH_BOOKMARK, glyph_h, colours.bookmark)
-            -- Use the TextWidget's ACTUAL rendered height for the
-            -- offset math, not the nominal face size. A
-            -- Font:getFace("symbols", N) widget paints at roughly
-            -- N * 1.3-1.4 (ascent + descent + line-height padding),
-            -- so a lift computed from N alone over-shoots and the
-            -- glyph dangles below the card. Measuring after build
-            -- keeps the lift math accurate at any DPI.
-            local widget_h = glyph:getSize().h
+            local halo_w = 1
+            -- Probe a bare glyph to measure the TRUE rendered height —
+            -- Font:getFace("symbols", N) paints at ~N*1.3-1.4 once
+            -- ascent / descent / line-height padding are accounted for.
+            local probe = CoverProgress.buildGlyphWidget(
+                CoverProgress.GLYPH_BOOKMARK, glyph_h,
+                Blitbuffer.COLOR_BLACK)
+            local widget_h = probe:getSize().h
+            probe:free()
+            -- White centre on a dark halo, no drop shadow. The
+            -- in-progress bookmark sits INSIDE the cover (no overhang),
+            -- so it doesn't need the "raised above the surface" cue a
+            -- shadow gives the favourite star / completed bookmark
+            -- (both of which dangle off the cover edge). Halo alone is
+            -- enough to keep it legible against any cover artwork.
+            local outlined = CoverProgress.buildOutlinedGlyphWidget(
+                CoverProgress.GLYPH_BOOKMARK, glyph_h, halo_w,
+                colors.border,      -- halo (shared "Border color")
+                colors.bookmark)    -- centre fill (user-tunable bookmark color)
             local lift = _glyphTopLift(self.show_titles)
             local y_offset = card_h - math.floor(widget_h * lift + 0.5)
             children[#children + 1] = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
-                padding_top  = y_offset,
-                padding_left = _glyphLeftInset(),
-                glyph,
+                padding_top  = y_offset - halo_w,
+                padding_left = _glyphLeftInset() - halo_w,
+                outlined,
             }
         end
     end
@@ -604,29 +655,35 @@ function SpineWidget:_renderShadowedCard(inner)
         local glyph_h = _glyphSize(card_w)
         local glyph_w = self:_glyphWidth(glyph_h)
         if glyph_w <= card_w * 0.4 then
-            local halo_w = 1
-            local colours = CoverProgress.resolvedColours()
+            local halo_w   = 1
+            local shadow_d = math.max(halo_w + 2,
+                                      math.floor(glyph_h * 0.10))
+            local colors  = CoverProgress.resolvedColors()
             -- Match the in-progress glyph's positioning exactly. The
             -- in-progress branch (above) bases its lift on
             -- TextWidget:getSize().h (actual rendered height,
             -- ~glyph_h * 1.35 after font line metrics) rather than
             -- glyph_h itself, because Font:getFace("symbols", N) paints
-            -- taller than N. Critically, buildOutlinedGlyphWidget's
-            -- OverlapGroup carries a SYNTHETIC dimen of glyph_h+2*halo_w
-            -- (see bookshelf_cover_progress.lua), which understates the
-            -- real paint footprint -- using outlined:getSize() here
-            -- under-shoots the lift the same way glyph_h does. Build a
-            -- throwaway bare glyph to measure the true height, then
-            -- offset by -halo_w so the inner glyph's centre lands on
-            -- the in-progress glyph's centre.
+            -- taller than N. The halo+shadow group carries a synthetic
+            -- dimen that understates the real paint footprint -- using
+            -- outlined:getSize() here under-shoots the lift the same
+            -- way glyph_h does. Build a throwaway bare glyph to measure
+            -- the true height, then offset by -halo_w so the inner
+            -- glyph's centre lands on the in-progress glyph's centre.
             local probe = CoverProgress.buildGlyphWidget(
                 CoverProgress.GLYPH_BOOKMARK_CHECK, glyph_h,
                 Blitbuffer.COLOR_BLACK)
             local widget_h = probe:getSize().h
             probe:free()
-            local outlined = CoverProgress.buildOutlinedGlyphWidget(
+            -- Same halo + drop-shadow treatment as the favourites star
+            -- (top-left). Halo keeps the glyph legible against the
+            -- cover; the offset shadow gives a hint of depth.
+            local outlined = CoverProgress.buildHaloShadowedGlyphWidget(
                 CoverProgress.GLYPH_BOOKMARK_CHECK, glyph_h, halo_w,
-                colours.badge_fg, colours.badge_bg)
+                shadow_d, shadow_d,  -- down-right
+                colors.border,             -- halo (shared "Border color")
+                colors.complete_bookmark,  -- centre fill (user-tunable)
+                colors.shadow)             -- shadow (always dark on screen)
             local lift = _glyphTopLift(self.show_titles)
             local y_offset = card_h - math.floor(widget_h * lift + 0.5)
             children[#children + 1] = FrameContainer:new{
@@ -649,7 +706,7 @@ function SpineWidget:_renderShadowedCard(inner)
     if indicators.glyph == "complete_tickbox" then
         local TextWidget = require("ui/widget/textwidget")
         local Font       = require("ui/font")
-        local colours    = CoverProgress.resolvedColours()
+        local colors    = CoverProgress.resolvedColors()
 
         -- Reference widget measures the page-count pill's natural inner
         -- height. Built with identical face spec to the page-count pill
@@ -682,7 +739,7 @@ function SpineWidget:_renderShadowedCard(inner)
             text = "\xEF\x90\xAE",   -- U+F42E nerd-font check
             face = Font:getFace("smallinfofont", _badgeSize(10)),
             bold = true,
-            fgcolor = colours.badge_fg,
+            fgcolor = colors.badge_fg,
         }
         local VerticalGroup = require("ui/widget/verticalgroup")
         local VerticalSpan  = require("ui/widget/verticalspan")
@@ -693,8 +750,8 @@ function SpineWidget:_renderShadowedCard(inner)
         }
         local pill = FrameContainer:new{
             bordersize     = Size.border.thin,
-            background     = colours.badge_bg,
-            color          = colours.badge_fg,
+            background     = colors.badge_bg,
+            color          = colors.border,
             radius         = Screen:scaleBySize(3),
             padding_left   = 0,
             padding_right  = 0,
@@ -730,7 +787,7 @@ function SpineWidget:_renderShadowedCard(inner)
     --    the LEFT of the badge. Either indicator can show alone.
     local want_page_count = indicators.page_count and self.book and self.book.page_count
     if indicators.bar or want_page_count then
-        local colours = CoverProgress.resolvedColours()
+        local colors = CoverProgress.resolvedColors()
         local bar_h   = _barHeight()
         local bar_pad = _barBottomPadding()
         local side    = _barSideMargin()
@@ -749,8 +806,8 @@ function SpineWidget:_renderShadowedCard(inner)
             -- close to the bar height.
             badge_widget = FrameContainer:new{
                 bordersize     = Size.border.thin,
-                background     = colours.badge_bg,
-                color          = colours.badge_fg,
+                background     = colors.badge_bg,
+                color          = colors.border,
                 radius         = Screen:scaleBySize(3),
                 padding_left   = Size.padding.small,
                 padding_right  = Size.padding.small,
@@ -764,7 +821,7 @@ function SpineWidget:_renderShadowedCard(inner)
                     text = "p\xe2\x80\x8a" .. tostring(self.book.page_count),
                     face = Font:getFace("smallinfofont", _badgeSize(12)),
                     bold = true,
-                    fgcolor = colours.badge_fg,
+                    fgcolor = colors.badge_fg,
                 },
             }
             local sz = badge_widget:getSize()
@@ -795,7 +852,7 @@ function SpineWidget:_renderShadowedCard(inner)
             if bar_w > 0 then
                 local bar = CoverProgress.buildBarWidget(
                     bar_w, bar_h,
-                    indicators.bar_pct, colours.fill, colours.track)
+                    indicators.bar_pct, colors.fill, colors.track, colors.border)
                 children[#children + 1] = FrameContainer:new{
                     bordersize   = 0,
                     padding      = 0,
@@ -819,11 +876,11 @@ function SpineWidget:_renderShadowedCard(inner)
             and self.book and self.book.series_num then
         local TextWidget     = require("ui/widget/textwidget")
         local Font           = require("ui/font")
-        local colours        = CoverProgress.resolvedColours()
+        local colors        = CoverProgress.resolvedColors()
         local badge = FrameContainer:new{
             bordersize     = Size.border.thin,
-            background     = colours.badge_bg,
-            color          = colours.badge_fg,
+            background     = colors.badge_bg,
+            color          = colors.border,
             radius         = Screen:scaleBySize(3),
             padding_left   = Size.padding.default,
             padding_right  = Size.padding.default,
@@ -851,7 +908,7 @@ function SpineWidget:_renderShadowedCard(inner)
                 text = "#\xe2\x80\x8a" .. tostring(self.book.series_num),
                 face = Font:getFace("smallinfofont", _badgeSize(12)),
                 bold = true,
-                fgcolor = colours.badge_fg,
+                fgcolor = colors.badge_fg,
             },
         }
         local badge_w       = badge:getSize().w
@@ -860,6 +917,86 @@ function SpineWidget:_renderShadowedCard(inner)
                                   cover_right_x - math.floor(badge_w / 2)))
         badge.overlap_offset = { badge_x, -SHADOW_OFFSET }
         children[#children + 1] = badge
+    end
+
+    -- Favourites star (top-left): same halo'd-glyph treatment as the
+    -- bookmark-check on the bottom-left, but mirrored to the top edge so
+    -- the two indicators (in-progress / finished bookmark below, favourite
+    -- star above) don't fight for the same corner. Sized at _glyphSize
+    -- to match the bookmark glyph exactly, so a book that's both a
+    -- favourite AND in-progress reads as a balanced pair of corner marks
+    -- rather than mismatched chrome.
+    --
+    -- Membership check goes straight to ReadCollection.coll.favorites
+    -- because book.in_favorites is only set by Repo.getFavorites -- on
+    -- every other fetch path the field is nil and a per-book check is
+    -- needed. The table lookup is O(1) (filepath key), so the cost is
+    -- negligible per shelf row.
+    local fp = self.book and self.book.filepath
+    -- `suppress_favorite_badge` lets the hero card opt out — the hero's
+    -- size + dedicated ★ button in the long-press menu make the corner
+    -- badge feel redundant there.
+    if (not self.is_bulk_selected)
+            and (not self.suppress_favorite_badge)
+            and fp
+            and BookshelfSettings.isTrue("show_fav_badge") then
+        local rc_ok, rc = pcall(require, "readcollection")
+        local in_fav = rc_ok and rc and rc.coll
+                       and rc.coll.favorites
+                       and rc.coll.favorites[fp] ~= nil
+        if in_fav then
+            -- 70% of bookmark size: the star glyph is intrinsically wider
+            -- than the bookmark at the same point size, so the star reads
+            -- as bigger when nominal sizes match. 70% brings the optical
+            -- weight roughly in line.
+            local glyph_h = math.floor(_glyphSize(card_w) * 0.70)
+            local glyph_w = self:_glyphWidth(glyph_h)
+            if glyph_w <= card_w * 0.4 then
+                local colors  = CoverProgress.resolvedColors()
+                local halo_w   = 1
+                -- Shadow extent must exceed halo_w to peek out from
+                -- behind the outline. ~6% of glyph height keeps it
+                -- proportional across DPIs while always landing 1-2 px
+                -- beyond the halo.
+                local shadow_d = math.max(halo_w + 2,
+                                          math.floor(glyph_h * 0.10))
+                -- Probe the bare star widget to measure the TRUE rendered
+                -- height (Font:getFace at size N renders at ~N*1.3-1.4 once
+                -- ascent / descent / line-height padding are accounted for;
+                -- the OverlapGroup's synthetic dimen under-reports that).
+                local probe = CoverProgress.buildGlyphWidget(
+                    "\xEF\x80\x85",  -- nerdfont star.1 (U+F005)
+                    glyph_h,
+                    Blitbuffer.COLOR_BLACK,
+                    "symbols")
+                local widget_h = probe:getSize().h
+                probe:free()
+                local outlined = CoverProgress.buildHaloShadowedGlyphWidget(
+                    "\xEF\x80\x85",
+                    glyph_h,
+                    halo_w,
+                    shadow_d, shadow_d,  -- down-right
+                    colors.border,          -- halo (shared "Border color")
+                    colors.favorite_star,   -- centre fill (user-tunable)
+                    colors.shadow,          -- shadow (always dark on screen)
+                    "symbols")
+                -- 35% of the glyph hangs above the cover; 65% sits on the
+                -- artwork. More overhang than the previous 25% so the star
+                -- clearly nestles into the top edge rather than sitting on
+                -- it, but still lighter than the bookmark's 50% dangle.
+                local top_lift = 0.35
+                local y_offset = -math.floor(widget_h * top_lift + 0.5) - halo_w
+                -- Both star and bookmark anchor on _glyphLeftInset(), but
+                -- the star is 70% of the bookmark's nominal height so its
+                -- centroid falls noticeably to the left of the bookmark's.
+                -- Shift right by half the size difference so the two
+                -- glyphs read as visually aligned in the same column.
+                local center_shift = math.floor((_glyphSize(card_w) - glyph_h) / 2)
+                local x_offset = _glyphLeftInset() - halo_w + center_shift
+                outlined.overlap_offset = { x_offset, y_offset }
+                children[#children + 1] = outlined
+            end
+        end
     end
 
     -- Bulk-select corner flag (top-left). Appended last so it paints
@@ -1069,7 +1206,7 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         -- arc, to fake rounded corners on top of a rectangular image.
         -- With the BorderOverlay backdrop those bg-white pixels poke
         -- out into the black ring as four little white teeth. Invert
-        -- the mask colour to match the backdrop so the corner squares
+        -- the mask color to match the backdrop so the corner squares
         -- merge seamlessly with the surrounding black.
         cover_args.bg_color = Blitbuffer.COLOR_BLACK
     else
@@ -1077,7 +1214,7 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         -- at (SHADOW_OFFSET, SHADOW_OFFSET) with the same w/h and same
         -- radius. Pass these so the corner mask can restore shadow grey
         -- where the shadow would otherwise show through.
-        cover_args.shadow_color    = SHADOW_GRAY
+        cover_args.shadow_color    = _shadowGray()
         cover_args.shadow_offset_x = SHADOW_OFFSET
         cover_args.shadow_offset_y = SHADOW_OFFSET
         cover_args.shadow_radius   = CARD_RADIUS
@@ -1098,6 +1235,8 @@ function SpineWidget:_renderFallback()
 
     local card_w, card_h = self:_cardDimensions()
     local border = CARD_BORDER
+    local colors = CoverProgress.resolvedColors()
+    local outer_bg, inner_bg = _fallbackBgs()
 
     -- Vintage-cover layout. Outer card paints a paper-tone background +
     -- thin border (matches the cover-render path so adjacent shelves
@@ -1134,6 +1273,11 @@ function SpineWidget:_renderFallback()
         face                          = Font:getFace("infofont", 13),
         bold                          = true,
         fgcolor                       = Blitbuffer.COLOR_BLACK,
+        -- TextBoxWidget fills its whole bitmap with bgcolor (default white).
+        -- Left at white that fill inverts to a solid black box in night mode,
+        -- which doesn't match the dark-grey card. Match the inner card fill
+        -- so the text sits flush on the card surface in both modes.
+        bgcolor                       = inner_bg,
         width                         = content_w,
         alignment                     = "center",
         height                        = title_max_h,
@@ -1178,6 +1322,7 @@ function SpineWidget:_renderFallback()
             text                          = author_text,
             face                          = Font:getFace("infofont", 10),
             fgcolor                       = Blitbuffer.COLOR_BLACK,
+            bgcolor                       = inner_bg,
             width                         = content_w,
             alignment                     = "center",
             height                        = author_max_h,
@@ -1189,9 +1334,12 @@ function SpineWidget:_renderFallback()
 
     -- Inner frame: thin border around a near-white inner fill. The
     -- second border is what makes it read as "ornate" vs a plain card.
+    -- Border color follows the user's "Border color" setting so the
+    -- placeholder cover ages with the rest of the chrome.
     local inner_frame = FrameContainer:new{
         bordersize = Size.border.thin,
-        background = Blitbuffer.COLOR_WHITE,
+        color      = colors.border,
+        background = inner_bg,
         padding    = content_pad,
         CenterContainer:new{
             dimen = Geom:new{
@@ -1208,9 +1356,10 @@ function SpineWidget:_renderFallback()
     -- is enlarged for the progress bar (asymmetric insets).
     local card = FrameContainer:new{
         bordersize = border,
+        color      = colors.border,
         radius     = CARD_RADIUS,
         padding    = 0,
-        background = Blitbuffer.gray(0.08),
+        background = outer_bg,
         VerticalGroup:new{
             align = "center",
             VerticalSpan:new{ width = inset_v_top - border },

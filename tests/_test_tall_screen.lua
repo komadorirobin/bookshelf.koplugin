@@ -136,31 +136,22 @@ test("_nShelves: standard expanded = 3", function()
     eq(bw(750, 1024, true):_nShelves(), 3)
 end)
 
-test("_nShelves: tall normal (Pixel 6 1080x2400) = 3", function()
-    -- Hero share at n=3 is ~32% on this aspect, comfortably above the
-    -- 30% floor, so the dynamic loop keeps the natural row count.
-    eq(bw(1080, 2400, false):_nShelves(), 3)
+test("_nShelves: tall normal (Pixel 6 1080x2400) = 6", function()
+    -- Upstream's adaptive layout sizes rows from the selected cover bucket
+    -- and lets tall screens use the extra vertical space.
+    eq(bw(1080, 2400, false):_nShelves(), 6)
 end)
 
-test("_nShelves: tall expanded = 4", function()
-    -- Expanded mode bypasses the share check (hero is just a strip) and
-    -- adds one row to the base count.
-    eq(bw(1080, 2400, true):_nShelves(), 4)
+test("_nShelves: tall expanded = 7", function()
+    eq(bw(1080, 2400, true):_nShelves(), 7)
 end)
 
-test("_nShelves: phone-tall normal (Boox Palma 824x1648) = 2", function()
-    -- Issue #36: with n=3 the hero falls to ~22% (below 30% floor), so
-    -- the dynamic loop drops to n=2 where hero share reaches ~49% and
-    -- covers keep their natural 2:3 aspect at full slot dimensions.
-    eq(bw(824, 1648, false):_nShelves(), 2)
+test("_nShelves: phone-tall normal (Boox Palma 824x1648) = 4", function()
+    eq(bw(824, 1648, false):_nShelves(), 4)
 end)
 
-test("_nShelves: phone-tall expanded (Boox Palma 824x1648) = 3", function()
-    -- Expanded adds 1 to the dynamic _baseShelves (2 on Palma), giving
-    -- 3 visible rows instead of the static-base 4. Keeps the
-    -- "expanded reveals one extra row" invariant: 9 visible expanded vs
-    -- 6 visible normal.
-    eq(bw(824, 1648, true):_nShelves(), 3)
+test("_nShelves: phone-tall expanded (Boox Palma 824x1648) = 5", function()
+    eq(bw(824, 1648, true):_nShelves(), 5)
 end)
 
 -- ── _nCols tests ───────────────────────────────────────────────────────────
@@ -168,8 +159,8 @@ test("_nCols: standard screen = 4", function()
     eq(bw(750, 1024):_nCols(), 4)
 end)
 
-test("_nCols: tall screen = 3", function()
-    eq(bw(1080, 2400):_nCols(), 3)
+test("_nCols: tall screen = 5", function()
+    eq(bw(1080, 2400):_nCols(), 5)
 end)
 
 -- ── _pageSize tests ────────────────────────────────────────────────────────
@@ -179,15 +170,13 @@ test("_pageSize: standard screen tracks visible rows", function()
 end)
 
 test("_pageSize: tall PW-aspect tracks visible rows", function()
-    eq(bw(1080, 2400, false):_pageSize(), 9)
-    eq(bw(1080, 2400, true):_pageSize(),  12)
+    eq(bw(1080, 2400, false):_pageSize(), 30)
+    eq(bw(1080, 2400, true):_pageSize(),  35)
 end)
 
 test("_pageSize: phone-tall (Palma 824x1648) tracks visible rows", function()
-    -- _baseShelves dropped to 2 to keep hero share >= 30%, so the page
-    -- advance step follows the visible row count in each mode.
-    eq(bw(824, 1648, false):_pageSize(), 6)
-    eq(bw(824, 1648, true):_pageSize(),  9)
+    eq(bw(824, 1648, false):_pageSize(), 16)
+    eq(bw(824, 1648, true):_pageSize(),  20)
 end)
 
 -- ── _viewSize tests ────────────────────────────────────────────────────────
@@ -199,22 +188,20 @@ test("_viewSize: standard expanded = 12", function()
     eq(bw(750, 1024, true):_viewSize(), 12)
 end)
 
-test("_viewSize: tall PW-aspect normal = 9", function()
-    eq(bw(1080, 2400, false):_viewSize(), 9)
+test("_viewSize: tall PW-aspect normal = 30", function()
+    eq(bw(1080, 2400, false):_viewSize(), 30)
 end)
 
-test("_viewSize: tall PW-aspect expanded = 12", function()
-    eq(bw(1080, 2400, true):_viewSize(), 12)
+test("_viewSize: tall PW-aspect expanded = 35", function()
+    eq(bw(1080, 2400, true):_viewSize(), 35)
 end)
 
-test("_viewSize: phone-tall normal (Palma) = 6", function()
-    -- 2 dynamic shelves * 3 cols = 6 visible per page in normal mode.
-    eq(bw(824, 1648, false):_viewSize(), 6)
+test("_viewSize: phone-tall normal (Palma) = 16", function()
+    eq(bw(824, 1648, false):_viewSize(), 16)
 end)
 
-test("_viewSize: phone-tall expanded (Palma) = 9", function()
-    -- Expanded reveals one extra row: 3 shelves * 3 cols = 9.
-    eq(bw(824, 1648, true):_viewSize(), 9)
+test("_viewSize: phone-tall expanded (Palma) = 20", function()
+    eq(bw(824, 1648, true):_viewSize(), 20)
 end)
 
 -- ── Report ─────────────────────────────────────────────────────────────────

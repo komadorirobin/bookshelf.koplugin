@@ -147,7 +147,7 @@ function LibraryModal:_dismissKeyboard()
     if input.focused then
         -- :unfocus() also flips _frame_textwidget.color from BLACK→DARK_GRAY,
         -- which is the visible "focus border" the user is asking for.
-        -- Setting input.focused = false alone wouldn't update the colour.
+        -- Setting input.focused = false alone wouldn't update the color.
         input:unfocus()
         UIManager:setDirty(self, "ui")
     end
@@ -433,10 +433,10 @@ function LibraryModal:_renderSearchInput(content_width)
         -- onTapTextBox in KOReader's InputText sets self.focused = true but
         -- never calls :focus() — the latter is what flips
         -- self._frame_textwidget.color from DARK_GRAY → BLACK (the visible
-        -- "focused border"). Without :focus(), the colour stays gray until
+        -- "focused border"). Without :focus(), the color stays gray until
         -- some other path triggers the update (typing the first character).
         -- Wrap onTapTextBox to call :focus() ourselves and mark the modal
-        -- dirty so the colour change shows up immediately.
+        -- dirty so the color change shows up immediately.
         local input = self._search_input
         local orig_onTapTextBox = input.onTapTextBox
         input.onTapTextBox = function(this, arg, ges)
@@ -556,7 +556,7 @@ function LibraryModal:_renderChipStrip(content_width)
         -- Border thickness stays constant across active/inactive so the chip
         -- widths don't shift when selection changes (avoids the "jiggle" of
         -- adjacent chips contracting/expanding by ~3px on tap). Active chip
-        -- uses black border colour which merges into its black fill, so the
+        -- uses black border color which merges into its black fill, so the
         -- border is invisible there but still occupies the same space.
         local fc = FrameContainer:new{
             bordersize = Size.border.thin,

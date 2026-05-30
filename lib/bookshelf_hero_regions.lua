@@ -9,7 +9,7 @@ Regions.SETTINGS_KEY = "bookshelf_hero_regions"
 
 -- Render order from top to bottom. Renderer and chooser modal both use
 -- this list. Adding a region means adding it here AND adding a default.
-Regions.ORDER = { "status", "rating", "title", "author", "metadata", "description", "progress" }
+Regions.ORDER = { "status", "rating", "title", "author", "metadata", "description", "tags", "progress" }
 
 Regions.DEFAULTS = {
     status = {
@@ -85,6 +85,15 @@ Regions.DEFAULTS = {
         bar_height = nil,         -- percentage of rendered text height; nil = 100% (match)
         bar_style  = "bordered",
     },
+    -- Interactive pill strip: same author / series / collection / genre /
+    -- folder pills the long-press book menu renders, but inline on the
+    -- hero. Tappable -- each pill drills into the matching view. Off by
+    -- default (opt-in); when enabled sits above the progress bar and
+    -- eats into the description's vertical slack.
+    tags = {
+        template = "",     -- ignored; pills are widgets, not text
+        disabled = true,   -- off by default
+    },
 }
 
 -- Labels for the chooser modal. English-only here; settings.lua wraps in _().
@@ -95,6 +104,7 @@ Regions.LABELS = {
     rating      = "Rating (interactive)",
     metadata    = "Metadata",
     description = "Description",
+    tags        = "Tags (interactive)",
     progress    = "Progress",
 }
 

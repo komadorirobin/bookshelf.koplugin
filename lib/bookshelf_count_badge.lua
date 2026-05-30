@@ -56,11 +56,11 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
         -- "×N" (UTF-8 U+00D7 multiplication sign + hair + digits)
         text = "\xc3\x97" .. HAIR .. tostring(total)
     end
-    local colours = CoverProgress.resolvedColours()
+    local colors = CoverProgress.resolvedColors()
     return FrameContainer:new{
         bordersize     = Size.border.thin,
-        background     = colours.badge_bg,
-        color          = colours.badge_fg,
+        background     = colors.badge_bg,
+        color          = colors.badge_fg,
         radius         = Screen:scaleBySize(3),
         padding_left   = Size.padding.default,
         padding_right  = Size.padding.default,
@@ -70,7 +70,7 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
             text = text,
             face = Font:getFace("smallinfofont", _badgeSize(12)),
             bold = true,
-            fgcolor = colours.badge_fg,
+            fgcolor = colors.badge_fg,
         },
     }
 end

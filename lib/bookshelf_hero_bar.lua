@@ -119,7 +119,7 @@ function BookendsBar:free() end -- nothing to release; pure painter
 -- `style` is the user's saved choice; we silently downgrade to whatever
 -- the active backend supports (paintProgressBar tolerates unknown
 -- styles by rendering bordered). `colors` is the bookends paintProgressBar
--- colour table ({ fill = ..., bg = ... } at minimum); when bookends isn't
+-- color table ({ fill = ..., bg = ... } at minimum); when bookends isn't
 -- installed the fallback ProgressWidget ignores it.
 function HeroBar:new(o)
     o = o or {}
@@ -145,7 +145,7 @@ function HeroBar:new(o)
     -- Fallback: KOReader ProgressWidget. Only bordered / solid are
     -- meaningful; saved styles like wavy render as the default look.
     -- ProgressWidget doesn't expose per-instance fill/bg overrides, so
-    -- user colour picks have no effect along this path — acceptable as
+    -- user color picks have no effect along this path — acceptable as
     -- the fallback only triggers when bookends isn't installed, and the
     -- user can install bookends to unlock themed bars.
     local ProgressWidget = require("ui/widget/progresswidget")

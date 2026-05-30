@@ -1,5 +1,5 @@
 --[[
-Bookshelf colour palette picker.
+Bookshelf color palette picker.
 
 A grid of 25 curated swatches (5 families of 5 shades) plus a hex input for
 custom values. Tap-to-preview: every swatch tap applies immediately via the
@@ -51,7 +51,7 @@ local SWATCH_SIDE  = Screen:scaleBySize(60)
 local SWATCH_GAP   = Screen:scaleBySize(8)
 local SWATCH_RADIUS = Size.radius.default
 
--- Swatch: a rounded coloured square that renders via paintRoundedRectRGB32.
+-- Swatch: a rounded colored square that renders via paintRoundedRectRGB32.
 -- A WidgetContainer subclass — owns its own dimen, not a CenterContainer.
 local Swatch = WidgetContainer:extend{
     dimen    = nil,
@@ -153,12 +153,12 @@ local function makeFooterBtn(text, width, height, on_tap)
     return ic
 end
 
-local ColourPaletteWidget = FocusManager:extend{
+local ColorPaletteWidget = FocusManager:extend{
     -- Mirrors KOReader's stock InputDialog (inputdialog.lua:124) — required
     -- so we still receive tap events while the on-screen keyboard is shown.
     -- Without it, UIManager:sendEvent (uimanager.lua:943) only dispatches to
     -- widgets *under* the keyboard if they're flagged is_always_active. The
-    -- result on a Kobo Libra Colour was a hard lockup: keyboard couldn't be
+    -- result on a Kobo Libra Color was a hard lockup: keyboard couldn't be
     -- dismissed and Apply/Cancel were unreachable, requiring a forced reboot.
     is_always_active = true,
     title            = nil,
@@ -170,12 +170,12 @@ local ColourPaletteWidget = FocusManager:extend{
     null_tile        = nil,
     -- When set, a "White" footer button appears that taps apply_callback with
     -- this hex and closes the picker (one-tap commit, like Default but to
-    -- a fixed colour rather than off). Used by the background-colour picker
-    -- as a shortcut to the page-background colour.
+    -- a fixed color rather than off). Used by the background-color picker
+    -- as a shortcut to the page-background color.
     white_callback   = nil,
 }
 
-function ColourPaletteWidget:init()
+function ColorPaletteWidget:init()
     self.screen_width  = Screen:getWidth()
     self.screen_height = Screen:getHeight()
 
@@ -206,7 +206,7 @@ function ColourPaletteWidget:init()
 end
 
 -- Returns true if the on-screen keyboard is currently up for our hex_input.
-function ColourPaletteWidget:_keyboardVisible()
+function ColorPaletteWidget:_keyboardVisible()
     return self.hex_input
         and self.hex_input.isKeyboardVisible
         and self.hex_input:isKeyboardVisible()
@@ -214,13 +214,13 @@ end
 
 -- Tear down the on-screen keyboard (if any) for our hex_input. Safe to call
 -- from any callback path; idempotent.
-function ColourPaletteWidget:_closeKeyboard()
+function ColorPaletteWidget:_closeKeyboard()
     if self:_keyboardVisible() then
         self.hex_input:onCloseKeyboard()
     end
 end
 
-function ColourPaletteWidget:onTapOutside(arg, ges)
+function ColorPaletteWidget:onTapOutside(arg, ges)
     -- If the keyboard is up and the user tapped outside it, dismiss the
     -- keyboard rather than consuming the tap silently. Mirrors stock
     -- InputDialog's behaviour (inputdialog.lua:562-576). The picker itself
@@ -238,14 +238,14 @@ end
 -- Always tear down the keyboard before leaving the widget — our callbacks
 -- close the picker via UIManager:close, but the InputText's keyboard is a
 -- separate top-level widget that needs explicit cleanup.
-function ColourPaletteWidget:onCloseWidget()
+function ColorPaletteWidget:onCloseWidget()
     self:_closeKeyboard()
     if FocusManager.onCloseWidget then
         return FocusManager.onCloseWidget(self)
     end
 end
 
-function ColourPaletteWidget:update()
+function ColorPaletteWidget:update()
     local side = SWATCH_SIDE
     local gap  = SWATCH_GAP
     local iw   = self.inner_width
@@ -340,7 +340,7 @@ function ColourPaletteWidget:update()
     -- Footer row: Cancel | Default | [White] | Apply, matching the preset-library
     -- modal's Close | Manage… | Apply pattern (no button borders, LineWidget
     -- dividers). White is conditional — present only when white_callback is set
-    -- (currently the background-colour picker).
+    -- (currently the background-color picker).
     local footer_h = Screen:scaleBySize(44)
     local n_btns   = self.white_callback and 4 or 3
     local btn_w    = math.floor(iw / n_btns)
@@ -435,16 +435,16 @@ function ColourPaletteWidget:update()
 end
 
 -- Mid-edit hook: revalidates the typed hex and, when it forms a fresh valid
--- value, both pushes the colour to the underlying reader overlay (via the
+-- value, both pushes the color to the underlying reader overlay (via the
 -- caller-supplied apply_callback) and refreshes the in-dialog preview swatch.
 -- The apply_callback path schedules its own repaint of the bookshelf overlay
--- (see colours_menu.lua's saveColors → markDirty), which in turn brings the
+-- (see colors_menu.lua's saveColors → markDirty), which in turn brings the
 -- picker's preview region back to screen — no extra setDirty needed here,
 -- which avoids racing InputText's per-keystroke dirty tracking.
-function ColourPaletteWidget:_updatePreview()
+function ColorPaletteWidget:_updatePreview()
     if not self.preview_swatch or not self.hex_input then return end
-    local Colour = require("lib/bookshelf_colour")
-    local hex = Colour.normaliseHex(self.hex_input:getText() or "")
+    local Color = require("lib/bookshelf_color")
+    local hex = Color.normaliseHex(self.hex_input:getText() or "")
     if not hex then return end
     if hex == self.selected_hex then return end  -- no-op if unchanged
     self.selected_hex = hex
@@ -455,15 +455,15 @@ function ColourPaletteWidget:_updatePreview()
     if self.apply_callback then self.apply_callback(hex) end
 end
 
-function ColourPaletteWidget:onHexSubmit()
+function ColorPaletteWidget:onHexSubmit()
     local txt = self.hex_input:getText()
     if not txt then return end
     -- Accept #RRGGBB or short #RGB (leading # optional, whitespace tolerated).
     -- Store the normalised #RRGGBB form so presets on disk are canonical.
-    local Colour = require("lib/bookshelf_colour")
-    local hex = Colour.normaliseHex(txt)
+    local Color = require("lib/bookshelf_color")
+    local hex = Color.normaliseHex(txt)
     if not hex then
-        Notification:notify(_("Invalid hex colour (use #RGB or #RRGGBB)"))
+        Notification:notify(_("Invalid hex color (use #RGB or #RRGGBB)"))
         return
     end
     self.selected_hex = hex
@@ -476,13 +476,13 @@ function ColourPaletteWidget:onHexSubmit()
     self:update()
 end
 
-function ColourPaletteWidget:onShow()
+function ColorPaletteWidget:onShow()
     UIManager:setDirty(self, "ui")
     return true
 end
 
 -- Public entry point.
-local function showColourPicker(bookshelf, title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
+local function showColorPicker(bookshelf, title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
     local restoreMenu = bookshelf:hideMenu(touchmenu_instance)
 
     local closed = false
@@ -493,7 +493,7 @@ local function showColourPicker(bookshelf, title, current_hex, default_hex, on_a
     end
 
     local widget
-    widget = ColourPaletteWidget:new{
+    widget = ColorPaletteWidget:new{
         title            = title or _("Pick a color"),
         selected_hex     = current_hex,
         apply_callback   = on_apply,
@@ -530,8 +530,8 @@ end
 
 local M = {}
 function M.attach(Bookshelf)
-    function Bookshelf:showColourPicker(title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
-        showColourPicker(self, title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
+    function Bookshelf:showColorPicker(title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
+        showColorPicker(self, title, current_hex, default_hex, on_apply, on_default, on_revert, touchmenu_instance, null_tile_label, white_hex)
     end
 end
 return M

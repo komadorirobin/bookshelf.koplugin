@@ -93,13 +93,30 @@ function ShelfRow.new(opts)
     --     and the extra slot height goes to the cover (slightly fatter than
     --     natural aspect, but no horizontal whitespace and the row doesn't
     --     leave slack that would push pagination off its fixed y position).
+    -- Aspect bounds so covers don't get extreme either way:
+    --   * Shrink floor: stop shrinking once slot_w drops below 70% of
+    --     natural (covers become hard to read). Below that, the row
+    --     simply leaves vertical slack instead.
+    --   * Stretch cap: allow at most 5% vertical overshoot (slot_h grows
+    --     past natural, making covers slightly taller than 2:3). Beyond
+    --     that the row keeps natural slot_h and leaves vertical slack.
+    local SHRINK_FLOOR  = 0.70
+    local STRETCH_CAP   = 1.05
+    local natural_slot_h = slot_h
     if opts.height then
         if slot_h > opts.height then
-            slot_h = opts.height
+            -- Budget tighter than natural: shrink both axes to preserve
+            -- 2:3, but not below the shrink floor.
+            local target_h = math.max(opts.height,
+                math.floor(natural_slot_h * SHRINK_FLOOR))
+            slot_h = target_h
             slot_w = math.floor(slot_h / 1.5)
         elseif slot_h < opts.height then
-            slot_h = opts.height
-            -- slot_w stays at natural — covers fill row width without gaps.
+            -- Budget looser than natural: stretch slot_h vertically up to
+            -- the cap. Beyond that, hold at the cap and let the row's
+            -- height-vs-content delta become vertical slack.
+            slot_h = math.min(opts.height,
+                math.floor(natural_slot_h * STRETCH_CAP))
         end
     end
 
@@ -112,15 +129,13 @@ function ShelfRow.new(opts)
     -- Single line at 14pt — short titles fit, longer ones truncate with
     -- ellipsis at the right edge of the slot. Two-line wrap was tried and
     -- read as crowded; truncation keeps the grid scannable.
-    -- Expanded shelf label-below-cover mode. Default "title" preserves
-    -- pre-v2.2.x behaviour. "author" / "series" pick the matching
-    -- book metadata; missing data falls back to title (or the literal
-    -- "None" for series). "none" reserves the strip but doesn't draw
-    -- any text — keeps covers the same physical size across modes so
-    -- toggling between labels doesn't stretch covers vertically.
-    local label_mode = BookshelfSettings.read("expanded_shelf_label") or "title"
-    if label_mode ~= "author" and label_mode ~= "series" and label_mode ~= "none" then
-        label_mode = "title"
+    -- Expanded shelf label-below-cover mode. Default "none" lets covers
+    -- claim the full slot height. "title" / "author" / "series" reserve
+    -- a strip below each cover for the corresponding metadata; missing
+    -- data falls back to title (or the literal "None" for series).
+    local label_mode = BookshelfSettings.read("expanded_shelf_label") or "none"
+    if label_mode ~= "title" and label_mode ~= "author" and label_mode ~= "series" then
+        label_mode = "none"
     end
     -- Two flags driven by the same `opts.show_titles` input — kept
     -- separate so the geometry stays consistent while the rendering
@@ -144,7 +159,10 @@ function ShelfRow.new(opts)
     local label_scale = BookshelfSettings.read("expanded_shelf_font_scale") or 100
     local title_block_h = 0
     local title_face
-    if show_titles then
+    -- Only reserve the strip when a label will actually be drawn. With
+    -- label_mode = "none" the cover claims the full slot height — the
+    -- stretch cap below keeps it from growing past ~5% of natural.
+    if draw_label then
         local face_size = math.floor(14 * label_scale / 100 + 0.5)
         title_face    = Font:getFace("infofont", face_size)
         title_block_h = label_gap + math.floor(face_size * 1.3)
@@ -154,7 +172,19 @@ function ShelfRow.new(opts)
             ((item.filepath or ""):match("([^/]+)$") or ""):gsub("%.[^.]+$", "")
         if label_mode == "author" then
             local a = item.author or item.authors
-            if a and a ~= "" then return a end
+            if a and a ~= "" then
+                -- Honour the "Author name formatting" setting so the
+                -- expanded-shelf author label matches the form used on
+                -- the hero, the long-press menu, and the Authors chip.
+                local fmt = BookshelfSettings.read("author_format") or "auto"
+                if fmt ~= "auto" then
+                    local ok_a, _AN = pcall(require, "lib/bookshelf_author_name")
+                    if ok_a and _AN and _AN.formatted then
+                        return _AN.formatted(a, fmt)
+                    end
+                end
+                return a
+            end
         elseif label_mode == "series" then
             local sname = item.series_name
             if sname and sname ~= "" then

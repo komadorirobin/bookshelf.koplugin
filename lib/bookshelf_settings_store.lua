@@ -41,7 +41,7 @@ local LEGACY_KEYS = {
     -- UX toggles
     "show_close_msg", "show_series_num",
     "fade_finished_books", "fade_finished_folders",
-    -- Cover-progress indicator colours / toggles
+    -- Cover-progress indicator colors / toggles
     "progress_fill", "progress_track", "bookmark_color",
     "badge_fg", "badge_bg",
     "folder_overlay_bg", "folder_overlay_fg",
@@ -102,7 +102,7 @@ local function _open()
 end
 
 -- Monotonic counter bumped on every save / delete. Lets downstream
--- modules memoise expensive derived state (e.g. CoverProgress colour
+-- modules memoise expensive derived state (e.g. CoverProgress color
 -- resolution) and invalidate cheaply by comparing the cached counter
 -- against the current one. Cheap to read (single field access) and
 -- cheap to bump (one add per user-action settings write — same cadence

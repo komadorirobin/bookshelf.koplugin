@@ -93,4 +93,54 @@ function AuthorName.givenOf(raw)
     return out or ""
 end
 
+-- surnameSortKey(raw): canonical lowercase surname for SORT + alpha-jump
+-- purposes. Strips leading particle words ("de Maupassant" -> "maupassant",
+-- "van der Berg" -> "berg") so the sort order matches the user's mental
+-- model of where a particle-prefixed surname belongs in the alphabet.
+-- surnameOf KEEPS the particle for display (e.g. the Authors chip card
+-- still reads "de Maupassant"), this is a separate key for ordering.
+function AuthorName.surnameSortKey(raw)
+    local s = AuthorName.surnameOf(raw)
+    if not s or s == "" then return "" end
+    local words = {}
+    for w in s:gmatch("%S+") do words[#words + 1] = w end
+    if #words == 0 then return s:lower() end
+    local i = 1
+    while i < #words and PARTICLES[words[i]:lower()] do
+        i = i + 1
+    end
+    local out = words[i]
+    for j = i + 1, #words do out = out .. " " .. words[j] end
+    return out:lower()
+end
+
+-- formatted(raw, mode): convert a stored author string into the user's
+-- preferred display form. Modes:
+--   "auto"       — return raw unchanged. Mirrors the pre-setting
+--                  behaviour: whichever form the first-walked book used
+--                  is what the user sees.
+--   "first_last" — always "Forename Surname" (e.g. "Richard Osman").
+--   "last_first" — always "Surname, Forename" (e.g. "Osman, Richard").
+--
+-- Falls back to raw when the parser can't extract both a given and a
+-- surname (single-word "AndyHazz"-style authors, empty input, etc.) so
+-- the user never sees a stripped-down version of a name we couldn't
+-- parse confidently.
+function AuthorName.formatted(raw, mode)
+    if type(raw) ~= "string" or raw == "" then return raw end
+    if mode == nil or mode == "auto" then return raw end
+    local surname = AuthorName.surnameOf(raw)
+    local given   = AuthorName.givenOf(raw)
+    if not surname or surname == "" then return raw end
+    if not given   or given   == "" then return raw end
+    -- Identical given == surname (single-word author) leaves no work to do.
+    if given:lower() == surname:lower() then return raw end
+    if mode == "first_last" then
+        return given .. " " .. surname
+    elseif mode == "last_first" then
+        return surname .. ", " .. given
+    end
+    return raw
+end
+
 return AuthorName

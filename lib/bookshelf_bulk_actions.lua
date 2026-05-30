@@ -55,6 +55,7 @@ function BulkActions.show(opts)
             or draft.collections_remove ~= nil
             or draft.refresh_metadata
             or draft.remove_from_history
+            or draft.favorite ~= nil
     end
     -- Staged buttons get a light-gray background fill (mutated on tap +
     -- propagated via dialog:reinit). Matches the per-book menu's
@@ -170,6 +171,38 @@ function BulkActions.show(opts)
         end,
     }
 
+    -- Favourite: 3-state cycle button (no change → add → remove → none).
+    -- Mirrors the long-press menu's ± Favourite toggle but stages across
+    -- the whole selection. The default ReadCollection name is "favorites"
+    -- (the same key the spine widget's star checks), so add/remove maps
+    -- directly to ReadCollection:addItem / :removeItem on apply.
+    local favorite_button
+    favorite_button = {
+        text_func = function()
+            if draft.favorite == "add" then
+                return "+ " .. _("Favourite")
+            elseif draft.favorite == "remove" then
+                return "\xE2\x88\x92 " .. _("Favourite")  -- U+2212 minus
+            end
+            return _("Favourite")
+        end,
+        background = draft.favorite and STAGED_BG or nil,
+        callback = function()
+            if draft.favorite == nil then
+                draft.favorite = "add"
+            elseif draft.favorite == "add" then
+                draft.favorite = "remove"
+            else
+                draft.favorite = nil
+            end
+            favorite_button.background = draft.favorite and STAGED_BG or nil
+            if dialog and dialog.reinit then
+                dialog:reinit()
+                UIManager:setDirty(dialog, "ui")
+            end
+        end,
+    }
+
     -- Collections: opens the collection manager in bulk mode. Manager
     -- renders tri-state cells against the selection (all / some / none)
     -- and returns a {add, remove} diff via on_save. Cancel leaves the
@@ -251,7 +284,8 @@ function BulkActions.show(opts)
                 ok_text = _("Reset"),
                 ok_callback = function()
                     local DocSettings = require("docsettings")
-                    for _i, fp in ipairs(selection:paths()) do
+                    local paths = selection:paths()
+                    for _i, fp in ipairs(paths) do
                         pcall(function()
                             local ds = DocSettings:open(fp)
                             ds:purge()
@@ -259,6 +293,20 @@ function BulkActions.show(opts)
                     end
                     local Repo = require("lib/bookshelf_book_repository")
                     Repo.invalidateBookCache("bulk-reset")
+                    -- Per-file progress cache holds the pre-reset status
+                    -- (e.g. "reading") for each file; without flushing
+                    -- it, status-filtered chips like Reading keep
+                    -- including the now-purged books and the placeholder
+                    -- maths goes sideways. Flush each path individually
+                    -- so we don't blow away progress data for files that
+                    -- weren't part of the reset.
+                    for _i, fp in ipairs(paths) do
+                        pcall(function() Repo.invalidateProgressCache(fp) end)
+                    end
+                    -- Reset is a destructive bulk action; like Delete,
+                    -- exit selection mode after applying so the bulk-
+                    -- select footer (cancel ✕ + count badge) clears.
+                    selection:exitMode()
                     bw:_rebuild()
                     UIManager:setDirty(bw, "ui")
                     if discard_toast then
@@ -457,6 +505,19 @@ function BulkActions.show(opts)
                             end
                         end, fp) and ok
                     end
+                    if draft.favorite == "add" then
+                        ok = safe("favorite_add", function()
+                            local ReadCollection = require("readcollection")
+                            ReadCollection:addItem(fp,
+                                ReadCollection.default_collection_name)
+                        end, fp) and ok
+                    elseif draft.favorite == "remove" then
+                        ok = safe("favorite_remove", function()
+                            local ReadCollection = require("readcollection")
+                            ReadCollection:removeItem(fp,
+                                ReadCollection.default_collection_name)
+                        end, fp) and ok
+                    end
                     if draft.remove_from_history then
                         ok = safe("remove_history", function()
                             require("readhistory"):removeItemByPath(fp)
@@ -468,12 +529,20 @@ function BulkActions.show(opts)
                 -- only mutates in-memory state (unlike removeItem which
                 -- calls write() internally), so without this explicit flush
                 -- bulk-added collections disappear on next session start.
-                if draft.collections_add or draft.collections_remove then
+                -- Favourite add/remove writes to the default collection
+                -- ("favorites") and shares the same flush requirement.
+                if draft.collections_add or draft.collections_remove
+                        or draft.favorite then
                     local ReadCollection = require("readcollection")
                     ReadCollection:write()
                 end
                 local Repo = require("lib/bookshelf_book_repository")
                 Repo.invalidateBookCache("bulk-apply")
+                -- Targeted invalidation so the Favourites chip reflects
+                -- the bulk toggle without a swipe-down refresh.
+                if draft.favorite then
+                    pcall(function() Repo.invalidateFavoritesCache() end)
+                end
                 bw:_rebuild()
                 UIManager:setDirty(bw, "ui")
                 -- Queue refresh-deleted paths for TEXT-ONLY metadata
@@ -527,7 +596,8 @@ function BulkActions.show(opts)
     local buttons = {
         { collections_button, rating_button },
         status_row,
-        { refresh_button, remove_history_button },
+        { favorite_button, refresh_button },
+        { remove_history_button },
         { reset_button, delete_button },
         { cancel_button, apply_button },
     }
