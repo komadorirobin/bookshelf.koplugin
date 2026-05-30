@@ -30,6 +30,12 @@ local function checkmark(key)
     return nil
 end
 
+local function _isAndroidDevice()
+    local ok, Device = pcall(require, "device")
+    return ok and Device and type(Device.isAndroid) == "function"
+        and Device:isAndroid()
+end
+
 -- ─── Sub-actions ──────────────────────────────────────────────────────────────
 
 -- Token picker: opens a popout Menu listing the bookshelf-scoped token
@@ -1489,6 +1495,52 @@ function Settings:_advancedSubItems()
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 self:_pickCoverCacheBudget(touchmenu_instance)
+            end,
+        },
+        {
+            text_func = function()
+                local state = BookshelfSettings.nilOrTrue("android_safe_mode")
+                    and _("On") or _("Off")
+                if not _isAndroidDevice() then
+                    return _("Android safe mode") .. ": " .. state
+                        .. " (" .. _("inactive") .. ")"
+                end
+                return _("Android safe mode") .. ": " .. state
+            end,
+            help_text = _("Avoids Android/HWUI startup crashes seen on some "
+                .. "devices by disabling Bookshelf's automatic background "
+                .. "preload, folder polling, and BIM metadata extraction. "
+                .. "Default: On. Turn it off only to test whether your "
+                .. "device is unaffected; if KOReader starts crashing, turn "
+                .. "it back on."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("android_safe_mode")
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local enabled = BookshelfSettings.nilOrTrue("android_safe_mode")
+                BookshelfSettings.save("android_safe_mode", not enabled)
+                BookshelfSettings.flush()
+                if self._bw then
+                    if self._bw._cancelPreload then self._bw:_cancelPreload() end
+                    if self._bw._cancelChipPreload then self._bw:_cancelChipPreload() end
+                    if self._bw._cancelFilePoll then self._bw:_cancelFilePoll() end
+                    if not BookshelfSettings.nilOrTrue("android_safe_mode") then
+                        if self._bw._maybeStartChipPreload then
+                            self._bw:_maybeStartChipPreload()
+                        end
+                        if self._bw._startFilePoll then
+                            self._bw:_startFilePoll()
+                        end
+                        if self._bw._schedulePreload
+                                and (self._bw._total_pages or 1) > (self._bw.page or 1) then
+                            self._bw:_schedulePreload(1)
+                        end
+                    end
+                end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
             end,
         },
         {

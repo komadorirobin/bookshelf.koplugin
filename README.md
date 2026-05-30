@@ -249,6 +249,11 @@ After adding new books over USB, Calibre, Syncthing, or KOReader's network downl
 - **Tap a chip** -- it also checks for filesystem changes on chip taps.
 - **Swipe down** on the shelf area for an immediate, full refresh; a brief "Refreshing library" notice appears.
 
+On Android, **Advanced settings -> Android safe mode** is on by default. It
+disables Bookshelf's automatic background preload, folder polling, and BIM
+metadata extraction to avoid an Android/HWUI crash reported on some devices.
+Turn it off only if you want to test whether your device is unaffected.
+
 ---
 
 ## Reference
@@ -479,6 +484,7 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `progress_fill` / `progress_track` / `bookmark_color` / `complete_bookmark_color` / `favorite_star_color` / `badge_fg` / `badge_bg` / `border_color` / `folder_overlay_bg` / `folder_overlay_fg` | Cover-chrome colours (% black). Each also has a `_night` variant for the night-mode palette; unset keys fall back to per-mode defaults. |
 | `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
 | `cover_cache_size` | How many scaled covers to keep in memory (default 32). |
+| `android_safe_mode` | Android only. Default on; disables risky background jobs implicated in issue #87. |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |
 | `show_close_msg` | Show the centred "Closing book…" toast when exiting a book. |

@@ -68,6 +68,11 @@ end
 -- still triggering Boox Palma (~20% at n=3) to drop to 2 rows.
 local MIN_HERO_SHARE = 0.25
 
+local function _androidSafeModeEnabled()
+    return Device:isAndroid()
+        and BookshelfSettings.nilOrTrue("android_safe_mode")
+end
+
 -- ─── BookshelfWidget ──────────────────────────────────────────────────────────
 
 local BookshelfWidget = InputContainer:extend{
@@ -2217,15 +2222,14 @@ end
 -- readability.
 function BookshelfWidget:_fireBimExtraction(files, label)
     if not files or #files == 0 then return false end
-    -- vulkan-fix (issue 87): BIM:extractInBackground forks a subprocess
+    -- Android safe mode (issue 87): BIM:extractInBackground forks a subprocess
     -- (FFIUtil.runInSubProcess -> C.fork()). On the reporter's Android device
     -- (Galaxy S24 Ultra, Android 16, Vulkan renderer) this aborts at launch
     -- with "FORTIFY: pthread_mutex_lock on a destroyed mutex" in hwuiTask0 --
     -- the classic fork-in-a-multithreaded-process mutex corruption, surfaced
-    -- by that device's render thread. Gate the fork on Android to test
-    -- whether it's the trigger. If confirmed, the real fix is synchronous
-    -- chunked extraction (no fork) so covers still populate.
-    if Device:isAndroid() then return false end
+    -- by that device's render thread. Default to gating the fork on Android,
+    -- but expose a toggle so users can test whether their device is affected.
+    if _androidSafeModeEnabled() then return false end
     local ok_bim, BIM = pcall(require, "bookinfomanager")
     if not (ok_bim and BIM and BIM.extractInBackground) then return false end
     local has_covers   = false
@@ -2264,10 +2268,10 @@ end
 -- wall-clock budget of BIM_POLL_TOTAL_BUDGET_S. Cancels any earlier
 -- polling timer so consecutive renders don't stack timers.
 function BookshelfWidget:_armExtractionPoll(pending_files)
-    -- vulkan-fix (issue 87): with the extraction fork gated on Android there's
-    -- nothing to poll for (no subprocess will complete), so skip the watch
-    -- loop entirely rather than let it back off against work that never runs.
-    if Device:isAndroid() then return end
+    -- Android safe mode: with the extraction fork gated there's nothing to
+    -- poll for (no subprocess will complete), so skip the watch loop entirely
+    -- rather than let it back off against work that never runs.
+    if _androidSafeModeEnabled() then return end
     if self._bim_poll_fn then
         UIManager:unschedule(self._bim_poll_fn)
         self._bim_poll_fn = nil
@@ -5929,10 +5933,10 @@ end
 function BookshelfWidget:_maybeStartChipPreload()
     if self._chip_preload_done then return end
     if self._chip_preload_fn then return end  -- already in flight
-    -- v2.3.1 defensive: the always-on background preload is implicated in an
-    -- Android crash (reported post-v2.3.0). Skip it on Android until the root
-    -- cause is pinned; e-ink devices keep the warm-up.
-    if Device:isAndroid() then return end
+    -- Android safe mode: the always-on background preload is implicated in an
+    -- Android/HWUI crash (issue 87). Keep it off by default on Android, but
+    -- allow users to disable safe mode when testing unaffected devices.
+    if _androidSafeModeEnabled() then return end
     if #(self._drilldown_path or {}) ~= 0 then return end
     self:_applyCoverCacheBudget()
     self._chip_preload_fn = function() self:_chipPreloadStep() end
@@ -6008,11 +6012,10 @@ end
 
 function BookshelfWidget:_startFilePoll()
     if self._file_poll_fn then return end   -- already polling
-    -- v2.3.1 defensive: the periodic file-poll is the other new always-on
-    -- background task in v2.3.0; skip it on Android alongside the preload
-    -- until the crash is root-caused. Sideloaded-book auto-detect pauses on
-    -- Android only (manual swipe-down refresh still works).
-    if Device:isAndroid() then return end
+    -- Android safe mode: the periodic file-poll is another always-on
+    -- background task. Sideloaded-book auto-detect pauses while safe mode is
+    -- on; manual swipe-down refresh still works.
+    if _androidSafeModeEnabled() then return end
     -- Establish baseline so the first tick doesn't false-positive on
     -- the very mtimes we'll be comparing against.
     self._home_dir_mtimes = _snapshotHomeDirs()
@@ -6082,7 +6085,7 @@ end
 function BookshelfWidget:_schedulePreload(direction)
     self:_cancelPreload()
     self:_applyCoverCacheBudget()
-    if Device:isAndroid() then return end  -- v2.3.1 crash defence; see _maybeStartChipPreload
+    if _androidSafeModeEnabled() then return end
     self._preload_dir = direction
     self._preload_fn = function() self:_preloadStep() end
     UIManager:scheduleIn(PRELOAD_START_DELAY_S, self._preload_fn)
