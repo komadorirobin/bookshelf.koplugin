@@ -23,6 +23,7 @@ local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local Size            = require("ui/size")
 local Font            = require("ui/font")
+local BFont           = require("lib/bookshelf_fonts")
 local Blitbuffer      = require("ffi/blitbuffer")
 local Screen          = require("device").screen
 local SpineWidget     = require("lib/bookshelf_spine_widget")
@@ -78,7 +79,7 @@ local function fontFace(face_name, base)
         local ok, face = pcall(Font.getFace, Font, face_name, size)
         if ok and face then return face end
     end
-    return Font:getFace("infofont", size)
+    return (BFont:getFace("infofont", size))
 end
 
 -- Elastic tokens: tokens that, when present in a region's expanded text,

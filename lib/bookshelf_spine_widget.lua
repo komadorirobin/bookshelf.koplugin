@@ -11,6 +11,7 @@
 local Blitbuffer      = require("ffi/blitbuffer")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+local BFont           = require("lib/bookshelf_fonts")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
@@ -620,7 +621,6 @@ function SpineWidget:_renderShadowedCard(inner)
     --     compensate for the glyph's no-descender bbox skew.
     if indicators.glyph == "complete_tickbox" then
         local TextWidget = require("ui/widget/textwidget")
-        local Font       = require("ui/font")
         local colors    = CoverProgress.resolvedColors()
 
         -- Reference widget measures the page-count pill's natural inner
@@ -629,14 +629,15 @@ function SpineWidget:_renderShadowedCard(inner)
         -- Finished pill is a smaller square sitting alongside the
         -- page-count pill: ~half the outer height for a subtler badge
         -- now that the heavy v2.1 design got Reddit pushback.
+        local ref_face, ref_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
         local ref = TextWidget:new{
             -- Match the page-count pill's actual text (hair space
             -- between "p" and the digits) so any future width-aware
             -- measurement here stays in sync. Only the height is
             -- consumed today, but the parity guards against drift.
             text = "p\xe2\x80\x8a1",
-            face = Font:getFace("smallinfofont", _badgeSize(12)),
-            bold = true,
+            face = ref_face,
+            bold = ref_bold,
         }
         local page_count_h = ref:getSize().h
         ref:free()
@@ -650,10 +651,11 @@ function SpineWidget:_renderShadowedCard(inner)
         -- inside a VerticalGroup biases the bbox-centred placement
         -- downward, so the rendered check lands at the pill's visual
         -- centre.
+        local check_face, check_bold = BFont:getFace("smallinfofont", _badgeSize(10), { bold = true })
         local check_widget = TextWidget:new{
             text = "\xEF\x90\xAE",   -- U+F42E nerd-font check
-            face = Font:getFace("smallinfofont", _badgeSize(10)),
-            bold = true,
+            face = check_face,
+            bold = check_bold,
             fgcolor = colors.badge_fg,
         }
         local VerticalGroup = require("ui/widget/verticalgroup")
@@ -713,12 +715,12 @@ function SpineWidget:_renderShadowedCard(inner)
         local badge_widget, badge_w, badge_h = nil, 0, 0
         if want_page_count then
             local TextWidget = require("ui/widget/textwidget")
-            local Font       = require("ui/font")
             -- Same face + weight as the "#N" series badge so the two
             -- badges read as a matched pair when both are present on a
             -- cover. Vertical padding is dropped to zero (the border
             -- alone provides breathing room) so the pill height stays
             -- close to the bar height.
+            local pc_face, pc_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
             badge_widget = FrameContainer:new{
                 bordersize     = Size.border.thin,
                 background     = colors.badge_bg,
@@ -734,8 +736,8 @@ function SpineWidget:_renderShadowedCard(inner)
                     -- the lowercase "p" and the leading digit otherwise
                     -- collide at smallinfofont(12).
                     text = "p\xe2\x80\x8a" .. tostring(self.book.page_count),
-                    face = Font:getFace("smallinfofont", _badgeSize(12)),
-                    bold = true,
+                    face = pc_face,
+                    bold = pc_bold,
                     fgcolor = colors.badge_fg,
                 },
             }
@@ -790,8 +792,8 @@ function SpineWidget:_renderShadowedCard(inner)
     if self.show_progress and _showSeriesNum(self.in_series)
             and self.book and self.book.series_num then
         local TextWidget     = require("ui/widget/textwidget")
-        local Font           = require("ui/font")
         local colors        = CoverProgress.resolvedColors()
+        local sn_face, sn_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
         local badge = FrameContainer:new{
             bordersize     = Size.border.thin,
             background     = colors.badge_bg,
@@ -821,8 +823,8 @@ function SpineWidget:_renderShadowedCard(inner)
                 -- that preserves the pill's compact silhouette
                 -- (issue #69). Mirrors the page-count pill below.
                 text = "#\xe2\x80\x8a" .. tostring(self.book.series_num),
-                face = Font:getFace("smallinfofont", _badgeSize(12)),
-                bold = true,
+                face = sn_face,
+                bold = sn_bold,
                 fgcolor = colors.badge_fg,
             },
         }
@@ -1147,7 +1149,6 @@ function SpineWidget:_renderFallback()
     local HorizontalSpan  = require("ui/widget/horizontalspan")
     local VerticalSpan    = require("ui/widget/verticalspan")
     local LineWidget      = require("ui/widget/linewidget")
-    local Font            = require("ui/font")
 
     local card_w, card_h = self:_cardDimensions()
     local border = CARD_BORDER
@@ -1184,10 +1185,11 @@ function SpineWidget:_renderFallback()
     local author_text = (self.book and self.book.author) or ""
 
     local title_max_h  = math.max(Screen:scaleBySize(20), math.floor(card_h * 0.40))
+    local title_face, title_bold = BFont:getFace("infofont", 13, { bold = true })
     local title = TextBoxWidget:new{
         text                          = title_text,
-        face                          = Font:getFace("infofont", 13),
-        bold                          = true,
+        face                          = title_face,
+        bold                          = title_bold,
         fgcolor                       = Blitbuffer.COLOR_BLACK,
         -- TextBoxWidget fills its whole bitmap with bgcolor (default white).
         -- Left at white that fill inverts to a solid black box in night mode,
@@ -1213,6 +1215,7 @@ function SpineWidget:_renderFallback()
         }
     end
     local rule_gap = HorizontalSpan:new{ width = Size.padding.small }
+    local diamond_face, diamond_bold = BFont:getFace("infofont", 12)
     local rule_centerer = CenterContainer:new{
         dimen = Geom:new{ w = content_w, h = math.max(Screen:scaleBySize(20), card_h * 0.10) },
         HorizontalGroup:new{
@@ -1221,7 +1224,8 @@ function SpineWidget:_renderFallback()
             rule_gap,
             TextWidget:new{
                 text    = "\xE2\x9D\x96",  -- ❖ U+2756
-                face    = Font:getFace("infofont", 12),
+                face    = diamond_face,
+                bold    = diamond_bold,
                 fgcolor = Blitbuffer.COLOR_BLACK,
             },
             HorizontalSpan:new{ width = Size.padding.small },
@@ -1234,9 +1238,11 @@ function SpineWidget:_renderFallback()
     local stack_children = { align = "center", title, rule_centerer }
     if author_text ~= "" then
         local author_max_h = math.max(Screen:scaleBySize(14), math.floor(card_h * 0.20))
+        local author_face, author_bold = BFont:getFace("infofont", 10)
         local author = TextBoxWidget:new{
             text                          = author_text,
-            face                          = Font:getFace("infofont", 10),
+            face                          = author_face,
+            bold                          = author_bold,
             fgcolor                       = Blitbuffer.COLOR_BLACK,
             bgcolor                       = inner_bg,
             width                         = content_w,

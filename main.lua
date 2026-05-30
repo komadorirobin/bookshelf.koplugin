@@ -156,6 +156,13 @@ function Bookshelf:init()
     -- Run once per init -- no settings flag needed because the clean is
     -- idempotent and cheap (one lfs.dir scan over the plugin root).
     _cleanLegacyLayout()
+    -- Bundled fonts: install (best-effort, for pickers) and seed fresh-install
+    -- defaults exactly once. Must run before any other settings write so the
+    -- "settings file present" fresh-install signal is accurate.
+    local Fonts = require("lib/bookshelf_fonts")
+    Fonts.maybeSeedFreshInstall()
+    Fonts.ensureInstalled()
+
     -- Cache update-related settings on the instance for the menu's text_func
     -- closures. Defaults match bookends: branch empty, source = "release",
     -- background check OFF (opt-in via the menu toggle).
@@ -1000,14 +1007,13 @@ end
 -- closing the widget here is safe — either a fresh one comes back on
 -- the next tick, or the stack drains and KOReader exits.
 -- Bookshelf:onPathChanged(path) — fired when the FileManager underneath us
--- navigates (filemanager.lua emits PathChanged on changeToPath). The two
--- triggers while our overlay is up are folder shortcuts and the
--- parent/home gestures. Rather than leave the user staring at a stale
--- overlay covering the folder they just navigated to, follow the navigation:
--- drill the bookshelf into that folder so browsing stays inside the library
--- view. (PROTOTYPE: drilling pushes onto the breadcrumb stack; we'll see how
--- back-navigation: the folder is pushed onto the breadcrumb stack, so a
--- swipe-back returns to where the user was before the shortcut.
+-- navigates (filemanager.lua emits PathChanged on changeToPath). This fires
+-- for any folder navigation while our overlay is up: folder shortcuts, the
+-- parent/home gestures, or any plugin/gesture that jumps to a folder. Rather
+-- than leave the user staring at a stale overlay covering the folder they just
+-- navigated to, follow the navigation: drill the bookshelf into that folder so
+-- browsing stays inside the library view. The folder is pushed onto the
+-- breadcrumb stack, so a swipe-back returns to where the user was before.
 --
 -- Guards: never while a document is open (we're not the home view then), only
 -- when the overlay is actually shown, and only when the path differs from

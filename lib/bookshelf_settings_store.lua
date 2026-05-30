@@ -22,8 +22,11 @@
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
 local logger      = require("logger")
+local lfs         = require("libs/libkoreader-lfs")
 
 local SETTINGS_PATH = DataStorage:getSettingsDir() .. "/bookshelf.lua"
+
+local _file_present_at_load = lfs.attributes(SETTINGS_PATH, "mode") ~= nil
 
 -- Explicit list of legacy keys to migrate. Editor / UI keys, tab schema,
 -- progress indicators, advanced toggles, updater state. Enumerated rather
@@ -63,6 +66,8 @@ local LEGACY_SORT_CHIPS = {
 
 local Store = {}
 local _settings = nil
+
+function Store.wasPresent() return _file_present_at_load end
 
 local function _migrate(s)
     if s:readSetting("migrated") then return end

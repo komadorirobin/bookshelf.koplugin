@@ -144,26 +144,26 @@ local function showFontPicker(current_face, default_face, on_select)
             end
         end
     end
-    -- Fallback: native KOReader FontList.
+    -- Fallback: native KOReader FontList as a full-screen Menu. Modelled on
+    -- KOReader's filemanagershortcuts menu: covers_fullscreen + is_borderless,
+    -- shown without manual positioning so MenuItem tap ranges line up, and a
+    -- close_callback so selecting (or tapping the title-bar close) dismisses it
+    -- -- the generic Menu only closes via close_callback (onMenuSelect).
     local Menu   = require("ui/widget/menu")
-    local Screen = require("device").screen
     local items  = { { text = _("(Default)"), callback = function() safe_select(nil) end } }
     for _i, file in ipairs(FontList:getFontList() or {}) do
         items[#items + 1] = { text = file, callback = function() safe_select(file) end }
     end
-    local mw = math.floor(Screen:getWidth() * 0.85)
-    local mh = math.floor(Screen:getHeight() * 0.7)
     local menu
     menu = Menu:new{
-        title      = _("Pick font"),
-        item_table = items,
-        is_popout  = true,
-        width      = mw,
-        height     = mh,
+        title             = _("Pick font"),
+        item_table        = items,
+        covers_fullscreen = true,
+        is_borderless     = true,
+        is_popout         = false,
     }
-    local x = math.floor((Screen:getWidth() - mw) / 2)
-    local y = math.floor((Screen:getHeight() - mh) / 2)
-    UIManager:show(menu, nil, nil, x, y)
+    menu.close_callback = function() UIManager:close(menu) end
+    UIManager:show(menu)
 end
 
 local HeroBar = require("lib/bookshelf_hero_bar")
@@ -506,5 +506,9 @@ function LineEditor.show(region_key, bw, settings_module, touchmenu_instance)
     }
     UIManager:show(dialog)
 end
+
+-- Exposed so other UI (e.g. the Bookshelf UI font picker in settings) can reuse
+-- the exact same font picker the hero line editor uses.
+LineEditor.showFontPicker = showFontPicker
 
 return LineEditor

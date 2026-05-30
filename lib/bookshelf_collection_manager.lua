@@ -50,6 +50,7 @@ local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local ReadCollection  = require("readcollection")
 local Font            = require("ui/font")
+local BFont           = require("lib/bookshelf_fonts")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
@@ -576,6 +577,7 @@ function CollectionManager.show(opts)
         -- single-book header would be misleading. Mirror manage-mode's
         -- titled-panel layout instead.
         local n_paths = (opts.paths and #opts.paths) or 0
+        local title_face, title_bold = BFont:getFace("tfont", 20, { bold = true })
         local title_row = HorizontalGroup:new{ align = "center" }
         title_row[#title_row + 1] = FrameContainer:new{
             bordersize = 0,
@@ -583,8 +585,8 @@ function CollectionManager.show(opts)
             margin     = 0,
             TextBoxWidget:new{
                 text  = string.format(_("Collections \xC2\xB7 %d books"), n_paths),
-                face  = Font:getFace("tfont", 20),
-                bold  = true,
+                face  = title_face,
+                bold  = title_bold,
                 width = inner_w,
             },
         }
@@ -592,11 +594,13 @@ function CollectionManager.show(opts)
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.default }
         content[#content + 1] = _divider()
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
+        local intro_face, intro_bold = BFont:getFace("infofont", 16)
         content[#content + 1] = TextBoxWidget:new{
             text  = _("Tap a collection to cycle through: no change, "
                 .. "add to all, remove from all. Save returns the diff "
                 .. "to the bulk menu."),
-            face  = Font:getFace("infofont", 16),
+            face  = intro_face,
+            bold  = intro_bold,
             width = inner_w,
         }
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
@@ -631,6 +635,7 @@ function CollectionManager.show(opts)
         -- collection grid. The two dividers + breathing room around the
         -- intro stop the title / intro / list from running into each
         -- other as one undifferentiated text block.
+        local mtitle_face, mtitle_bold = BFont:getFace("tfont", 20, { bold = true })
         local title_row = HorizontalGroup:new{ align = "center" }
         title_row[#title_row + 1] = FrameContainer:new{
             bordersize = 0,
@@ -638,8 +643,8 @@ function CollectionManager.show(opts)
             margin     = 0,
             TextBoxWidget:new{
                 text  = _("Manage collections"),
-                face  = Font:getFace("tfont", 20),
-                bold  = true,
+                face  = mtitle_face,
+                bold  = mtitle_bold,
                 width = inner_w,
             },
         }
@@ -647,12 +652,14 @@ function CollectionManager.show(opts)
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.default }
         content[#content + 1] = _divider()
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
+        local mintro_face, mintro_bold = BFont:getFace("infofont", 16)
         content[#content + 1] = TextBoxWidget:new{
             text  = _("Tap a custom collection to rename, delete, or pin "
                 .. "it to the chip bar. Long-press a book on the shelf "
                 .. "and tap Collections… to add or remove it from "
                 .. "collections."),
-            face  = Font:getFace("infofont", 16),
+            face  = mintro_face,
+            bold  = mintro_bold,
             width = inner_w,
         }
         content[#content + 1] = VerticalSpan:new{ width = Size.padding.large }
@@ -920,9 +927,11 @@ function CollectionManager.show(opts)
     if total_pages > 1 then
         local Button = require("ui/widget/button")
         local chev_size = Screen:scaleBySize(28)
+        local ind_face, ind_bold = BFont:getFace("cfont", 14)
         local indicator = TextWidget:new{
             text = string.format(_("Page %d of %d"), cur_page, total_pages),
-            face = Font:getFace("cfont", 14),
+            face = ind_face,
+            bold = ind_bold,
         }
         local function _chev(icon, enabled, target_page)
             return Button:new{

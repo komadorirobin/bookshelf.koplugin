@@ -16,6 +16,7 @@ local FrameContainer = require("ui/widget/container/framecontainer")
 local TextWidget     = require("ui/widget/textwidget")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
+local BFont          = require("lib/bookshelf_fonts")
 local Screen         = require("device").screen
 local CoverProgress  = require("lib/bookshelf_cover_progress")
 
@@ -57,6 +58,7 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
         text = "\xc3\x97" .. HAIR .. tostring(total)
     end
     local colors = CoverProgress.resolvedColors()
+    local face, bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
     return FrameContainer:new{
         bordersize     = Size.border.thin,
         background     = colors.badge_bg,
@@ -68,8 +70,8 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
         padding_bottom = Size.padding.small,
         TextWidget:new{
             text = text,
-            face = Font:getFace("smallinfofont", _badgeSize(12)),
-            bold = true,
+            face = face,
+            bold = bold,
             fgcolor = colors.badge_fg,
         },
     }

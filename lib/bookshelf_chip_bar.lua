@@ -40,6 +40,7 @@ local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
+local BFont          = require("lib/bookshelf_fonts")
 local Blitbuffer     = require("ffi/blitbuffer")
 local UIManager      = require("ui/uimanager")
 local Screen         = require("device").screen
@@ -64,17 +65,20 @@ end
 local function _buildLabelContent(label, size, max_w)
     local segments = TextSegments.labelSegments(TextSegments.upper(label or ""))
     if #segments == 0 then
+        local empty_face, empty_bold = BFont:getFace("infofont", size)
         return TextWidget:new{
             text    = "",
-            face    = Font:getFace("infofont", size),
+            face    = empty_face,
+            bold    = empty_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
     end
     if #segments == 1 then
+        local one_face, one_bold = BFont:getFace("infofont", size, { bold = segments[1].class == "text" })
         return TextWidget:new{
             text      = segments[1].text,
-            face      = Font:getFace("infofont", size),
-            bold      = segments[1].class == "text",
+            face      = one_face,
+            bold      = one_bold,
             fgcolor   = Blitbuffer.COLOR_BLACK,
             max_width = max_w,
         }
@@ -90,9 +94,11 @@ local function _buildLabelContent(label, size, max_w)
     local icon_w = 0
     for _i, seg in ipairs(segments) do
         if seg.class ~= "text" then
+            local iw_face, iw_bold = BFont:getFace("infofont", size)
             local tw = TextWidget:new{
                 text = seg.text,
-                face = Font:getFace("infofont", size),
+                face = iw_face,
+                bold = iw_bold,
             }
             icon_w = icon_w + tw:getSize().w
             tw:free()
@@ -102,10 +108,11 @@ local function _buildLabelContent(label, size, max_w)
     local hg = HorizontalGroup:new{ align = "center" }
     for _i, seg in ipairs(segments) do
         local is_text = (seg.class == "text")
+        local seg_face, seg_bold = BFont:getFace("infofont", size, { bold = is_text })
         hg[#hg + 1] = TextWidget:new{
             text      = seg.text,
-            face      = Font:getFace("infofont", size),
-            bold      = is_text,
+            face      = seg_face,
+            bold      = seg_bold,
             fgcolor   = Blitbuffer.COLOR_BLACK,
             max_width = is_text and text_budget or nil,
         }
@@ -120,10 +127,11 @@ local function _measureLabel(label, size)
     local total = 0
     local segments = TextSegments.labelSegments(TextSegments.upper(label or ""))
     for _i, seg in ipairs(segments) do
+        local m_face, m_bold = BFont:getFace("infofont", size, { bold = seg.class == "text" })
         local tw = TextWidget:new{
             text = seg.text,
-            face = Font:getFace("infofont", size),
-            bold = seg.class == "text",
+            face = m_face,
+            bold = m_bold,
         }
         total = total + tw:getSize().w
         tw:free()
@@ -212,16 +220,18 @@ local function arrowPillFrame(label, h, chained, glyph)
     -- sees "[search] SEARCH RESULTS" instead of just the bare icon.
     local content_widget, content_w, content_h
     if glyph and label and label ~= "" then
+        local icon_face, icon_bold = BFont:getFace("infofont", _scaled(18), { bold = true })
         local icon_tw = TextWidget:new{
             text    = glyph,
-            face    = Font:getFace("infofont", _scaled(18)),
-            bold    = true,
+            face    = icon_face,
+            bold    = icon_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
+        local lbl_face, lbl_bold = BFont:getFace("infofont", _scaled(16), { bold = true })
         local text_tw = TextWidget:new{
             text    = TextSegments.upper(label),
-            face    = Font:getFace("infofont", _scaled(16)),
-            bold    = true,
+            face    = lbl_face,
+            bold    = lbl_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
         local gap = Size.padding.default
@@ -234,18 +244,18 @@ local function arrowPillFrame(label, h, chained, glyph)
         content_w = icon_tw:getSize().w + gap + text_tw:getSize().w
         content_h = math.max(icon_tw:getSize().h, text_tw:getSize().h)
     else
-        local label_text, face
+        local label_text, face, bold
         if glyph then
             label_text = glyph
-            face       = Font:getFace("infofont", _scaled(18))
+            face, bold = BFont:getFace("infofont", _scaled(18), { bold = true })
         else
             label_text = TextSegments.upper(label or "")
-            face       = Font:getFace("infofont", _scaled(16))
+            face, bold = BFont:getFace("infofont", _scaled(16), { bold = true })
         end
         content_widget = TextWidget:new{
             text    = label_text,
             face    = face,
-            bold    = true,
+            bold    = bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
         content_w = content_widget:getSize().w
@@ -435,9 +445,11 @@ function ChipBar:_initChips()
             local nat
             if chip.nerd_glyph then
                 -- Icon chip: regular weight (icons should not be faux-bolded)
+                local ng_face, ng_bold = BFont:getFace("infofont", _scaled(18))
                 local tw = TextWidget:new{
                     text = chip.nerd_glyph,
-                    face = Font:getFace("infofont", _scaled(18)),
+                    face = ng_face,
+                    bold = ng_bold,
                 }
                 nat = tw:getSize().w + 2 * pad
                 tw:free()
@@ -526,9 +538,11 @@ function ChipBar:_initChips()
             -- glyph in a TextWidget at the chip-label point size
             -- and the bold solid shape comes through as the user
             -- expects (vs the thin appbar.search SVG).
+            local cc_face, cc_bold = BFont:getFace("infofont", _scaled(18))
             cell_content = TextWidget:new{
                 text    = chip.nerd_glyph,
-                face    = Font:getFace("infofont", _scaled(18)),
+                face    = cc_face,
+                bold    = cc_bold,
                 fgcolor = Blitbuffer.COLOR_BLACK,
             }
         elseif chip.icon then
@@ -661,7 +675,7 @@ function ChipBar:_initBreadcrumb()
     -- to back out to top level before they can reach it (#55). Tap
     -- routes to on_change("current") which clears the drill path AND
     -- resets the hero to the lastfile.
-    local face_text = Font:getFace("infofont", _scaled(16))
+    local face_text, face_text_bold = BFont:getFace("infofont", _scaled(16), { bold = true })
     local n         = #self.breadcrumb_path
 
     -- Pull the currently-reading chip from the chips list. Renders as
@@ -681,9 +695,11 @@ function ChipBar:_initBreadcrumb()
         local inner_h = outer_h - 2 * b  -- so FrameContainer's borders sit INSIDE outer_h
         current_w = math.floor(outer_h * 1.6)
         local inner_w = current_w - 2 * b
+        local glyph_face, glyph_bold = BFont:getFace("infofont", _scaled(18))
         local glyph = TextWidget:new{
             text    = current_chip.nerd_glyph or "",
-            face    = Font:getFace("infofont", _scaled(18)),
+            face    = glyph_face,
+            bold    = glyph_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
         -- Match chips-mode visual exactly: an InvertedFrame body
@@ -785,7 +801,7 @@ function ChipBar:_initBreadcrumb()
         deepest_widget = TextWidget:new{
             text    = deepest_label,
             face    = face_text,
-            bold    = true,
+            bold    = face_text_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
         deepest_w = deepest_widget:getSize().w

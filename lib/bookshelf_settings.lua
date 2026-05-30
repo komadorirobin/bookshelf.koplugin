@@ -8,9 +8,11 @@
 local Menu         = require("ui/widget/menu")
 local SpinWidget   = require("ui/widget/spinwidget")
 local UIManager    = require("ui/uimanager")
+local T            = require("ffi/util").template
 local _            = require("lib/bookshelf_i18n").gettext
 
 local BookshelfSettings = require("lib/bookshelf_settings_store")
+local BFont        = require("lib/bookshelf_fonts")
 
 -- ─── Settings singleton ───────────────────────────────────────────────────────
 
@@ -170,15 +172,18 @@ Wrap content in [if:foo]…[/if] to show it only when the token has a value. Add
                         preview = "    \xe2\x86\x92 " .. val
                     end
                 end
+                local desc_face, desc_bold = BFont:getFace("cfont", 16, { bold = true })
                 local desc_w = TextWidget:new{
                     text = item.description or "",
-                    face = Font:getFace("cfont", 16),
-                    bold = true,
+                    face = desc_face,
+                    bold = desc_bold,
                     max_width = content_w,
                 }
+                local tok_face, tok_bold = BFont:getFace("cfont", 13)
                 local tok_w = TextWidget:new{
                     text = (item.token or "") .. preview,
-                    face = Font:getFace("cfont", 13),
+                    face = tok_face,
+                    bold = tok_bold,
                     fgcolor = Blitbuffer.gray(0.4),
                     max_width = content_w,
                 }
@@ -1392,6 +1397,21 @@ function Settings:_advancedSubItems()
             end,
         },
         {
+            text_func = function()
+                local Fonts = require("lib/bookshelf_fonts")
+                local f = Fonts.getUIFontFace()
+                local label = _("Follow KOReader")
+                if f then label = f:gsub("^.*/", ""):gsub("%.%w+$", "") end  -- basename, no extension
+                return T(_("Bookshelf UI font: %1"), label)
+            end,
+            help_text = _("The font Bookshelf uses for its own UI text (chips, "
+                .. "labels, metadata). Pick any installed font (same picker as the "
+                .. "hero card); '(Default)' follows your KOReader UI font. The hero "
+                .. "title and author have their own fonts in the hero card editor."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance) self:_pickBookshelfUIFont(touchmenu_instance) end,
+        },
+        {
             text     = _("Reset chip bar to defaults"),
             help_text = _("Clears your custom chip layout (which chips are "
                 .. "shown, their order, their labels and icons, their "
@@ -1432,6 +1452,32 @@ function Settings:_advancedSubItems()
                                 self._bw:_syncPageFromCursor()
                             end
                             self._bw._drilldown_path = {}
+                            self._bw:_rebuild()
+                            UIManager:setDirty(self._bw, "ui")
+                        end
+                    end,
+                })
+            end,
+        },
+        {
+            text     = _("Reset book detail area to defaults"),
+            help_text = _("Clears your hero/book-detail customizations and "
+                .. "restores the fresh-install detail layout, including the "
+                .. "bundled title (Inter ExtraBold) and author (Caveat) fonts. "
+                .. "The Bookshelf UI font and chip bar are unaffected."),
+            callback = function(touchmenu_instance)
+                local ConfirmBox = require("ui/widget/confirmbox")
+                UIManager:show(ConfirmBox:new{
+                    text = _("Reset the book detail area to default settings?\n\n"
+                        .. "All hero/detail text and font customizations will be "
+                        .. "lost. The Bookshelf UI font and chip bar are unaffected."),
+                    ok_text = _("Reset"),
+                    ok_callback = function()
+                        local Regions = require("lib/bookshelf_hero_regions")
+                        Regions.applyFreshInstallDefaults()
+                        BookshelfSettings.flush()
+                        if touchmenu_instance then UIManager:close(touchmenu_instance) end
+                        if self._bw and self._bw._rebuild then
                             self._bw:_rebuild()
                             UIManager:setDirty(self._bw, "ui")
                         end
@@ -1865,6 +1911,27 @@ function Settings:_pickStackLabelFontScale(touchmenu_instance)
     UIManager:show(dialog)
 end
 
+-- Bookshelf UI font picker -- reuses the hero line editor's font picker
+-- (bookends-rich preview when available, FontList file picker otherwise).
+-- Applies on tap: the chosen font is saved and the live bookshelf rebuilt
+-- immediately. "(Default)" in the picker clears the setting -> follow KOReader.
+function Settings:_pickBookshelfUIFont(touchmenu_instance)
+    local Fonts      = require("lib/bookshelf_fonts")
+    local LineEditor = require("lib/bookshelf_hero_line_editor")
+    LineEditor.showFontPicker(Fonts.getUIFontFace(), nil, function(face)
+        Fonts.setUIFontFace(face)            -- face is a resolvable path, or nil = follow
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+        -- Refresh the menu row's text_func so "Bookshelf UI font: X" updates
+        -- without leaving and re-entering the menu (the pick is async).
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end)
+end
+
 -- _textSizeSubItems() -- single home for every font-scale knob in the
 -- plugin (issue #60). Pre-#60 these were scattered: Hero in Edit hero
 -- card, Cover badges in Cover display, Expanded shelf labels in
@@ -2057,14 +2124,18 @@ function Settings:_about()
     -- live from _meta.lua so any release that touches version=... in
     -- that file flows through automatically -- there's no other
     -- string to keep in sync.
+    local ver_face, ver_bold = BFont:getFace("cfont", 16)
     column[#column + 1] = TextWidget:new{
         text = "v" .. version,
-        face = Font:getFace("cfont", 16),
+        face = ver_face,
+        bold = ver_bold,
     }
     column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+    local desc_face, desc_bold = BFont:getFace("cfont", 16)
     column[#column + 1] = TextBoxWidget:new{
         text      = description,
-        face      = Font:getFace("cfont", 16),
+        face      = desc_face,
+        bold      = desc_bold,
         width     = content_w,
         alignment = "center",
     }

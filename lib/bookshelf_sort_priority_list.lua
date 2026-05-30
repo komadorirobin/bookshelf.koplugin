@@ -17,6 +17,7 @@ local CenterContainer= require("ui/widget/container/centercontainer")
 local Geom           = require("ui/geometry")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
+local BFont          = require("lib/bookshelf_fonts")
 local Screen         = require("device").screen
 
 local List = {}
@@ -91,11 +92,13 @@ function List:_rebuild()
         local label_w = self.width - btn_w * 2 - (self.show_reverse and btn_w or 0) - (self.show_delete and btn_w or 0)
         local InputContainer = require("ui/widget/container/inputcontainer")
         local GestureRange   = require("ui/gesturerange")
+        local label_face, label_bold = BFont:getFace("infofont", 16)
         local label_inner = CenterContainer:new{
             dimen = Geom:new{ w = label_w, h = self.row_h },
             TextWidget:new{
                 text = label,
-                face = Font:getFace("infofont", 16),
+                face = label_face,
+                bold = label_bold,
                 max_width = label_w - Size.padding.default * 2,
             },
         }

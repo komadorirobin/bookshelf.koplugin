@@ -229,6 +229,21 @@ The full token list is in the [Token cheatsheet](#token-cheatsheet) below.
 
 ---
 
+## Bundled fonts
+
+Bookshelf ships three open-licensed fonts (see `fonts/CREDITS.md`):
+
+- **Roboto Condensed** (Apache 2.0) -- the default Bookshelf UI font on new installs.
+- **Inter ExtraBold** (OFL) -- default hero title.
+- **Caveat** (OFL) -- default hero author.
+
+Set the interface font under **Bookshelf settings -> Bookshelf UI font** (defaults to
+*Follow KOReader UI font* for existing users). The fonts are also copied into your font
+folder so they're selectable in the hero card's font picker after a restart. Existing
+users can adopt the new detail look via **Reset book detail area to defaults**.
+
+---
+
 ## Updates
 
 Open **menu -> Updates** to keep Bookshelf current:

@@ -35,6 +35,7 @@ local VerticalGroup     = require("ui/widget/verticalgroup")
 local VerticalSpan      = require("ui/widget/verticalspan")
 local WidgetContainer   = require("ui/widget/container/widgetcontainer")
 local Font              = require("ui/font")
+local BFont             = require("lib/bookshelf_fonts")
 local Screen            = Device.screen
 
 -- 5 rows × 5 cols: neutrals / warm dark / warm light / cool dark / cool light.
@@ -83,9 +84,11 @@ end
 -- nullTile: a labelled white tile used as the "No background" sentinel.
 -- Rendered at grid position [0,0] of the palette when null_tile is set.
 local function nullTile(label, selected, side, on_tap)
+    local nt_face, nt_bold = BFont:getFace("ffont", 12)
     local tw = TextWidget:new{
         text      = label,
-        face      = Font:getFace("ffont", 12),
+        face      = nt_face,
+        bold      = nt_bold,
         max_width = side - 2 * Size.padding.small,
     }
     local frame = FrameContainer:new{
@@ -138,10 +141,11 @@ end
 -- preset-library modal's Close | Manage… | Apply row (no bezel, just text
 -- plus a vertical LineWidget divider between buttons — see preset_manager_modal.lua).
 local function makeFooterBtn(text, width, height, on_tap)
+    local btn_face, btn_bold = BFont:getFace("cfont", 18, { bold = true })
     local label = TextWidget:new{
         text     = text,
-        face     = Font:getFace("cfont", 18),
-        bold     = true,
+        face     = btn_face,
+        bold     = btn_bold,
         fgcolor  = Blitbuffer.COLOR_BLACK,
     }
     local ic = InputContainer:new{
@@ -283,10 +287,11 @@ function ColorPaletteWidget:update()
 
     -- Hex row: a static "#" prefix label, an InputText for the six hex
     -- digits, and a live-preview swatch on the right.
-    local hex_face = Font:getFace("cfont", 18)
+    local hex_face, hex_bold = BFont:getFace("cfont", 18)
     local hash_label = TextWidget:new{
         text    = "#",
         face    = hex_face,
+        bold    = hex_bold,
         fgcolor = Blitbuffer.COLOR_BLACK,
     }
     -- Strip any leading # from the seed value — the # is rendered as a
