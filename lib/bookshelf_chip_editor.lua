@@ -50,6 +50,9 @@ local DEFAULT_REVERSE = {
     -- through (or finished) at the top. Ascending (unread first) is the
     -- niche choice -- still reachable via the picker's toggle.
     percent_read = true,
+    -- Rating sort defaults to highest-first, matching the Ratings stack
+    -- default and the usual "show my best-rated books at the top" intent.
+    rating       = true,
     -- Everything else defaults to false (ascending). The table only
     -- needs entries for keys whose default is true.
 }
@@ -1368,8 +1371,9 @@ function Editor:_pickSortLevel(draft, level_index, on_close)
             { key_btn("series_name"),    key_btn("series_index"),
               key_btn("series_combined") },
             { key_btn("last_opened"),    key_btn("date_added")        },
-            { key_btn("percent_read"),   key_btn("size")              },
+            { key_btn("percent_read"),   key_btn("rating")            },
             { key_btn("read_status"),    key_btn("read_status_active")},
+            { key_btn("size"),           key_btn("page_count")        },
             { key_btn("book_count") },
             close_row,
         }
