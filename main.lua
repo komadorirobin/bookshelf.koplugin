@@ -1022,8 +1022,28 @@ end
 function Bookshelf:onPathChanged(path)
     if self.ui and self.ui.document then return end
     if not (_live_widget and UIManager:isWidgetShown(_live_widget)) then return end
-    if not path or path == "" or path == _overlay_open_path then return end
-    _overlay_open_path = path
+    if not path or path == "" then return end
+    -- Absorb the single PathChanged that FileManager fires while Bookshelf is
+    -- taking over the home screen (same path the overlay opened over).
+    -- Consume it ONCE, then forget. Previously the snapshot stayed set for the
+    -- rest of the session, so re-selecting that same folder later (e.g. a
+    -- folder shortcut to a folder you'd visited before, after switching chips)
+    -- was silently swallowed -- it looked like nothing happened (issue #88
+    -- follow-up). changeToPath re-emits PathChanged even for the current
+    -- folder, so this guard was the only thing suppressing the re-navigation.
+    if path == _overlay_open_path then
+        _overlay_open_path = nil
+        return
+    end
+    -- Don't re-drill the folder we're already showing: a redundant PathChanged
+    -- echo for the current drilldown would push a duplicate breadcrumb entry.
+    -- (Reading the widget's drilldown stack here mirrors how this file already
+    -- reaches into _live_widget for _expandFolder / the window-stack walk.)
+    local dd  = _live_widget._drilldown_path
+    local top = dd and dd[#dd]
+    if top and top.kind == "folder" and top.payload and top.payload.path == path then
+        return
+    end
     if _live_widget._expandFolder then
         local label = path:match("([^/]+)/?$") or path
         _live_widget:_expandFolder{ path = path, label = label }
