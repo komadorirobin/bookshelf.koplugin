@@ -21,6 +21,7 @@ local GestureRange    = require("ui/gesturerange")
 local Geom            = require("ui/geometry")
 local Size            = require("ui/size")
 local Font            = require("ui/font")
+local BFont           = require("lib/bookshelf_fonts")
 local Blitbuffer      = require("ffi/blitbuffer")
 local SpineWidget     = require("lib/bookshelf_spine_widget")
 local SeriesStack     = require("lib/bookshelf_series_stack")
@@ -159,12 +160,13 @@ function ShelfRow.new(opts)
     local label_scale = BookshelfSettings.read("expanded_shelf_font_scale") or 100
     local title_block_h = 0
     local title_face
+    local title_bold
     -- Only reserve the strip when a label will actually be drawn. With
     -- label_mode = "none" the cover claims the full slot height — the
     -- stretch cap below keeps it from growing past ~5% of natural.
     if draw_label then
         local face_size = math.floor(14 * label_scale / 100 + 0.5)
-        title_face    = Font:getFace("infofont", face_size)
+        title_face, title_bold = BFont:getFace("infofont", face_size)
         title_block_h = label_gap + math.floor(face_size * 1.3)
     end
     local function _labelFor(item)
@@ -520,6 +522,7 @@ function ShelfRow.new(opts)
                     local title_widget = TextWidget:new{
                         text      = title_text,
                         face      = title_face,
+                        bold      = title_bold,
                         max_width = slot_w,
                     }
                     stack[#stack + 1] = VerticalSpan:new{ width = label_gap }

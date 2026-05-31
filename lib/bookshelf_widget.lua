@@ -15,6 +15,7 @@ local GestureRange    = require("ui/gesturerange")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local Size            = require("ui/size")
 local Font            = require("ui/font")
+local BFont           = require("lib/bookshelf_fonts")
 local UIManager       = require("ui/uimanager")
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
@@ -1640,10 +1641,14 @@ function BookshelfWidget:_rebuild()
 
         local card_inner_w = content_w - Size.padding.large * 2
         local card_children = { align = "center" }
+        -- bgcolor must match the card -- TextBoxWidget defaults to
+        -- COLOR_WHITE and paints its own background fill, which shows up
+        -- as a white block on the grey card if we don't override.
+        local hl_face, hl_bold = BFont:getFace("infofont", 22, { bold = true })
         card_children[#card_children + 1] = TextBoxWidget:new{
             text      = headline_text,
-            face      = Font:getFace("infofont", 22),
-            bold      = true,
+            face      = hl_face,
+            bold      = hl_bold,
             bgcolor   = card_bg,
             width     = card_inner_w,
             alignment = "center",
@@ -1652,9 +1657,11 @@ function BookshelfWidget:_rebuild()
             card_children[#card_children + 1] = VerticalSpan:new{
                 width = Size.padding.large,
             }
+            local sub_face, sub_bold = BFont:getFace("infofont", 15)
             card_children[#card_children + 1] = TextBoxWidget:new{
                 text      = sub_text,
-                face      = Font:getFace("infofont", 15),
+                face      = sub_face,
+                bold      = sub_bold,
                 bgcolor   = card_bg,
                 width     = card_inner_w,
                 alignment = "center",
@@ -2847,7 +2854,12 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
                 local in_collections = ReadCollection.getCollectionsWithFile
                     and ReadCollection:getCollectionsWithFile(book.filepath) or {}
                 local pill_specs = bw:_buildPillSpecs(book, in_collections, nil)
-                return bw:_buildPillGroup(pill_specs, pill_w, 2)
+                -- Scale the tag pills with the Hero card font-size knob, so the
+                -- whole hero (text + tags) grows/shrinks together. Base 12 = the
+                -- prior fixed size, so 100% is unchanged.
+                local hero_scale = (BookshelfSettings.read("font_scale") or 100) / 100
+                local pill_size  = math.max(8, math.floor(12 * hero_scale + 0.5))
+                return bw:_buildPillGroup(pill_specs, pill_w, 2, pill_size)
             end
         end
     end
@@ -3328,8 +3340,8 @@ function BookshelfWidget:_buildBucketIcon(focused, frame_width)
     -- Probe the digit's text size first so we can size the bucket's
     -- internal width to fit. Use the same face the paint loop uses.
     local count_font_size = math.floor(art_h * 0.5)
-    local count_face      = Font:getFace("infofont", count_font_size)
-    local probe = TextWidget:new{ text = count_str, face = count_face, bold = true }
+    local count_face, count_bold = BFont:getFace("infofont", count_font_size, { bold = true })
+    local probe = TextWidget:new{ text = count_str, face = count_face, bold = count_bold }
     local text_w = probe:getSize().w
     probe:free()
     -- Bucket inner cavity width = text_w + a small horizontal margin
@@ -3366,7 +3378,7 @@ function BookshelfWidget:_buildBucketIcon(focused, frame_width)
         -- which varies font-to-font with ascender/descender padding).
         -- Baseline sits inside the bottom wall by cap_r so the digit
         -- reads as resting in the bucket regardless of font choice.
-        local tw = TextWidget:new{ text = count_str, face = count_face, bold = true,
+        local tw = TextWidget:new{ text = count_str, face = count_face, bold = count_bold,
                                    fgcolor = color }
         local ts = tw:getSize()
         local baseline_h = (tw.getBaseline and tw:getBaseline()) or tw._baseline_h or ts.h
@@ -6600,16 +6612,19 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- info is no longer rendered here -- it lives as a tappable pill
     -- in the nav strip below.
     local top_stack = VerticalGroup_:new{ align = "left" }
+    local mtitle_face, mtitle_bold = BFont:getFace("smalltfont", 20, { bold = true })
     top_stack[#top_stack + 1] = TextBoxWidget_:new{
         text  = book.title or book.filename or _("(no title)"),
-        face  = Font:getFace("smalltfont", 20),
-        bold  = true,
+        face  = mtitle_face,
+        bold  = mtitle_bold,
         width = text_w,
     }
     if book.author and book.author ~= "" then
+        local mauthor_face, mauthor_bold = BFont:getFace("cfont", 16)
         top_stack[#top_stack + 1] = TextBoxWidget_:new{
             text  = book.author,
-            face  = Font:getFace("cfont", 16),
+            face  = mauthor_face,
+            bold  = mauthor_bold,
             width = text_w,
         }
     end
@@ -6617,7 +6632,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- Metadata + filename block: cheap-to-fetch supporting detail in a
     -- compact bottom slice of the top stack. Each chunk skipped when
     -- its source is unavailable.
-    local meta_face = Font:getFace("cfont", 12)
+    local meta_face, meta_bold = BFont:getFace("cfont", 12)
     local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     local size_bytes, mtime
     if ok_lfs and lfs and lfs.attributes then
@@ -6660,6 +6675,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
         top_stack[#top_stack + 1] = TextBoxWidget_:new{
             text  = table.concat(meta_parts, "  \xC2\xB7  "),  -- middle-dot
             face  = meta_face,
+            bold  = meta_bold,
             width = text_w,
         }
     end
@@ -6671,6 +6687,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     top_stack[#top_stack + 1] = TextBoxWidget_:new{
         text  = basename,
         face  = meta_face,
+        bold  = meta_bold,
         width = text_w,
     }
 
@@ -6685,7 +6702,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- passes nil because it doesn't want nav-into-self affordances.
     local pill_group = VerticalGroup_:new{ align = "left" }
     if pill_specs and #pill_specs > 0 then
-        local pill_face   = Font:getFace("cfont", 12)
+        local pill_face, pill_bold = BFont:getFace("cfont", 12, { bold = true })
         local pill_pad_h  = Size.padding.default  -- L/R inner padding
         local pill_pad_v  = Size.padding.small    -- T/B inner padding
         local pill_gap    = Size.padding.default  -- between pills
@@ -6701,7 +6718,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
             local label_w = TextWidget_:new{
                 text = (label_text or ""):upper(),
                 face = pill_face,
-                bold = true,
+                bold = pill_bold,
             }
             -- Explicit white bg so the tap-feedback inversion has
             -- something to flip to black. Matches the hero pill builder.
@@ -7067,7 +7084,7 @@ end
 -- into a non-tappable "+N" pill. Returns a VerticalGroup (possibly
 -- empty if pill_specs is empty / nil). Pure widget builder — no state
 -- on self other than what the spec callbacks capture.
-function BookshelfWidget:_buildPillGroup(pill_specs, available_w, max_rows)
+function BookshelfWidget:_buildPillGroup(pill_specs, available_w, max_rows, base_size)
     local Font            = require("ui/font")
     local TextWidget_     = require("ui/widget/textwidget")
     local FrameContainer_ = require("ui/widget/container/framecontainer")
@@ -7082,7 +7099,7 @@ function BookshelfWidget:_buildPillGroup(pill_specs, available_w, max_rows)
     local pill_group = VerticalGroup_:new{ align = "left" }
     if not pill_specs or #pill_specs == 0 then return pill_group end
 
-    local pill_face  = Font:getFace("cfont", 12)
+    local pill_face, pill_bold = BFont:getFace("cfont", base_size or 12, { bold = true })
     local pill_pad_h = Size.padding.default
     local pill_pad_v = Size.padding.small
     local pill_gap   = Size.padding.default
@@ -7091,7 +7108,7 @@ function BookshelfWidget:_buildPillGroup(pill_specs, available_w, max_rows)
         local label_w = TextWidget_:new{
             text = (label_text or ""):upper(),
             face = pill_face,
-            bold = true,
+            bold = pill_bold,
         }
         -- Explicit white bg so the tap-feedback inversion has something to
         -- invert to black (without this, the frame's transparent fill
@@ -9098,9 +9115,11 @@ function BookshelfWidget:_openGroupMenu(group, kind)
     }
     -- Subtitle prompt: explains both actions so the user knows what
     -- each button does. Sits between the title and the button row.
+    local prompt_face, prompt_bold = BFont:getFace("infofont", 16)
     dialog:addWidget(TextBoxWidget:new{
         text      = prompt,
-        face      = Font:getFace("infofont", 16),
+        face      = prompt_face,
+        bold      = prompt_bold,
         alignment = "center",
         width     = dialog.title_group_width or math.floor(Screen:getWidth() * 0.6),
     })

@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/bookshelf-logo-dark.png">
-    <img alt="Bookshelf" src="assets/bookshelf-logo.png" width="320">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/AndyHazz/bookshelf.koplugin/master/assets/bookshelf-logo-dark.png">
+    <img alt="Bookshelf" src="https://raw.githubusercontent.com/AndyHazz/bookshelf.koplugin/master/assets/bookshelf-logo.png" width="320">
   </picture>
 </p>
 
@@ -90,6 +90,10 @@ Each cover on the grid is either a book or a stack of books (for series, authors
 - **Swipe down** on the hero to restore it; **swipe down** on the shelf area to refresh the library after adding new books over USB or Calibre.
 
 The full gesture reference is in [Gestures cheatsheet](#gestures-cheatsheet) below.
+
+### Folder shortcuts and jump-to-folder gestures
+
+If a KOReader folder shortcut, the "go to parent folder" or "go home" gesture, or any plugin points the file browser at a folder while Bookshelf is open, Bookshelf follows into that folder rather than leaving you on the previous shelf. The folder is added to the breadcrumb trail, so a back-swipe returns you to where you were. Opening an actual book still goes straight to the reader as usual.
 
 ---
 
@@ -229,6 +233,21 @@ The full token list is in the [Token cheatsheet](#token-cheatsheet) below.
 
 ---
 
+## Bundled fonts
+
+Bookshelf ships three open-licensed fonts (see `fonts/CREDITS.md`):
+
+- **Roboto Condensed** (Apache 2.0) -- the default Bookshelf UI font on new installs.
+- **Inter ExtraBold** (OFL) -- default hero title.
+- **Caveat** (OFL) -- default hero author.
+
+Set the interface font under **Bookshelf settings -> Bookshelf UI font** (defaults to
+*Follow KOReader UI font* for existing users). The fonts are also copied into your font
+folder so they're selectable in the hero card's font picker after a restart. Existing
+users can adopt the new detail look via **Reset book detail area to defaults**.
+
+---
+
 ## Updates
 
 Open **menu -> Updates** to keep Bookshelf current:
@@ -321,7 +340,7 @@ Up to three levels per chip. Available sort keys:
 - **Last opened** (most-recent-first by default)
 - **Date added** (most-recent-first by default)
 - **Percent read** (most progress first by default)
-- **Rating** (highest first; unrated last)
+- **Rating** (highest first by default; unrated last)
 - **Unread/Reading/Finished** or **Reading/Unread/Finished** (status orderings)
 - **File size**
 - **Page count**
@@ -483,7 +502,8 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `show_series_num` | "always" / "in_series" / "never". |
 | `progress_fill` / `progress_track` / `bookmark_color` / `complete_bookmark_color` / `favorite_star_color` / `badge_fg` / `badge_bg` / `border_color` / `folder_overlay_bg` / `folder_overlay_fg` | Cover-chrome colours (% black). Each also has a `_night` variant for the night-mode palette; unset keys fall back to per-mode defaults. |
 | `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
-| `cover_cache_size` | How many scaled covers to keep in memory (default 32). |
+| `bookshelf_ui_font` | Chosen Bookshelf interface font (a resolvable font face). Absent = follow KOReader's UI font. |
+| `cover_cache_mb` | Memory budget (MB) for the scaled-cover cache (default 24). The legacy `cover_cache_size` count key is discarded on first load. |
 | `android_safe_mode` | Android only. Default on; disables risky background jobs implicated in issue #87. |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |

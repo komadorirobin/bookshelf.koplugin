@@ -194,6 +194,62 @@ function Regions.write(key, entry)
     Regions.invalidateCache()
 end
 
+-- The fresh-install / "Reset book detail area to defaults" hero layout. This
+-- is the maintainer's tuned configuration copied verbatim from the reference
+-- device, with one portability fix: bundled-font faces are stored as bare
+-- filenames ("Inter-ExtraBold.ttf", "Caveat-Regular.ttf") which resolve via
+-- the scanned font dir on any device (the reference device had stored the
+-- title as an absolute /mnt/us/fonts path). Regions not listed here (e.g.
+-- "rating") fall through to Regions.DEFAULTS.
+Regions.FRESH_INSTALL = {
+    status = {
+        template  = "%time_12h %spacer  %disk[if:batt]  %batt_icon%batt[/if][if:light]  %light_icon%light_pct[/if]  %wifi_icon",
+        font_size = 14, bold = true, uppercase = false, alignment = "right",
+    },
+    title = {
+        template    = "%title",
+        font_face   = "Inter-ExtraBold.ttf", font_size = 32, bold = false,
+        uppercase   = false, alignment = "left", line_height = 0.05,
+    },
+    author = {
+        template  = "%authors_short",
+        font_face = "Caveat-Regular.ttf", font_size = 26, bold = false,
+        uppercase = false, alignment = "left",
+    },
+    metadata = {
+        template  = "[if:series]%series_name[if:series_num] / #%series_num[/if][/if]",
+        font_size = 14, bold = true, uppercase = false, alignment = "right",
+    },
+    description = {
+        template  = "[if:rating]%rating \xC2\xB7 [/if]%description",
+        font_size = 16, bold = false, alignment = "left",
+    },
+    tags = { disabled = false },
+    progress = {
+        template   = "%book_pct  %bar  [if:book_time_left]%book_time_left[/if]",
+        font_size  = 14, bold = true, uppercase = false, alignment = "left",
+        bar_style  = "rounded",
+    },
+}
+
+-- Re-seed the hero/detail area to the fresh-install look (the FRESH_INSTALL
+-- layout above). Writes the whole region set in one flush. Used by the
+-- first-run seed and by "Reset book detail area to defaults".
+function Regions.applyFreshInstallDefaults()
+    local stored = {}
+    for _, key in ipairs(Regions.ORDER) do
+        local cfg = Regions.FRESH_INSTALL[key]
+        if cfg then
+            local entry = {}
+            for k, v in pairs(cfg) do entry[k] = v end   -- copy, don't alias the template table
+            stored[key] = entry
+        end
+    end
+    G_reader_settings:saveSetting(Regions.SETTINGS_KEY, stored)
+    G_reader_settings:flush()
+    Regions.invalidateCache()
+end
+
 -- snapshot(key) — deep-copy the *raw* stored entry for a region (or nil
 -- if there is none). Cheap because the schema is one level deep.
 function Regions.snapshot(key)

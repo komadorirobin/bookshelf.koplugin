@@ -23,6 +23,7 @@ local Widget         = require("ui/widget/widget")
 local Geom           = require("ui/geometry")
 local Size           = require("ui/size")
 local Font           = require("ui/font")
+local BFont          = require("lib/bookshelf_fonts")
 local Blitbuffer     = require("ffi/blitbuffer")
 local Screen         = require("device").screen
 
@@ -259,7 +260,7 @@ function FolderCard.build(opts)
     local BookshelfSettings = require("lib/bookshelf_settings_store")
     local label_scale = BookshelfSettings.read("stack_label_font_scale", 100) or 100
     local face_size   = math.max(8, math.floor(16 * label_scale / 100))
-    local face        = Font:getFace("infofont", face_size)
+    local face, bold  = BFont:getFace("infofont", face_size, { bold = true })
     local label_pad     = Size.padding.large
     local label_w_avail = card_w - label_pad * 2
 
@@ -268,7 +269,7 @@ function FolderCard.build(opts)
     local line_probe = TextBoxWidget:new{
         text  = "Mg",
         face  = face,
-        bold  = true,
+        bold  = bold,
         width = label_w_avail,
     }
     local line_h = line_probe:getSize().h
@@ -278,7 +279,7 @@ function FolderCard.build(opts)
     local probe = TextBoxWidget:new{
         text  = label_text,
         face  = face,
-        bold  = true,
+        bold  = bold,
         width = label_w_avail,
     }
     local content_h = probe:getSize().h
@@ -319,7 +320,7 @@ function FolderCard.build(opts)
     local label_widget = CardboardTextBox:new{
         text                          = label_text,
         face                          = face,
-        bold                          = true,
+        bold                          = bold,
         fgcolor                       = label_fg,
         bgcolor                       = fill_color,
         width                         = label_w_avail,

@@ -20,6 +20,7 @@ local Size = require("ui/size")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local BFont = require("lib/bookshelf_fonts")
 local _ = require("lib/bookshelf_i18n").gettext
 
 -- Uniform gap applied everywhere below the title bar separator.
@@ -226,10 +227,11 @@ function LibraryModal:_renderTitleBar(content_width, modal_w)
     -- Equal top/bottom padding so the title text reads as vertically centred.
     local bar_pad = Screen:scaleBySize(8)
 
+    local title_face, title_bold = BFont:getFace("cfont", 22, { bold = true })
     local title_w = TextWidget:new{
         text = self.config.title,
-        face = Font:getFace("cfont", 22),
-        bold = true,
+        face = title_face,
+        bold = title_bold,
         fgcolor = Blitbuffer.COLOR_BLACK,
     }
 
@@ -292,8 +294,9 @@ function LibraryModal:_renderTabSegments(title_bar_h)
     local function seg(label, is_active, on_tap)
         local fg = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
         local bg = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+        local seg_face, seg_bold = BFont:getFace("cfont", 14, { bold = is_active })
         local tw = TextWidget:new{
-            text = label, face = Font:getFace("cfont", 14), bold = is_active, fgcolor = fg,
+            text = label, face = seg_face, bold = seg_bold, fgcolor = fg,
         }
         local pill_w = tw:getSize().w + 2 * seg_pad_h
         -- No border on either state — the active fill alone signals selection,
@@ -369,8 +372,8 @@ function LibraryModal:_renderSearchInput(content_width)
 
     -- Button labels match the tab pill font (cfont/14) so the row reads as
     -- one family. The input itself stays at cfont/16 for typing legibility.
-    local btn_face = Font:getFace("cfont", 14)
-    local input_face = Font:getFace("cfont", 16)
+    local btn_face = (BFont:getFace("cfont", 14))
+    local input_face = (BFont:getFace("cfont", 16))
     local btn_pad_h = Screen:scaleBySize(12)
     local gap = Screen:scaleBySize(6)
     -- InputText wraps its TextWidget in a FrameContainer with bordersize +
@@ -550,8 +553,9 @@ function LibraryModal:_renderChipStrip(content_width)
         end
         local fg = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
         local bg = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+        local chip_face, chip_bold = BFont:getFace("cfont", 13, { bold = is_active })
         local tw = TextWidget:new{
-            text = chip.label, face = Font:getFace("cfont", 13), bold = is_active, fgcolor = fg,
+            text = chip.label, face = chip_face, bold = chip_bold, fgcolor = fg,
         }
         -- Border thickness stays constant across active/inactive so the chip
         -- widths don't shift when selection changes (avoids the "jiggle" of
@@ -635,9 +639,11 @@ function LibraryModal:_renderChipStrip(content_width)
         local status_max = content_width - row1_w - status_gap
         if status_max > 0 then
             table.insert(row1, HorizontalSpan:new{ width = status_gap })
+            local status_face, status_bold = BFont:getFace("cfont", 13)
             table.insert(row1, TextWidget:new{
                 text = status_text,
-                face = Font:getFace("cfont", 13),
+                face = status_face,
+                bold = status_bold,
                 max_width = status_max,
                 fgcolor = Blitbuffer.COLOR_DARK_GRAY,
             })
@@ -918,10 +924,11 @@ function LibraryModal:_renderFooter(content_width)
         -- Dynamic label needed for Apply/Install switching in preset modal;
         -- label_func() takes precedence over the static label fallback.
         local btn_text = action.label_func and action.label_func() or action.label
+        local act_face, act_bold = BFont:getFace("cfont", 16, { bold = action.primary == true })
         table.insert(btns, Button:new{
             text = btn_text,
-            face = Font:getFace("cfont", 16),
-            bold = action.primary == true,
+            face = act_face,
+            bold = act_bold,
             bordersize = 0,
             radius = 0,
             width = btn_width,

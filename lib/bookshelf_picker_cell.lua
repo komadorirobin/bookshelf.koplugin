@@ -21,6 +21,7 @@ local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Font            = require("ui/font")
+local BFont           = require("lib/bookshelf_fonts")
 local Geom            = require("ui/geometry")
 local Size            = require("ui/size")
 local TextWidget      = require("ui/widget/textwidget")
@@ -67,10 +68,11 @@ function PickerCell.render(item, dimen, opts)
     local sub_fgcolor = Blitbuffer.COLOR_BLACK
 
     local children = {}
+    local label_face, label_bold = BFont:getFace("cfont", 18, { bold = true })
     children[#children + 1] = TextWidget:new{
         text      = item.label or "",
-        face      = Font:getFace("cfont", 18),
-        bold      = true,
+        face      = label_face,
+        bold      = label_bold,
         fgcolor   = fgcolor,
         max_width = content_w,
     }
@@ -92,10 +94,11 @@ function PickerCell.render(item, dimen, opts)
         -- lines bold the visual relationship reads as one stacked unit;
         -- a larger gap broke that into two separate lines.
         children[#children + 1] = VerticalSpan:new{ width = Screen:scaleBySize(1) }
+        local sub_face, sub_bold = BFont:getFace("cfont", 12, { bold = true })
         children[#children + 1] = TextWidget:new{
             text      = sub_text,
-            face      = Font:getFace("cfont", 12),
-            bold      = true,
+            face      = sub_face,
+            bold      = sub_bold,
             fgcolor   = sub_fgcolor,
             max_width = content_w,
         }

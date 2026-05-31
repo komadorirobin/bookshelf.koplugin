@@ -70,6 +70,11 @@ package.loaded["lib/bookshelf_hero_card"]       = {
     buildStatusRow = function() return nil end,
 }
 package.loaded["lib/bookshelf_chip_bar"]        = { new = function() return {} end }
+package.loaded["lib/bookshelf_fonts"]           = {
+    getFace = function(_, family, size, opts)
+        return { family = family, size = size }, opts and opts.bold or false
+    end,
+}
 package.loaded["lib/bookshelf_shelf_row"]       = {}
 package.loaded["lib/bookshelf_spine_widget"]    = {}
 
