@@ -6,6 +6,7 @@
 -- All persisted keys use the bookshelf_* prefix.
 
 local Menu         = require("ui/widget/menu")
+local Notification = require("ui/widget/notification")
 local SpinWidget   = require("ui/widget/spinwidget")
 local UIManager    = require("ui/uimanager")
 local T            = require("ffi/util").template
@@ -1333,6 +1334,24 @@ function Settings:_advancedSubItems()
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 self:_pickCoverCacheBudget(touchmenu_instance)
+            end,
+        },
+        {
+            text = _("Clear cover cache"),
+            help_text = _("Drop all cached scaled covers from memory. "
+                .. "Use this when a book's cover has been updated outside "
+                .. "KOReader (e.g. a metadata-enrichment tool rewrote the "
+                .. "EPUB) and the old cover is still showing on the shelf. "
+                .. "The next render fetches fresh covers from the EPUBs. "
+                .. "Restarting KOReader has the same effect."),
+            keep_menu_open = true,
+            callback = function()
+                local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+                ScaledCoverCache:clear()
+                UIManager:show(Notification:new{
+                    text    = _("Cover cache cleared"),
+                    timeout = 2,
+                })
             end,
         },
         {
