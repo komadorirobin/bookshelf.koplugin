@@ -236,6 +236,28 @@ local function _loadPickerModules()
     }
 end
 
+local function _runWhenOnline(fn, on_error)
+    local ok_network, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_network and NetworkMgr and type(NetworkMgr.runWhenOnline) == "function" then
+        local ok_run = pcall(function()
+            NetworkMgr:runWhenOnline(function()
+                local ok, err = pcall(fn)
+                if not ok and on_error then on_error(tostring(err)) end
+            end)
+        end)
+        if ok_run then
+            return true
+        end
+    end
+
+    local ok, err = pcall(fn)
+    if not ok then
+        if on_error then on_error(tostring(err)) end
+        return false, err
+    end
+    return true
+end
+
 local function _openHardcoverSettingsObject()
     if _hc_settings_object then return _hc_settings_object end
     local ok, HardcoverSettings = pcall(require, "hardcover/lib/hardcover_settings")
@@ -561,10 +583,11 @@ function Hardcover.showBookPicker(book, opts)
                 if opts.on_error then opts.on_error(link_err) end
                 return
             end
-            local ok_refresh, refresh_err = Hardcover.refreshBook(book, { force = true })
-            if opts.on_book_selected then
-                opts.on_book_selected(selected, ok_refresh, refresh_err)
-            end
+            Hardcover.refreshBookOnline(book, { force = true }, function(ok_refresh, refresh_err)
+                if opts.on_book_selected then
+                    opts.on_book_selected(selected, ok_refresh, refresh_err)
+                end
+            end)
         end,
         function(search)
             manager:updateSearchResults(search)
@@ -597,10 +620,11 @@ function Hardcover.showEditionPicker(book, book_id, opts)
                 if opts.on_error then opts.on_error(link_err) end
                 return
             end
-            local ok_refresh, refresh_err = Hardcover.refreshBook(book, { force = true })
-            if opts.on_edition_selected then
-                opts.on_edition_selected(selected, ok_refresh, refresh_err)
-            end
+            Hardcover.refreshBookOnline(book, { force = true }, function(ok_refresh, refresh_err)
+                if opts.on_edition_selected then
+                    opts.on_edition_selected(selected, ok_refresh, refresh_err)
+                end
+            end)
         end
     )
     return true
@@ -641,6 +665,13 @@ end
 
 local function _downloadImage(url, key, force)
     if type(url) ~= "string" or url == "" or not key then return nil end
+    local ok_network, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_network and NetworkMgr and type(NetworkMgr.isOnline) == "function" then
+        local ok_online, is_online = pcall(NetworkMgr.isOnline, NetworkMgr)
+        if ok_online and not is_online then
+            return nil
+        end
+    end
     local dir = _cacheDir()
     if not _ensureDir(dir) then return nil end
     local ext = url:match("%.([jJ][pP][eE]?[gG])[%?%#]?") and "jpg"
@@ -789,6 +820,16 @@ function Hardcover.refreshBook(book, opts)
     return true, payload
 end
 
+function Hardcover.refreshBookOnline(book, opts, callback)
+    opts = opts or {}
+    return _runWhenOnline(function()
+        local ok, payload = Hardcover.refreshBook(book, opts)
+        if callback then callback(ok, payload) end
+    end, function(err)
+        if callback then callback(false, err) end
+    end)
+end
+
 function Hardcover.refreshAllLinked()
     local linked, updated, failed = 0, 0, 0
     local errors = {}
@@ -818,6 +859,15 @@ function Hardcover.refreshAllLinked()
         failed = failed,
         errors = errors,
     }
+end
+
+function Hardcover.refreshAllLinkedOnline(callback)
+    return _runWhenOnline(function()
+        local ok, stats = Hardcover.refreshAllLinked()
+        if callback then callback(ok, stats) end
+    end, function(err)
+        if callback then callback(false, err) end
+    end)
 end
 
 function Hardcover.enrichBook(book)

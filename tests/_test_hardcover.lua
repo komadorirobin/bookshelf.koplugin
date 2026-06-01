@@ -118,5 +118,28 @@ test("refreshBook writes cache from Hardcover API", function()
     assert(book.description == "Fresh Hardcover description.", tostring(book.description))
 end)
 
+test("refreshBookOnline uses KOReader network manager when available", function()
+    reset()
+    local network_called = false
+    package.loaded["ui/network/manager"] = {
+        runWhenOnline = function(_self, callback)
+            network_called = true
+            callback()
+        end,
+    }
+    assert(Hardcover.linkBook("/books/a.epub", { id = 123, title = "A Book" }))
+
+    local callback_ok, callback_payload
+    local ok = Hardcover.refreshBookOnline({ filepath = "/books/a.epub" }, {}, function(refresh_ok, payload)
+        callback_ok = refresh_ok
+        callback_payload = payload
+    end)
+    assert(ok == true, "online wrapper did not return true")
+    assert(network_called == true, "NetworkMgr:runWhenOnline was not used")
+    assert(callback_ok == true, tostring(callback_payload))
+    assert(callback_payload.description == "Fresh Hardcover description.", "bad callback payload")
+    package.loaded["ui/network/manager"] = nil
+end)
+
 io.stdout:write(("PASS %d  FAIL %d\n"):format(pass, fail))
 if fail > 0 then os.exit(1) end

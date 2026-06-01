@@ -39,6 +39,14 @@ local function splitAuthors(s)
     return #t > 0 and t or nil
 end
 
+local function shallowCopyRecord(record)
+    local copy = {}
+    for k, v in pairs(record or {}) do
+        copy[k] = v
+    end
+    return copy
+end
+
 -- Split a genre/tag string (or array of strings) on common EPUB delimiters
 -- (comma, semicolon, pipe, slash) and return a trimmed array, or nil.
 local function splitGenreTags(src)
@@ -388,7 +396,7 @@ function Repo.buildBookMeta(filepath, opts)
     -- good record we built for this file when BIM doesn't currently
     -- have usable metadata for it.
     if not info.has_meta and _meta_record_cache[filepath] then
-        local cached = _meta_record_cache[filepath]
+        local cached = shallowCopyRecord(_meta_record_cache[filepath])
         local Hardcover = getHardcover()
         if Hardcover and Hardcover.enrichBook then
             pcall(Hardcover.enrichBook, cached)
@@ -489,10 +497,6 @@ function Repo.buildBookMeta(filepath, opts)
                        or nil,
         page_count  = info.pages,
     }
-    local Hardcover = getHardcover()
-    if Hardcover and Hardcover.enrichBook then
-        pcall(Hardcover.enrichBook, book)
-    end
     -- Cache fresh records whose text metadata is present, with the
     -- cover_bb stripped. ImageWidget marks the cover_bb's
     -- image_disposable=true after first paint -- it's a one-shot
@@ -513,6 +517,10 @@ function Repo.buildBookMeta(filepath, opts)
             if k ~= "cover_bb" then cached[k] = v end
         end
         _meta_record_cache[filepath] = cached
+    end
+    local Hardcover = getHardcover()
+    if Hardcover and Hardcover.enrichBook then
+        pcall(Hardcover.enrichBook, book)
     end
     return book
 end

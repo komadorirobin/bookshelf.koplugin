@@ -1202,15 +1202,16 @@ function Settings:_hardcoverSubItems()
                         notify(_("Hardcover integration could not be loaded"))
                         return
                     end
-                    local ok, stats = Hardcover.refreshAllLinked()
-                    if not ok then
-                        notify(tostring(stats or _("Hardcover refresh failed")), 5)
-                        return
-                    end
-                    markDirty("hardcover-refresh")
-                    notify(T(_("Hardcover metadata refreshed: %1 updated, %2 failed"),
-                             tostring(stats.updated or 0),
-                             tostring(stats.failed or 0)), 4)
+                    Hardcover.refreshAllLinkedOnline(function(ok, stats)
+                        if not ok then
+                            notify(tostring(stats or _("Hardcover refresh failed")), 5)
+                            return
+                        end
+                        markDirty("hardcover-refresh")
+                        notify(T(_("Hardcover metadata refreshed: %1 updated, %2 failed"),
+                                 tostring(stats.updated or 0),
+                                 tostring(stats.failed or 0)), 4)
+                    end)
                 end)
             end,
         },

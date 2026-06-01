@@ -7190,13 +7190,14 @@ function BookshelfWidget:_openHardcoverMenu(book)
     end
 
     local function refreshLinkedMetadata(success_text)
-        local ok, err = Hardcover.refreshBook(book, { force = true })
-        refreshAfterAction("hardcover-refresh-one")
-        if ok then
-            bw:_hardcoverToast(success_text or _("Hardcover metadata refreshed"))
-        else
-            bw:_hardcoverToast(tostring(err or _("Hardcover refresh failed")), 5)
-        end
+        Hardcover.refreshBookOnline(book, { force = true }, function(ok, err)
+            refreshAfterAction("hardcover-refresh-one")
+            if ok then
+                bw:_hardcoverToast(success_text or _("Hardcover metadata refreshed"))
+            else
+                bw:_hardcoverToast(tostring(err or _("Hardcover refresh failed")), 5)
+            end
+        end)
     end
 
     local embedded_button = {

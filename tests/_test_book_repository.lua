@@ -280,6 +280,48 @@ test("buildBook: single-author string yields one-element array, no trailing whit
     assert(book.author == "Sole Author")
 end)
 
+test("buildBookMeta: Hardcover enrichment never sticks in sticky metadata cache", function()
+    local fp = "/hardcover-cache.epub"
+    _G._test_settings = {
+        bookshelf_hardcover_links = {
+            [fp] = { book_id = 123, title = "Remote Link" },
+        },
+        bookshelf_hardcover_enrichment = {
+            ["123"] = {
+                description = "Remote description",
+                cover_path = "/tmp/remote-cover.jpg",
+            },
+        },
+    }
+    local Hardcover = require("lib/bookshelf_hardcover")
+    Hardcover.invalidate()
+
+    _G._test_bim_data = {
+        [fp] = {
+            has_meta = "Y",
+            title = "Local Title",
+            authors = "Local Author",
+        },
+    }
+    local enriched = Repo.buildBookMeta(fp)
+    assert(enriched.description == "Remote description", "expected remote description")
+    assert(enriched.cover_image_path == "/tmp/remote-cover.jpg", "expected remote cover")
+
+    -- Simulate Clear link / Clear cache, then BIM being temporarily unable
+    -- to provide metadata. The fallback path should return a clean copy of
+    -- the sticky record, not stale Hardcover fields from before the unlink.
+    _G._test_settings.bookshelf_hardcover_links = {}
+    _G._test_settings.bookshelf_hardcover_enrichment = {}
+    Hardcover.invalidate()
+    _G._test_bim_data[fp] = {}
+
+    local fallback = Repo.buildBookMeta(fp)
+    assert(fallback.title == "Local Title", "sticky metadata record was not used")
+    assert(fallback.description == nil, "stale Hardcover description leaked")
+    assert(fallback.cover_image_path == nil, "stale Hardcover cover leaked")
+    assert(fallback.hardcover_book_id == nil, "stale Hardcover id leaked")
+end)
+
 test("buildBook: nil authors → nil array (not crash)", function()
     _G._test_bim_data = { ["/x.epub"] = {} }
     local book = Repo.buildBook("/x.epub")
