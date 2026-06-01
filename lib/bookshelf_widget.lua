@@ -28,6 +28,7 @@ local ChipBar   = require("lib/bookshelf_chip_bar")
 local ShelfRow    = require("lib/bookshelf_shelf_row")
 local SpineWidget = require("lib/bookshelf_spine_widget")
 local logger      = require("logger")
+local T           = require("ffi/util").template
 
 -- Wall-clock timer for perf instrumentation. LuaSocket's gettime() gives
 -- fractional seconds including I/O waits; os.clock() is CPU-only (fallback).
@@ -7149,6 +7150,156 @@ function BookshelfWidget:_showFullDescription(book)
     UIManager:show(viewer)
 end
 
+function BookshelfWidget:_refreshHardcoverEnrichmentView(reason)
+    Repo.invalidateBookCache(reason or "hardcover")
+    pcall(function() require("lib/bookshelf_image_source").invalidateCache() end)
+    if self._rebuild then
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+    end
+end
+
+function BookshelfWidget:_hardcoverToast(text, timeout)
+    UIManager:show(require("ui/widget/notification"):new{
+        text    = text,
+        timeout = timeout or 3,
+    })
+end
+
+function BookshelfWidget:_openHardcoverMenu(book)
+    if not (book and book.filepath) then return end
+    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+    if not ok_hc or not Hardcover then
+        self:_hardcoverToast(_("Hardcover integration could not be loaded"))
+        return
+    end
+
+    local bw = self
+    local link = Hardcover.getLink(book.filepath)
+    local dialog
+
+    local function closeThen(fn)
+        return function()
+            UIManager:close(dialog)
+            if fn then UIManager:nextTick(fn) end
+        end
+    end
+
+    local function refreshAfterAction(reason)
+        bw:_refreshHardcoverEnrichmentView(reason or "hardcover-link")
+    end
+
+    local function refreshLinkedMetadata(success_text)
+        local ok, err = Hardcover.refreshBook(book, { force = true })
+        refreshAfterAction("hardcover-refresh-one")
+        if ok then
+            bw:_hardcoverToast(success_text or _("Hardcover metadata refreshed"))
+        else
+            bw:_hardcoverToast(tostring(err or _("Hardcover refresh failed")), 5)
+        end
+    end
+
+    local embedded_button = {
+        text = _("Link embedded IDs"),
+        callback = closeThen(function()
+            local ok, result = Hardcover.linkFromEmbeddedIdentifiers(book)
+            if not ok then
+                bw:_hardcoverToast(tostring(result or _("No embedded Hardcover identifier found")), 5)
+                return
+            end
+            refreshLinkedMetadata(_("Hardcover book linked"))
+        end),
+    }
+
+    local select_book_button = {
+        text = _("Select book") .. "\xE2\x80\xA6",
+        callback = closeThen(function()
+            local ok, err = Hardcover.showBookPicker(book, {
+                on_error = function(msg)
+                    bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
+                end,
+                on_book_selected = function(_selected, ok_refresh, refresh_err)
+                    refreshAfterAction("hardcover-select-book")
+                    if ok_refresh == false then
+                        bw:_hardcoverToast(T(_("Book linked, but metadata refresh failed: %1"),
+                                             tostring(refresh_err)), 5)
+                    else
+                        bw:_hardcoverToast(_("Hardcover book linked"))
+                    end
+                end,
+            })
+            if not ok then
+                bw:_hardcoverToast(tostring(err or _("Hardcover search failed")), 5)
+            end
+        end),
+    }
+
+    local select_edition_button = {
+        text = _("Select edition") .. "\xE2\x80\xA6",
+        enabled = link and link.book_id and true or false,
+        callback = closeThen(function()
+            local current = Hardcover.getLink(book.filepath)
+            if not current or not current.book_id then
+                bw:_hardcoverToast(_("Link a Hardcover book first"))
+                return
+            end
+            local ok, err = Hardcover.showEditionPicker(book, current.book_id, {
+                on_error = function(msg)
+                    bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
+                end,
+                on_edition_selected = function(_selected, ok_refresh, refresh_err)
+                    refreshAfterAction("hardcover-select-edition")
+                    if ok_refresh == false then
+                        bw:_hardcoverToast(T(_("Edition linked, but metadata refresh failed: %1"),
+                                             tostring(refresh_err)), 5)
+                    else
+                        bw:_hardcoverToast(_("Hardcover edition linked"))
+                    end
+                end,
+            })
+            if not ok then
+                bw:_hardcoverToast(tostring(err or _("Hardcover edition search failed")), 5)
+            end
+        end),
+    }
+
+    local refresh_button = {
+        text = _("Refresh metadata"),
+        enabled = link and link.book_id and true or false,
+        callback = closeThen(function()
+            refreshLinkedMetadata()
+        end),
+    }
+
+    local clear_button = {
+        text = _("Clear link"),
+        enabled = link and true or false,
+        callback = closeThen(function()
+            local ok, err = Hardcover.clearLink(book.filepath)
+            refreshAfterAction("hardcover-clear-link")
+            if ok then
+                bw:_hardcoverToast(_("Hardcover link cleared"))
+            else
+                bw:_hardcoverToast(tostring(err or _("Could not clear Hardcover link")), 5)
+            end
+        end),
+    }
+
+    local linked_text = link
+        and (T(_("Linked: %1"), Hardcover.linkLabel(book.filepath) or tostring(link.book_id)))
+        or _("Not linked to Hardcover")
+    dialog = require("ui/widget/buttondialog"):new{
+        title = _("Hardcover"),
+        buttons = {
+            { { text = linked_text, enabled = false } },
+            { embedded_button, select_book_button },
+            { select_edition_button, refresh_button },
+            { clear_button, { text = _("Cancel"), callback = function() UIManager:close(dialog) end } },
+        },
+    }
+    UIManager:show(dialog)
+end
+
 -- (from on_series_hold on a SeriesStack). Series groups have a .books field;
 -- we route to a series-specific dialog in that case.
 function BookshelfWidget:_openBookMenu(item)
@@ -7478,6 +7629,23 @@ function BookshelfWidget:_openBookMenu(item)
                 timeout = 2,
             })
         end),
+    }
+
+    local hardcover_button = {
+        text_func = function()
+            local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+            if ok_hc and Hardcover and Hardcover.getLink
+                    and Hardcover.getLink(book.filepath) then
+                return _("Hardcover") .. "  \xE2\x9C\x93"
+            end
+            return _("Hardcover")
+        end,
+        callback = function()
+            UIManager:close(dialog)
+            UIManager:nextTick(function()
+                bw:_openHardcoverMenu(book)
+            end)
+        end,
     }
 
     -- Rating button + sub-dialog. Sub-dialog writes draft.rating
@@ -7953,8 +8121,9 @@ function BookshelfWidget:_openBookMenu(item)
     --   1. Show info / Collections / Rating
     --   2. Status row (Unopened / Reading / On hold / Finished)
     --   3. Reset book data… / Remove from history
-    --   4. Delete / Refresh metadata
-    --   5. Select / Cancel / Apply
+    --   4. Refresh metadata / Hardcover
+    --   5. Delete
+    --   6. Select / Cancel / Apply
     --
     -- Top row pairs Show info / Collections / Rating so the Collections
     -- button sits right under the header pills (visual anchor to the
@@ -7964,7 +8133,8 @@ function BookshelfWidget:_openBookMenu(item)
         { show_info_button, tags_button, rating_button },
         status_row,
         { reset_btn,        remove_history_button, fav_button },
-        { delete_btn,       refresh_button },
+        { refresh_button,   hardcover_button },
+        { delete_btn },
     }
     buttons[#buttons + 1] = { select_btn, cancel_btn, apply_btn }
 

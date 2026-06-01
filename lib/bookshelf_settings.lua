@@ -1127,9 +1127,108 @@ function Settings:_settingsSubItems()
             end,
         },
         {
+            text                = _("Hardcover enrichment"),
+            sub_item_table_func = function()
+                return self:_hardcoverSubItems()
+            end,
+        },
+        {
             text                = _("Advanced settings"),
             sub_item_table_func = function()
                 return self:_advancedSubItems()
+            end,
+        },
+    }
+end
+
+function Settings:_hardcoverSubItems()
+    local function markDirty(reason)
+        pcall(function()
+            require("lib/bookshelf_book_repository").invalidateBookCache(reason or "hardcover")
+        end)
+        pcall(function()
+            require("lib/bookshelf_image_source").invalidateCache()
+        end)
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+    end
+
+    local function notify(text, timeout)
+        UIManager:show(Notification:new{
+            text    = text,
+            timeout = timeout or 3,
+        })
+    end
+
+    return {
+        {
+            text = _("Fill missing descriptions from Hardcover"),
+            help_text = _("When a book is linked to Hardcover and Bookshelf has cached a description for it, use that text only if the EPUB has no description of its own."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("hardcover_fill_descriptions")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("hardcover_fill_descriptions")
+                BookshelfSettings.save("hardcover_fill_descriptions", not enabled)
+                markDirty("hardcover-description-toggle")
+            end,
+        },
+        {
+            text = _("Use Hardcover covers when missing"),
+            help_text = _("When a linked book has no embedded EPUB cover, use the cached Hardcover cover image as a Bookshelf-only fallback. EPUB files are not modified."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("hardcover_fill_covers")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("hardcover_fill_covers")
+                BookshelfSettings.save("hardcover_fill_covers", not enabled)
+                markDirty("hardcover-cover-toggle")
+            end,
+        },
+        {
+            text = _("Refresh linked Hardcover metadata"),
+            help_text = _("Fetch descriptions and cover images for books already linked to Hardcover. Rendering never contacts Hardcover; this explicit refresh updates Bookshelf's local cache."),
+            callback = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function()
+                    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                    if not ok_hc or not Hardcover then
+                        notify(_("Hardcover integration could not be loaded"))
+                        return
+                    end
+                    local ok, stats = Hardcover.refreshAllLinked()
+                    if not ok then
+                        notify(tostring(stats or _("Hardcover refresh failed")), 5)
+                        return
+                    end
+                    markDirty("hardcover-refresh")
+                    notify(T(_("Hardcover metadata refreshed: %1 updated, %2 failed"),
+                             tostring(stats.updated or 0),
+                             tostring(stats.failed or 0)), 4)
+                end)
+            end,
+        },
+        {
+            text = _("Clear Hardcover cache"),
+            help_text = _("Remove Bookshelf's cached Hardcover descriptions and downloaded cover images. Existing book links are kept."),
+            callback = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function()
+                    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                    if ok_hc and Hardcover and Hardcover.clearEnrichmentCache then
+                        Hardcover.clearEnrichmentCache()
+                    end
+                    markDirty("hardcover-clear-cache")
+                    notify(_("Hardcover cache cleared"))
+                end)
             end,
         },
     }

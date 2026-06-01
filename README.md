@@ -109,6 +109,7 @@ Below the header you'll find:
 | **Show info** | KOReader's built-in book info dialog. |
 | **Collections (N)…** | Add or remove the book from any collection (Favourites, To Be Read, your own). The number shows current membership. |
 | **Rating** | Set a 1-to-5 star rating, or clear it. |
+| **Hardcover** | Link the book to Hardcover, pick a specific edition, or refresh cached Hardcover metadata. Requires `hardcoverapp.koplugin`. |
 | **Refresh metadata** | Re-read the cover and metadata from the file (useful after editing metadata externally). |
 | **Remove from history** | Drop the book from Recent without changing anything else on disk. |
 | **Reset book data…** | A wider purge with checkboxes for progress, bookmarks, highlights, notes, custom cover, and custom metadata. |
@@ -128,6 +129,19 @@ Collections are named lists of books, and Bookshelf uses KOReader's built-in col
 Open **menu -> Manage collections…** to add new collections, rename or delete existing ones, and **pin** any collection to your chip bar as a dedicated shelf.
 
 To put a book into a collection, long-press its cover and tap **Collections (N)…**. Tick the collections you want, then Save. The pill strip in the book menu's header updates immediately to reflect what's changed.
+
+---
+
+## Hardcover enrichment
+
+If you also use `hardcoverapp.koplugin`, Bookshelf can reuse its book links and cache a small amount of Hardcover metadata for display:
+
+- Missing book descriptions can be filled from Hardcover.
+- Missing local EPUB covers can use cached Hardcover cover images as a Bookshelf-only fallback.
+- Links are managed from a book's long-press menu under **Hardcover**.
+- Network calls only happen from explicit actions such as linking or **Settings -> Hardcover enrichment -> Refresh linked Hardcover metadata**. Normal shelf rendering reads only the local cache.
+
+Bookshelf does not rewrite EPUB files. Hardcover descriptions and cover images are stored in Bookshelf's settings/cache and can be disabled or cleared from **Settings -> Hardcover enrichment**.
 
 ---
 
@@ -499,6 +513,8 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
 | `bookshelf_ui_font` | Chosen Bookshelf interface font (a resolvable font face). Absent = follow KOReader's UI font. |
 | `cover_cache_mb` | Memory budget (MB) for the scaled-cover cache (default 24). The legacy `cover_cache_size` count key is discarded on first load. |
+| `hardcover_links` / `hardcover_enrichment` | Optional Hardcover link and cached description/cover metadata used by the Hardcover enrichment menu. |
+| `hardcover_fill_descriptions` / `hardcover_fill_covers` | Optional toggles for whether cached Hardcover descriptions/covers fill missing local metadata. Defaults on. |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |
 | `show_close_msg` | Show the centred "Closing book…" toast when exiting a book. |

@@ -467,9 +467,13 @@ function SpineWidget:init()
     --     override, or book.cover_bb populated by buildBookMeta with the
     --     default want_cover=true) OR we have a filepath to drive the
     --     lazy path (ScaledCoverCache hit or Repo.getCoverBB on miss).
+    --   * OR book.cover_image_path is a cached external enrichment cover
+    --     (currently Hardcover) for a book whose EPUB has no embedded cover.
     local effective_bb = self.cover_bb or (self.book and self.book.cover_bb)
     local can_lazy     = self.book and self.book.filepath
-    if self.book and self.book.has_cover and (effective_bb or can_lazy) then
+    local external_cover = self.book and self.book.cover_image_path
+    if self.book
+            and ((self.book.has_cover and (effective_bb or can_lazy)) or external_cover) then
         self[1] = self:_renderCover(effective_bb)
     else
         self[1] = self:_renderFallback()
@@ -961,6 +965,23 @@ function SpineWidget:_renderCover(bb)
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
     local fp = self.book and self.book.filepath
+    local external_cover = self.book
+        and not self.book.has_cover
+        and self.book.cover_image_path
+
+    if external_cover then
+        local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
+        local external_bb = ok_img and ImageSource.loadImage(external_cover, img_w, img_h) or nil
+        if external_bb then
+            return self:_wrapCoverInCard(
+                ImageWidget:new{
+                    image            = external_bb,
+                    image_disposable = false,
+                    scale_factor     = 1,
+                },
+                card_w, card_h, border)
+        end
+    end
 
     -- Cache-first. ScaledCoverCache is keyed by filepath only (one bb
     -- per book at canonical/max-seen dims). On hit, if the cached bb
