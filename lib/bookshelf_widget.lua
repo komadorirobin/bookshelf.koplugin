@@ -116,15 +116,16 @@ function BookshelfWidget._coverNeedsResize(info, specs)
 end
 
 function BookshelfWidget:_hasPrevPaginationTarget()
+    local total = self._total_pages or 1
     return self.page > 1
+        or (#self._drilldown_path == 0 and total > 1)
         or #self._drilldown_path > 0
-        or not self._chip_bar_hidden
 end
 
 function BookshelfWidget:_hasNextPaginationTarget()
     local total = self._total_pages or 1
     return self.page < total
-        or (#self._drilldown_path == 0 and not self._chip_bar_hidden)
+        or (#self._drilldown_path == 0 and total > 1)
 end
 
 function BookshelfWidget:_simpleUIPageLabel()
@@ -4586,7 +4587,7 @@ end
 --      (with wrap; pages flip automatically to keep the preview visible).
 --   2. Else page through the chip's data (west = next page, east = previous).
 --   3. East-swipe at page 1 + drilled-in → pop one drill level.
---   4. Edge swipe at top level + chip strip visible → cycle tabs (wrap).
+--   4. Top-level page edges wrap within the active chip.
 
 -- _chipNeighbour(direction) -> chip key or nil
 -- direction = +1 → next chip (with wrap), -1 → previous chip (with wrap).
@@ -5554,6 +5555,17 @@ function BookshelfWidget:_advanceCursor(delta_views, total)
     self:_clampCursor(total)
 end
 
+function BookshelfWidget:_jumpToPage(page_num)
+    local total_pages = math.max(1, self._total_pages or 1)
+    page_num = math.floor(tonumber(page_num) or 1)
+    if page_num < 1 then page_num = 1 end
+    if page_num > total_pages then page_num = total_pages end
+    local view = self:_viewSize()
+    self._cursor = math.max(1, (page_num - 1) * view + 1)
+    self:_clampCursor()
+    self:_syncPageFromCursor()
+end
+
 -- _viewSize() — books shown per page: current rows × cols.
 -- Standard normal: 8, standard expanded: 12, tall normal: 9, tall expanded: 12.
 -- Landscape normal: 5, landscape expanded: 10.
@@ -6110,7 +6122,7 @@ end
 -- Shared pagination logic for swipe and hardware-key page-turn handlers.
 -- Hero-position-aware preview cycling is gesture-only (depends on swipe
 -- coordinates) so it stays in the swipe wrappers; everything else —
--- page-step, chip-cycle at edges, drill-back at page 1 — is identical
+-- page-step, wrap at top-level edges, drill-back at page 1 — is identical
 -- between input modes.
 function BookshelfWidget:_paginateNext()
     -- Pagination works inside drilled views too — a series / folder with
@@ -6125,13 +6137,13 @@ function BookshelfWidget:_paginateNext()
         self:_schedulePreload(1)
         return true
     end
-    -- Last page at top level (no drill-down) and chip strip visible
-    -- → cycle to the next tab (with wrap). Drilled-in last page is
-    -- left as a no-op; back-navigation there happens via the
-    -- breadcrumb or east-swipe.
-    if #self._drilldown_path == 0 and not self._chip_bar_hidden then
-        local next_key = self:_chipNeighbour(1)
-        if next_key then self:_setActiveChip(next_key) end
+    -- Last page at top level wraps within the active chip. Chip changes
+    -- remain available via the explicit bookshelf_next_tab dispatcher action,
+    -- but page-turn keys/swipes stay bound to pagination.
+    if #self._drilldown_path == 0 and total > 1 then
+        self:_jumpToPage(1)
+        self:_swapShelvesInPlace()
+        self:_schedulePreload(1)
     end
     return true
 end
@@ -6152,13 +6164,14 @@ function BookshelfWidget:_paginatePrev()
         self:_drillBackTo(#self._drilldown_path - 1)
         return true
     end
-    -- Top level + page 1 + chip strip visible → cycle to previous tab
-    -- (with wrap). Hidden strip means 0 or 1 effective tab; cycling
-    -- would either no-op or surface a hidden chip silently, neither
-    -- helpful.
-    if not self._chip_bar_hidden then
-        local prev_key = self:_chipNeighbour(-1)
-        if prev_key then self:_setActiveChip(prev_key) end
+    -- Page 1 at top level wraps to the active chip's final page, which lets
+    -- large alphabetic libraries be browsed from the end without leaving the
+    -- current chip.
+    local total = self._total_pages or 1
+    if total > 1 then
+        self:_jumpToPage(total)
+        self:_swapShelvesInPlace()
+        self:_schedulePreload(-1)
     end
     return true
 end
