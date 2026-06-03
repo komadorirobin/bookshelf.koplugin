@@ -2642,6 +2642,7 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
         end,
         on_description_tap = function(b) self:_showFullDescription(b) end,
         on_rating_change   = function(b, r) self:_setBookRating(b, r) end,
+        on_hardcover_reviews_tap = function(b) self:_showHardcoverReviews(b) end,
         is_selected      = (self._focus_zone == "hero")
                            or (current and self._selection:contains(current.filepath) or false)
                            or (current and self._tap_selected_fp == current.filepath or false),
@@ -7190,6 +7191,199 @@ function BookshelfWidget:_showFullDescription(book)
     UIManager:show(viewer)
 end
 
+local function _formatHardcoverReviewRating(rating)
+    rating = tonumber(rating)
+    if not rating or rating <= 0 then return nil end
+    local text = string.format("%.1f", rating):gsub("%.0$", "")
+    return text .. " \xE2\x98\x85"
+end
+
+local function _formatHardcoverReviewDate(ts)
+    if type(ts) ~= "string" then return nil end
+    return ts:match("^(%d%d%d%d%-%d%d%-%d%d)") or ts
+end
+
+local function _repaintHardcoverReviewViewer(viewer)
+    UIManager:setDirty(viewer, function()
+        if viewer and viewer.dimen then
+            return "ui", viewer.dimen
+        end
+        return "full"
+    end)
+end
+
+local function _scrollHardcoverReviewViewer(viewer, direction)
+    local scroll = viewer and viewer.scroll_text_w
+    local textw = scroll and scroll.text_widget
+    if not textw or not textw.vertical_string_list or not textw.lines_per_page then
+        return true
+    end
+
+    local line_count = #textw.vertical_string_list
+    local lines_per_page = math.max(1, tonumber(textw.lines_per_page) or 1)
+    local max_top = math.max(1, line_count - lines_per_page + 1)
+    local old_top = math.max(1, tonumber(textw.virtual_line_num) or 1)
+    local new_top = old_top + (direction > 0 and lines_per_page or -lines_per_page)
+    if new_top < 1 then
+        new_top = 1
+    elseif new_top > max_top then
+        new_top = max_top
+    end
+
+    if new_top ~= old_top then
+        textw.image_show_alt_text = nil
+        textw:free(false)
+        textw.virtual_line_num = new_top
+        textw:_updateLayout()
+        if scroll.updateScrollBar then
+            scroll:updateScrollBar(true)
+        end
+        _repaintHardcoverReviewViewer(viewer)
+    end
+    return true
+end
+
+local function _stabiliseHardcoverReviewViewer(viewer)
+    local scroll = viewer and viewer.scroll_text_w
+    if not scroll then return end
+
+    -- TextViewer can advance read-only text past the last full page on
+    -- some KOReader builds. Clamp page turns so reviews don't become blank.
+    function scroll:scrollDown()
+        return _scrollHardcoverReviewViewer(viewer, 1)
+    end
+    function scroll:scrollUp()
+        return _scrollHardcoverReviewViewer(viewer, -1)
+    end
+    function scroll:scrollText(direction)
+        return _scrollHardcoverReviewViewer(viewer, direction)
+    end
+    function scroll:onScrollDown()
+        return _scrollHardcoverReviewViewer(viewer, 1)
+    end
+    function scroll:onScrollUp()
+        return _scrollHardcoverReviewViewer(viewer, -1)
+    end
+
+    if Device:hasKeys() then
+        viewer.key_events = viewer.key_events or {}
+        viewer.key_events.BSHardcoverReviewsNextPage = { { Device.input.group.PgFwd } }
+        viewer.key_events.BSHardcoverReviewsPrevPage = { { Device.input.group.PgBack } }
+        function viewer:onBSHardcoverReviewsNextPage()
+            return _scrollHardcoverReviewViewer(viewer, 1)
+        end
+        function viewer:onBSHardcoverReviewsPrevPage()
+            return _scrollHardcoverReviewViewer(viewer, -1)
+        end
+    end
+end
+
+function BookshelfWidget:_showHardcoverReviews(book, opts)
+    opts = opts or {}
+    if not (book and book.filepath) then return end
+    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+    local InfoMessage = require("ui/widget/infomessage")
+    if not ok_hc or not Hardcover then
+        UIManager:show(InfoMessage:new{
+            text = _("Hardcover integration could not be loaded"),
+            icon = "notice-warning",
+            timeout = 3,
+        })
+        return
+    end
+
+    local link = Hardcover.getLink(book.filepath)
+    local book_id = book.hardcover_book_id or (link and link.book_id)
+    if not book_id then
+        UIManager:show(InfoMessage:new{
+            text = _("No Hardcover book is linked yet."),
+            icon = "notice-warning",
+            timeout = 3,
+        })
+        return
+    end
+
+    UIManager:show(InfoMessage:new{
+        text = _("Fetching Hardcover reviews..."),
+        timeout = 1,
+    })
+
+    Hardcover.fetchReviewsOnline(book_id, {
+        force = opts.force == true,
+    }, function(ok, result)
+        if not ok then
+            UIManager:show(InfoMessage:new{
+                text = _("Hardcover reviews could not be fetched: ") .. tostring(result),
+                icon = "notice-warning",
+                timeout = 5,
+            })
+            return
+        end
+
+        local Tokens = require("lib/bookshelf_tokens")
+        local parts = {}
+        local title = result.title or book.hardcover_title or book.title or _("Hardcover reviews")
+        parts[#parts + 1] = title
+
+        local meta = {}
+        local rating = _formatHardcoverReviewRating(result.rating)
+        if rating then meta[#meta + 1] = rating end
+        if tonumber(result.ratings_count) and tonumber(result.ratings_count) > 0 then
+            meta[#meta + 1] = string.format(_("%d ratings"), tonumber(result.ratings_count))
+        end
+        if tonumber(result.reviews_count) and tonumber(result.reviews_count) > 0 then
+            meta[#meta + 1] = string.format(_("%d reviews"), tonumber(result.reviews_count))
+        end
+        if #meta > 0 then
+            parts[#parts + 1] = table.concat(meta, " · ")
+        end
+        parts[#parts + 1] = _("Showing non-spoiler reviews from Hardcover.")
+
+        local reviews = type(result.reviews) == "table" and result.reviews or {}
+        if #reviews == 0 then
+            parts[#parts + 1] = ""
+            parts[#parts + 1] = _("No non-spoiler reviews found.")
+        else
+            for _i, review in ipairs(reviews) do
+                parts[#parts + 1] = ""
+                parts[#parts + 1] = "--------------------"
+                local line = {}
+                line[#line + 1] = review.user_name or review.username or _("Unknown reader")
+                local r = _formatHardcoverReviewRating(review.rating)
+                if r then line[#line + 1] = r end
+                local d = _formatHardcoverReviewDate(review.reviewed_at)
+                if d then line[#line + 1] = d end
+                if tonumber(review.likes_count) and tonumber(review.likes_count) > 0 then
+                    line[#line + 1] = string.format(_("%d likes"), tonumber(review.likes_count))
+                end
+                parts[#parts + 1] = table.concat(line, " · ")
+                local text = Tokens.cleanDescription(review.text or "") or ""
+                if text == "" then text = _("No review text.") end
+                parts[#parts + 1] = text
+            end
+        end
+
+        local viewer
+        viewer = require("ui/widget/textviewer"):new{
+            title = _("Hardcover reviews"),
+            text  = table.concat(parts, "\n"),
+            buttons_table = {
+                {
+                    { text = _("Refresh"), callback = function()
+                        UIManager:close(viewer)
+                        self:_showHardcoverReviews(book, { force = true })
+                    end },
+                    { text = _("Close"), callback = function()
+                        UIManager:close(viewer)
+                    end },
+                },
+            },
+        }
+        _stabiliseHardcoverReviewViewer(viewer)
+        UIManager:show(viewer)
+    end)
+end
+
 function BookshelfWidget:_refreshHardcoverEnrichmentView(reason)
     Repo.invalidateBookCache(reason or "hardcover")
     pcall(function() require("lib/bookshelf_image_source").invalidateCache() end)
@@ -7326,6 +7520,14 @@ function BookshelfWidget:_openHardcoverMenu(book)
         end),
     }
 
+    local reviews_button = {
+        text = _("Reviews") .. "\xE2\x80\xA6",
+        enabled = link and link.book_id and true or false,
+        callback = closeThen(function()
+            bw:_showHardcoverReviews(book)
+        end),
+    }
+
     local linked_text = link
         and (T(_("Linked: %1"), Hardcover.linkLabel(book.filepath) or tostring(link.book_id)))
         or _("Not linked to Hardcover")
@@ -7335,7 +7537,8 @@ function BookshelfWidget:_openHardcoverMenu(book)
             { { text = linked_text, enabled = false } },
             { embedded_button, select_book_button },
             { select_edition_button, refresh_button },
-            { clear_button, { text = _("Cancel"), callback = function() UIManager:close(dialog) end } },
+            { reviews_button, clear_button },
+            { { text = _("Cancel"), callback = function() UIManager:close(dialog) end } },
         },
     }
     UIManager:show(dialog)

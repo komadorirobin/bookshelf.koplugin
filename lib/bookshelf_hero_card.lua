@@ -33,6 +33,10 @@ local HeroBar         = require("lib/bookshelf_hero_bar")
 local TextSegments    = require("lib/bookshelf_text_segments")
 local RenderText      = require("ui/rendertext")
 
+local HC_STAR       = "\xef\x80\x85" -- Nerd Font nf-fa-star
+local HC_HALF_STAR  = "\xef\x82\x89" -- Nerd Font nf-fa-star_half
+local HC_EMPTY_STAR = "\xef\x80\x86" -- Nerd Font nf-fa-star_o
+
 local HeroCard = InputContainer:extend{
     book                = nil,
     width               = nil,
@@ -54,6 +58,10 @@ local HeroCard = InputContainer:extend{
     -- is responsible for persisting to DocSettings and triggering a
     -- hero rebuild.
     on_rating_change    = nil,
+    -- Fires when the user taps the display-only Hardcover rating row.
+    -- The parent fetches/shows reviews explicitly so normal hero
+    -- rendering remains cache-only and offline.
+    on_hardcover_reviews_tap = nil,
     is_selected         = false,
     is_bulk_selected    = false,
     -- Builder callback returning a fresh tappable pill-strip widget for
@@ -557,56 +565,106 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- Sits ABOVE title/author so the stars anchor to a fixed y position
     -- regardless of how long the title is or whether the author line is
     -- present -- predictable target for tap-to-rate.
-    if regions.rating and not regions.rating.disabled and book and self.on_rating_change then
-        -- 1.25x nominal font size so the glyph reads as a clear
-        -- interactive target while staying close in scale to the
-        -- old IconWidget render (scaleBySize(16), ~24px on PW5).
-        local star_size = regions.rating.font_size or 16
-        local face      = fontFace(nil, math.floor(star_size * 1.25 + 0.5))
-        local gap       = Screen:scaleBySize(4)
-        local rating    = tonumber(book.rating) or 0
-        local row       = HorizontalGroup:new{ align = "center" }
-        local hero_self = self
-        for i = 1, 5 do
-            local glyph = (i <= rating) and "\xE2\x98\x85" or "\xE2\x98\x86"
-            local tw = TextWidget:new{
-                text = glyph,
-                face = face,
-                bold = true,
-            }
-            local sz = tw:getSize()
-            local Star = InputContainer:extend{}
-            function Star:onTap()
-                -- Tapping the current rating clears it (matches KOReader's
-                -- BookStatusWidget toggle behaviour).
-                --
-                -- Lua ternary gotcha: `(cond) and nil or i` always
-                -- returns `i`, because `cond and nil` evaluates to nil
-                -- (a falsy value) and the `or i` branch wins. Have to
-                -- use an explicit if/else (or `(cond) and (something
-                -- truthy) or fallback`).
-                local new_rating
-                if i == rating then
-                    new_rating = nil
+    if regions.rating and not regions.rating.disabled and book then
+        local hardcover_mode = BookshelfSettings.isTrue("hardcover_hero_rating")
+        local rating
+        if hardcover_mode then
+            rating = tonumber(book.hardcover_rating)
+        else
+            rating = tonumber(book.rating) or 0
+        end
+        if (hardcover_mode or self.on_rating_change) and (not hardcover_mode or rating) then
+            local star_size = regions.rating.font_size or 16
+            local face      = fontFace(nil, hardcover_mode and star_size
+                or math.floor(star_size * 1.25 + 0.5))
+            local gap       = Screen:scaleBySize(4)
+            local row       = HorizontalGroup:new{ align = "center" }
+            local hero_self = self
+            for i = 1, 5 do
+                local glyph
+                if hardcover_mode then
+                    local whole = math.floor(rating)
+                    if i <= whole then
+                        glyph = HC_STAR
+                    elseif i == whole + 1 and rating - whole >= 0.5 then
+                        glyph = HC_HALF_STAR
+                    else
+                        glyph = HC_EMPTY_STAR
+                    end
                 else
-                    new_rating = i
+                    glyph = (i <= rating) and "\xE2\x98\x85" or "\xE2\x98\x86"
                 end
-                hero_self.on_rating_change(hero_self.book, new_rating)
-                return true
+                local tw = TextWidget:new{
+                    text = glyph,
+                    face = face,
+                    bold = true,
+                }
+                local sz = tw:getSize()
+                if hardcover_mode or not self.on_rating_change then
+                    row[#row + 1] = tw
+                else
+                    local Star = InputContainer:extend{}
+                    function Star:onTap()
+                        -- Tapping the current rating clears it (matches KOReader's
+                        -- BookStatusWidget toggle behaviour).
+                        local new_rating
+                        if i == rating then
+                            new_rating = nil
+                        else
+                            new_rating = i
+                        end
+                        hero_self.on_rating_change(hero_self.book, new_rating)
+                        return true
+                    end
+                    local star = Star:new{
+                        dimen = Geom:new{ w = sz.w, h = sz.h },
+                        tw,
+                    }
+                    star.ges_events = {
+                        Tap = { GestureRange:new{ ges = "tap", range = star.dimen } },
+                    }
+                    row[#row + 1] = star
+                end
+                if i < 5 then
+                    row[#row + 1] = HorizontalSpan:new{ width = gap }
+                end
             end
-            local star = Star:new{
-                dimen = Geom:new{ w = sz.w, h = sz.h },
-                tw,
-            }
-            star.ges_events = {
-                Tap = { GestureRange:new{ ges = "tap", range = star.dimen } },
-            }
-            row[#row + 1] = star
-            if i < 5 then
-                row[#row + 1] = HorizontalSpan:new{ width = gap }
+            if hardcover_mode then
+                local reviews_count = tonumber(book.hardcover_reviews_count)
+                if reviews_count and reviews_count > 0 then
+                    row[#row + 1] = HorizontalSpan:new{ width = gap * 2 }
+                    row[#row + 1] = TextWidget:new{
+                        text = string.format("%d reviews", reviews_count),
+                        face = fontFace(nil, math.max(10, math.floor(star_size * 0.65 + 0.5))),
+                        bold = true,
+                    }
+                end
+                if self.on_hardcover_reviews_tap then
+                    local RatingTap = InputContainer:extend{}
+                    local hero = self
+                    function RatingTap:onTap()
+                        hero.on_hardcover_reviews_tap(hero.book)
+                        return true
+                    end
+                    local row_size = row:getSize()
+                    local tappable = RatingTap:new{
+                        dimen = Geom:new{
+                            w = right_w,
+                            h = row_size and row_size.h or star_size,
+                        },
+                        row,
+                    }
+                    tappable.ges_events = {
+                        Tap = { GestureRange:new{ ges = "tap", range = tappable.dimen } },
+                    }
+                    right_top[#right_top + 1] = tappable
+                else
+                    right_top[#right_top + 1] = row
+                end
+            else
+                right_top[#right_top + 1] = row
             end
         end
-        right_top[#right_top + 1] = row
     end
 
     -- Title (rendered after rating so the stars sit at a fixed y above it).

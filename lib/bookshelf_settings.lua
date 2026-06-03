@@ -1141,6 +1141,12 @@ function Settings:_settingsSubItems()
     }
 end
 
+local function _formatCacheTime(ts)
+    ts = tonumber(ts)
+    if not ts then return _("never") end
+    return os.date("%Y-%m-%d %H:%M", ts)
+end
+
 function Settings:_hardcoverSubItems()
     local function markDirty(reason)
         pcall(function()
@@ -1163,6 +1169,20 @@ function Settings:_hardcoverSubItems()
     end
 
     return {
+        {
+            text_func = function()
+                local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                if not ok_hc or not Hardcover or not Hardcover.getCacheStats then
+                    return _("Cached Hardcover ratings: unavailable")
+                end
+                local stats = Hardcover.getCacheStats()
+                return string.format(_("Cached Hardcover ratings: %d/%d · %s"),
+                    stats.rated or 0,
+                    stats.linked or 0,
+                    _formatCacheTime(stats.fetched_at))
+            end,
+            enabled_func = function() return false end,
+        },
         {
             text = _("Fill missing descriptions from Hardcover"),
             help_text = _("When a book is linked to Hardcover and Bookshelf has cached a description for it, use that text only if the EPUB has no description of its own."),
@@ -1187,6 +1207,58 @@ function Settings:_hardcoverSubItems()
                 local enabled = BookshelfSettings.nilOrTrue("hardcover_fill_covers")
                 BookshelfSettings.save("hardcover_fill_covers", not enabled)
                 markDirty("hardcover-cover-toggle")
+            end,
+        },
+        {
+            text = _("Show Hardcover ratings in hero"),
+            help_text = _("When enabled, the Hero rating row shows the cached public Hardcover rating instead of KOReader's local rating. Enabling this also turns on the Hero rating row. Normal Bookshelf rendering only reads the local cache."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("hardcover_hero_rating")
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local enabled = BookshelfSettings.isTrue("hardcover_hero_rating")
+                BookshelfSettings.save("hardcover_hero_rating", not enabled)
+                if not enabled then
+                    local Regions = require("lib/bookshelf_hero_regions")
+                    local regions = Regions.read()
+                    if regions.rating and regions.rating.disabled then
+                        regions.rating.disabled = false
+                        Regions.write("rating", regions.rating)
+                    end
+                end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+                markDirty("hardcover-rating-toggle")
+            end,
+        },
+        {
+            text = _("Refresh Hardcover ratings"),
+            help_text = _("Fetch public ratings and review counts for linked Hardcover books and store them in Bookshelf's local cache."),
+            callback = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function()
+                    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                    if not ok_hc or not Hardcover or not Hardcover.refreshRatingsOnline then
+                        notify(_("Hardcover integration could not be loaded"))
+                        return
+                    end
+                    notify(_("Fetching Hardcover ratings..."), 1)
+                    Hardcover.refreshRatingsOnline(function(ok, stats)
+                        if not ok then
+                            notify(tostring(stats or _("Hardcover ratings refresh failed")), 5)
+                            return
+                        end
+                        markDirty("hardcover-ratings-refresh")
+                        stats = type(stats) == "table" and stats or {}
+                        notify(T(_("Hardcover ratings refreshed: %1 rated of %2 linked books"),
+                                 tostring(stats.rated or 0),
+                                 tostring(stats.linked or 0)), 4)
+                    end)
+                end)
             end,
         },
         {
@@ -1229,6 +1301,24 @@ function Settings:_hardcoverSubItems()
                     end
                     markDirty("hardcover-clear-cache")
                     notify(_("Hardcover cache cleared"))
+                end)
+            end,
+        },
+        {
+            text = _("Clear cached Hardcover ratings/reviews"),
+            help_text = _("Remove Bookshelf's cached Hardcover ratings, review counts, and review text. Existing links and cached descriptions/covers are kept."),
+            callback = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function()
+                    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                    if ok_hc and Hardcover then
+                        if Hardcover.clearRatingsCache then Hardcover.clearRatingsCache() end
+                        if Hardcover.clearReviewsCache then Hardcover.clearReviewsCache() end
+                    end
+                    markDirty("hardcover-ratings-clear-cache")
+                    notify(_("Hardcover ratings/reviews cache cleared"))
                 end)
             end,
         },

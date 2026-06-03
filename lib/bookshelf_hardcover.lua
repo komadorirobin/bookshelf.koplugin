@@ -13,10 +13,16 @@ local Hardcover = {}
 local HC_SETTINGS_FILE = "hardcoversync_settings.lua"
 local LINKS_KEY        = "hardcover_links"
 local CACHE_KEY        = "hardcover_enrichment"
+local RATINGS_KEY      = "hardcover_ratings"
+local RATINGS_TIME_KEY = "hardcover_ratings_fetched_at"
+local REVIEWS_KEY      = "hardcover_reviews"
+local REVIEWS_TTL      = 24 * 60 * 60
 
 local _links
 local _external_links
 local _enrichment_cache
+local _ratings_cache
+local _reviews_cache
 local _hc_settings
 local _hc_settings_object
 
@@ -88,6 +94,38 @@ end
 local function _saveEnrichmentCache(cache)
     _enrichment_cache = cache or {}
     BookshelfSettings.save(CACHE_KEY, _enrichment_cache)
+end
+
+local function _readRatingsCache()
+    if _ratings_cache then return _ratings_cache end
+    local raw = BookshelfSettings.read(RATINGS_KEY, {})
+    _ratings_cache = type(raw) == "table" and raw or {}
+    return _ratings_cache
+end
+
+local function _saveRatingsCache(cache)
+    _ratings_cache = cache or {}
+    BookshelfSettings.save(RATINGS_KEY, _ratings_cache)
+    BookshelfSettings.save(RATINGS_TIME_KEY, os.time())
+end
+
+local function _readReviewsCache()
+    if _reviews_cache then return _reviews_cache end
+    local raw = BookshelfSettings.read(REVIEWS_KEY, {})
+    _reviews_cache = type(raw) == "table" and raw or {}
+    return _reviews_cache
+end
+
+local function _saveReviewsCache(cache)
+    _reviews_cache = cache or {}
+    BookshelfSettings.save(REVIEWS_KEY, _reviews_cache)
+end
+
+local function _ratingFromCacheEntry(entry)
+    if type(entry) ~= "table" then return nil end
+    local rating = entry.rating
+    if rating == false then return nil end
+    return tonumber(rating)
 end
 
 local function _cacheKey(book_id, edition_id)
@@ -355,8 +393,40 @@ function Hardcover.invalidate()
     _links = nil
     _external_links = nil
     _enrichment_cache = nil
+    _ratings_cache = nil
+    _reviews_cache = nil
     _hc_settings = nil
     _hc_settings_object = nil
+end
+
+function Hardcover.getCachedAt()
+    return tonumber(BookshelfSettings.read(RATINGS_TIME_KEY))
+end
+
+function Hardcover.getCacheStats()
+    local cache = _readRatingsCache()
+    local linked, rated = 0, 0
+    local seen = {}
+    local function countLink(_filepath, link)
+        if type(link) ~= "table" or not link.book_id then return end
+        local key = tostring(link.book_id)
+        if seen[key] then return end
+        seen[key] = true
+        linked = linked + 1
+        if _ratingFromCacheEntry(cache[key]) then rated = rated + 1 end
+    end
+    for fp, link in pairs(_readExternalLinks(false)) do countLink(fp, link) end
+    for fp, link in pairs(_readLinks()) do countLink(fp, link) end
+    return {
+        linked = linked,
+        rated = rated,
+        fetched_at = Hardcover.getCachedAt(),
+    }
+end
+
+function Hardcover.getCachedRating(book_id)
+    if not book_id then return nil end
+    return _ratingFromCacheEntry(_readRatingsCache()[tostring(book_id)])
 end
 
 function Hardcover.clearEnrichmentCache()
@@ -374,6 +444,16 @@ function Hardcover.clearEnrichmentCache()
             end
         end
     end
+end
+
+function Hardcover.clearRatingsCache()
+    _ratings_cache = {}
+    BookshelfSettings.save(RATINGS_KEY, _ratings_cache)
+    BookshelfSettings.delete(RATINGS_TIME_KEY)
+end
+
+function Hardcover.clearReviewsCache()
+    _saveReviewsCache({})
 end
 
 function Hardcover.getLink(filepath)
@@ -652,6 +732,45 @@ local function _errString(err)
     return tostring(err)
 end
 
+local function _collectLinkedBookIds()
+    local ids, seen = {}, {}
+    local function collect(_filepath, link)
+        if type(link) ~= "table" or not link.book_id then return end
+        local id = tonumber(link.book_id)
+        if id and not seen[id] then
+            seen[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+    for fp, link in pairs(_readExternalLinks(true)) do collect(fp, link) end
+    for fp, link in pairs(_readLinks()) do collect(fp, link) end
+    table.sort(ids)
+    return ids
+end
+
+local function _getUserId(Api, settings)
+    if not settings then return nil, "Could not open Hardcover settings" end
+    local user_id = settings:readSetting("user_id")
+    if user_id then return tonumber(user_id) or user_id end
+    if type(Api.me) ~= "function" then return nil, "Hardcover user id is missing" end
+    local ok_me, me = pcall(Api.me, Api)
+    if not ok_me then
+        return nil, "Could not fetch Hardcover user id: " .. _errString(me)
+    end
+    user_id = me and me.id
+    if not user_id then return nil, "Could not fetch Hardcover user id" end
+    pcall(settings.saveSetting, settings, "user_id", user_id)
+    if type(settings.flush) == "function" then
+        pcall(settings.flush, settings)
+    end
+    return tonumber(user_id) or user_id
+end
+
+local function _normaliseUserName(user)
+    if type(user) ~= "table" then return nil end
+    return user.name or user.username
+end
+
 local function _imageUrl(row)
     if type(row) ~= "table" then return nil end
     if type(row.cached_image) == "string" and row.cached_image ~= "" then
@@ -870,6 +989,199 @@ function Hardcover.refreshAllLinkedOnline(callback)
     end)
 end
 
+local function _normaliseReviewsPayload(book)
+    if type(book) ~= "table" then return nil end
+    local reviews = {}
+    for _, row in ipairs(type(book.user_books) == "table" and book.user_books or {}) do
+        local text = row.review or row.review_raw
+        if type(text) == "string" and text ~= "" then
+            reviews[#reviews + 1] = {
+                id = row.id,
+                rating = tonumber(row.rating),
+                text = text,
+                spoiler = row.review_has_spoilers == true,
+                reviewed_at = row.reviewed_at,
+                likes_count = tonumber(row.likes_count) or 0,
+                user_name = _normaliseUserName(row.user),
+                username = type(row.user) == "table" and row.user.username or nil,
+            }
+        end
+    end
+    return {
+        book_id = book.id,
+        title = book.title,
+        rating = tonumber(book.rating),
+        ratings_count = tonumber(book.ratings_count) or 0,
+        reviews_count = tonumber(book.reviews_count) or 0,
+        reviews = reviews,
+        fetched_at = os.time(),
+    }
+end
+
+function Hardcover.fetchReviews(book_id, opts)
+    opts = opts or {}
+    book_id = tonumber(book_id) or book_id
+    if not book_id then return false, "Missing Hardcover book id" end
+
+    local key = tostring(book_id)
+    local cache = _readReviewsCache()
+    local cached = cache[key]
+    local ttl = tonumber(opts.ttl) or REVIEWS_TTL
+    if not opts.force and type(cached) == "table" and cached.fetched_at
+            and (os.time() - tonumber(cached.fetched_at)) < ttl then
+        return true, cached
+    end
+
+    local Api, api_err = _loadApi()
+    if not Api then return false, api_err end
+
+    local limit = tonumber(opts.limit) or 10
+    if limit < 1 then limit = 1 end
+    if limit > 25 then limit = 25 end
+
+    local query = [[
+        query ($id: Int!, $limit: Int!) {
+          books_by_pk(id: $id) {
+            id
+            title
+            rating
+            ratings_count
+            reviews_count
+            user_books(
+              where: { has_review: { _eq: true }, review_has_spoilers: { _eq: false } },
+              order_by: [{ likes_count: desc_nulls_last }, { reviewed_at: desc_nulls_last }],
+              limit: $limit
+            ) {
+              id
+              rating
+              review
+              review_raw
+              review_has_spoilers
+              reviewed_at
+              likes_count
+              user {
+                id
+                name
+                username
+              }
+            }
+          }
+        }
+    ]]
+
+    local ok_query, data, err = pcall(Api.query, Api, query, { id = book_id, limit = limit })
+    if not ok_query then
+        return false, "Hardcover reviews could not be fetched: " .. _errString(data)
+    end
+    if not data or type(data.books_by_pk) ~= "table" then
+        return false, err and ("Hardcover reviews could not be fetched: " .. _errString(err))
+            or "No response from Hardcover"
+    end
+
+    local payload = _normaliseReviewsPayload(data.books_by_pk)
+    if not payload then return false, "Hardcover reviews could not be parsed" end
+    cache[key] = payload
+    _saveReviewsCache(cache)
+    return true, payload
+end
+
+function Hardcover.fetchReviewsOnline(book_id, opts, callback)
+    opts = opts or {}
+    return _runWhenOnline(function()
+        local ok, payload = Hardcover.fetchReviews(book_id, opts)
+        if callback then callback(ok, payload) end
+    end, function(err)
+        if callback then callback(false, err) end
+    end)
+end
+
+function Hardcover.refreshRatings()
+    local Api, api_err = _loadApi()
+    if not Api then return false, api_err end
+
+    local ok_settings, settings = pcall(_openExternalSettings)
+    if not ok_settings or not settings then
+        return false, "Could not open Hardcover settings"
+    end
+
+    local ids = _collectLinkedBookIds()
+    if #ids == 0 then
+        _saveRatingsCache({})
+        return true, {
+            linked = 0,
+            rated = 0,
+            updated = 0,
+        }
+    end
+
+    local user_id, user_err = _getUserId(Api, settings)
+    if not user_id then return false, user_err end
+
+    local query = [[
+        query ($ids: [Int!], $userId: Int!) {
+          books(where: { id: { _in: $ids }}) {
+            id
+            rating
+            ratings_count
+            reviews_count
+            user_books(where: { user_id: { _eq: $userId }}) {
+              id
+              rating
+            }
+          }
+        }
+    ]]
+
+    local ok_query, data, err = pcall(Api.query, Api, query, { ids = ids, userId = user_id })
+    if not ok_query then
+        return false, "Hardcover rating refresh failed: " .. _errString(data)
+    end
+    if not data or type(data.books) ~= "table" then
+        return false, err and ("Hardcover rating refresh failed: " .. _errString(err))
+            or "No response from Hardcover"
+    end
+
+    local now = os.time()
+    local cache = {}
+    for _, id in ipairs(ids) do
+        cache[tostring(id)] = { rating = false, fetched_at = now }
+    end
+
+    local rated = 0
+    for _, row in ipairs(data.books) do
+        if type(row) == "table" and row.id then
+            local rating = tonumber(row.rating)
+            local user_book = type(row.user_books) == "table" and row.user_books[1] or nil
+            local user_rating = user_book and tonumber(user_book.rating) or nil
+            if rating then rated = rated + 1 end
+            cache[tostring(row.id)] = {
+                rating = rating or false,
+                ratings_count = tonumber(row.ratings_count) or 0,
+                reviews_count = tonumber(row.reviews_count) or 0,
+                user_book_id = user_book and user_book.id or nil,
+                user_rating = user_rating or false,
+                fetched_at = now,
+            }
+        end
+    end
+
+    _saveRatingsCache(cache)
+    return true, {
+        linked = #ids,
+        rated = rated,
+        updated = #data.books,
+    }
+end
+
+function Hardcover.refreshRatingsOnline(callback)
+    return _runWhenOnline(function()
+        local ok, stats = Hardcover.refreshRatings()
+        if callback then callback(ok, stats) end
+    end, function(err)
+        if callback then callback(false, err) end
+    end)
+end
+
 function Hardcover.enrichBook(book)
     if not book or not book.filepath then return book end
     local link = Hardcover.getLink(book.filepath)
@@ -878,6 +1190,13 @@ function Hardcover.enrichBook(book)
     book.hardcover_book_id = tonumber(link.book_id) or link.book_id
     book.hardcover_edition_id = tonumber(link.edition_id) or link.edition_id
     book.hardcover_title = link.title
+
+    local rating_entry = _readRatingsCache()[tostring(link.book_id)]
+    book.hardcover_rating = Hardcover.getCachedRating(link.book_id)
+    if type(rating_entry) == "table" then
+        book.hardcover_ratings_count = tonumber(rating_entry.ratings_count) or 0
+        book.hardcover_reviews_count = tonumber(rating_entry.reviews_count) or 0
+    end
 
     local enrichment = Hardcover.getCachedEnrichment(link.book_id, link.edition_id)
     if type(enrichment) ~= "table" then return book end

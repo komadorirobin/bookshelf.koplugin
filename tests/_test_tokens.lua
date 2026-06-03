@@ -71,6 +71,18 @@ test("metadata: literal text passes through", function()
     eq(Tokens.expand("Reading %title by %author.", bookFixture()),
        "Reading Dune by Frank Herbert.")
 end)
+test("metadata: %hardcover_rating formats cached rating", function()
+    local b = bookFixture(); b.hardcover_rating = 4.5
+    eq(Tokens.expand("%hardcover_rating", b), "4.5")
+end)
+test("metadata: %hardcover_stars renders half-star ratings", function()
+    local b = bookFixture(); b.hardcover_rating = 4.5
+    eq(Tokens.expand("%hardcover_stars", b),
+       "\xef\x80\x85\xef\x80\x85\xef\x80\x85\xef\x80\x85\xef\x82\x89")
+end)
+test("metadata: empty Hardcover rating stays empty", function()
+    eq(Tokens.expand("%hardcover_rating|%hardcover_stars", bookFixture()), "|")
+end)
 test("metadata: missing token resolves to empty", function()
     local b = bookFixture(); b.series = nil
     eq(Tokens.expand("%series", b), "")

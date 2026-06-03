@@ -36,6 +36,8 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%series_num",       description = "Series number" },
     { category = "Book",     token = "%rating",           description = "Star rating (★★★☆☆), empty when unrated" },
     { category = "Book",     token = "%rating_number",    description = "Rating as a number 1-5 (empty when unrated)" },
+    { category = "Book",     token = "%hardcover_rating", description = "Cached Hardcover rating number" },
+    { category = "Book",     token = "%hardcover_stars",  description = "Cached Hardcover rating as stars" },
     { category = "Book",     token = "%status",           description = "Reading status (unread / reading / on_hold / finished)" },
     { category = "Book",     token = "%filename",         description = "File name" },
     { category = "Book",     token = "%format",           description = "Format (EPUB/PDF/…)" },
@@ -186,6 +188,36 @@ Tokens.expanders.rating = function(book)
     local filled = "\xE2\x98\x85"  -- ★ U+2605
     local empty  = "\xE2\x98\x86"  -- ☆ U+2606
     return filled:rep(r) .. empty:rep(5 - r)
+end
+
+local HC_STAR       = "\xef\x80\x85" -- Nerd Font nf-fa-star
+local HC_HALF_STAR  = "\xef\x82\x89" -- Nerd Font nf-fa-star_half
+local HC_EMPTY_STAR = "\xef\x80\x86" -- Nerd Font nf-fa-star_o
+
+Tokens.expanders.hardcover_rating = function(book)
+    if not book or not book.hardcover_rating then return "" end
+    local r = tonumber(book.hardcover_rating)
+    if not r or r <= 0 then return "" end
+    return string.format("%.1f", r):gsub("%.0$", "")
+end
+
+Tokens.expanders.hardcover_stars = function(book)
+    if not book or not book.hardcover_rating then return "" end
+    local r = tonumber(book.hardcover_rating)
+    if not r or r <= 0 then return "" end
+    if r > 5 then r = 5 end
+    local whole = math.floor(r)
+    local out = {}
+    for i = 1, 5 do
+        if i <= whole then
+            out[#out + 1] = HC_STAR
+        elseif i == whole + 1 and r - whole >= 0.5 then
+            out[#out + 1] = HC_HALF_STAR
+        else
+            out[#out + 1] = HC_EMPTY_STAR
+        end
+    end
+    return table.concat(out)
 end
 
 local function codepointToUtf8(n)

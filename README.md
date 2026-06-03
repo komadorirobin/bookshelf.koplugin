@@ -138,8 +138,9 @@ If you also use `hardcoverapp.koplugin`, Bookshelf can reuse its book links and 
 
 - Missing book descriptions can be filled from Hardcover.
 - Missing local EPUB covers can use cached Hardcover cover images as a Bookshelf-only fallback.
+- Cached Hardcover ratings can be shown in the hero rating row, and tapping that row opens a non-spoiler review popup.
 - Links are managed from a book's long-press menu under **Hardcover**.
-- Network calls only happen from explicit actions such as linking or **Settings -> Hardcover enrichment -> Refresh linked Hardcover metadata**. Normal shelf rendering reads only the local cache.
+- Network calls only happen from explicit actions such as linking, refreshing metadata/ratings, or opening reviews. Normal shelf rendering reads only the local cache.
 
 Bookshelf does not rewrite EPUB files. Hardcover descriptions and cover images are stored in Bookshelf's settings/cache and can be disabled or cleared from **Settings -> Hardcover enrichment**.
 
@@ -419,6 +420,8 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%series_num` | *1* |
 | `%rating` | *★★★☆☆* (empty when unrated) |
 | `%rating_number` | *3* (1-5, empty when unrated) |
+| `%hardcover_rating` | *4.5* (cached Hardcover rating, empty when unavailable) |
+| `%hardcover_stars` | Cached Hardcover rating as star glyphs |
 | `%status` | *reading* (unread / reading / on_hold / finished) |
 | `%filename` | *The_Great_Gatsby* |
 | `%format` | *EPUB* |
@@ -513,8 +516,9 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
 | `bookshelf_ui_font` | Chosen Bookshelf interface font (a resolvable font face). Absent = follow KOReader's UI font. |
 | `cover_cache_mb` | Memory budget (MB) for the scaled-cover cache (default 24). The legacy `cover_cache_size` count key is discarded on first load. |
-| `hardcover_links` / `hardcover_enrichment` | Optional Hardcover link and cached description/cover metadata used by the Hardcover enrichment menu. |
+| `hardcover_links` / `hardcover_enrichment` / `hardcover_ratings` / `hardcover_reviews` | Optional Hardcover link and cached description/cover/rating/review metadata used by the Hardcover enrichment menu. |
 | `hardcover_fill_descriptions` / `hardcover_fill_covers` | Optional toggles for whether cached Hardcover descriptions/covers fill missing local metadata. Defaults on. |
+| `hardcover_hero_rating` | Show cached Hardcover ratings in the hero rating row instead of KOReader's local rating. |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |
 | `show_close_msg` | Show the centred "Closing book…" toast when exiting a book. |

@@ -4,6 +4,9 @@
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local settings = {}
+local hc_settings = {
+    books = {},
+}
 
 package.loaded["lib/bookshelf_settings_store"] = {
     read = function(key, default)
@@ -32,11 +35,60 @@ package.loaded["datastorage"] = {
 }
 
 package.loaded["libs/libkoreader-lfs"] = {
-    attributes = function() return nil end,
+    attributes = function(_path, attr)
+        if attr == "mode" then return "file" end
+        return nil
+    end,
+}
+
+package.loaded["luasettings"] = {
+    open = function(_self, path)
+        assert(path == "/tmp/bookshelf-hardcover-test/hardcoversync_settings.lua",
+            "unexpected settings path: " .. tostring(path))
+        return {
+            readSetting = function(_settings, key) return hc_settings[key] end,
+            saveSetting = function(_settings, key, value) hc_settings[key] = value end,
+            flush = function() end,
+        }
+    end,
 }
 
 package.loaded["hardcover/lib/hardcover_api"] = {
-    query = function(_self, _query, variables)
+    me = function() return { id = 42 } end,
+    query = function(_self, query, variables)
+        if query:find("books_by_pk", 1, true) and variables.id then
+            return {
+                books_by_pk = {
+                    id = variables.id,
+                    title = "Fresh Hardcover Title",
+                    rating = 4.25,
+                    ratings_count = 12,
+                    reviews_count = 2,
+                    user_books = {
+                        {
+                            id = 501,
+                            rating = 4,
+                            review = "<p>Sharp and strange.</p>",
+                            review_has_spoilers = false,
+                            reviewed_at = "2026-05-01T00:00:00",
+                            likes_count = 3,
+                            user = { name = "Reader One", username = "readerone" },
+                        },
+                    },
+                },
+            }
+        end
+        if variables.ids then
+            assert(variables.userId == 42, "expected fetched user id")
+            return {
+                books = {
+                    { id = 123, rating = 4.5, ratings_count = 12,
+                      reviews_count = 2, user_books = { { id = 10, rating = nil } } },
+                    { id = 999, rating = nil, ratings_count = 0,
+                      reviews_count = 0, user_books = { { id = 11, rating = nil } } },
+                },
+            }
+        end
         return {
             book = {
                 id = variables.bookId,
@@ -62,6 +114,12 @@ end
 
 local function reset()
     settings = {}
+    hc_settings = {
+        books = {
+            ["/books/a.epub"] = { book_id = 123, edition_id = 456, title = "Linked A" },
+            ["/books/b.epub"] = { book_id = 999, title = "Linked B" },
+        },
+    }
     Hardcover.invalidate()
 end
 
@@ -139,6 +197,55 @@ test("refreshBookOnline uses KOReader network manager when available", function(
     assert(callback_ok == true, tostring(callback_payload))
     assert(callback_payload.description == "Fresh Hardcover description.", "bad callback payload")
     package.loaded["ui/network/manager"] = nil
+end)
+
+test("refreshRatings fetches linked book ratings and caches them", function()
+    reset()
+    local ok, result = Hardcover.refreshRatings()
+    assert(ok, tostring(result))
+    assert(result.linked == 2, "expected two linked books")
+    assert(result.rated == 1, "expected one rated book")
+    assert(hc_settings.user_id == 42, "expected user id cache")
+    assert(settings.bookshelf_hardcover_ratings["123"].rating == 4.5,
+        "missing cached rating")
+    assert(settings.bookshelf_hardcover_ratings["999"].rating == false,
+        "unrated books should be cached as false")
+end)
+
+test("enrichBook adds cached Hardcover rating and review count", function()
+    reset()
+    settings.bookshelf_hardcover_ratings = {
+        ["123"] = {
+            rating = 4.5,
+            ratings_count = 12,
+            reviews_count = 2,
+        },
+    }
+    Hardcover.invalidate()
+    local book = Hardcover.enrichBook{ filepath = "/books/a.epub" }
+    assert(book.hardcover_book_id == 123, "missing Hardcover book id")
+    assert(book.hardcover_edition_id == 456, "missing Hardcover edition id")
+    assert(book.hardcover_rating == 4.5, "missing Hardcover rating")
+    assert(book.hardcover_reviews_count == 2, "missing reviews count")
+end)
+
+test("fetchReviews loads and caches non-spoiler Hardcover reviews", function()
+    reset()
+    local ok, result = Hardcover.fetchReviews(123)
+    assert(ok, tostring(result))
+    assert(result.title == "Fresh Hardcover Title", "missing review title")
+    assert(result.reviews_count == 2, "missing review count")
+    assert(#result.reviews == 1, "expected one non-spoiler review")
+    assert(result.reviews[1].user_name == "Reader One", "missing reviewer")
+    assert(result.reviews[1].text == "<p>Sharp and strange.</p>", "missing review text")
+
+    local Api = package.loaded["hardcover/lib/hardcover_api"]
+    local old_query = Api.query
+    Api.query = function() error("reviews should come from cache") end
+    local ok_cached, cached = Hardcover.fetchReviews(123)
+    Api.query = old_query
+    assert(ok_cached, tostring(cached))
+    assert(cached.reviews[1].user_name == "Reader One", "cached review missing")
 end)
 
 io.stdout:write(("PASS %d  FAIL %d\n"):format(pass, fail))
