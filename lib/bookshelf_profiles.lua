@@ -93,7 +93,26 @@ end
 
 function Profiles.folderSortPriority(profile)
     if not profile then return nil end
+    local ok_settings, BookshelfSettings = pcall(require, "lib/bookshelf_settings_store")
+    if ok_settings and BookshelfSettings then
+        local saved = BookshelfSettings.read("profile_folder_sort_" .. profile.key)
+        if type(saved) == "table" and #saved > 0 then
+            return saved
+        end
+    end
     return profile.folder_sort
+end
+
+function Profiles.saveFolderSortPriority(profile, sort_priority)
+    if not profile then return end
+    local ok_settings, BookshelfSettings = pcall(require, "lib/bookshelf_settings_store")
+    if not (ok_settings and BookshelfSettings) then return end
+    if type(sort_priority) == "table" and #sort_priority > 0 then
+        BookshelfSettings.save("profile_folder_sort_" .. profile.key, sort_priority)
+    else
+        BookshelfSettings.delete("profile_folder_sort_" .. profile.key)
+    end
+    BookshelfSettings.flush()
 end
 
 local function normalizePath(path)

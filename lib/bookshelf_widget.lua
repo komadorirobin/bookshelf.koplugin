@@ -3693,6 +3693,111 @@ function BookshelfWidget:_jumpToLetterPrefix(prefix)
     })
 end
 
+local function _copySortPriority(sort_priority)
+    local out = {}
+    if type(sort_priority) == "table" then
+        for i, level in ipairs(sort_priority) do
+            if type(level) == "table" then
+                out[i] = { key = level.key, reverse = level.reverse == true }
+            end
+        end
+    end
+    return out
+end
+
+local function _sortPrioritySignature(sort_priority)
+    local parts = {}
+    if type(sort_priority) == "table" then
+        for i, level in ipairs(sort_priority) do
+            parts[i] = tostring(level and level.key or "")
+                .. ":" .. tostring(level and level.reverse == true or false)
+        end
+    end
+    return table.concat(parts, "|")
+end
+
+local function _saveTabSortPriority(tab_id, sort_priority)
+    local TabModel = require("lib/bookshelf_tab_model")
+    local tabs = TabModel.load()
+    for _i, tab in ipairs(tabs) do
+        if tab.id == tab_id then
+            tab.sort_priority = _copySortPriority(sort_priority)
+            TabModel.save(tabs)
+            return true
+        end
+    end
+    return false
+end
+
+-- _openSortMenu -- SimpleUI page-strip shortcut. Upstream's normal footer
+-- opens page/letter jump from the page label, but our SimpleUI bottom strip
+-- has historically used the tiny page label as the quick sort affordance. Keep
+-- that behaviour and route it through the same sort picker as the chip editor.
+function BookshelfWidget:_openSortMenu()
+    local InfoMessage = require("ui/widget/infomessage")
+    local Editor      = require("lib/bookshelf_chip_editor")
+    local Repo        = require("lib/bookshelf_book_repository")
+
+    local profile_chip = self:_profileChip(self.chip)
+    local draft
+    local persist
+
+    if profile_chip then
+        if profile_chip.kind ~= "folder" then
+            UIManager:show(InfoMessage:new{
+                text    = _("This chip has a fixed sort order."),
+                timeout = 2,
+            })
+            return true
+        end
+        draft = {
+            id            = profile_chip.key,
+            label         = profile_chip.label,
+            source        = { kind = "folder", id = profile_chip.path },
+            filter        = {},
+            sort_priority = _copySortPriority(Profiles.folderSortPriority(self.profile)),
+        }
+        persist = function()
+            Profiles.saveFolderSortPriority(self.profile, draft.sort_priority)
+            return true
+        end
+    else
+        local TabModel = require("lib/bookshelf_tab_model")
+        local tab = TabModel.getById(self.chip)
+        if not tab then
+            UIManager:show(InfoMessage:new{
+                text    = _("No sort options for this view."),
+                timeout = 2,
+            })
+            return true
+        end
+        draft = {
+            id            = tab.id,
+            label         = tab.label,
+            source        = tab.source or { kind = tab.id },
+            filter        = tab.filter or {},
+            sort_priority = _copySortPriority(tab.sort_priority),
+        }
+        persist = function()
+            return _saveTabSortPriority(tab.id, draft.sort_priority)
+        end
+    end
+
+    local before = _sortPrioritySignature(draft.sort_priority)
+    local function on_close()
+        if _sortPrioritySignature(draft.sort_priority) == before then return end
+        if not persist() then return end
+        Repo.invalidateBookCache("sort-menu")
+        if Repo.invalidateAllCache then Repo.invalidateAllCache() end
+        self._cursor = 1
+        self.page = 1
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+    end
+    Editor:_pickSortLevel(draft, 1, on_close)
+    return true
+end
+
 -- _openPageJump -- unified input dialog matching KOReader's file-manager
 -- pagination tap (issue 24): user types either a page number OR a letter /
 -- prefix, then chooses the appropriate action button. One dialog handles
