@@ -351,6 +351,13 @@ end)
 test("sanitiseReviewHtml normalises self-closing br and tag case", function()
     eq(Tokens.sanitiseReviewHtml('a<BR/>b'), "a<br>b")
 end)
+test("sanitiseReviewHtml strips <br> padding at paragraph edges", function()
+    -- leading <br> after a blockquote (the quote/attribution gap) is dropped;
+    -- the real break after the attribution is kept.
+    eq(Tokens.sanitiseReviewHtml(
+        "<blockquote>q</blockquote><p><br><strong>cite</strong><br>text<br></p>"),
+       "<blockquote>q</blockquote><p><strong>cite</strong><br>text</p>")
+end)
 test("sanitiseReviewHtml returns empty for nil/empty", function()
     eq(Tokens.sanitiseReviewHtml(nil), "")
     eq(Tokens.sanitiseReviewHtml(""), "")
@@ -362,13 +369,32 @@ test("reviewsHtml italicises reviewer names and escapes them", function()
         reviews = { { user_name = "A<B", text = "<p>Great</p>" } },
     }
     has(html, "<i>A&lt;B</i>", "reviewer name not italic+escaped")
+    has(html, "<b>Review by</b>", "missing bold Review-by label")
 end)
-test("reviewsHtml bolds a header and escapes the book title", function()
+test("reviewsHtml puts the book title in a large h1 heading, escaped", function()
     local html = Tokens.reviewsHtml{
         title = "Tom & Jerry", reviews = { { user_name = "x", text = "hi" } },
     }
-    has(html, "Tom &amp; Jerry", "title not escaped")
-    has(html, "<b>", "no bold header present")
+    has(html, "<h1>Tom &amp; Jerry</h1>", "title not a large escaped heading")
+end)
+test("reviewsHtml renders shared star glyphs; overall counts inline", function()
+    local html = Tokens.reviewsHtml{
+        title = "T", rating = 3.5, ratings_count = 54, reviews_count = 14,
+        reviews = { { user_name = "x", rating = 4, text = "hi" } },
+    }
+    -- Same glyph row as the ratings area (Tokens.starString, F005/F123/F006),
+    -- embedded via @font-face. Overall stars in a span with counts on the same
+    -- line; per-review stars on their own line. 3.5 -> ★★★⯨☆ ; 4 -> ★★★★☆
+    has(html, '<span class="stars">' .. HC_STAR:rep(3) .. HC_HALF .. HC_EMPTY .. "</span>", "overall star span")
+    has(html, "54 ratings \xC2\xB7 14 reviews", "counts inline after stars")
+    has(html, '<p class="stars">' .. HC_STAR:rep(4) .. HC_EMPTY .. "</p>", "per-review star row")
+end)
+test("reviewsHtml formats the date (ISO fallback without datetime module)", function()
+    local html = Tokens.reviewsHtml{
+        title = "T",
+        reviews = { { user_name = "x", reviewed_at = "2026-04-02T00:00:00", text = "hi" } },
+    }
+    has(html, "<i>2026-04-02</i>", "date not rendered in italics")
 end)
 test("reviewsHtml embeds the sanitised review body (script stripped)", function()
     local html = Tokens.reviewsHtml{

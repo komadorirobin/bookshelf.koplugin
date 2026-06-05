@@ -360,6 +360,17 @@ function Tokens.sanitiseReviewHtml(raw)
         end
         return ""
     end)
+    -- KOReader renders every <br> as a blank line, so a <br> padding against a
+    -- paragraph boundary doubles the gap. Reviewers commonly emit
+    -- "</blockquote><p><br>attribution", which lands an extra blank line
+    -- between the quote and its attribution. Drop <br> at the start/end of a
+    -- paragraph (real mid-text breaks, e.g. after the attribution, are kept).
+    local prev
+    repeat
+        prev = s
+        s = s:gsub("<p>%s*<br>%s*", "<p>")
+        s = s:gsub("%s*<br>%s*</p>", "</p>")
+    until s == prev
     return s
 end
 
@@ -370,25 +381,49 @@ end
 -- sanitised review body. Stars use the plain Unicode star (U+2605) so they
 -- render in the MuPDF HTML engine's normal font (the Nerd Font PUA glyphs
 -- used elsewhere are not guaranteed in that renderer).
+-- Region-aware review date. KOReader has no free-form date-format preference,
+-- but datetime.secondsToDate(secs, true) returns the localised "Tue Apr 02
+-- 2026" form (day/month names translated for the active UI language). Falls
+-- back to the ISO date when datetime is unavailable (pure-Lua tests) or the
+-- timestamp can't be parsed. Input is Hardcover's ISO "2026-04-02T00:00:00".
+local function _formatReviewDate(ts)
+    if type(ts) ~= "string" or ts == "" then return nil end
+    local ok_dt, datetime = pcall(require, "datetime")
+    if ok_dt and type(datetime) == "table"
+            and datetime.stringToSeconds and datetime.secondsToDate then
+        local ok_s, secs = pcall(datetime.stringToSeconds, (ts:gsub("T", " ")))
+        if ok_s and tonumber(secs) and tonumber(secs) > 0 then
+            local ok_f, formatted = pcall(datetime.secondsToDate, secs, true)
+            if ok_f and type(formatted) == "string" and formatted ~= "" then
+                return formatted
+            end
+        end
+    end
+    return ts:sub(1, 10)
+end
+
 function Tokens.reviewsHtml(payload)
     payload = type(payload) == "table" and payload or {}
     local out = {}
-    out[#out + 1] = "<h2><b>" .. _escHtml(payload.title or "Hardcover reviews") .. "</b></h2>"
+    -- Book title: a large heading above all reviews.
+    out[#out + 1] = "<h1>" .. _escHtml(payload.title or "Hardcover reviews") .. "</h1>"
 
-    local meta = {}
+    -- Overall rating: the shared star glyph row (in a span so only the glyphs
+    -- use the embedded symbols font), with the rating/review counts inline on
+    -- the SAME line, just after the stars.
+    local parts = {}
     local rating = tonumber(payload.rating)
     if rating and rating > 0 then
-        meta[#meta + 1] = string.format("%s \xE2\x98\x85",
-            (string.format("%.1f", rating):gsub("%.0$", "")))
+        parts[#parts + 1] = '<span class="stars">' .. Tokens.starString(rating) .. "</span>"
     end
     if tonumber(payload.ratings_count) and tonumber(payload.ratings_count) > 0 then
-        meta[#meta + 1] = string.format("%d ratings", tonumber(payload.ratings_count))
+        parts[#parts + 1] = string.format("%d ratings", tonumber(payload.ratings_count))
     end
     if tonumber(payload.reviews_count) and tonumber(payload.reviews_count) > 0 then
-        meta[#meta + 1] = string.format("%d reviews", tonumber(payload.reviews_count))
+        parts[#parts + 1] = string.format("%d reviews", tonumber(payload.reviews_count))
     end
-    if #meta > 0 then
-        out[#out + 1] = "<p>" .. _escHtml(table.concat(meta, " \xC2\xB7 ")) .. "</p>"
+    if #parts > 0 then
+        out[#out + 1] = '<p class="rating">' .. table.concat(parts, " \xC2\xB7 ") .. "</p>"
     end
 
     local reviews = type(payload.reviews) == "table" and payload.reviews or {}
@@ -400,18 +435,19 @@ function Tokens.reviewsHtml(payload)
     for _i, review in ipairs(reviews) do
         local name = review.user_name or review.username or "Unknown reader"
         local rr = tonumber(review.rating)
-        local parts = { "<b>Review by</b> <i>" .. _escHtml(name) .. "</i>" }
-        if rr and rr > 0 then
-            parts[#parts + 1] = (string.format("%.1f", rr):gsub("%.0$", "")) .. " \xE2\x98\x85"
-        end
-        if review.reviewed_at then
-            parts[#parts + 1] = _escHtml(tostring(review.reviewed_at):sub(1, 10))
-        end
-        if tonumber(review.likes_count) and tonumber(review.likes_count) > 0 then
-            parts[#parts + 1] = string.format("%d likes", tonumber(review.likes_count))
-        end
         out[#out + 1] = "<hr/>"
-        out[#out + 1] = "<p>" .. table.concat(parts, " \xC2\xB7 ") .. "</p>"
+        -- Stars on their own line above each review, so they always sit at the
+        -- same left-aligned position regardless of name/date length.
+        if rr and rr > 0 then
+            out[#out + 1] = '<p class="stars">' .. Tokens.starString(rr) .. "</p>"
+        end
+        local byline = { "<b>Review by</b> <i>" .. _escHtml(name) .. "</i>" }
+        local d = _formatReviewDate(review.reviewed_at)
+        if d then byline[#byline + 1] = "<i>" .. _escHtml(d) .. "</i>" end
+        if tonumber(review.likes_count) and tonumber(review.likes_count) > 0 then
+            byline[#byline + 1] = string.format("%d likes", tonumber(review.likes_count))
+        end
+        out[#out + 1] = '<p class="byline">' .. table.concat(byline, " \xC2\xB7 ") .. "</p>"
         local body = Tokens.sanitiseReviewHtml(review.text or "")
         if body == "" then body = "<p>No review text.</p>" end
         out[#out + 1] = body

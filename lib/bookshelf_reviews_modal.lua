@@ -12,11 +12,13 @@ local Blitbuffer      = require("ffi/blitbuffer")
 local ButtonTable     = require("ui/widget/buttontable")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
+local FontList        = require("fontlist")
 local FrameContainer  = require("ui/widget/container/framecontainer")
+local ffiutil         = require("ffi/util")
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local InputContainer  = require("ui/widget/container/inputcontainer")
-local MovableContainer = require("ui/widget/container/movablecontainer")
+local LineWidget      = require("ui/widget/linewidget")
 local ScrollHtmlWidget = require("ui/widget/scrollhtmlwidget")
 local Size            = require("ui/size")
 local TitleBar        = require("ui/widget/titlebar")
@@ -29,10 +31,14 @@ local _               = require("lib/bookshelf_i18n").gettext
 -- the engine supports a CSS subset. The body margin gives a little side
 -- breathing room since the frame itself has no inner horizontal padding.
 local REVIEW_CSS = [[
-    body   { margin: 0 0.6em; font-family: sans-serif; }
-    h2     { font-size: 1.1em; margin: 0.2em 0 0.3em 0; }
+    body   { margin: 0 0.6em; padding: 0; font-family: sans-serif; }
+    h1     { font-size: 1.8em; margin: 0 0 0.15em 0; padding: 0; }
     p      { margin: 0.35em 0; text-align: left; }
-    hr     { border: 0; border-top: 1px solid #888888; margin: 0.6em 0; }
+    .stars   { font-family: "nerdstars"; font-size: 1.15em; }
+    p.stars  { margin: 0.5em 0 0.05em 0; }
+    p.rating { margin: 0 0 0.5em 0; }
+    p.byline { margin: 0 0 0.25em 0; }
+    hr     { border: 0; border-top: 1px solid #888888; margin: 0.7em 0 0.4em 0; }
     i, em       { font-style: italic; }
     b, strong   { font-weight: bold; }
     blockquote  { margin: 0.4em 1em; color: #444444; }
@@ -49,8 +55,9 @@ local ReviewsModal = InputContainer:extend{
 
 function ReviewsModal:init()
     local screen_w, screen_h = Screen:getWidth(), Screen:getHeight()
-    self.width  = self.width  or math.floor(screen_w * 0.92)
-    self.height = self.height or math.floor(screen_h * 0.86)
+    -- Near-fullscreen with the standard screen-edge inset (matches TextViewer).
+    self.width  = self.width  or (screen_w - Screen:scaleBySize(30))
+    self.height = self.height or (screen_h - Screen:scaleBySize(30))
 
     if Device:hasKeys() then
         self.key_events = { Close = { { Device.input.group.Back } } }
@@ -103,13 +110,38 @@ function ReviewsModal:init()
         html_h = Screen:scaleBySize(80)
     end
 
+    -- Embed the Nerd Font symbols face via @font-face so the star rows use the
+    -- exact same glyphs (F005/F123/F006) as the ratings UI. MuPDF's HTML engine
+    -- doesn't fall back to that font for Private-Use-Area codepoints, but it
+    -- DOES honour an @font-face that points at the file directly (same path the
+    -- rest of KOReader loads it from). If the font can't be resolved we just
+    -- skip the rule and the glyphs fall back to blank -- no crash.
+    local css = REVIEW_CSS
+    local symbols_path = ffiutil.realpath(FontList.fontdir .. "/nerdfonts/symbols.ttf")
+    if symbols_path then
+        css = string.format(
+            '@font-face { font-family: "nerdstars"; src: url("%s"); }\n%s',
+            symbols_path, REVIEW_CSS)
+    end
+
     self.scroll_html = ScrollHtmlWidget:new{
         html_body         = self.html_body or "",
-        css               = REVIEW_CSS,
+        css               = css,
         default_font_size = Screen:scaleBySize(18),
         width             = self.width,
         height            = html_h,
         dialog            = self,
+    }
+
+    -- Separator line between the scrollable reviews and the button row, so
+    -- the buttons read as a distinct footer (the title bar already has its
+    -- own bottom line).
+    local button_separator = LineWidget:new{
+        background = Blitbuffer.COLOR_DARK_GRAY,
+        dimen = Geom:new{
+            w = self.width,
+            h = Size.line.medium,
+        },
     }
 
     self.frame = FrameContainer:new{
@@ -121,13 +153,15 @@ function ReviewsModal:init()
             align = "left",
             self.titlebar,
             self.scroll_html,
+            button_separator,
             buttons,
         },
     }
 
+    -- Fixed, centred -- no MovableContainer, so it can't be dragged around.
     self[1] = CenterContainer:new{
         dimen = Geom:new{ w = screen_w, h = screen_h },
-        MovableContainer:new{ self.frame },
+        self.frame,
     }
 end
 
