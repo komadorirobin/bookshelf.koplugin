@@ -33,9 +33,9 @@ local HeroBar         = require("lib/bookshelf_hero_bar")
 local TextSegments    = require("lib/bookshelf_text_segments")
 local RenderText      = require("ui/rendertext")
 
-local HC_STAR       = "\xef\x80\x85" -- Nerd Font nf-fa-star
-local HC_HALF_STAR  = "\xef\x82\x89" -- Nerd Font nf-fa-star_half
-local HC_EMPTY_STAR = "\xef\x80\x86" -- Nerd Font nf-fa-star_o
+local HC_STAR       = "\xef\x80\x85" -- nf-fa-star            (U+F005)
+local HC_HALF_STAR  = "\xef\x84\xa3" -- nf-fa-star_half_empty (U+F123)
+local HC_EMPTY_STAR = "\xef\x80\x86" -- nf-fa-star_o          (U+F006)
 
 local HeroCard = InputContainer:extend{
     book                = nil,
@@ -583,6 +583,8 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
             for i = 1, 5 do
                 local glyph
                 if hardcover_mode then
+                    -- Hardcover ratings are fractional: full / half / empty
+                    -- using the Nerd Font glyph set.
                     local whole = math.floor(rating)
                     if i <= whole then
                         glyph = HC_STAR
@@ -592,6 +594,8 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                         glyph = HC_EMPTY_STAR
                     end
                 else
+                    -- The user's own rating stays native integer with plain
+                    -- Unicode stars, kept separate from Hardcover's half-stars.
                     glyph = (i <= rating) and "\xE2\x98\x85" or "\xE2\x98\x86"
                 end
                 local tw = TextWidget:new{

@@ -7245,93 +7245,6 @@ function BookshelfWidget:_showFullDescription(book)
     UIManager:show(viewer)
 end
 
-local function _formatHardcoverReviewRating(rating)
-    rating = tonumber(rating)
-    if not rating or rating <= 0 then return nil end
-    local text = string.format("%.1f", rating):gsub("%.0$", "")
-    return text .. " \xE2\x98\x85"
-end
-
-local function _formatHardcoverReviewDate(ts)
-    if type(ts) ~= "string" then return nil end
-    return ts:match("^(%d%d%d%d%-%d%d%-%d%d)") or ts
-end
-
-local function _repaintHardcoverReviewViewer(viewer)
-    UIManager:setDirty(viewer, function()
-        if viewer and viewer.dimen then
-            return "ui", viewer.dimen
-        end
-        return "full"
-    end)
-end
-
-local function _scrollHardcoverReviewViewer(viewer, direction)
-    local scroll = viewer and viewer.scroll_text_w
-    local textw = scroll and scroll.text_widget
-    if not textw or not textw.vertical_string_list or not textw.lines_per_page then
-        return true
-    end
-
-    local line_count = #textw.vertical_string_list
-    local lines_per_page = math.max(1, tonumber(textw.lines_per_page) or 1)
-    local max_top = math.max(1, line_count - lines_per_page + 1)
-    local old_top = math.max(1, tonumber(textw.virtual_line_num) or 1)
-    local new_top = old_top + (direction > 0 and lines_per_page or -lines_per_page)
-    if new_top < 1 then
-        new_top = 1
-    elseif new_top > max_top then
-        new_top = max_top
-    end
-
-    if new_top ~= old_top then
-        textw.image_show_alt_text = nil
-        textw:free(false)
-        textw.virtual_line_num = new_top
-        textw:_updateLayout()
-        if scroll.updateScrollBar then
-            scroll:updateScrollBar(true)
-        end
-        _repaintHardcoverReviewViewer(viewer)
-    end
-    return true
-end
-
-local function _stabiliseHardcoverReviewViewer(viewer)
-    local scroll = viewer and viewer.scroll_text_w
-    if not scroll then return end
-
-    -- TextViewer can advance read-only text past the last full page on
-    -- some KOReader builds. Clamp page turns so reviews don't become blank.
-    function scroll:scrollDown()
-        return _scrollHardcoverReviewViewer(viewer, 1)
-    end
-    function scroll:scrollUp()
-        return _scrollHardcoverReviewViewer(viewer, -1)
-    end
-    function scroll:scrollText(direction)
-        return _scrollHardcoverReviewViewer(viewer, direction)
-    end
-    function scroll:onScrollDown()
-        return _scrollHardcoverReviewViewer(viewer, 1)
-    end
-    function scroll:onScrollUp()
-        return _scrollHardcoverReviewViewer(viewer, -1)
-    end
-
-    if Device:hasKeys() then
-        viewer.key_events = viewer.key_events or {}
-        viewer.key_events.BSHardcoverReviewsNextPage = { { Device.input.group.PgFwd } }
-        viewer.key_events.BSHardcoverReviewsPrevPage = { { Device.input.group.PgBack } }
-        function viewer:onBSHardcoverReviewsNextPage()
-            return _scrollHardcoverReviewViewer(viewer, 1)
-        end
-        function viewer:onBSHardcoverReviewsPrevPage()
-            return _scrollHardcoverReviewViewer(viewer, -1)
-        end
-    end
-end
-
 function BookshelfWidget:_showHardcoverReviews(book, opts)
     opts = opts or {}
     if not (book and book.filepath) then return end
@@ -7375,66 +7288,21 @@ function BookshelfWidget:_showHardcoverReviews(book, opts)
         end
 
         local Tokens = require("lib/bookshelf_tokens")
-        local parts = {}
-        local title = result.title or book.hardcover_title or book.title or _("Hardcover reviews")
-        parts[#parts + 1] = title
-
-        local meta = {}
-        local rating = _formatHardcoverReviewRating(result.rating)
-        if rating then meta[#meta + 1] = rating end
-        if tonumber(result.ratings_count) and tonumber(result.ratings_count) > 0 then
-            meta[#meta + 1] = string.format(_("%d ratings"), tonumber(result.ratings_count))
-        end
-        if tonumber(result.reviews_count) and tonumber(result.reviews_count) > 0 then
-            meta[#meta + 1] = string.format(_("%d reviews"), tonumber(result.reviews_count))
-        end
-        if #meta > 0 then
-            parts[#parts + 1] = table.concat(meta, " · ")
-        end
-        parts[#parts + 1] = _("Showing non-spoiler reviews from Hardcover.")
-
-        local reviews = type(result.reviews) == "table" and result.reviews or {}
-        if #reviews == 0 then
-            parts[#parts + 1] = ""
-            parts[#parts + 1] = _("No non-spoiler reviews found.")
-        else
-            for _i, review in ipairs(reviews) do
-                parts[#parts + 1] = ""
-                parts[#parts + 1] = "--------------------"
-                local line = {}
-                line[#line + 1] = review.user_name or review.username or _("Unknown reader")
-                local r = _formatHardcoverReviewRating(review.rating)
-                if r then line[#line + 1] = r end
-                local d = _formatHardcoverReviewDate(review.reviewed_at)
-                if d then line[#line + 1] = d end
-                if tonumber(review.likes_count) and tonumber(review.likes_count) > 0 then
-                    line[#line + 1] = string.format(_("%d likes"), tonumber(review.likes_count))
-                end
-                parts[#parts + 1] = table.concat(line, " · ")
-                local text = Tokens.cleanDescription(review.text or "") or ""
-                if text == "" then text = _("No review text.") end
-                parts[#parts + 1] = text
-            end
-        end
-
-        local viewer
-        viewer = require("ui/widget/textviewer"):new{
-            title = _("Hardcover reviews"),
-            text  = table.concat(parts, "\n"),
-            buttons_table = {
-                {
-                    { text = _("Refresh"), callback = function()
-                        UIManager:close(viewer)
-                        self:_showHardcoverReviews(book, { force = true })
-                    end },
-                    { text = _("Close"), callback = function()
-                        UIManager:close(viewer)
-                    end },
-                },
-            },
+        local ReviewsModal = require("lib/bookshelf_reviews_modal")
+        local html = Tokens.reviewsHtml{
+            title         = result.title or book.hardcover_title or book.title,
+            rating        = result.rating,
+            ratings_count = result.ratings_count,
+            reviews_count = result.reviews_count,
+            reviews       = result.reviews,
         }
-        _stabiliseHardcoverReviewViewer(viewer)
-        UIManager:show(viewer)
+        UIManager:show(ReviewsModal:new{
+            title      = _("Hardcover reviews"),
+            html_body  = html,
+            on_refresh = function()
+                self:_showHardcoverReviews(book, { force = true })
+            end,
+        })
     end)
 end
 
@@ -7958,12 +7826,11 @@ function BookshelfWidget:_openBookMenu(item)
     -- staged value first (falling back to book.rating when nothing is
     -- staged).
     local function _ratingLabel()
-        -- Five star glyphs (filled + empty). When a rating change is
-        -- staged, render the staged target; otherwise fall back to the
-        -- persisted book.rating. Clamps weird values (NaN, negative,
-        -- >5) to the valid range. Staged state is signalled by the
-        -- gray-fill background on the rating button itself (set on
-        -- the row spec, mutated on tap).
+        -- Five plain-Unicode star glyphs (filled + empty), native integer
+        -- ratings. When a rating change is staged, render the staged target;
+        -- otherwise fall back to the persisted book.rating. Clamps weird
+        -- values (NaN, negative, >5) to range. Staged state is signalled by
+        -- the gray-fill background on the rating button itself.
         local r
         if draft.rating == false then
             r = tonumber(book.rating) or 0
@@ -8025,6 +7892,8 @@ function BookshelfWidget:_openBookMenu(item)
                 _reinitDialog()
             end
         end
+        -- Native integer ratings: five rows of N filled + (5-N) empty plain
+        -- Unicode stars. Tap sets draft.rating = N (whole stars only).
         local rows = {}
         for i = 1, 5 do
             local star_label = ("\xE2\x98\x85"):rep(i) .. ("\xE2\x98\x86"):rep(5 - i)
@@ -8038,8 +7907,6 @@ function BookshelfWidget:_openBookMenu(item)
             { text = _("Clear"), callback = rating_close(function()
                 draft.rating = nil  -- nil = "clear" target on Apply
             end) },
-        }
-        rows[#rows + 1] = {
             { text = _("Cancel"), callback = rating_close() },
         }
         rating_dialog = require("ui/widget/buttondialog"):new{
