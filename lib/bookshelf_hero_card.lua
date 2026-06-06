@@ -733,8 +733,10 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                     dimen = Geom:new{ w = right_w, h = sz.h },
                     widget,
                 }
+                -- A little extra breathing room than the usual default gap so
+                -- the pills don't crowd the progress line below them.
                 right_bottom[#right_bottom + 1] = VerticalSpan:new{
-                    width = Size.padding.default,
+                    width = Size.padding.default + Screen:scaleBySize(4),
                 }
             end
         end
