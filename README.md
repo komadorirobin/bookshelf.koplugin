@@ -141,17 +141,22 @@ If you also use `hardcoverapp.koplugin`, Bookshelf can link books to Hardcover a
 - **Auto link** -- links using identifiers already embedded in the EPUB, with no searching: an ISBN, or a Hardcover id/edition baked into the file's metadata. The most specific identifier wins (a Hardcover edition, then ISBN, then a Hardcover book/slug).
 - **Manual link…** -- searches Hardcover by title and author and lets you pick the right book.
 - **Select edition…** -- once linked, choose a specific edition (e.g. to get the right cover or page count).
+- **Use Hardcover image** / **Use Hardcover description** -- per-book toggles (shown once linked) that override the book's own cover or description with Hardcover's. See below for how these are set automatically.
 - **Clear link** -- remove the Hardcover link.
 
 If a book has usable identifiers, Auto link is one tap; otherwise use Manual link. When a book is linked, a **Hardcover reviews** button appears in the book menu (and the hero rating row's "N reviews" opens the same popup). Reviews are filtered to spoiler-free ones, and cached, so they reopen offline once fetched.
 
+**Linking the whole library at once.** **Settings -> Hardcover enrichment -> Auto link all books** runs the single-book Auto link across every book that carries an embedded ISBN or Hardcover id, so you don't have to open each one. It contacts Hardcover at about one book per second and shows cancellable progress; books without a usable identifier are skipped (use Manual link for those).
+
 **What gets enriched** (all optional, toggled under **Settings -> Hardcover enrichment**):
 
-- Missing book descriptions can be filled from Hardcover.
-- Missing local EPUB covers can use a cached Hardcover cover image as a Bookshelf-only fallback.
+- Book descriptions can be filled from Hardcover.
+- A Hardcover cover image can stand in for the local cover.
 - Cached Hardcover ratings can be shown in the hero rating row.
 
-Bookshelf does not rewrite EPUB files -- Hardcover descriptions and cover images are stored in Bookshelf's own cache. Network calls only happen from explicit actions (linking, refreshing ratings, fetching reviews); normal shelf rendering reads only the local cache. You can disable or clear the cache from **Settings -> Hardcover enrichment**.
+**Choosing covers and descriptions.** Each linked book has its own **Use Hardcover image** and **Use Hardcover description** toggles. When you link a book, Bookshelf picks sensible defaults: it adopts the Hardcover description if the book has none of its own, and the Hardcover cover if the book has no embedded cover or its cover is lower resolution than Hardcover's. After that the per-book toggle is yours to flip either way -- it's never changed again by a later metadata refresh. (The defaults follow the two global "fill when missing" switches, so turning those off opts out of the automatic selection too.) Turning **Use Hardcover image** on saves the Hardcover cover into the book's sidecar (`.sdr`) folder as a custom cover, so KOReader's own file browser shows it too; turning it off restores whatever was there before -- a cover you'd set yourself is preserved, never overwritten.
+
+Bookshelf does not rewrite EPUB files. Descriptions and ratings live in Bookshelf's own cache; a chosen Hardcover cover is stored as KOReader's standard custom cover in the book's `.sdr` folder. Network calls only happen from explicit actions (linking, refreshing ratings, fetching reviews); normal shelf rendering reads only the local cache. You can disable or clear the cache from **Settings -> Hardcover enrichment**.
 
 ---
 
