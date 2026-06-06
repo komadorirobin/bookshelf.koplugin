@@ -395,15 +395,20 @@ end
 local function _notifyLoadedHardcoverSettings(filepath, config, original)
     local HardcoverSettings = package.loaded["hardcover/lib/hardcover_settings"]
     if not HardcoverSettings then return end
+    -- Keep the Hardcover app's in-memory book settings in sync so it sees our
+    -- link change next time it reads them.
     if HardcoverSettings.settings and HardcoverSettings.settings ~= _hc_settings then
         pcall(_applyExternalBookSetting, HardcoverSettings.settings, filepath, config)
     end
-    if type(HardcoverSettings.notify) == "function" then
-        pcall(HardcoverSettings.notify, HardcoverSettings, "books", {
-            filename = filepath,
-            config = config,
-        }, original or {})
-    end
+    -- Deliberately do NOT call HardcoverSettings:notify() here. That broadcasts
+    -- to the app's subscribers, one of which (onSettingsChanged ->
+    -- registerHighlight) dereferences self.ui.highlight -- nil in FileManager
+    -- context, where our link writes happen. A single link crashed its handler
+    -- (caught), and a bulk auto-link / "Remove all" fired it once per book: a
+    -- storm of error handlers that reads as a crash. The mirrored data is
+    -- already persisted by _mirrorExternalLink's _applyExternalBookSetting, so
+    -- skipping the broadcast loses nothing but the (crashing) live event.
+    -- `original` is retained in the signature for callers; intentionally unused.
 end
 
 local function _mirrorExternalLink(filepath, config)
