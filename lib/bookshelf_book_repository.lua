@@ -1434,6 +1434,26 @@ local function _lightMetaForFp(cache, fp)
     return _buildBookMetaLight(fp)
 end
 
+-- Flat list of every book filepath in the library: the same depth-capped
+-- recursive walk getLatest / the series + author groups use (honours the
+-- bookshelf_latest_walk_depth setting). For bulk operations that need only
+-- paths, not per-book metadata. Returns a shallow copy (safe to mutate).
+function Repo.getAllFilepaths()
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    -- cachedWalk yields candidate RECORDS ({ fp = "...", mtime = ... }), not
+    -- bare paths (getLatest reads candidates[i].fp) -- pull the path strings.
+    local paths = {}
+    for _i, c in ipairs(cachedWalk(home, depth)) do
+        if type(c) == "table" and type(c.fp) == "string" then
+            paths[#paths + 1] = c.fp
+        elseif type(c) == "string" then
+            paths[#paths + 1] = c
+        end
+    end
+    return paths
+end
+
 function Repo.getLatest(limit, offset, opts)
     local _t0 = _gettime()
     local home       = G_reader_settings:readSetting("home_dir") or "/"

@@ -1236,6 +1236,137 @@ function Settings:_hardcoverSubItems()
         })
     end
 
+    -- Bulk auto-link: scan the whole library and link any book that carries
+    -- an embedded ISBN / Hardcover id -- the single-book "Auto link" applied
+    -- across the library. Throttled to ~1 request/second to stay under
+    -- Hardcover's 60/min API limit; shows cancellable progress.
+    local function autoLinkAll(touchmenu_instance)
+        local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+        if not ok_hc or not Hardcover
+                or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
+            notify(_("Hardcover plugin is not available"))
+            return
+        end
+        local Repo = require("lib/bookshelf_book_repository")
+        local filepaths = Repo.getAllFilepaths() or {}
+        -- Pre-filter: drop already-linked books (cheap -- reads the link cache,
+        -- no network), so only genuine candidates cost an API call.
+        local candidates = {}
+        for _i, fp in ipairs(filepaths) do
+            if not Hardcover.getLink(fp) then
+                candidates[#candidates + 1] = fp
+            end
+        end
+        local total = #candidates
+        if total == 0 then
+            notify(_("No unlinked books to auto-link."))
+            return
+        end
+        if touchmenu_instance then UIManager:close(touchmenu_instance) end
+
+        -- Upper-bound time estimate: we can't tell which books carry an id
+        -- without opening each, so quote the worst case (~1.2s per book that
+        -- actually hits the network).
+        local est_min = math.max(1, math.ceil(total * 1.2 / 60))
+        local ConfirmBox = require("ui/widget/confirmbox")
+        UIManager:show(ConfirmBox:new{
+            text = T(_("Scan %1 unlinked book(s) and link any that carry an ISBN or Hardcover id?\n\nThis contacts Hardcover at about one book per second (its rate limit), so it can take up to ~%2 min. You can cancel any time."),
+                     tostring(total), tostring(est_min)),
+            ok_text = _("Auto-link"),
+            ok_callback = function()
+                local InfoMessage = require("ui/widget/infomessage")
+                -- Drive the scan through the scheduler rather than a blocking
+                -- Trapper loop: the UI event loop runs between books, so a tap
+                -- on the progress message is handled promptly (the previous
+                -- blocking loop never gave the tap a chance). id-books are paced
+                -- by RATE to respect Hardcover's ~60/min limit; no-id books just
+                -- yield a tick.
+                local RATE = 1.2
+                local st = { i = 0, linked = 0, no_match = 0, no_id = 0,
+                             errors = 0, cancelled = false }
+                -- Ignore taps for a brief moment after start: the tap that
+                -- confirmed "Auto-link" in the ConfirmBox can bleed through onto
+                -- the freshly-shown progress message and cancel it instantly.
+                local armed = false
+                UIManager:scheduleIn(0.6, function() armed = true end)
+                local info
+                -- InfoMessage:onCloseWidget fires dismiss_callback on ANY close,
+                -- including our own UIManager:close() when we swap in an updated
+                -- progress message. Detach the callback before a programmatic
+                -- close so only a genuine user dismissal of the *current* message
+                -- counts as a cancel -- otherwise every refresh() self-cancels the
+                -- scan the moment `armed` turns true.
+                local function closeInfo()
+                    if info then
+                        info.dismiss_callback = nil
+                        UIManager:close(info)
+                        info = nil
+                    end
+                end
+                local function refresh()
+                    closeInfo()
+                    info = InfoMessage:new{
+                        text = T(_("Auto-linking from Hardcover…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)"),
+                                 tostring(st.i), tostring(total), tostring(st.linked)),
+                        dismiss_callback = function()
+                            if armed then st.cancelled = true end
+                        end,
+                    }
+                    UIManager:show(info)
+                end
+                local function finish()
+                    closeInfo()
+                    if st.linked > 0 then markDirty("hardcover-auto-link-all") end
+                    local msg = T(_("Auto-link %1\n\nLinked: %2\nNo match: %3\nNo usable id: %4"),
+                                  st.cancelled and _("cancelled") or _("complete"),
+                                  tostring(st.linked), tostring(st.no_match), tostring(st.no_id))
+                    if st.errors > 0 then
+                        msg = msg .. "\n" .. T(_("Errors: %1"), tostring(st.errors))
+                    end
+                    UIManager:show(InfoMessage:new{ text = msg })
+                end
+                local step
+                step = function()
+                    if st.cancelled or st.i >= total then return finish() end
+                    st.i = st.i + 1
+                    local fp = candidates[st.i]
+                    -- One book record reused for the id read + the link, so the
+                    -- EPUB is opened at most once (the read caches identifiers).
+                    local book = { filepath = fp }
+                    local ids = Hardcover.getEmbeddedIdentifiers
+                                and Hardcover.getEmbeddedIdentifiers(book)
+                    local did_network = false
+                    if not ids then
+                        st.no_id = st.no_id + 1
+                    else
+                        did_network = true
+                        local ok_call, linked_ok =
+                            pcall(Hardcover.linkFromEmbeddedIdentifiers, book)
+                        if not ok_call then
+                            st.errors = st.errors + 1
+                        elseif linked_ok then
+                            st.linked = st.linked + 1
+                        else
+                            st.no_match = st.no_match + 1
+                        end
+                    end
+                    -- Update the count on each network book (already paced) and
+                    -- occasionally during no-id runs, to avoid rapid flicker.
+                    if did_network or st.i % 10 == 0 or st.i == total then
+                        refresh()
+                    end
+                    if did_network then
+                        UIManager:scheduleIn(RATE, step)
+                    else
+                        UIManager:nextTick(step)
+                    end
+                end
+                refresh()
+                UIManager:nextTick(step)
+            end,
+        })
+    end
+
     return {
         {
             text_func = function()
@@ -1353,6 +1484,17 @@ function Settings:_hardcoverSubItems()
                                  tostring(stats.failed or 0)), 4)
                     end)
                 end)
+            end,
+        },
+        {
+            text = _("Auto-link all books"),
+            help_text = _("Scan the library and link any book that carries an embedded ISBN or Hardcover id, with no manual searching -- the single-book Auto link applied to the whole library. Contacts Hardcover (rate-limited to about one book per second) and shows cancellable progress."),
+            enabled_func = function()
+                local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
+                return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
+            end,
+            callback = function(touchmenu_instance)
+                autoLinkAll(touchmenu_instance)
             end,
         },
         {
