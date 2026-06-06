@@ -6460,33 +6460,56 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- thumbnail loses its rectangular shape.
     local fresh = Repo.buildBookMeta(book.filepath) or book
     local thumb_widget
-    if fresh.cover_bb then
+
+    -- Prefer the external (Hardcover/custom) cover whenever enrichBook set
+    -- cover_image_path on the rebuilt record -- otherwise the header keeps
+    -- showing the embedded cover even after "Use Hardcover image" is on, so
+    -- the menu thumbnail disagrees with the shelf. The external bb is owned
+    -- by ImageSource's cache (keyed by path+mtime+size), so paint it with
+    -- image_disposable=false; freeing it would corrupt the shared cache.
+    local ext_cover = fresh.cover_image_path
+    local thumb_bb, thumb_disposable
+    if ext_cover then
+        local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
+        thumb_bb = ok_img and ImageSource.loadImage(ext_cover, thumb_w, thumb_w * 2) or nil
+        thumb_disposable = false
+    end
+    if not thumb_bb and fresh.cover_bb then
+        -- Fallback: the embedded cover_bb is one-shot (ImageWidget frees it
+        -- after first paint) per feedback_image_disposable_shared_book.
+        thumb_bb = fresh.cover_bb
+        thumb_disposable = true
+    end
+
+    if thumb_bb then
         -- Resize the container to the cover's true aspect ratio so the
-        -- image fills the frame with no letterboxing. cover_bb is a
+        -- image fills the frame with no letterboxing. The bb is a
         -- blitbuffer with .w/.h fields; falling back to 2:3 if either
         -- is missing keeps the layout sane for malformed covers.
-        local bb = fresh.cover_bb
-        if bb.w and bb.h and bb.w > 0 then
-            thumb_h = math.floor(thumb_w * (bb.h / bb.w))
+        local bw = thumb_bb.w or (thumb_bb.getWidth and thumb_bb:getWidth())
+        local bh = thumb_bb.h or (thumb_bb.getHeight and thumb_bb:getHeight())
+        if bw and bh and bw > 0 then
+            thumb_h = math.floor(thumb_w * (bh / bw))
         end
         local thumb_frame = FrameContainer:new{
             bordersize = Size.border.thin,
             padding    = 0,
             margin     = 0,
             ImageWidget:new{
-                image            = fresh.cover_bb,
-                image_disposable = true,
+                image            = thumb_bb,
+                image_disposable = thumb_disposable,
                 width            = thumb_w,
                 height           = thumb_h,
                 scale_factor     = 0,
             },
         }
         -- Wrap in an InputContainer so a tap on the thumbnail opens a
-        -- full-screen preview. The bb above is one-shot (ImageWidget
-        -- frees it after first paint), so the tap handler rebuilds the
-        -- record to get a fresh bb for ImageViewer. ImageViewer takes
-        -- ownership of the new bb via image_disposable=true.
+        -- full-screen preview. The embedded bb is one-shot (freed after
+        -- first paint), so the tap handler reloads the cover for
+        -- ImageViewer. The external cover comes from ImageSource's cache,
+        -- so the viewer must NOT free it (image_disposable=false).
         local fp = book.filepath
+        local ext_for_viewer = ext_cover
         local title_for_viewer = book.title or book.filename or ""
         thumb_widget = InputContainer:new{
             dimen = Geom:new{
@@ -6499,6 +6522,21 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
             Tap = { GestureRange:new{ ges = "tap", range = thumb_widget.dimen } },
         }
         thumb_widget.onTap = function()
+            if ext_for_viewer then
+                local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
+                local sw_ = Screen:getWidth()
+                local pv_bb = ok_img and ImageSource.loadImage(
+                    ext_for_viewer, sw_, sw_ * 2) or nil
+                if pv_bb then
+                    UIManager:show(require("ui/widget/imageviewer"):new{
+                        image            = pv_bb,
+                        image_disposable = false,  -- ImageSource cache owns it
+                        title_text       = title_for_viewer,
+                        fullscreen       = true,
+                    })
+                    return true
+                end
+            end
             local preview = Repo.buildBookMeta(fp)
             if not preview or not preview.cover_bb then return true end
             UIManager:show(require("ui/widget/imageviewer"):new{
@@ -7342,9 +7380,18 @@ function BookshelfWidget:_showHardcoverReviews(book, opts)
     end)
 end
 
-function BookshelfWidget:_refreshHardcoverEnrichmentView(reason)
+function BookshelfWidget:_refreshHardcoverEnrichmentView(reason, filepath)
     Repo.invalidateBookCache(reason or "hardcover")
     pcall(function() require("lib/bookshelf_image_source").invalidateCache() end)
+    -- A cover toggle / re-link changes the cover image; drop the per-filepath
+    -- scaled bitmap (and progress memo) so the rebuild re-renders it. No
+    -- BIM re-extract needed -- the render prefers cover_image_path directly.
+    if filepath then
+        pcall(function() require("lib/bookshelf_scaled_cover_cache"):drop(filepath) end)
+        pcall(function()
+            if Repo.invalidateProgressCache then Repo.invalidateProgressCache(filepath) end
+        end)
+    end
     if self._rebuild then
         self:_rebuild()
         UIManager:setDirty(self, "ui")
@@ -7370,31 +7417,34 @@ function BookshelfWidget:_openHardcoverMenu(book)
     local link = Hardcover.getLink(book.filepath)
     local dialog
 
-    -- This menu is opened FROM the book long-press menu (which closed itself
-    -- to show us), so every exit should land the user back on that menu, not
-    -- on the bare bookshelf. Reopening recovers the staged draft stashed by
-    -- the book menu's Hardcover button.
+    -- Most actions here apply immediately and keep you in this menu (reopened,
+    -- refreshed -- e.g. a successful link now shows the override toggles), so
+    -- you can chain link + toggles. Only "Done" exits back to the book menu.
     local function returnToBookMenu()
         UIManager:nextTick(function() bw:_openBookMenu(book) end)
     end
+    local function returnToHardcoverMenu()
+        UIManager:nextTick(function() bw:_openHardcoverMenu(book) end)
+    end
 
-    -- closeThen: close this menu, run the action, then reopen the book menu.
-    -- Actions that open their OWN sub-dialog (the pickers, Reviews) pass
-    -- chains=true and reopen the book menu from that sub-dialog's completion
-    -- callbacks instead -- otherwise the book menu would flash up underneath
-    -- the sub-dialog on the same tick.
+    -- closeThen: close this menu, run the action, then reopen THIS menu
+    -- refreshed. Actions that open their own sub-dialog (the pickers) pass
+    -- chains=true and reopen from that sub-dialog's completion callback.
     local function closeThen(fn, chains)
         return function()
             UIManager:close(dialog)
             UIManager:nextTick(function()
                 if fn then fn() end
-                if not chains then returnToBookMenu() end
+                if not chains then returnToHardcoverMenu() end
             end)
         end
     end
 
     local function refreshAfterAction(reason)
-        bw:_refreshHardcoverEnrichmentView(reason or "hardcover-link")
+        -- Pass the filepath so the scaled-cover cache is dropped too: cover
+        -- toggles / re-links change the cover, and a stale cached bitmap would
+        -- otherwise keep showing the old one.
+        bw:_refreshHardcoverEnrichmentView(reason or "hardcover-link", book.filepath)
     end
 
     local function refreshLinkedMetadata(success_text)
@@ -7428,7 +7478,7 @@ function BookshelfWidget:_openHardcoverMenu(book)
             -- selection), so the return to the book menu is handled there
             -- uniformly -- the per-result callbacks only show toasts / refresh.
             local ok, err = Hardcover.showBookPicker(book, {
-                on_close = returnToBookMenu,
+                on_close = returnToHardcoverMenu,
                 on_error = function(msg)
                     bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
                 end,
@@ -7443,10 +7493,10 @@ function BookshelfWidget:_openHardcoverMenu(book)
                 end,
             })
             -- Picker failed to even open: no dialog, so on_close never fires --
-            -- return to the book menu now.
+            -- reopen the Hardcover menu now.
             if not ok then
                 bw:_hardcoverToast(tostring(err or _("Hardcover search failed")), 5)
-                returnToBookMenu()
+                returnToHardcoverMenu()
             end
         end, true),
     }
@@ -7458,11 +7508,11 @@ function BookshelfWidget:_openHardcoverMenu(book)
             local current = Hardcover.getLink(book.filepath)
             if not current or not current.book_id then
                 bw:_hardcoverToast(_("Link a Hardcover book first"))
-                returnToBookMenu()
+                returnToHardcoverMenu()
                 return
             end
             local ok, err = Hardcover.showEditionPicker(book, current.book_id, {
-                on_close = returnToBookMenu,
+                on_close = returnToHardcoverMenu,
                 on_error = function(msg)
                     bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
                 end,
@@ -7478,7 +7528,7 @@ function BookshelfWidget:_openHardcoverMenu(book)
             })
             if not ok then
                 bw:_hardcoverToast(tostring(err or _("Hardcover edition search failed")), 5)
-                returnToBookMenu()
+                returnToHardcoverMenu()
             end
         end, true),
     }
@@ -7497,11 +7547,49 @@ function BookshelfWidget:_openHardcoverMenu(book)
         end),
     }
 
-    local cancel_button = {
-        text = _("Cancel"),
+    -- "Done", not "Cancel": every action here (link, toggles, clear) applies
+    -- immediately, so there's nothing to cancel -- this just exits to the book
+    -- menu.
+    local done_button = {
+        text = _("Done"),
         callback = function()
             UIManager:close(dialog)
             returnToBookMenu()
+        end,
+    }
+
+    -- Per-book override toggles (only meaningful once linked). They flip the
+    -- link record's use_cover / use_description flags in place and reinit the
+    -- dialog so the checkbox updates without leaving the menu.
+    local CHK_ON, CHK_OFF = "\xE2\x98\x91 ", "\xE2\x98\x90 "  -- ☑ / ☐
+    local function flagOn(field)
+        -- Pass `book` so an auto-filled (global "fill when missing") cover or
+        -- description reads as ON, not OFF -- otherwise the checkbox disagrees
+        -- with what's on screen and toggling it appears to do nothing.
+        local f = Hardcover.getEnrichmentFlags and Hardcover.getEnrichmentFlags(book.filepath, book)
+        return (f and f[field]) or false
+    end
+    local use_cover_button = {
+        text_func = function()
+            return (flagOn("use_cover") and CHK_ON or CHK_OFF) .. _("Use Hardcover image")
+        end,
+        callback = function()
+            local ok, err = Hardcover.setUseCover(book.filepath, not flagOn("use_cover"))
+            if not ok then bw:_hardcoverToast(tostring(err or _("Could not update")), 5) end
+            -- Light refresh: the render now prefers cover_image_path directly
+            -- (see SpineWidget._renderCover), so no BIM re-extract is needed.
+            refreshAfterAction("hardcover-use-cover")
+            if dialog and dialog.reinit then dialog:reinit() end
+        end,
+    }
+    local use_desc_button = {
+        text_func = function()
+            return (flagOn("use_description") and CHK_ON or CHK_OFF) .. _("Use Hardcover description")
+        end,
+        callback = function()
+            Hardcover.setUseDescription(book.filepath, not flagOn("use_description"))
+            refreshAfterAction("hardcover-use-description")
+            if dialog and dialog.reinit then dialog:reinit() end
         end,
     }
 
@@ -7511,13 +7599,15 @@ function BookshelfWidget:_openHardcoverMenu(book)
     local linked_text = link
         and (T(_("Linked: %1"), Hardcover.linkLabel(book.filepath) or tostring(link.book_id)))
         or _("Not linked to Hardcover")
+    local button_rows = { { { text = linked_text, enabled = false } } }
+    if link and link.book_id then
+        button_rows[#button_rows + 1] = { use_cover_button, use_desc_button }
+    end
+    button_rows[#button_rows + 1] = { embedded_button, select_book_button, select_edition_button }
+    button_rows[#button_rows + 1] = { clear_button, done_button }
     dialog = require("ui/widget/buttondialog"):new{
-        title = _("Hardcover"),
-        buttons = {
-            { { text = linked_text, enabled = false } },
-            { embedded_button, select_book_button, select_edition_button },  -- Auto | Manual… | Select edition…
-            { clear_button, cancel_button },                                 -- Clear link (left) | Cancel (right)
-        },
+        title   = _("Hardcover"),
+        buttons = button_rows,
     }
     UIManager:show(dialog)
 end

@@ -1020,9 +1020,13 @@ function SpineWidget:_renderCover(bb)
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
     local fp = self.book and self.book.filepath
-    local external_cover = self.book
-        and not self.book.has_cover
-        and self.book.cover_image_path
+    -- Use the external (Hardcover) cover whenever it's set: enrichBook only
+    -- sets cover_image_path when it should be shown -- either the book has no
+    -- embedded cover, or "Use Hardcover image" forces the override. The old
+    -- `not has_cover` gate here ignored the override for books that DO have an
+    -- embedded cover (so it only updated after a heavy deleteBookInfo). This
+    -- matches the external_cover check in init().
+    local external_cover = self.book and self.book.cover_image_path
 
     if external_cover then
         local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")

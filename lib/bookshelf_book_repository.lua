@@ -488,6 +488,10 @@ function Repo.buildBookMeta(filepath, opts)
         -- BIM-only: covers and page count are not in metadata.calibre.
         cover_bb    = info.cover_bb,
         has_cover   = info.has_cover and not info.ignore_cover,
+        -- Original (pre-thumbnail) cover dimensions BIM records as "WxH",
+        -- e.g. "1072x1448". Used by the Hardcover enricher to decide whether
+        -- the embedded cover is lower resolution than Hardcover's.
+        cover_sizetag = info.cover_sizetag,
         lang        = (cb and type(cb.languages) == "table" and cb.languages[1])
                        or info.language,
         description = (cb and type(cb.comments) == "string" and cb.comments ~= "")

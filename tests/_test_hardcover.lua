@@ -335,5 +335,113 @@ test("refreshRatings preserves a linked book the API response omits", function()
     assert(ratings["999"].rating == false, "unrated returned entry should be false")
 end)
 
+-- ─── Pass-2 link-time auto-decision ──────────────────────────────────────────
+-- autoDecideFlags is tested in isolation by stubbing the two setters (the real
+-- ones touch DocSettings, which isn't mocked here) and asserting the decision.
+
+test("autoDecideFlags enables both overrides for a coverless, descriptionless book", function()
+    reset()
+    local orig_c, orig_d = Hardcover.setUseCover, Hardcover.setUseDescription
+    local calls = {}
+    Hardcover.setUseCover       = function(_fp, en) calls.cover = en; return true end
+    Hardcover.setUseDescription = function(_fp, en) calls.desc  = en; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = false, description = nil },
+        { description = "From Hardcover", cover_path = "/tmp/x.jpg",
+          cover_width = 800, cover_height = 1200 })
+    Hardcover.setUseCover, Hardcover.setUseDescription = orig_c, orig_d
+    assert(calls.cover == true, "cover should auto-enable when the book has none")
+    assert(calls.desc  == true, "description should auto-enable when the book has none")
+end)
+
+test("autoDecideFlags keeps a higher-resolution embedded cover", function()
+    reset()
+    local orig_c = Hardcover.setUseCover
+    local called = false
+    Hardcover.setUseCover = function() called = true; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = true, cover_sizetag = "1600x2400" },
+        { cover_path = "/tmp/x.jpg", cover_width = 800, cover_height = 1200 })
+    Hardcover.setUseCover = orig_c
+    assert(not called, "should not swap when the embedded cover is larger")
+end)
+
+test("autoDecideFlags adopts a higher-resolution Hardcover cover", function()
+    reset()
+    local orig_c = Hardcover.setUseCover
+    local en
+    Hardcover.setUseCover = function(_fp, e) en = e; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = true, cover_sizetag = "400x600" },
+        { cover_path = "/tmp/x.jpg", cover_width = 1000, cover_height = 1500 })
+    Hardcover.setUseCover = orig_c
+    assert(en == true, "should adopt Hardcover when its cover is larger")
+end)
+
+test("autoDecideFlags keeps the embedded cover when sizes can't be compared", function()
+    reset()
+    local orig_c = Hardcover.setUseCover
+    local called = false
+    Hardcover.setUseCover = function() called = true; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = true, cover_sizetag = nil },
+        { cover_path = "/tmp/x.jpg" })  -- no HC dimensions either
+    Hardcover.setUseCover = orig_c
+    assert(not called, "unknown dimensions must not trigger a swap")
+end)
+
+test("autoDecideFlags never overrides an explicit user choice", function()
+    reset()
+    hc_settings.books["/books/a.epub"].use_cover       = false
+    hc_settings.books["/books/a.epub"].use_description = true
+    Hardcover.invalidate()
+    local orig_c, orig_d = Hardcover.setUseCover, Hardcover.setUseDescription
+    local touched = false
+    Hardcover.setUseCover       = function() touched = true; return true end
+    Hardcover.setUseDescription = function() touched = true; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = false, description = nil },
+        { description = "x", cover_path = "/tmp/x.jpg", cover_width = 9, cover_height = 9 })
+    Hardcover.setUseCover, Hardcover.setUseDescription = orig_c, orig_d
+    assert(not touched, "a decided flag (true/false) must not be re-touched")
+end)
+
+test("autoDecideFlags honours disabled global fill switches", function()
+    reset()
+    settings.bookshelf_hardcover_fill_covers       = false
+    settings.bookshelf_hardcover_fill_descriptions = false
+    local orig_c, orig_d = Hardcover.setUseCover, Hardcover.setUseDescription
+    local touched = false
+    Hardcover.setUseCover       = function() touched = true; return true end
+    Hardcover.setUseDescription = function() touched = true; return true end
+    Hardcover.autoDecideFlags(
+        { filepath = "/books/a.epub", has_cover = false, description = nil },
+        { description = "x", cover_path = "/tmp/x.jpg", cover_width = 9, cover_height = 9 })
+    Hardcover.setUseCover, Hardcover.setUseDescription = orig_c, orig_d
+    assert(not touched, "auto-enable must respect the global fill settings")
+end)
+
+-- ─── Pass-1 effective-state flag display ─────────────────────────────────────
+
+test("getEnrichmentFlags reports an auto-filled cover as effectively on", function()
+    reset()
+    -- Cache enrichment carrying a cover + description for linked book A.
+    settings.bookshelf_hardcover_enrichment = {
+        ["123:456"] = { cover_path = "/tmp/x.jpg", description = "Desc" },
+    }
+    Hardcover.invalidate()
+    -- Undecided flags + a book with no cover/description: the global fill
+    -- default would render Hardcover's, so the toggles read ON.
+    local f = Hardcover.getEnrichmentFlags("/books/a.epub",
+        { has_cover = false, description = nil })
+    assert(f and f.use_cover == true,       "filled cover should read as on")
+    assert(f and f.use_description == true,  "filled description should read as on")
+    -- A book that already has its own cover/description: nothing filled -> off.
+    local g = Hardcover.getEnrichmentFlags("/books/a.epub",
+        { has_cover = true, description = "Own description" })
+    assert(g and g.use_cover == false,       "embedded cover should read as off")
+    assert(g and g.use_description == false, "own description should read as off")
+end)
+
 io.stdout:write(("PASS %d  FAIL %d\n"):format(pass, fail))
 if fail > 0 then os.exit(1) end
