@@ -7476,15 +7476,35 @@ function BookshelfWidget:_openHardcoverMenu(book)
         end)
     end
 
+    -- Pick the auto-link mode up front from whether the book carries an
+    -- embedded ISBN / Hardcover id (reads the EPUB OPF once; cached on the book
+    -- + instant for non-EPUBs). With an id we resolve exactly; without one the
+    -- button becomes a title+author best-guess search instead of a dead end.
+    local has_embedded_id = Hardcover.getEmbeddedIdentifiers
+        and Hardcover.getEmbeddedIdentifiers(book) ~= nil or false
     local embedded_button = {
-        text = _("Auto link"),
+        text = has_embedded_id and _("Auto link") or _("Auto link (best guess)"),
         callback = closeThen(function()
-            local ok, result = Hardcover.linkFromEmbeddedIdentifiers(book)
-            if not ok then
-                bw:_hardcoverToast(tostring(result or _("No embedded Hardcover identifier found")), 5)
-                return
+            if has_embedded_id then
+                local ok, result = Hardcover.linkFromEmbeddedIdentifiers(book)
+                if not ok then
+                    bw:_hardcoverToast(tostring(result or _("No embedded Hardcover identifier found")), 5)
+                    return
+                end
+                refreshLinkedMetadata(_("Hardcover book linked"))
+            else
+                -- No embedded id: search Hardcover by title + author and link
+                -- the most confident match (the auto-link-all "Best guess").
+                local ok, result = Hardcover.bestGuessLink(book)
+                if not ok then
+                    local msg = (result == "no_confident_match" or result == "no_match")
+                        and _("No confident Hardcover match -- try Manual link")
+                        or tostring(result or _("Hardcover search failed"))
+                    bw:_hardcoverToast(msg, 5)
+                    return
+                end
+                refreshLinkedMetadata(_("Hardcover book linked (best guess)"))
             end
-            refreshLinkedMetadata(_("Hardcover book linked"))
         end),
     }
     -- (embedded_button is terminal: closeThen reopens the book menu for it.)
@@ -7589,12 +7609,19 @@ function BookshelfWidget:_openHardcoverMenu(book)
             return (flagOn("use_cover") and CHK_ON or CHK_OFF) .. _("Use Hardcover image")
         end,
         callback = function()
+            local _t0 = _gettime()
             local ok, err = Hardcover.setUseCover(book.filepath, not flagOn("use_cover"))
+            local _t_set = _gettime()
             if not ok then bw:_hardcoverToast(tostring(err or _("Could not update")), 5) end
             -- Light refresh: the render now prefers cover_image_path directly
             -- (see SpineWidget._renderCover), so no BIM re-extract is needed.
             refreshAfterAction("hardcover-use-cover")
+            local _t_refresh = _gettime()
             if dialog and dialog.reinit then dialog:reinit() end
+            logger.dbg(string.format(
+                "[hc diag] use_cover toggle: setUseCover=%.0fms refresh=%.0fms reinit=%.0fms TOTAL=%.0fms",
+                (_t_set - _t0) * 1000, (_t_refresh - _t_set) * 1000,
+                (_gettime() - _t_refresh) * 1000, (_gettime() - _t0) * 1000))
         end,
     }
     local use_desc_button = {
@@ -7602,9 +7629,16 @@ function BookshelfWidget:_openHardcoverMenu(book)
             return (flagOn("use_description") and CHK_ON or CHK_OFF) .. _("Use Hardcover description")
         end,
         callback = function()
+            local _t0 = _gettime()
             Hardcover.setUseDescription(book.filepath, not flagOn("use_description"))
+            local _t_set = _gettime()
             refreshAfterAction("hardcover-use-description")
+            local _t_refresh = _gettime()
             if dialog and dialog.reinit then dialog:reinit() end
+            logger.dbg(string.format(
+                "[hc diag] use_description toggle: setUseDescription=%.0fms refresh=%.0fms reinit=%.0fms TOTAL=%.0fms",
+                (_t_set - _t0) * 1000, (_t_refresh - _t_set) * 1000,
+                (_gettime() - _t_refresh) * 1000, (_gettime() - _t0) * 1000))
         end,
     }
 

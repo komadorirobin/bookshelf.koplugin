@@ -7,6 +7,14 @@
 -- books.
 
 local BookshelfSettings = require("lib/bookshelf_settings_store")
+local logger = require("logger")
+
+-- Wall-clock (fractional seconds) for diagnostic timing; falls back to CPU.
+local _diagNow
+do
+    local ok, s = pcall(require, "socket")
+    _diagNow = (ok and s and type(s.gettime) == "function") and s.gettime or os.clock
+end
 
 local Hardcover = {}
 
@@ -1044,12 +1052,26 @@ function Hardcover.showBookPicker(book, opts)
     local title = book.title or _filenameTitle(book.filepath)
     local author = _authorString(book)
     local books, err
+    local _t0 = _diagNow()
     local embedded = _findBookByIdentifiers(modules, Hardcover.getEmbeddedIdentifiers(book), user_id)
     if embedded then
         books = { embedded }
     else
         books, err = modules.Api:findBooks(title, author, user_id)
     end
+    -- Diagnostic: what we searched for and what came back. Helps explain
+    -- "Manual link shows unrelated books" -- usually the local title/author
+    -- metadata is off, or findBooks strips too much (it drops everything after
+    -- a ':' and appends the author to the query).
+    local titles = {}
+    for i, b in ipairs(books or {}) do
+        if i > 6 then break end
+        titles[#titles + 1] = tostring(b.title)
+    end
+    logger.dbg(string.format(
+        "[hc diag] manual search: title=%q author=%q embedded=%s -> %d result(s) in %.0fms [%s]",
+        tostring(title), tostring(author), embedded and "yes" or "no",
+        #(books or {}), (_diagNow() - _t0) * 1000, table.concat(titles, " | ")))
     if not books then return false, err or "No response from Hardcover" end
 
     local manager = _newDialogManager(modules, settings)
@@ -1058,7 +1080,11 @@ function Hardcover.showBookPicker(book, opts)
         books,
         { book_id = (Hardcover.getLink(book.filepath) or {}).book_id },
         function(selected)
+            local _sel_t0 = _diagNow()
             local ok, link_err = Hardcover.linkBook(book.filepath, selected)
+            logger.dbg(string.format(
+                "[hc diag] manual select: linkBook=%.0fms title=%q",
+                (_diagNow() - _sel_t0) * 1000, tostring(selected and selected.title)))
             if not ok then
                 if opts.on_error then opts.on_error(link_err) end
                 return

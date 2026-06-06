@@ -34,6 +34,11 @@ package.loaded["datastorage"] = {
     getSettingsDir = function() return "/tmp/bookshelf-hardcover-test" end,
 }
 
+package.loaded["logger"] = {
+    dbg = function() end, info = function() end,
+    warn = function() end, err = function() end,
+}
+
 package.loaded["libs/libkoreader-lfs"] = {
     attributes = function(_path, attr)
         if attr == "mode" then return "file" end
