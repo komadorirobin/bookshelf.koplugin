@@ -1647,6 +1647,59 @@ function Hardcover.refreshRatingsOnline(callback)
     end)
 end
 
+-- Apply the global "Use Hardcover metadata" override to `book`: for a linked
+-- book, replace its title / author(s) / series + # / genres with Hardcover's --
+-- a clean switch, no merging. No-op when the toggle is off, the book isn't
+-- linked, or no enrichment is cached. Self-contained (own link + cache reads,
+-- all memoized -- no file I/O) so it's cheap enough to also run on the light
+-- grouping records, keeping the genre/author/series chips in sync with the
+-- per-book tag pills. Cover/description stay under their per-book toggles.
+function Hardcover.applyMetadata(book)
+    if not BookshelfSettings.isTrue("hardcover_use_metadata") then return end
+    if type(book) ~= "table" or not book.filepath then return end
+    local link = Hardcover.getLink(book.filepath)
+    if not link then return end
+    local enrichment = Hardcover.getCachedEnrichment(link.book_id, link.edition_id)
+    if type(enrichment) ~= "table" then return end
+
+    book.hardcover_metadata = true
+    if type(enrichment.title) == "string" and enrichment.title ~= "" then
+        book.title = enrichment.title
+    end
+    if type(enrichment.authors) == "string" and enrichment.authors ~= "" then
+        local list = {}
+        for a in enrichment.authors:gmatch("[^,]+") do
+            local name = a:gsub("^%s+", ""):gsub("%s+$", "")
+            if name ~= "" then list[#list + 1] = name end
+        end
+        if #list > 0 then book.authors = list end
+    end
+    if type(enrichment.series_name) == "string" and enrichment.series_name ~= "" then
+        book.series_name = enrichment.series_name
+        local pos = enrichment.series_position
+        if pos ~= nil then
+            -- Format like Calibre: integer position with no decimal.
+            local n = tonumber(pos)
+            local pos_str = (n and n == math.floor(n)) and tostring(math.floor(n))
+                or tostring(pos)
+            book.series_num = pos_str
+            book.series = enrichment.series_name .. " #" .. pos_str
+        else
+            book.series_num = nil
+            book.series = enrichment.series_name
+        end
+    end
+    if type(enrichment.genres) == "table" and #enrichment.genres > 0 then
+        local max = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
+        if max < 0 then max = 0 end
+        local g = {}
+        for i = 1, math.min(max, #enrichment.genres) do
+            g[i] = enrichment.genres[i]
+        end
+        if #g > 0 then book.genres = g end
+    end
+end
+
 function Hardcover.enrichBook(book)
     if not book or not book.filepath then return book end
     local link = Hardcover.getLink(book.filepath)
@@ -1708,49 +1761,12 @@ function Hardcover.enrichBook(book)
         end
     end
 
-    -- "Use Hardcover metadata" (global, opt-in): for a linked book, replace the
-    -- bibliographic fields with Hardcover's -- title, author(s), series + #, and
-    -- genres -- a clean switch (no merging). Cover and description stay under
-    -- their own per-book toggles above. We always cache this metadata; the
-    -- toggle only decides whether it's used here.
-    if BookshelfSettings.isTrue("hardcover_use_metadata") then
-        book.hardcover_metadata = true
-        if type(enrichment.title) == "string" and enrichment.title ~= "" then
-            book.title = enrichment.title
-        end
-        if type(enrichment.authors) == "string" and enrichment.authors ~= "" then
-            local list = {}
-            for a in enrichment.authors:gmatch("[^,]+") do
-                local name = a:gsub("^%s+", ""):gsub("%s+$", "")
-                if name ~= "" then list[#list + 1] = name end
-            end
-            if #list > 0 then book.authors = list end
-        end
-        if type(enrichment.series_name) == "string" and enrichment.series_name ~= "" then
-            book.series_name = enrichment.series_name
-            local pos = enrichment.series_position
-            if pos ~= nil then
-                -- Format like Calibre: integer position with no decimal.
-                local n = tonumber(pos)
-                local pos_str = (n and n == math.floor(n)) and tostring(math.floor(n))
-                    or tostring(pos)
-                book.series_num = pos_str
-                book.series = enrichment.series_name .. " #" .. pos_str
-            else
-                book.series_num = nil
-                book.series = enrichment.series_name
-            end
-        end
-        if type(enrichment.genres) == "table" and #enrichment.genres > 0 then
-            local max = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
-            if max < 0 then max = 0 end
-            local g = {}
-            for i = 1, math.min(max, #enrichment.genres) do
-                g[i] = enrichment.genres[i]
-            end
-            if #g > 0 then book.genres = g end
-        end
-    end
+    -- "Use Hardcover metadata" override (title/author/series/genres) lives in
+    -- Hardcover.applyMetadata so the exact same logic also runs on the lighter
+    -- grouping records that back the genre/author/series chips -- not just full
+    -- book builds. Otherwise the tag pills (full build) would switch but the
+    -- chips/stacks (light build) wouldn't.
+    Hardcover.applyMetadata(book)
     return book
 end
 

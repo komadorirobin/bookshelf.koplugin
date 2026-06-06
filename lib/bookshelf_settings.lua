@@ -1208,7 +1208,14 @@ end
 function Settings:_hardcoverSubItems()
     local function markDirty(reason)
         pcall(function()
-            require("lib/bookshelf_book_repository").invalidateBookCache(reason or "hardcover")
+            local Repo = require("lib/bookshelf_book_repository")
+            Repo.invalidateBookCache(reason or "hardcover")
+            -- Also drop the light-meta cache: Hardcover changes (linking,
+            -- "Use Hardcover metadata", auto-link) rewrite the title/author/
+            -- series/genre fields the genre/author/series chips group from, so
+            -- the chips must rebuild from fresh records, not just the per-chip
+            -- result caches invalidateBookCache clears.
+            if Repo.invalidateLightMeta then Repo.invalidateLightMeta() end
         end)
         pcall(function()
             require("lib/bookshelf_image_source").invalidateCache()

@@ -619,7 +619,7 @@ local function _buildLightMetaFromInfo(fp, info)
     -- filename is also returned so callers like searchBooks can include
     -- it in their search haystack without paying for the heavy
     -- buildBookMeta path.
-    return {
+    local rec = {
         filepath    = fp,
         filename    = filename,
         series_name = series_name,
@@ -636,6 +636,15 @@ local function _buildLightMetaFromInfo(fp, info)
         genres      = genres,
         title       = title,
     }
+    -- Apply the global "Use Hardcover metadata" override here too, so the
+    -- genre / author / series chips (built from these light records) switch
+    -- over with the per-book tag pills. Cheap (memoized link + cache reads,
+    -- no file I/O) and a no-op when the toggle is off / book isn't linked.
+    local Hardcover = getHardcover()
+    if Hardcover and Hardcover.applyMetadata then
+        pcall(Hardcover.applyMetadata, rec)
+    end
+    return rec
 end
 
 local function _buildBookMetaLight(fp)
@@ -1106,6 +1115,16 @@ function Repo.invalidateBookCache(reason)
     if logger and logger.dbg then
         logger.dbg("[bookshelf] cache invalidated: " .. tostring(reason))
     end
+end
+
+-- Drop the light-meta cache (the per-file records the genre/author/series
+-- chips are grouped from). invalidateBookCache deliberately keeps this warm
+-- (it's a BIM batch query to rebuild), but a change to the *content* of those
+-- records -- e.g. toggling "Use Hardcover metadata", which rewrites
+-- title/author/series/genres -- must force a rebuild or the chips stay stale.
+-- The walk cache (file list) is untouched; only the per-file metadata refetches.
+function Repo.invalidateLightMeta()
+    _light_meta_cache = {}
 end
 
 -- Cached read of a file's percent_finished + summary.status + summary.rating
