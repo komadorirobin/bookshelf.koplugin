@@ -18,7 +18,6 @@ LUA="${LUA:-lua}"
 # Suites that cannot run standalone, keyed by basename. Keep the reason short.
 skip_reason() {
     case "$1" in
-        _test_colour.lua)         echo "lib/bookshelf_colour removed in v2.3.0 colour rework (test needs rewrite)";;
         _test_tall_screen.lua)    echo "needs KOReader native libs/libkoreader-lfs (pulled in via fonts)";;
         _test_text_segments.lua)  echo "needs KOReader native ffi/utf8proc";;
         *)                        echo "";;
