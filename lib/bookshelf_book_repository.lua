@@ -65,12 +65,53 @@ local function splitGenreTags(src)
     return #t > 0 and t or nil
 end
 
--- Supported e-book extensions (used in both getCurrent and walkBooks).
+-- Supported e-book extensions (used in getCurrent and walkBooks via
+-- _supportedExt). Mirrors the document formats KOReader itself registers
+-- (frontend/document/*), minus pure images and code/scripts -- those are
+-- openable but aren't shelf books and would surface cover/sidecar files.
+-- Compound ".zip" forms (fb2.zip etc.) are handled by _supportedExt; a bare
+-- ".zip"/".tar" archive is intentionally NOT a book.
 local SUPPORTED_EXT = {
-    epub=true, pdf=true, mobi=true, azw=true, azw3=true, fb2=true,
-    cbz=true, cbr=true, txt=true, md=true, html=true, htm=true, djvu=true,
-    doc=true, docx=true, rtf=true, odt=true,
+    -- ebooks
+    epub=true, epub3=true, fb2=true, fb3=true, mobi=true, azw=true,
+    azw3=true, prc=true, pdb=true, tcr=true, ["fb2.zip"]=true,
+    -- documents
+    pdf=true, djvu=true, djv=true, xps=true, chm=true, doc=true, docx=true,
+    docm=true, rtf=true, odt=true,
+    -- text / markup (and their zipped forms)
+    txt=true, md=true, html=true, htm=true, xhtml=true, htmlz=true,
+    ["html.zip"]=true, ["htm.zip"]=true, ["txt.zip"]=true,
+    ["md.zip"]=true, ["rtf.zip"]=true,
+    -- comics
+    cbz=true, cbr=true, cbt=true,
 }
+
+-- _supportedExt(name): the supported book extension for a filename (lowercased,
+-- e.g. "epub" or the compound "fb2.zip"), or nil if not a book. Handles the
+-- ".zip" book forms KOReader registers (fb2.zip, html.zip, ...) without
+-- treating a bare/unknown ".zip" archive as a book.
+local function _supportedExt(name)
+    if not name then return nil end
+    local last = name:match("%.([^.]+)$")
+    if not last then return nil end
+    last = last:lower()
+    if last == "zip" then
+        local compound = name:match("%.([^.]+%.[Zz][Ii][Pp])$")
+        compound = compound and compound:lower()
+        return (compound and SUPPORTED_EXT[compound]) and compound or nil
+    end
+    return SUPPORTED_EXT[last] and last or nil
+end
+
+-- _formatLabel(fp): uppercase format label for display/grouping. Collapses a
+-- compound ".zip" book to its inner kind ("book.fb2.zip" -> "FB2") so zipped
+-- and plain books share one format card. Falls back to the last extension.
+local function _formatLabel(fp)
+    if not fp then return nil end
+    local ext = _supportedExt(fp) or fp:match("%.([^.]+)$")
+    if not ext or ext == "" then return nil end
+    return (ext:gsub("%.[Zz][Ii][Pp]$", "")):upper()
+end
 
 -- ─── Lazy module accessors ───────────────────────────────────────────────────
 -- Never require() at module top-level; tests stub via package.loaded.
@@ -495,7 +536,7 @@ function Repo.buildBookMeta(filepath, opts)
     local book = {
         filepath    = filepath,
         filename    = filename,
-        format      = (filepath:match("%.([^.]+)$") or ""):upper(),
+        format      = _formatLabel(filepath) or "",
         title       = title,
         author      = authors and authors[1] or nil,
         authors     = authors,
@@ -781,8 +822,7 @@ end
 function Repo.currentFilepath()
     local lastfile = G_reader_settings:readSetting("lastfile")
     if not lastfile then return nil end
-    local ext = lastfile:match("%.([^.]+)$")
-    if not ext or not SUPPORTED_EXT[ext:lower()] then return nil end
+    if not _supportedExt(lastfile) then return nil end
     return lastfile
 end
 
@@ -1280,8 +1320,7 @@ local function walkBooks(root, depth, out, current_depth, dirs)
                     walkBooks(fp, depth, out, current_depth + 1, dirs)
                 end
             elseif mode == "file" then
-                local ext = entry:match("%.([^.]+)$")
-                if ext and SUPPORTED_EXT[ext:lower()] then
+                if _supportedExt(entry) then
                     -- size kept alongside mtime so sort-by-File-size on
                     -- custom-source tabs has data without re-statting.
                     -- attr.size is already in hand from the same lfs call.
@@ -1581,8 +1620,7 @@ function Repo.findFirstBookIn(path, max_depth)
             local mode = type(attr) == "table" and attr.mode
                           or lfs.attributes(fp, "mode")
             if mode == "file" then
-                local ext = f:match("%.([^.]+)$")
-                if ext and SUPPORTED_EXT[ext:lower()] then
+                if _supportedExt(f) then
                     files[#files + 1] = { name = f, fp = fp }
                 end
             elseif mode == "directory" then
@@ -1627,8 +1665,7 @@ function Repo.folderHasBooks(path)
                     local attr = lfs.attributes(fp)
                     if attr then
                         if attr.mode == "file" then
-                            local ext = entry:match("%.([^.]+)$")
-                            if ext and SUPPORTED_EXT[ext:lower()] then
+                            if _supportedExt(entry) then
                                 _folderHasBooks_cache[path] = true
                                 return true
                             end
@@ -2142,8 +2179,7 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
     local shapes = {}
     for _i, e in ipairs(ordered_entries) do
         if e.attr.mode == "file" then
-            local ext = e.name:match("%.([^.]+)$")
-            if ext and SUPPORTED_EXT[ext:lower()] then
+            if _supportedExt(e.name) then
                 shapes[#shapes + 1] = { kind = "book", fp = e.fp }
             end
         elseif e.attr.mode == "directory" then
@@ -3300,10 +3336,7 @@ end
 -- how the rest of bookshelf (book detail, etc.) presents formats. Returns nil
 -- for files with no extension so _buildGroups skips them.
 local function _formatKey(fp)
-    if not fp then return nil end
-    local ext = fp:match("%.([^.]+)$")
-    if not ext or ext == "" then return nil end
-    return ext:upper()
+    return _formatLabel(fp)
 end
 
 function Repo.getFormats(limit, offset, sort_priority_override, filter, opts)

@@ -205,6 +205,64 @@ test("getLatest: orders by mtime desc, respects limit and depth", function()
     assert(latest[3].title == "Old")
 end)
 
+test("getLatest: recognises fb2.zip, ignores images and bare archives", function()
+    -- #118: compound ".fb2.zip" must be treated as a book (KOReader reads it),
+    -- while a bare ".zip" archive and image sidecars must NOT appear as books.
+    Repo.invalidateWalkCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/home") and {
+            ".", "..",
+            "story.fb2.zip",   -- compound book -> include
+            "novel.epub",      -- include
+            "scan.djv",        -- DjVu variant -> include
+            "cover.jpg",       -- image -> exclude
+            "art.png",         -- image -> exclude
+            "backup.zip",      -- bare archive -> exclude
+            "notes.py",        -- script -> exclude
+        } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        return 0
+    end
+    _G._test_settings = { home_dir = "/home", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/home/story.fb2.zip"] = { title = "Story" },
+        ["/home/novel.epub"]    = { title = "Novel" },
+        ["/home/scan.djv"]      = { title = "Scan" },
+    }
+    local latest = Repo.getLatest(20)
+    local titles = {}
+    for _i, b in ipairs(latest) do titles[b.title] = true end
+    assert(#latest == 3, "expected 3 books (fb2.zip, epub, djv), got " .. #latest)
+    assert(titles["Story"] and titles["Novel"] and titles["Scan"],
+        "expected Story + Novel + Scan to be listed")
+end)
+
+test("getBySource: fb2.zip groups under the FB2 format card with plain fb2", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/lib/zipped.fb2.zip"] = { title = "Zipped" },
+        ["/lib/plain.fb2"]      = { title = "Plain" },
+        ["/lib/other.epub"]     = { title = "Other" },
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib")
+            and { ".", "..", "zipped.fb2.zip", "plain.fb2", "other.epub" } or {}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        return 0
+    end
+    local list, total = Repo.getBySource({ kind = "format", id = "fb2" }, nil, nil, 0, 10)
+    Repo.invalidateWalkCache()
+    assert(total == 2, "expected 2 FB2 books (plain + zipped), got " .. tostring(total))
+end)
+
 -- ============================================================================
 -- Task 2.4: getFavorites + getSeriesGroups
 -- ============================================================================
