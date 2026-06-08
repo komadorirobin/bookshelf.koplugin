@@ -892,7 +892,8 @@ function BookshelfWidget:_serializeDrillPath()
                               query = e.payload and e.payload.query }
         elseif e.kind == "author" or e.kind == "series"
                 or e.kind == "genre" or e.kind == "tag"
-                or e.kind == "format" or e.kind == "rating" then
+                or e.kind == "format" or e.kind == "rating"
+                or e.kind == "language" then
             out[#out + 1] = { kind = e.kind, label = e.label }
         end
         -- Other kinds (transient overlays) are deliberately not persisted.
@@ -987,7 +988,7 @@ function BookshelfWidget:_restoreDrillPath(saved)
             self:_searchAndDrill(e.query)
         elseif e.kind == "author" or e.kind == "series"
                 or e.kind == "genre" or e.kind == "format"
-                or e.kind == "rating" then
+                or e.kind == "rating" or e.kind == "language" then
             local g = Repo.findGroup(e.kind, e.label, self:_profileScope())
             if g then
                 self._drilldown_path[#self._drilldown_path + 1] = {
@@ -2654,7 +2655,8 @@ function BookshelfWidget:_fetchChipItems(n)
     -- _total_hint path takes over for pagination.
     if tip and (tip.kind == "series" or tip.kind == "author"
             or tip.kind == "genre" or tip.kind == "tag"
-            or tip.kind == "format" or tip.kind == "rating") then
+            or tip.kind == "format" or tip.kind == "rating"
+            or tip.kind == "language") then
         local books = tip.payload.books or {}
         local total = #books
         local offset = (self._cursor or 1) - 1
@@ -3282,6 +3284,8 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
         on_genre_hold     = function(g) bw:_openGroupMenu(g, "genre") end,
         on_tag_tap        = function(g) bw:_expandTag(g) end,
         on_tag_hold       = function(g) bw:_openGroupMenu(g, "tag") end,
+        on_language_tap   = function(g) bw:_expandLanguage(g) end,
+        on_language_hold  = function(g) bw:_openGroupMenu(g, "language") end,
         on_folder_tap     = function(f) bw:_expandFolder(f) end,
         on_folder_hold    = function(f) bw:_openFolderMenu(f) end,
     }
@@ -5384,6 +5388,8 @@ function BookshelfWidget:onBSKbPress()
                 self:_expandFormat(item)
             elseif item.kind == "rating" then
                 self:_expandRating(item)
+            elseif item.kind == "language" then
+                self:_expandLanguage(item)
             elseif item.books then
                 self:_expandSeries(item)
             end
@@ -6263,12 +6269,22 @@ end
 function BookshelfWidget:_maybeStartChipPreload()
     if self._chip_preload_done then return end
     if self._chip_preload_fn then return end  -- already in flight
+    -- Apply the user's cover-cache budget unconditionally -- it governs the
+    -- next/prev PAGE preload too, which is independent of the chip warm-up
+    -- below. (Belt-and-braces: _schedulePreload also applies it, but a
+    -- single-page chip never calls that.)
+    self:_applyCoverCacheBudget()
+    -- The CHIP warm-up only (the per-chip background pre-build) is disablable
+    -- in Advanced settings (default on). It makes chip switches instant, but on
+    -- a large library with many chips it adds several seconds of post-launch
+    -- work; off = chips build lazily on first switch. This does NOT touch the
+    -- predictive next/prev page preload, which stays on regardless.
+    if not BookshelfSettings.nilOrTrue("prewarm_chip_cache") then return end
     -- Android safe mode: the always-on background preload is implicated in an
     -- Android/HWUI crash (issue 87). Keep it off by default on Android, but
     -- allow users to disable safe mode when testing unaffected devices.
     if _androidSafeModeEnabled() then return end
     if #(self._drilldown_path or {}) ~= 0 then return end
-    self:_applyCoverCacheBudget()
     self._chip_preload_fn = function() self:_chipPreloadStep() end
     UIManager:scheduleIn(CHIP_PRELOAD_DELAY_S, self._chip_preload_fn)
 end
@@ -6439,13 +6455,19 @@ function BookshelfWidget:_paginateNext()
         self:_schedulePreload(1)
         return true
     end
-    -- Last page at top level wraps within the active chip. Chip changes
-    -- remain available via the explicit bookshelf_next_tab dispatcher action,
-    -- but page-turn keys/swipes stay bound to pagination.
-    if #self._drilldown_path == 0 and total > 1 then
-        self:_jumpToPage(1)
+    -- Last page at top level (no drill-down) and chip strip visible:
+    -- stay in the chip and wrap to the first page instead of switching to
+    -- the neighbouring chip (issue #115). Drilled-in last page is left as a
+    -- no-op; back-navigation there happens via the breadcrumb or east-swipe.
+    if #self._drilldown_path == 0 and not self._chip_bar_hidden
+            and total > 1 and self._cursor > 1 then
+        self._cursor = 1
+        self:_syncPageFromCursor()
         self:_swapShelvesInPlace()
         self:_schedulePreload(1)
+        logger.dbg(string.format(
+            "[bookshelf perf] paginate: dir=next at end -> wrap to first page elapsed=%.0fms",
+            (_gettime() - _diag_t0) * 1000))
     end
     return true
 end
@@ -6466,14 +6488,20 @@ function BookshelfWidget:_paginatePrev()
         self:_drillBackTo(#self._drilldown_path - 1)
         return true
     end
-    -- Page 1 at top level wraps to the active chip's final page, which lets
-    -- large alphabetic libraries be browsed from the end without leaving the
-    -- current chip.
-    local total = self._total_pages or 1
-    if total > 1 then
-        self:_jumpToPage(total)
-        self:_swapShelvesInPlace()
-        self:_schedulePreload(-1)
+    -- Top level + page 1 + chip strip visible: stay in the chip and wrap to
+    -- the last page instead of switching to the previous tab (issue #115).
+    if not self._chip_bar_hidden then
+        local total       = self._total_pages or 1
+        local last_cursor = self:_maxCursor()
+        if total > 1 and self._cursor < last_cursor then
+            self._cursor = last_cursor
+            self:_syncPageFromCursor()
+            self:_swapShelvesInPlace()
+            self:_schedulePreload(-1)
+            logger.dbg(string.format(
+                "[bookshelf perf] paginate: dir=prev at start -> wrap to last page elapsed=%.0fms",
+                (_gettime() - _diag_t0) * 1000))
+        end
     end
     return true
 end
@@ -6633,7 +6661,8 @@ function BookshelfWidget:_focusedStack()
     if not item then return nil end
     if item.books or item.kind == "folder" or item.kind == "author"
         or item.kind == "genre" or item.kind == "tag"
-        or item.kind == "format" or item.kind == "rating" then
+        or item.kind == "format" or item.kind == "rating"
+        or item.kind == "language" then
         return item
     end
     return nil
@@ -7706,27 +7735,81 @@ end
 -- strip HTML tags and decode entities; the viewer renders plain
 -- text with paragraph breaks preserved.
 function BookshelfWidget:_showFullDescription(book)
-    if not book or not book.description or book.description == "" then return end
+    if not book then return end
     local Tokens = require("lib/bookshelf_tokens")
-    -- Render the description as formatted HTML (paragraphs, emphasis, lists)
-    -- in the same scrollable modal the reviews use, via the shared sanitiser
-    -- (whitelisted tags, attributes stripped, break-runs collapsed). Falls
-    -- back to the plain-text cleaner if sanitising yields nothing usable.
-    local html = Tokens.sanitiseReviewHtml(book.description)
-    if not html or html:gsub("%s+", "") == "" then
-        local text = Tokens.cleanDescription(book.description) or ""
-        if text == "" then return end
-        html = "<p>" .. (text:gsub("\n\n+", "</p><p>"):gsub("\n", "<br>")) .. "</p>"
+    -- Render a raw description (either source) to HTML. Two shapes:
+    --   * EPUB / Calibre blurbs are HTML (<p>, <b>, <br>, …) -> keep the markup
+    --     via the shared sanitiser (whitelisted tags, attributes stripped).
+    --   * Hardcover blurbs are PLAIN TEXT with \n\n paragraph breaks and no
+    --     tags -> the HTML renderer would collapse those newlines into a single
+    --     block, so convert paragraph/line breaks to HTML instead.
+    -- A real tag is "<" immediately followed by an (optional "/" then a) letter
+    -- -- e.g. <p> or </p>. This deliberately does NOT match prose like "x < y"
+    -- (space after "<"), so plain-text blurbs with a stray angle bracket still
+    -- take the plain-text path.
+    local function toHtml(raw)
+        if type(raw) ~= "string" or raw == "" then return nil end
+        local html
+        if raw:find("</?%a") then html = Tokens.sanitiseReviewHtml(raw) end
+        if not html or html:gsub("%s+", "") == "" then
+            local text = Tokens.cleanDescription(raw) or ""
+            if text == "" then return nil end
+            local esc = text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+            html = "<p>" .. (esc:gsub("\n\n+", "</p><p>"):gsub("\n", "<br>")) .. "</p>"
+        end
+        return html
     end
+
+    -- The book's OWN (embedded / Calibre) description and Hardcover's. enrichBook
+    -- stashes file_description (the original, even when Hardcover's is the one
+    -- shown) and hardcover_description_text. For an un-enriched book there's no
+    -- Hardcover text and book.description is its own.
+    local file_desc
+    if book.file_description ~= nil then
+        file_desc = book.file_description
+    elseif not book.hardcover_description then
+        file_desc = book.description
+    end
+    local file_html = toHtml(file_desc)
+    local hc_html   = toHtml(book.hardcover_description_text
+        or (book.hardcover_description and book.description) or nil)
+    if not file_html and not hc_html then return end
+
     local title = book.title or _("Description")
     if book.author then title = title .. " — " .. book.author end
+
     local ReviewsModal = require("lib/bookshelf_reviews_modal")
-    UIManager:show(ReviewsModal:new{
-        title     = title,
-        html_body = html,
-        -- No on_refresh: a description doesn't refresh, so the modal shows a
-        -- single Close button.
-    })
+    local args = { title = title }
+    if file_html and hc_html then
+        -- Both available: a Book / Hardcover toggle at the top. Default to
+        -- whichever description the hero currently shows.
+        args.tabs = {
+            { label = _("Book"),      html = file_html },   -- 1 = book's own
+            { label = _("Hardcover"), html = hc_html },     -- 2 = Hardcover
+        }
+        args.active_tab = book.hardcover_description and 2 or 1
+        -- On close, adopt the description of the tab being viewed: switching to
+        -- the other tab and closing changes what the hero (and the book's other
+        -- surfaces) use -- same effect as the per-book "Use Hardcover
+        -- description" toggle. Only writes when the choice actually changed.
+        args.on_tab_close = function(active_idx)
+            local use_hc = (active_idx == 2)
+            if use_hc ~= (book.hardcover_description == true) then
+                local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                if ok_hc and Hardcover and Hardcover.setUseDescription then
+                    Hardcover.setUseDescription(book.filepath, use_hc)
+                    self:_refreshHardcoverEnrichmentView(
+                        "hardcover-use-description", book.filepath)
+                end
+            end
+        end
+    else
+        -- Single source: show it, and note Hardcover-sourced descriptions.
+        args.html_body = hc_html or file_html
+        if hc_html and not file_html then args.subtitle = _("(from Hardcover)") end
+    end
+    -- No on_refresh: a description doesn't refresh, so the footer is Close only.
+    UIManager:show(ReviewsModal:new(args))
 end
 
 local function _formatHardcoverReviewRating(rating)
@@ -9586,6 +9669,15 @@ local GROUP_KINDS = {
             { key = "title",        reverse = false },
         },
     },
+    language = {
+        source_kind     = "language",
+        source_id_field = "series_name",
+        sort_priority   = {
+            { key = "author_surname", reverse = false },
+            { key = "series_name",    reverse = false },
+            { key = "series_index",   reverse = false },
+        },
+    },
 }
 
 -- _resolveStackPaths(group) — flat list of book.filepath strings for a
@@ -9703,14 +9795,15 @@ function BookshelfWidget:_openGroupMenu(group, kind)
 
     -- Per-kind "this <thing>" fragment for the prompt. Translatable.
     local this_kind
-    if     kind == "folder" then this_kind = _("this folder")
-    elseif kind == "series" then this_kind = _("this series")
-    elseif kind == "author" then this_kind = _("this author")
-    elseif kind == "genre"  then this_kind = _("this genre")
-    elseif kind == "tag"    then this_kind = _("this collection")
-    elseif kind == "format" then this_kind = _("this format")
-    elseif kind == "rating" then this_kind = _("this rating")
-    else                         this_kind = _("this group")
+    if     kind == "folder"   then this_kind = _("this folder")
+    elseif kind == "series"   then this_kind = _("this series")
+    elseif kind == "author"   then this_kind = _("this author")
+    elseif kind == "genre"    then this_kind = _("this genre")
+    elseif kind == "tag"      then this_kind = _("this collection")
+    elseif kind == "format"   then this_kind = _("this format")
+    elseif kind == "rating"   then this_kind = _("this rating")
+    elseif kind == "language" then this_kind = _("this language")
+    else                           this_kind = _("this group")
     end
 
     -- Prompt + action buttons are state-aware. For "some" (the Venn
@@ -10249,6 +10342,16 @@ function BookshelfWidget:_expandFormat(group)
     self:_applyWithinGroupSort(group)
     self:_drillInto{
         kind    = "format",
+        label   = group.series_name,
+        payload = group,
+    }
+end
+
+function BookshelfWidget:_expandLanguage(group)
+    if not group or not group.series_name then return end
+    self:_applyWithinGroupSort(group)
+    self:_drillInto{
+        kind    = "language",
         label   = group.series_name,
         payload = group,
     }

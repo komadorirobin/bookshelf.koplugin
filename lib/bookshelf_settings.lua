@@ -1941,6 +1941,68 @@ end
 
 -- Factored out from main.lua so it can be referenced via the new Settings
 -- parent menu. Behaviour is identical to the previous inline definition.
+-- Performance levers, grouped under one "Performance tweaks" submenu so the
+-- Advanced menu stays scannable.
+function Settings:_performanceSubItems()
+    return {
+        {
+            text = _("Pre-warm chip cache"),
+            help_text = _("Warms each chip's data in the background shortly"
+                .. " after launch so switching chips is instant. On a large"
+                .. " library with many chips this adds a few seconds of work"
+                .. " after startup; turn it off for a quicker, lighter launch"
+                .. " (chips then load on first use)."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("prewarm_chip_cache")
+            end,
+            callback = function()
+                local on = BookshelfSettings.nilOrTrue("prewarm_chip_cache")
+                BookshelfSettings.save("prewarm_chip_cache", not on)
+                BookshelfSettings.flush()
+            end,
+        },
+        {
+            text     = _('"Latest" walk depth'),
+            callback = function() self:_pickLatestDepth() end,
+        },
+        {
+            text_func = function()
+                return _("Cover cache") .. ": "
+                    .. tostring(BookshelfSettings.read("cover_cache_mb") or 24)
+                    .. " MB"
+            end,
+            help_text = _("How much memory to use for ready-scaled book covers. "
+                .. "A bigger cache keeps more covers warm -- smoother paging and "
+                .. "preloading -- at the cost of RAM. Default 24 MB. Lower it if "
+                .. "memory is tight; raise it on a device with plenty of RAM. "
+                .. "(How many covers that holds depends on their size: roughly "
+                .. "200-400 small grayscale covers, fewer large or colour ones.)"),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                self:_pickCoverCacheBudget(touchmenu_instance)
+            end,
+        },
+        {
+            text = _("Clear cover cache"),
+            help_text = _("Drop all cached scaled covers from memory. "
+                .. "Use this when a book's cover has been updated outside "
+                .. "KOReader (e.g. a metadata-enrichment tool rewrote the "
+                .. "EPUB) and the old cover is still showing on the shelf. "
+                .. "The next render fetches fresh covers from the EPUBs. "
+                .. "Restarting KOReader has the same effect."),
+            keep_menu_open = true,
+            callback = function()
+                local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+                ScaledCoverCache:clear()
+                UIManager:show(Notification:new{
+                    text    = _("Cover cache cleared"),
+                    timeout = 2,
+                })
+            end,
+        },
+    }
+end
+
 function Settings:_advancedSubItems()
     local plugin = self._plugin
     return {
@@ -1951,6 +2013,12 @@ function Settings:_advancedSubItems()
                     UIManager:close(touchmenu_instance)
                 end
                 UIManager:nextTick(function() plugin:scanAllMetadata() end)
+            end,
+        },
+        {
+            text                = _("Performance tweaks"),
+            sub_item_table_func = function()
+                return self:_performanceSubItems()
             end,
         },
         {
@@ -1995,45 +2063,6 @@ function Settings:_advancedSubItems()
                     row(_("First Last"),   "first_last"),
                     row(_("Last, First"),  "last_first"),
                 }
-            end,
-        },
-        {
-            text     = _('"Latest" walk depth'),
-            callback = function() self:_pickLatestDepth() end,
-        },
-        {
-            text_func = function()
-                return _("Cover cache") .. ": "
-                    .. tostring(BookshelfSettings.read("cover_cache_mb") or 24)
-                    .. " MB"
-            end,
-            help_text = _("How much memory to use for ready-scaled book covers. "
-                .. "A bigger cache keeps more covers warm -- smoother paging and "
-                .. "preloading -- at the cost of RAM. Default 24 MB. Lower it if "
-                .. "memory is tight; raise it on a device with plenty of RAM. "
-                .. "(How many covers that holds depends on their size: roughly "
-                .. "200-400 small grayscale covers, fewer large or colour ones.)"),
-            keep_menu_open = true,
-            callback = function(touchmenu_instance)
-                self:_pickCoverCacheBudget(touchmenu_instance)
-            end,
-        },
-        {
-            text = _("Clear cover cache"),
-            help_text = _("Drop all cached scaled covers from memory. "
-                .. "Use this when a book's cover has been updated outside "
-                .. "KOReader (e.g. a metadata-enrichment tool rewrote the "
-                .. "EPUB) and the old cover is still showing on the shelf. "
-                .. "The next render fetches fresh covers from the EPUBs. "
-                .. "Restarting KOReader has the same effect."),
-            keep_menu_open = true,
-            callback = function()
-                local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
-                ScaledCoverCache:clear()
-                UIManager:show(Notification:new{
-                    text    = _("Cover cache cleared"),
-                    timeout = 2,
-                })
             end,
         },
         {

@@ -3,6 +3,12 @@
 -- caching). One entry per book, sized to the LARGEST render dims seen
 -- across hero / shelf / expanded-shelf in this session.
 local logger = require("logger")
+-- Per-cover cache logging is verbose (one line per PUT/EVICT) and, because
+-- Lua evaluates the string.format() argument before logger.dbg can discard it
+-- at the info level, the format cost is paid on every cover even with debug
+-- logging off. Gate it behind a constant so production pays nothing; flip to
+-- true when diagnosing cache churn.
+local _PERF_LOG = false
 --
 -- Why filepath-only: the same book renders into slots of different
 -- dimensions across the UI:
@@ -140,9 +146,9 @@ function ScaledCoverCache:_evictIfNeeded()
         if self._bytes < 0 then self._bytes = 0 end
         self._sizes[key] = nil
         self._evictions = self._evictions + 1
-        logger.dbg(string.format(
+        if _PERF_LOG then logger.dbg(string.format(
             "[bookshelf perf] ScaledCoverCache: EVICT fp=%s size=%d/%d bytes=%d/%d",
-            key, #self._order, self._capacity, self._bytes, self._byte_budget))
+            key, #self._order, self._capacity, self._bytes, self._byte_budget)) end
     end
 end
 
@@ -193,13 +199,13 @@ function ScaledCoverCache:put(filepath, bb)
     self._sizes[filepath] = nbytes
     self._bytes = self._bytes + nbytes
     self._puts = self._puts + 1
-    logger.dbg(string.format(
+    if _PERF_LOG then logger.dbg(string.format(
         "[bookshelf perf] ScaledCoverCache: PUT fp=%s %dx%d size=%d/%d bytes=%d/%d hits=%d puts=%d",
         filepath,
         (bb.getWidth and bb:getWidth() or 0),
         (bb.getHeight and bb:getHeight() or 0),
         #self._order, self._capacity, self._bytes, self._byte_budget,
-        self._hits, self._puts))
+        self._hits, self._puts)) end
     self:_evictIfNeeded()
     return bb
 end

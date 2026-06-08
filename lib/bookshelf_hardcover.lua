@@ -2005,9 +2005,17 @@ function Hardcover.enrichBook(book)
     -- applied at link/refresh time) or by a manual toggle; there is no live
     -- "fill when missing" path, so what renders here can't disagree with the
     -- toggle the user sees.
-    if link.use_description == true
-            and type(enrichment.description) == "string" and enrichment.description ~= "" then
-        book.description = enrichment.description
+    -- Stash BOTH descriptions so the description modal can offer a
+    -- File <-> Hardcover toggle when both exist. book.description here is still
+    -- the book's OWN (embedded / Calibre) blurb -- capture it before the
+    -- override below. hardcover_description_text holds Hardcover's cached blurb
+    -- regardless of which is shown by default.
+    book.file_description = book.description
+    if type(enrichment.description) == "string" and enrichment.description ~= "" then
+        book.hardcover_description_text = enrichment.description
+    end
+    if link.use_description == true and book.hardcover_description_text then
+        book.description = book.hardcover_description_text
         book.hardcover_description = true
     end
     if link.use_cover == true then

@@ -72,6 +72,14 @@ local _overlay_open_path = nil
 -- section, false again before our deferred work runs the show. (Pattern
 -- adapted from komadorirobin's fork.)
 local _suppress_close_document_show = false
+-- True once the cold-boot start_with=bookshelf takeover has run. Only the
+-- first FileManager init of the session (app start) should auto-raise
+-- Bookshelf; later FM inits are reader-close re-instantiations, where the
+-- destination is decided by the close path (onCloseDocument / _safeShow,
+-- both keyed on _isShowing()). This is what lets a user who closed Bookshelf
+-- and opened a book from the raw FileManager stay in the FileManager on
+-- close, while a cold boot still lands on Bookshelf (issue #110).
+local _did_initial_takeover = false
 
 -- Close a TouchMenu we received as the first callback argument. Used
 -- whenever a menu callback changes the visible UI layer (e.g. opens or
@@ -227,8 +235,17 @@ function Bookshelf:init()
 
     -- Takeover: if start_with=bookshelf and we're in the FileManager context
     -- (no document currently being opened), close FM and present Bookshelf.
+    -- Only on the FIRST FM init of the session (cold boot). Later FM inits are
+    -- reader-close re-instantiations; whether Bookshelf returns then is decided
+    -- by the close path (onCloseDocument / _safeShow gate on _isShowing()), so a
+    -- user who closed Bookshelf and opened a book from the raw FileManager stays
+    -- in the FileManager when the book closes (issue #110).
     if G_reader_settings:readSetting("start_with") == "bookshelf"
-            and not (self.ui and self.ui.document) then
+            and not (self.ui and self.ui.document)
+            and not _did_initial_takeover then
+        -- Mark the attempt now (before the CoverBrowser bail below) so a
+        -- missing-CoverBrowser notification fires once, not on every FM init.
+        _did_initial_takeover = true
         -- Bookshelf depends on CoverBrowser's BookInfoManager. If
         -- CoverBrowser is disabled, every code path that touches BIM
         -- throws — pre-#49 this manifested as a crash loop on the
@@ -1016,8 +1033,14 @@ function Bookshelf:_wireFastFileBrowserTab(force)
         -- which is true exactly when the book was opened from Bookshelf. This
         -- makes the reader-close destination independent of the restart
         -- setting, so a user who keeps "Start with: History" still lands on
-        -- Bookshelf after finishing a book. Plain-FM users (Bookshelf not on
-        -- the stack) fall through to KOReader's normal file-browser path.
+        -- Bookshelf after finishing a book.
+        --
+        -- "Return to where you came from" (issue #110): if the book was opened
+        -- from the raw FileManager (Bookshelf not on the stack — e.g. the user
+        -- closed Bookshelf, browsed FM and opened a book there), the File
+        -- browser tab takes them back to the FileManager, not Bookshelf, even
+        -- when Start with = Bookshelf. The session-once takeover guard keeps
+        -- the cold-boot FM init from re-raising Bookshelf behind this.
         if plugin:_isShowing() then
             -- Bookshelf is home: same fast-path as the gesture.
             plugin:_safeShow()
@@ -1291,16 +1314,16 @@ function Bookshelf:onCloseDocument()
     -- early and the nextTick(show) below never fired. The result was an
     -- FM flash whenever bookshelf wasn't already on the stack.)
     --
-    -- Decoupled from "Start with" (issue #98): re-show Bookshelf on close
-    -- whenever it is the live home (its widget is on the stack) OR the user
-    -- configured it as their restart home. The _isShowing() arm covers a
-    -- user who keeps a different "Start with" but opened Bookshelf via
-    -- gesture and read from it — they still land back on Bookshelf. The
-    -- start_with arm preserves the original behaviour for boot edge cases
-    -- where the widget isn't on the stack yet. Plain-FM users match neither
-    -- and fall through to KOReader's normal file-browser path.
-    if not (self:_isShowing()
-            or G_reader_settings:readSetting("start_with") == "bookshelf") then
+    -- Re-show Bookshelf on close only when it is the live home — i.e. its
+    -- widget is on the stack, which is true exactly when the book was opened
+    -- from Bookshelf (issue #98 decouple; #110 "return to where you came
+    -- from"). This covers a user on any "Start with" who opened Bookshelf via
+    -- gesture and read from it. A user who closed Bookshelf and opened a book
+    -- from the raw FileManager matches neither and falls through to KOReader's
+    -- normal file-browser path — so they stay in the FileManager on close,
+    -- even with Start with = Bookshelf. Cold boot still lands on Bookshelf via
+    -- the session-once init takeover, not this handler.
+    if not self:_isShowing() then
         return
     end
     if self.ui and self.ui.tearing_down then return end
