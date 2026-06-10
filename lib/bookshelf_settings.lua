@@ -2216,6 +2216,32 @@ function Settings:_advancedSubItems()
             end,
         },
         {
+            text = _("Sort Chinese text by pinyin"),
+            help_text = _("Sorts Chinese characters by their Mandarin "
+                .. "pinyin reading, so Chinese titles and authors file "
+                .. "alphabetically alongside Latin names. When off, "
+                .. "Chinese text sorts in Unicode order (roughly by "
+                .. "radical and stroke count), after Latin names. "
+                .. "Japanese kanji are also affected, so leave this off "
+                .. "for Japanese-language libraries."),
+            checked_func   = function()
+                return BookshelfSettings.read("cjk_pinyin_sort") == true
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.read("cjk_pinyin_sort") == true
+                BookshelfSettings.save("cjk_pinyin_sort", not enabled)
+                -- No explicit cache invalidation needed: the save bumps the
+                -- settings generation, and the sort engine re-reads the flag
+                -- (and epoch-invalidates its per-record keys) on the next
+                -- sort. The rebuild below triggers that sort.
+                if self._bw and self._bw._rebuild then
+                    self._bw:_rebuild()
+                    UIManager:setDirty(self._bw, "ui")
+                end
+            end,
+        },
+        {
             text = _("BETA: Read calibre metadata.calibre"),
             help_text = _("For users with a Calibre-managed library. "
                 .. "Reads the metadata.calibre JSON file at home_dir to "

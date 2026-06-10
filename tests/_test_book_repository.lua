@@ -62,6 +62,7 @@ package.loaded["ui/data/isolanguage"] = {
 -- the G_reader_settings stub, but transparently re-prefixes keys with
 -- "bookshelf_". Lets existing tests keep using bookshelf_X keys in
 -- _test_settings while production code reads short keys via the store.
+local _store_generation = 1
 package.loaded["lib/bookshelf_settings_store"] = {
     read   = function(key, default)
         local v = _G._test_settings and _G._test_settings["bookshelf_" .. key]
@@ -71,11 +72,14 @@ package.loaded["lib/bookshelf_settings_store"] = {
     save   = function(key, value)
         _G._test_settings = _G._test_settings or {}
         _G._test_settings["bookshelf_" .. key] = value
+        _store_generation = _store_generation + 1
     end,
     delete = function(key)
         if _G._test_settings then _G._test_settings["bookshelf_" .. key] = nil end
+        _store_generation = _store_generation + 1
     end,
     flush  = function() end,
+    generation = function() return _store_generation end,
     isTrue = function(key)
         return _G._test_settings and _G._test_settings["bookshelf_" .. key] == true
     end,
