@@ -70,6 +70,10 @@ local FolderStack = InputContainer:extend{
     -- back to book_count when omitted. Separate field so F/N stays
     -- stack-wide even when book_count reflects a filtered count.
     finished_total   = nil,
+    -- all_read/all_read_total: supplied even when count badges are hidden,
+    -- so the faded-folder overlay can remain independent of badge display.
+    all_read         = nil,
+    all_read_total   = nil,
 }
 
 function FolderStack:init()
@@ -176,8 +180,11 @@ function FolderStack:init()
     local book_count = tonumber(self.book_count)
         or (self.folder and tonumber(self.folder.book_count))
     local unread_count = self.folder and tonumber(self.folder.unread_count)
-    local all_read = self.folder and self.folder.all_read
-    if all_read and book_count and book_count > 0 and fadeFinishedFoldersEnabled() then
+    local all_read_count = book_count
+        or tonumber(self.all_read_total)
+        or (self.folder and tonumber(self.folder.all_read_total))
+    local all_read = self.all_read or (self.folder and self.folder.all_read)
+    if all_read and all_read_count and all_read_count > 0 and fadeFinishedFoldersEnabled() then
         children[#children + 1] = FadeOverlay:new{
             width  = self.width - FolderCard.SHADOW_OFFSET,
             height = self.height - FolderCard.SHADOW_OFFSET,
@@ -207,7 +214,7 @@ function FolderStack:init()
             badge.overlap_offset = { 0, -FolderCard.SHADOW_OFFSET }
             children[#children + 1] = badge
         end
-    elseif all_read and book_count and book_count > 0 and not self.selected_count then
+    elseif all_read and all_read_count and all_read_count > 0 and not self.selected_count then
         local card_w = self.width - FolderCard.SHADOW_OFFSET
         local card_h = self.height - FolderCard.SHADOW_OFFSET
         local glyph = SpineWidget.newStatusGlyphOverlay{
