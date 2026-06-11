@@ -88,6 +88,7 @@ local _suppress_close_document_show = false
 -- and opened a book from the raw FileManager stay in the FileManager on
 -- close, while a cold boot still lands on Bookshelf (issue #110).
 local _did_initial_takeover = false
+local _suppress_path_changed_until = 0
 
 local function _simpleUIExpected()
     local ok_store, SUISettings = pcall(require, "sui_store")
@@ -106,6 +107,40 @@ local function _simpleUIReady()
     local fm = ok_fm and FM and FM.instance or nil
     local plugin = fm and fm._simpleui_plugin
     return plugin and plugin._onTabTap ~= nil
+end
+
+local function _suppressPathChangedFor(seconds)
+    _suppress_path_changed_until = math.max(
+        _suppress_path_changed_until,
+        _gettime() + (seconds or 0))
+end
+
+local function _isPathChangedSuppressed()
+    return _gettime() < (_suppress_path_changed_until or 0)
+end
+
+local function _profileOwnsPath(profile, path)
+    if not (profile and path and path ~= "") then return false end
+    local normalized = path:gsub("/+$", "")
+    for _, root in ipairs(profile.roots or {}) do
+        local r = tostring(root or ""):gsub("/+$", "")
+        if r ~= "" and (normalized == r
+                or normalized:sub(1, #r + 1) == r .. "/"
+                or r:sub(1, #normalized + 1) == normalized .. "/") then
+            return true
+        end
+    end
+    for _, chip in ipairs(profile.chips or {}) do
+        if chip.kind == "folder" and chip.path then
+            local p = tostring(chip.path):gsub("/+$", "")
+            if normalized == p
+                    or normalized:sub(1, #p + 1) == p .. "/"
+                    or p:sub(1, #normalized + 1) == normalized .. "/" then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- Close a TouchMenu we received as the first callback argument. Used
@@ -1031,6 +1066,12 @@ function Bookshelf:_safeShow(profile_key)
     UIManager:forceRePaint()  -- commit the InfoMessage before onClose blocks
     _preserve_live_widget_on_reader_close = true
     _suppress_close_document_show = true
+    -- showFileManager(file) emits FileManager PathChanged events while it
+    -- restores the folder around the just-closed book. Those are internal
+    -- reader-return housekeeping, not user navigation underneath Bookshelf;
+    -- following them can drill a profile view into ePubs / ePubs/Fiktion and
+    -- produce breadcrumbs like "Folder > Fiktion > ePubs > Fiktion".
+    _suppressPathChangedFor(2.0)
     -- Capture and mark the reader instance before the deferred close. Recent
     -- ReaderUI/FileManager paths may mutate self.ui while onClose is running;
     -- using the captured object mirrors SimpleUI's gesture-close path and keeps
@@ -1048,6 +1089,7 @@ function Bookshelf:_safeShow(profile_key)
     local function release_flags()
         _preserve_live_widget_on_reader_close = false
         _suppress_close_document_show = false
+        _suppressPathChangedFor(0.5)
     end
 
     UIManager:nextTick(function()
@@ -1312,6 +1354,14 @@ function Bookshelf:onPathChanged(path)
     if self.ui and self.ui.document then return end
     if not (_live_widget and UIManager:isWidgetShown(_live_widget)) then return end
     if not path or path == "" then return end
+    if _isPathChangedSuppressed() then
+        _overlay_open_path = path
+        return
+    end
+    if _profileOwnsPath(_live_widget.profile, path) then
+        _overlay_open_path = path
+        return
+    end
     -- Absorb the single PathChanged that FileManager fires while Bookshelf is
     -- taking over the home screen (same path the overlay opened over).
     -- Consume it ONCE, then forget. Previously the snapshot stayed set for the
