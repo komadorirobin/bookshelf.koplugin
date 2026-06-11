@@ -182,6 +182,35 @@ local function _formatLabel(fp)
     return (ext:gsub("%.[Zz][Ii][Pp]$", "")):upper()
 end
 
+-- Reflowed formats do not have an intrinsic page grid. BIM may still expose
+-- an `info.pages` value for some files, but once KOReader has opened/rendered
+-- the book the DocSettings sidecar is the better source: it is the count the
+-- reader itself uses for the current render/pagemap.
+local DOCSETTINGS_PAGE_COUNT_EXT = {
+    epub=true, epub3=true, fb2=true, fb3=true, mobi=true, azw=true,
+    azw3=true, prc=true, pdb=true, tcr=true, ["fb2.zip"]=true,
+    txt=true, md=true, html=true, htm=true, xhtml=true, htmlz=true,
+    ["html.zip"]=true, ["htm.zip"]=true, ["txt.zip"]=true,
+    ["md.zip"]=true, ["rtf.zip"]=true,
+    chm=true, doc=true, docx=true, docm=true, rtf=true, odt=true,
+}
+
+local function _prefersDocSettingsPageCount(filepath, format)
+    local ext = _supportedExt(filepath)
+    if ext and DOCSETTINGS_PAGE_COUNT_EXT[ext] then return true end
+    if type(format) == "string" then
+        return DOCSETTINGS_PAGE_COUNT_EXT[format:lower()] == true
+    end
+    return false
+end
+
+function Repo.prefersDocSettingsPageCount(book_or_path)
+    if type(book_or_path) == "table" then
+        return _prefersDocSettingsPageCount(book_or_path.filepath, book_or_path.format)
+    end
+    return _prefersDocSettingsPageCount(book_or_path)
+end
+
 -- ─── Lazy module accessors ───────────────────────────────────────────────────
 -- Never require() at module top-level; tests stub via package.loaded.
 
@@ -900,7 +929,9 @@ function Repo.buildBook(filepath)
             end
         end
     end
-    if not book.page_count then
+    if ds_page_count and _prefersDocSettingsPageCount(filepath, book.format) then
+        book.page_count = ds_page_count
+    elseif not book.page_count then
         book.page_count = ds_page_count
     end
     -- page_num precedence mirrors page_count:

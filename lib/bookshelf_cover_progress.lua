@@ -120,7 +120,13 @@ function M.decide(book)
     local need_status_fallback = (status == nil and book.filepath)
     local need_pages_fallback  =
         (want_page_count and not book.page_count and book.filepath)
-    if need_status_fallback or need_pages_fallback then
+    local prefer_doc_pages = false
+    if want_page_count and book.page_count and book.filepath then
+        if not _Repo then _Repo = require("lib/bookshelf_book_repository") end
+        prefer_doc_pages = _Repo.prefersDocSettingsPageCount
+            and _Repo.prefersDocSettingsPageCount(book)
+    end
+    if need_status_fallback or need_pages_fallback or prefer_doc_pages then
         if not _Repo then _Repo = require("lib/bookshelf_book_repository") end
         local p, s, _r, pages = _Repo.readProgress(book.filepath)
         if need_status_fallback then
@@ -128,10 +134,9 @@ function M.decide(book)
             status = s
         end
         -- Mutate book.page_count so the SpineWidget renderer (which
-        -- reads self.book.page_count directly) picks it up without a
-        -- second lookup, and subsequent decide() calls skip the
-        -- readProgress branch entirely.
-        if need_pages_fallback and pages then
+        -- reads self.book.page_count directly) picks up the sidecar value
+        -- without a second lookup in the render path.
+        if (need_pages_fallback or prefer_doc_pages) and pages then
             book.page_count = pages
         end
     end

@@ -194,6 +194,46 @@ test("getCurrent: returns a book when lastfile is set", function()
     assert(b.filename == "dune", "expected filename=dune got " .. tostring(b.filename))
 end)
 
+test("buildBook: EPUB page count prefers rendered DocSettings over BIM estimate", function()
+    local fp = "/books/three-apples.epub"
+    _G._test_bim_data = {
+        [fp] = {
+            title = "Tre äpplen föll från himlen",
+            authors = "Narine Abgarjan",
+            pages = 222,
+        }
+    }
+    _G._test_docsettings_data = {
+        [fp] = {
+            stats = { pages = 370 },
+            percent_finished = 0.5,
+        }
+    }
+    local b = Repo.buildBook(fp)
+    assert(b.page_count == 370, "expected rendered page_count=370 got " .. tostring(b.page_count))
+    assert(b.page_num == 185, "expected synthetic page_num=185 got " .. tostring(b.page_num))
+end)
+
+test("buildBook: fixed-layout page count keeps BIM pages over DocSettings stats", function()
+    local fp = "/books/fixed.pdf"
+    _G._test_bim_data = {
+        [fp] = {
+            title = "Fixed",
+            authors = "Author",
+            pages = 271,
+        }
+    }
+    _G._test_docsettings_data = {
+        [fp] = {
+            stats = { pages = 370 },
+            percent_finished = 0.5,
+        }
+    }
+    local b = Repo.buildBook(fp)
+    assert(b.page_count == 271, "expected fixed-layout page_count=271 got " .. tostring(b.page_count))
+    assert(b.page_num == 136, "expected synthetic page_num from fixed pages got " .. tostring(b.page_num))
+end)
+
 -- ============================================================================
 -- Task 2.2: getRecent (already committed)
 -- ============================================================================
