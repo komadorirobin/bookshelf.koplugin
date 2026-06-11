@@ -641,6 +641,67 @@ function BookshelfWidget:_profileSettingKey()
     return "active_chip"
 end
 
+local function _normFolderPath(path)
+    if type(path) ~= "string" or path == "" then return nil end
+    return path:gsub("/+$", "")
+end
+
+local function _isStrictDescendantPath(path, root)
+    return path and root and path:sub(1, #root + 1) == root .. "/"
+end
+
+local function _isAncestorPath(path, root)
+    return path and root and root:sub(1, #path + 1) == path .. "/"
+end
+
+function BookshelfWidget:_sanitizeProfileFolderDrilldown()
+    if not (self.profile and self._drilldown_path and #self._drilldown_path > 0) then
+        return false
+    end
+    local profile_chip = self:_profileChip(self.chip)
+    if not (profile_chip and profile_chip.kind == "folder" and profile_chip.path) then
+        return false
+    end
+    local root = _normFolderPath(profile_chip.path)
+    if not root then return false end
+
+    local changed = false
+    local kept = {}
+    local seen = {}
+    for _, entry in ipairs(self._drilldown_path) do
+        if entry and entry.kind == "folder" then
+            local payload = entry.payload or {}
+            local path = _normFolderPath(payload.path or entry.path)
+            -- Profile folder chips already represent their root. Reader-return
+            -- FileManager PathChanged events can otherwise leave stale crumbs
+            -- like ePubs > Fiktion > ePubs > Fiktion above the same root view.
+            if path and _isStrictDescendantPath(path, root) then
+                if not seen[path] then
+                    kept[#kept + 1] = entry
+                    seen[path] = true
+                else
+                    changed = true
+                end
+            else
+                if path == root or _isAncestorPath(path, root) or path then
+                    changed = true
+                end
+            end
+        else
+            kept[#kept + 1] = entry
+        end
+    end
+    if changed or #kept ~= #self._drilldown_path then
+        self._drilldown_path = kept
+        if #kept == 0 then
+            self._cursor = 1
+            self.page = 1
+        end
+        return true
+    end
+    return false
+end
+
 function BookshelfWidget:setProfile(profile_key)
     local profile = Profiles.get(profile_key)
     if self.profile == profile then return end
@@ -1096,6 +1157,7 @@ function BookshelfWidget:_rebuild()
         self._pending_restore_drill = nil
         self:_restoreDrillPath(saved)
     end
+    self:_sanitizeProfileFolderDrilldown()
     local _perf_t0   = _gettime()
     local _perf_chip = self.chip
     local _perf_page = self.page
@@ -1523,6 +1585,7 @@ function BookshelfWidget:_rebuild()
             local plural_for_chip = {
                 authors = "author", series = "series", genres = "genre",
                 tags = "tag", all = "folder", library = "folder",
+                folder = "folder",
             }
             -- Only override when the drilled kind doesn't match the chip's
             -- own kind (so the user can still tap "Authors" chip → drill
