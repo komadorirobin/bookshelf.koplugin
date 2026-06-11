@@ -63,6 +63,11 @@ package.loaded["docsettings"] = {
                 return _G._test_docsettings_data and _G._test_docsettings_data[fp]
                     and _G._test_docsettings_data[fp][key]
             end end
+            if k == "saveSetting" then return function(_, key, value)
+                _G._test_docsettings_data = _G._test_docsettings_data or {}
+                _G._test_docsettings_data[fp] = _G._test_docsettings_data[fp] or {}
+                _G._test_docsettings_data[fp][key] = value
+            end end
         end })
     end,
     -- enrichBook's use_cover path looks for a custom .sdr cover; none in tests,
@@ -212,6 +217,32 @@ test("buildBook: EPUB page count prefers rendered DocSettings over BIM estimate"
     local b = Repo.buildBook(fp)
     assert(b.page_count == 370, "expected rendered page_count=370 got " .. tostring(b.page_count))
     assert(b.page_num == 185, "expected synthetic page_num=185 got " .. tostring(b.page_num))
+end)
+
+test("recordRenderedPageCount: stores reader getPageCount for EPUB badges", function()
+    local fp = "/books/three-apples.epub"
+    _G._test_bim_data = {
+        [fp] = {
+            title = "Tre äpplen föll från himlen",
+            authors = "Narine Abgarjan",
+            pages = 222,
+        }
+    }
+    _G._test_docsettings_data = {
+        [fp] = {
+            stats = { pages = 222 },
+            percent_finished = 0.5,
+        }
+    }
+    local saved = Repo.recordRenderedPageCount(fp, {
+        getPageCount = function() return 370 end,
+    })
+    assert(saved == 370, "expected saved rendered count=370 got " .. tostring(saved))
+    local b = Repo.buildBook(fp)
+    assert(b.page_count == 370, "expected stored rendered page_count=370 got " .. tostring(b.page_count))
+    assert(b.page_num == 185, "expected synthetic page_num=185 got " .. tostring(b.page_num))
+    local _pct, _status, _rating, pages = Repo.readProgress(fp)
+    assert(pages == 370, "expected readProgress page_count=370 got " .. tostring(pages))
 end)
 
 test("buildBook: fixed-layout page count keeps BIM pages over DocSettings stats", function()

@@ -1323,6 +1323,9 @@ function Bookshelf:onCloseDocument()
     local Repo = require("lib/bookshelf_book_repository")
     if Repo and self.ui and self.ui.document and self.ui.document.file then
         local fp = self.ui.document.file
+        if Repo.recordRenderedPageCount then
+            Repo.recordRenderedPageCount(fp, self.ui.document)
+        end
         if Repo.invalidateStatsCache then Repo.invalidateStatsCache(fp) end
         -- Same reasoning for the progress cache: percent_finished /
         -- summary.status are now stale for this file specifically.

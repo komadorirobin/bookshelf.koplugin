@@ -875,6 +875,55 @@ end
 -- DocSettings handle it opens, and Lua upvalue scoping needs the local
 -- to exist before that function body is compiled.
 local _progress_cache, PROGRESS_CACHE_TTL
+local BOOKSHELF_RENDERED_PAGE_COUNT_KEY = "bookshelf_rendered_page_count"
+
+local function _readDocSetting(ds, key)
+    if not (ds and key) then return nil end
+    local ok, value = pcall(ds.readSetting, ds, key)
+    return ok and value or nil
+end
+
+local function _docSettingsPageCount(ds)
+    local rendered_pages = _readDocSetting(ds, BOOKSHELF_RENDERED_PAGE_COUNT_KEY)
+    if rendered_pages then return tonumber(rendered_pages) end
+
+    local stable_pages = _readDocSetting(ds, "pagemap_doc_pages")
+    if stable_pages then return tonumber(stable_pages) end
+
+    local stats = _readDocSetting(ds, "stats")
+    if type(stats) == "table" and stats.pages then
+        return tonumber(stats.pages)
+    end
+    return nil
+end
+
+function Repo.recordRenderedPageCount(filepath, document)
+    if not (filepath and document and type(document.getPageCount) == "function") then
+        return nil
+    end
+    if not _prefersDocSettingsPageCount(filepath) then
+        return nil
+    end
+    local ok_count, count = pcall(document.getPageCount, document)
+    count = ok_count and tonumber(count) or nil
+    if not (count and count > 0) then
+        return nil
+    end
+    count = math.floor(count + 0.5)
+
+    local ok_ds, ds = pcall(function() return getDocSettings():open(filepath) end)
+    if not (ok_ds and ds and type(ds.saveSetting) == "function") then
+        return nil
+    end
+    local ok_save = pcall(ds.saveSetting, ds, BOOKSHELF_RENDERED_PAGE_COUNT_KEY, count)
+    if not ok_save then
+        return nil
+    end
+    if _progress_cache then
+        _progress_cache[filepath] = nil
+    end
+    return count
+end
 
 function Repo.buildBook(filepath)
     local book = Repo.buildBookMeta(filepath)
@@ -918,17 +967,7 @@ function Repo.buildBook(filepath)
     -- page_count nil) because it doubles as the progress-cache seed
     -- below, which must match what readProgress would compute for this
     -- file - readProgress never sees BIM's count.
-    local ds_page_count
-    do
-        local stable_pages = ds:readSetting("pagemap_doc_pages")
-        if stable_pages then ds_page_count = tonumber(stable_pages) end
-        if not ds_page_count then
-            local stats = ds:readSetting("stats")
-            if type(stats) == "table" and stats.pages then
-                ds_page_count = tonumber(stats.pages)
-            end
-        end
-    end
+    local ds_page_count = _docSettingsPageCount(ds)
     if ds_page_count and _prefersDocSettingsPageCount(filepath, book.format) then
         book.page_count = ds_page_count
     elseif not book.page_count then
@@ -1405,14 +1444,7 @@ function Repo.readProgress(filepath)
             status = summary.status
             rating = tonumber(summary.rating)
         end
-        local ok_pm, stable_pages = pcall(ds.readSetting, ds, "pagemap_doc_pages")
-        if ok_pm and stable_pages then page_count = tonumber(stable_pages) end
-        if not page_count then
-            local ok_st, stats = pcall(ds.readSetting, ds, "stats")
-            if ok_st and type(stats) == "table" and stats.pages then
-                page_count = tonumber(stats.pages)
-            end
-        end
+        page_count = _docSettingsPageCount(ds)
     end
     -- Normalise to bookshelf canonical status values. KOReader's End-of-book
     -- dialog and Book Status widget store 'complete' / 'abandoned' in
