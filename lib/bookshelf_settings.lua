@@ -1367,6 +1367,56 @@ function Settings:_settingsSubItems()
                 return self:_expandedShelfSubItems()
             end,
         },
+        -- Start-menu position: three-state radio. "left" (default; an
+        -- absent key reads as left), "right" mirrors the whole stack
+        -- (footer button, popup anchor, leftward flyout), "off" removes
+        -- the button and its d-pad slot entirely.
+        (function()
+            local function readPos()
+                local v = BookshelfSettings.read("start_menu_position", "left")
+                if v == "right" or v == "off" then return v end
+                return "left"
+            end
+            local labels = {
+                left  = _("Left"),
+                right = _("Right"),
+                off   = _("Off"),
+            }
+            local function optionRow(pos, label)
+                return {
+                    text           = label,
+                    checked_func   = function() return readPos() == pos end,
+                    radio          = true,
+                    keep_menu_open = true,
+                    callback       = function(touchmenu_instance)
+                        BookshelfSettings.save("start_menu_position", pos)
+                        if self._bw and self._bw._rebuild then
+                            self._bw:_rebuild()
+                            UIManager:setDirty(self._bw, "ui")
+                        end
+                        if touchmenu_instance and touchmenu_instance.updateItems then
+                            touchmenu_instance:updateItems()
+                        end
+                    end,
+                }
+            end
+            return {
+                text_func = function()
+                    return _("Start menu") .. ": " .. labels[readPos()]
+                end,
+                help_text = _("Where the start-menu button sits in the"
+                    .. " footer. Right moves the button and its menu to"
+                    .. " the bottom-right corner; Off hides the button"
+                    .. " entirely."),
+                sub_item_table_func = function()
+                    return {
+                        optionRow("left",  labels.left),
+                        optionRow("right", labels.right),
+                        optionRow("off",   labels.off),
+                    }
+                end,
+            }
+        end)(),
     }
     -- "Hardcover enrichment" was promoted to the top-level Bookshelf menu
     -- (below Manage collections) -- see main.lua addToMainMenu. It no longer

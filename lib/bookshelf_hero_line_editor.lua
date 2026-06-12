@@ -194,22 +194,16 @@ local function toggleBarToken(dialog, draft, applyLivePreview)
     applyLivePreview()
 end
 
--- Soft-imports bookends's icon library and shows the picker. Returns
--- false if bookends is missing (caller can hide the button entirely).
+-- Shows the bundled icons library picker. Dynamic %tokens stay available
+-- here: the picked value lands in a token template, which IS expanded
+-- through lib/bookshelf_tokens.lua at render time.
 local function showIconsLibrary(dialog)
-    local ok, IconsLibrary = pcall(require, "menu.icons_library")
-    if not ok or not IconsLibrary or not IconsLibrary.show then return false end
+    local IconsLibrary = require("lib/bookshelf_icons_library")
     IconsLibrary:show(function(value)
         if dialog and dialog.addTextToInput then
             pcall(function() dialog:addTextToInput(value) end)
         end
     end)
-    return true
-end
-
-local function bookendsIconsAvailable()
-    local ok, IconsLibrary = pcall(require, "menu.icons_library")
-    return ok and IconsLibrary and IconsLibrary.show ~= nil
 end
 
 local LineEditor = {}
@@ -546,15 +540,13 @@ function LineEditor.show(region_key, bw, settings_module, touchmenu_instance)
                 end,
             },
         }
-        if bookendsIconsAvailable() then
-            action_row[#action_row + 1] = {
-                text     = _("Icons\xE2\x80\xA6"),
-                callback = function()
-                    if dialog then dialog:onCloseKeyboard() end
-                    showIconsLibrary(dialog)
-                end,
-            }
-        end
+        action_row[#action_row + 1] = {
+            text     = _("Icons\xE2\x80\xA6"),
+            callback = function()
+                if dialog then dialog:onCloseKeyboard() end
+                showIconsLibrary(dialog)
+            end,
+        }
         action_row[#action_row + 1] = {
             text     = _("Default"),
             callback = function()

@@ -1746,6 +1746,56 @@ test("getAll: a BIM metadata failure keeps the page with filename fallback", fun
     }
 end)
 
+-- #113 / issue 90: "sort folders by book count" must order folder cards by
+-- how many books each holds (recursively). Regression guard for the
+-- single-pass counting in getAll's needs.book_count block: a book under a
+-- listed folder is attributed to that folder, so the sort value matches the
+-- badge. Folder names are deliberately anti-correlated with their counts so
+-- a broken counter (all zero -> name tie-break) sorts differently.
+test("getAll: sort by book_count orders folders by recursive book count", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 2 }
+    _G._test_bim_data = {
+        ["/lib/aaa/x1.epub"] = { title = "x1" },
+        ["/lib/bbb/y1.epub"] = { title = "y1" },
+        ["/lib/bbb/y2.epub"] = { title = "y2" },
+        ["/lib/bbb/y3.epub"] = { title = "y3" },
+        ["/lib/ccc/z1.epub"] = { title = "z1" },
+        ["/lib/ccc/z2.epub"] = { title = "z2" },
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local listings = {
+            ["/lib"]     = { ".", "..", "aaa", "bbb", "ccc" },
+            ["/lib/aaa"] = { ".", "..", "x1.epub" },
+            ["/lib/bbb"] = { ".", "..", "y1.epub", "y2.epub", "y3.epub" },
+            ["/lib/ccc"] = { ".", "..", "z1.epub", "z2.epub" },
+        }
+        local files = listings[path] or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        local is_dir = (fp == "/lib/aaa" or fp == "/lib/bbb" or fp == "/lib/ccc")
+        local mode   = is_dir and "directory" or "file"
+        if key == nil then return { mode = mode, modification = 0 } end
+        if key == "mode"         then return mode end
+        if key == "modification" then return 0 end
+        return nil
+    end
+    -- Descending book_count: bbb(3), ccc(2), aaa(1). Name order would be the
+    -- reverse, so a correct count is the only way to get this order.
+    local items, total = Repo.getAll(nil, 10, 0, { { key = "book_count", reverse = true } })
+    assert(total == 3, "expected 3 folder shapes, got " .. tostring(total))
+    assert(items and #items == 3, "expected 3 items, got " .. tostring(items and #items))
+    assert(items[1].path == "/lib/bbb",
+        "highest count folder should sort first, got " .. tostring(items[1].path))
+    assert(items[2].path == "/lib/ccc",
+        "middle count folder should sort second, got " .. tostring(items[2].path))
+    assert(items[3].path == "/lib/aaa",
+        "lowest count folder should sort last, got " .. tostring(items[3].path))
+    Repo.invalidateWalkCache()
+end)
+
 -- ============================================================================
 -- Task 3.1: getBySource generic resolver
 -- ============================================================================
@@ -1879,6 +1929,32 @@ test("getBySource: folder honours sort_priority via getAll override", function()
            "expected Bravo first (title desc), got " .. tostring(list[1].title))
     assert(list[2].title == "Alpha",
            "expected Alpha second, got " .. tostring(list[2].title))
+end)
+
+test("getBySource: folder_flat returns all books recursively, no folder cards", function()
+    -- #76: a flattened folder chip lists every book under the path at any
+    -- depth, with NO subfolder cards (unlike the "folder" tree view). So a
+    -- flatten of /lib pulls alpha + bravo (comics) + charlie (novels) = 3
+    -- book records, and none of them is a folder card.
+    _setupResolverLibrary()
+    local list, total = Repo.getBySource({ kind = "folder_flat", id = "/lib" }, nil, nil, 0, 10)
+    _teardownResolverLibrary()
+    assert(type(list) == "table", "expected table, got " .. type(list))
+    assert(#list == 3, "expected 3 books flattened under /lib, got " .. #list)
+    assert(total == 3, "expected total=3, got " .. tostring(total))
+    for _i, it in ipairs(list) do
+        assert(it.kind ~= "folder", "flattened view must not contain folder cards")
+        assert(type(it.filepath) == "string", "expected a book record with a filepath")
+    end
+end)
+
+test("getBySource: folder_flat scoped to a subfolder lists only its books", function()
+    -- Flatten of a subfolder is bounded to that subtree's books.
+    _setupResolverLibrary()
+    local list, total = Repo.getBySource({ kind = "folder_flat", id = "/lib/comics" }, nil, nil, 0, 10)
+    _teardownResolverLibrary()
+    assert(#list == 2, "expected 2 books under /lib/comics, got " .. #list)
+    assert(total == 2, "expected total=2, got " .. tostring(total))
 end)
 
 -- ============================================================================

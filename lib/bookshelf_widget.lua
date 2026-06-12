@@ -2211,7 +2211,7 @@ function BookshelfWidget:_rebuild()
     -- any rebuild is always a cold cover decode. From a freshly-settled page
     -- the user's likeliest next action is a forward swipe, so warm the next
     -- page now. No-op on the last page; _schedulePreload cancels any prior
-    -- preload, re-syncs cache capacity, and is Android-gated internally.
+    -- preload and re-syncs cache capacity.
     if (self._total_pages or 1) > (self.page or 1) then
         self:_schedulePreload(1)
     end
@@ -3044,13 +3044,16 @@ end
 
 -- ─── Navigation ───────────────────────────────────────────────────────────────
 
--- _openBook(book)  — open ReaderUI for the given book WITHOUT closing
--- the home screen. The Reader is shown on top in UIManager's stack;
--- when the Reader closes, Bookshelf is exposed automatically with no
+-- _openBook(book, after_open_callback)  — open ReaderUI for the given book
+-- WITHOUT closing the home screen. The Reader is shown on top in UIManager's
+-- stack; when the Reader closes, Bookshelf is exposed automatically with no
 -- intermediate FileManager flash. (Closing Bookshelf first leaves
 -- FileManager visible for one paint cycle before the close-document
 -- handler shows a fresh Bookshelf instance back on top.)
-function BookshelfWidget:_openBook(book)
+-- after_open_callback (optional) is handed to ReaderUI:showReader and runs
+-- with the ready ReaderUI once the document is open — same hook the bookmark
+-- browser's "View in book" uses to jump to a position after opening.
+function BookshelfWidget:_openBook(book, after_open_callback)
     if not book or not book.filepath then return end
     -- Stale records (Send-to-Kindle moved/removed the file after BIM cached
     -- the path) crash KOReader's filemanagerbookinfo:show via lfs.attributes
@@ -3081,7 +3084,7 @@ function BookshelfWidget:_openBook(book)
     self._hero_current_memo = nil
     self:_stopStatusTimer()
     local ReaderUI = require("apps/reader/readerui")
-    ReaderUI:showReader(book.filepath)
+    ReaderUI:showReader(book.filepath, nil, nil, nil, after_open_callback)
 end
 
 -- _buildHero — constructs a HeroCard reflecting current preview / lastfile.
@@ -3615,6 +3618,20 @@ end
 
 -- ─── Selection overlay ────────────────────────────────────────────────────────
 
+-- Bottom hit-zone extension baked into every footer button's frame
+-- (padding_bottom). Exposed as a class constant so other widgets that
+-- overlay a footer button's region (e.g. the start menu's close glyph
+-- over the hamburger) can subtract the same amount.
+BookshelfWidget.FOOTER_HIT_EXTENSION = Screen:scaleBySize(12)
+
+-- Stroke thickness of the custom-painted footer art (the hamburger bars,
+-- and the start menu's close X painted over them). Exposed as a class
+-- constant so the start menu can paint its X at EXACTLY the same weight —
+-- a glyph X always read heavier than the painted bars. Formula matches
+-- _buildStartMenuIcon's bar_t: art square scaled at 32, bars at ~art/14.
+BookshelfWidget.FOOTER_STROKE_W =
+    math.max(1, math.floor(Screen:scaleBySize(32) / 14))
+
 -- _wrapAsFooterButton(content_widget, frame_width, focused, on_tap)
 -- Wraps an arbitrary content widget in the same FrameContainer
 -- structure KOReader's Button widget produces internally — same
@@ -3627,7 +3644,7 @@ function BookshelfWidget:_wrapAsFooterButton(content_widget, frame_width, focuse
     local HorizontalSpan  = require("ui/widget/horizontalspan")
     local focus_border    = Screen:scaleBySize(4)
     local focus_radius    = Screen:scaleBySize(4)
-    local hit_extension   = Screen:scaleBySize(12)
+    local hit_extension   = BookshelfWidget.FOOTER_HIT_EXTENSION
     -- Focus swap: when focused, paint a focus_border-thick ring at the
     -- frame edge; when not focused, reserve the same space as
     -- transparent margin. Outer footprint stays constant.
@@ -3745,6 +3762,46 @@ function BookshelfWidget:_buildBucketIcon(focused, frame_width)
     end)
 end
 
+-- _buildStartMenuIcon(focused, frame_width) — Footer hamburger; opens the start menu. Hidden in multi-select (the close-X takes the slot).
+-- Custom-painted three bars rather than the obvious U+2630 glyph: the
+-- fallback face that renders U+2630 has a font box far taller than the
+-- art size (odd ascent/descent), which both inflated the button frame
+-- (so it reached up under the start-menu panel) and left the bar ink
+-- sitting below the chevrons' vertical midline. Painting the bars
+-- directly (same precedent as _buildBucketIcon) keeps the geometry
+-- deterministic: the box is exactly art_size tall, bars centered.
+function BookshelfWidget:_buildStartMenuIcon(focused, frame_width)
+    local art_size = Screen:scaleBySize(32)
+    frame_width    = frame_width or art_size
+    local bar_w    = art_size
+    -- Thin black bars: solid horizontal rects read heavier than the
+    -- chevrons' anti-aliased diagonal arms at equal pixel width, so the
+    -- bars run thinner (art_size/14 vs the arms' ~1/12) to land at the
+    -- same VISUAL stroke weight. Single source: FOOTER_STROKE_W (the
+    -- start menu's close X consumes the same constant).
+    local bar_t    = BookshelfWidget.FOOTER_STROKE_W
+    local span     = math.floor(art_size * 0.62)
+    local gap      = math.max(1, math.floor((span - 3 * bar_t) / 2))
+    span = 3 * bar_t + 2 * gap
+    local Widget = require("ui/widget/widget")
+    local BarsWidget = Widget:extend{}
+    function BarsWidget:getSize() return Geom:new{ w = bar_w, h = art_size } end
+    function BarsWidget:paintTo(bb, x, y)
+        local top = y + math.floor((art_size - span) / 2)
+        for i = 0, 2 do
+            bb:paintRect(x, top + i * (bar_t + gap), bar_w, bar_t,
+                Blitbuffer.COLOR_BLACK)
+        end
+    end
+    local bw_ref = self
+    local btn = self:_wrapAsFooterButton(BarsWidget:new{}, frame_width, focused, function()
+        bw_ref:_openStartMenu()
+        return true
+    end)
+    self._burger_dimen = btn.dimen
+    return btn
+end
+
 -- _buildExitIcon(focused) — Renders the close icon as the mdi-close nerd-
 -- font glyph (U+E855) via KOReader's bundled `symbols` font face. Earlier
 -- iterations rasterised the X pixel-by-pixel because paintLine isn't in
@@ -3782,6 +3839,15 @@ function BookshelfWidget:_buildExitIcon(focused, frame_width)
         end
         return true
     end)
+end
+
+-- _startMenuPosition() — sanitised read of the start-menu position
+-- setting: "left" (default; an absent or unknown value reads as left),
+-- "right", or "off".
+function BookshelfWidget:_startMenuPosition()
+    local v = BookshelfSettings.read("start_menu_position", "left")
+    if v == "right" or v == "off" then return v end
+    return "left"
 end
 
 -- _buildFooterRow(content_w, total_pages, footer_h) — the screen-anchored
@@ -3835,7 +3901,28 @@ function BookshelfWidget:_buildFooterRow(content_w, total_pages, footer_h)
             dimen = Geom:new{ w = self.width, h = footer_h },
             bucket_icon,
         }
+    else
+        local menu_pos = self:_startMenuPosition()
+        if menu_pos == "off" then
+            -- No hamburger this build: clear the stashed dimen so a
+            -- stale region from a previous build can't anchor the
+            -- start-menu close indicator (defensive; _openStartMenu
+            -- also no-ops when off).
+            self._burger_dimen = nil
+        else
+            local nav_strip_w  = math.floor(content_w * 0.75)
+            local side_strip_w = math.floor((self.width - nav_strip_w) / 2)
+            local burger_focused = (self._focus_zone == "footer")
+                and (self._footer_cursor_btn == "menu")
+            local burger = self:_buildStartMenuIcon(burger_focused, side_strip_w, footer_h)
+            local Container = menu_pos == "right" and RightContainer or LeftContainer
+            row[#row + 1] = Container:new{
+                dimen = Geom:new{ w = self.width, h = footer_h },
+                burger,
+            }
+        end
     end
+    self._footer_h_last = footer_h
     self._footer_row_widget = row
     return row
 end
@@ -5320,7 +5407,20 @@ function BookshelfWidget:onBSFocusDown()
                 self:_refreshBucket()
                 return true
             end
-            if total <= 1 then return true end   -- single page: footer has nothing actionable
+            if total <= 1 then
+                -- Single page: pagination buttons are disabled, but the
+                -- start-menu slot is still reachable (selection is off here;
+                -- the active-selection branch above exits before this point).
+                if self:_startMenuPosition() == "off" then
+                    -- ...unless the start menu is hidden: nothing in the
+                    -- footer is focusable, so keep focus in the grid.
+                    return true
+                end
+                self._footer_cursor_btn = "menu"
+                self._focus_zone        = "footer"
+                self:_swapFooterInPlace()
+                return true
+            end
             self._footer_cursor_btn = "next"
             self._focus_zone        = "footer"
             self:_swapFooterInPlace()
@@ -5341,26 +5441,34 @@ function BookshelfWidget:onBSFocusDown()
     return true
 end
 
--- _footerNeighbour(cur, page, total, dir)
+-- _footerNeighbour(cur, page, total, dir, sel_active, menu_pos)
 -- Returns the key of the nearest enabled footer button in direction dir
 -- (dir=1 for right, dir=-1 for left), or nil if there is none.
-local _FOOTER_ORDER = {"first","prev","page","next","last"}
-local function _footerBtnEnabled(k, page, total)
+-- menu_pos is the start-menu position setting ("left"/"right"/"off"):
+-- two static order tables (rather than one runtime-built list) keep the
+-- d-pad order matching the on-screen order - the menu slot sits before
+-- the chevrons when the hamburger is on the left and after them when it
+-- is on the right. "off" disables the slot via _footerBtnEnabled.
+local _FOOTER_ORDER_LEFT  = {"menu","first","prev","page","next","last"}
+local _FOOTER_ORDER_RIGHT = {"first","prev","page","next","last","menu"}
+local function _footerBtnEnabled(k, page, total, sel_active, menu_pos)
+    if k == "menu" then return not sel_active and menu_pos ~= "off" end
     if k == "first" or k == "prev" then return page > 1 end
     if k == "page"                  then return true end
     -- "next" or "last"
     return page < total
 end
-local function _footerNeighbour(cur, page, total, dir)
+local function _footerNeighbour(cur, page, total, dir, sel_active, menu_pos)
+    local order = menu_pos == "right" and _FOOTER_ORDER_RIGHT or _FOOTER_ORDER_LEFT
     local cur_i = 0
-    for i, k in ipairs(_FOOTER_ORDER) do
+    for i, k in ipairs(order) do
         if k == cur then cur_i = i; break end
     end
     if cur_i == 0 then return nil end
     local i = cur_i + dir
-    while i >= 1 and i <= #_FOOTER_ORDER do
-        local k = _FOOTER_ORDER[i]
-        if _footerBtnEnabled(k, page, total) then return k end
+    while i >= 1 and i <= #order do
+        local k = order[i]
+        if _footerBtnEnabled(k, page, total, sel_active, menu_pos) then return k end
         i = i + dir
     end
     return nil
@@ -5416,7 +5524,8 @@ function BookshelfWidget:onBSFocusLeft()
 
     if self._focus_zone == "footer" then
         local total   = self._total_pages or 1
-        local new_btn = _footerNeighbour(self._footer_cursor_btn, self.page, total, -1)
+        local new_btn = _footerNeighbour(self._footer_cursor_btn, self.page, total, -1,
+            self._selection:isActive(), self:_startMenuPosition())
         if new_btn then
             self._footer_cursor_btn = new_btn
             self:_swapFooterInPlace()
@@ -5477,7 +5586,8 @@ function BookshelfWidget:onBSFocusRight()
 
     if self._focus_zone == "footer" then
         local total   = self._total_pages or 1
-        local new_btn = _footerNeighbour(self._footer_cursor_btn, self.page, total, 1)
+        local new_btn = _footerNeighbour(self._footer_cursor_btn, self.page, total, 1,
+            self._selection:isActive(), self:_startMenuPosition())
         if new_btn then
             self._footer_cursor_btn = new_btn
             self:_swapFooterInPlace()
@@ -5608,7 +5718,10 @@ function BookshelfWidget:onBSKbPress()
     if self._focus_zone == "footer" then
         local btn   = self._footer_cursor_btn
         local total = self._total_pages or 1
-        if btn == "first" and self.page > 1 then
+        if btn == "menu" and not self._selection:isActive() then
+            self:_openStartMenu()
+            return true
+        elseif btn == "first" and self.page > 1 then
             self._cursor = 1
             self:_syncPageFromCursor()
             self._footer_cursor_btn = "next"
@@ -7086,7 +7199,7 @@ end
 -- a one-time-use bb -- ImageWidget frees it after first paint, which
 -- means the bb in `book` itself (potentially shared with other UI) is
 -- never touched. Same disposable-bb invariant as the hero card.
-function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
+function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs, bookmark_action)
     if not book or not book.filepath then return nil end
     local Font           = require("ui/font")
     local ImageWidget    = require("ui/widget/imagewidget")
@@ -7097,12 +7210,16 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     local TextBoxWidget_     = require("ui/widget/textboxwidget")
     local TextWidget_        = require("ui/widget/textwidget")
 
-    -- Target header width: leave generous side margin so the ButtonDialog
-    -- chrome (padding + border) doesn't push us past the screen edge.
     -- Caller can pass override_width (e.g. the collection manager, which
     -- nests inside the book menu and needs a narrower header).
-    local sw = Screen:getWidth()
-    local header_w = override_width or math.floor(sw * 0.82)
+    -- Match the dialog's added-widget width (= the button-table width) so
+    -- the header fills exactly the button area -- neither narrower (margins
+    -- around the cover) nor wider (margins around the buttons, which would
+    -- grow the whole dialog). The book menu passes that width as
+    -- override_width; the fallback mirrors ButtonDialog's own default width
+    -- so a no-override caller still fits.
+    local header_w = override_width
+        or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.9)
     -- Cover thumbnail is the visual anchor of the header; size it large
     -- enough that the title block on a real cover is legible, but not
     -- so large the menu starts to dominate the screen. Height is
@@ -7111,7 +7228,14 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- image exactly -- no horizontal or vertical letterboxing.
     local thumb_w  = Screen:scaleBySize(110)
     local thumb_h  = math.floor(thumb_w * 1.5)  -- default 2:3 if no cover
-    local gap_w    = Size.padding.large
+    -- Cover<->text gap = the shelf's inter-column book gap, so the menu
+    -- matches the main grid. The header's outer inset is supplied by the
+    -- DIALOG's title_padding (the book menu sets it to this same gap), so we
+    -- add NO frame inset here -- stacking a frame inset on the dialog's own
+    -- padding was the doubling.
+    local gap_w    = self:_bookGap(math.min(
+        math.floor(Size.padding.fullscreen * 2 * 0.8),
+        math.floor(Screen:getWidth() * 0.03)))
 
     -- Rebuild the book record so we get an independent cover_bb that
     -- ImageWidget can own + free (cover_bb is one-shot per the
@@ -7215,6 +7339,47 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
         end
     end
 
+    -- Bookmark link (#67): "N bookmark(s) ›" in the header's top-right
+    -- corner, opening KOReader's bookmark browser. A text link rather than
+    -- a bare icon -- clearer, and the count says what's there. Built only
+    -- when bookmark_action is passed (book has annotations + browser
+    -- available). Reserve its width off the text column so a long title
+    -- doesn't run under it.
+    local bm_link, bm_reserve = nil, 0
+    if bookmark_action then
+        local n = bookmark_action.count
+        local bm_text = n == 1 and _("1 bookmark") or T(_("%1 bookmarks"), n)
+        local bm_face, bm_bold = BFont:getFace("cfont", 16, { bold = true })
+        -- The chevron is a real glyph (U+E841 mdi-chevron-right) from the
+        -- symbols/nerdfont face -- NOT an ASCII ">" -- so it's its own widget:
+        -- the count label's cfont doesn't carry that PUA codepoint.
+        local bm_row = HorizontalGroup_:new{
+            align = "center",
+            TextWidget_:new{ text = bm_text, face = bm_face, bold = bm_bold },
+            HorizontalSpan_:new{ width = Size.padding.small },
+            TextWidget_:new{ text = "\xEE\xA1\x81", face = BFont:getFace("symbols", 20) },
+        }
+        local bm_frame = FrameContainer:new{
+            bordersize = 0,
+            margin     = 0,
+            padding    = 0,
+            bm_row,
+        }
+        local bm_sz = bm_frame:getSize()
+        bm_link = InputContainer:new{
+            dimen = Geom:new{ w = bm_sz.w, h = bm_sz.h },
+            bm_frame,
+        }
+        bm_link.ges_events = {
+            Tap = { GestureRange:new{ ges = "tap", range = bm_link.dimen } },
+        }
+        bm_link.onTap = function() bookmark_action.on_tap(); return true end
+        bm_reserve = bm_sz.w + Size.padding.default
+    end
+    -- No frame inset: header_w (the dialog's added-widget width) is already
+    -- inset from the button rows by the dialog's title_padding. The content
+    -- fills it edge to edge; only the TITLE row reserves space for the
+    -- bookmark link (below), overlaying the title's right-hand whitespace.
     local text_w = thumb_widget and (header_w - thumb_w - gap_w) or header_w
 
     -- Top of text column: title (bold) + author + one-line metadata
@@ -7222,15 +7387,17 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- info is no longer rendered here -- it lives as a tappable pill
     -- in the nav strip below.
     local top_stack = VerticalGroup_:new{ align = "left" }
-    local mtitle_face, mtitle_bold = BFont:getFace("smalltfont", 20, { bold = true })
+    local mtitle_face, mtitle_bold = BFont:getFace("smalltfont", 22, { bold = true })
     top_stack[#top_stack + 1] = TextBoxWidget_:new{
         text  = book.title or book.filename or _("(no title)"),
         face  = mtitle_face,
         bold  = mtitle_bold,
-        width = text_w,
+        -- Title wraps before the top-right bookmark link (bm_reserve = 0
+        -- when there's no link, so this is the full width otherwise).
+        width = text_w - bm_reserve,
     }
     if book.author and book.author ~= "" then
-        local mauthor_face, mauthor_bold = BFont:getFace("cfont", 16)
+        local mauthor_face, mauthor_bold = BFont:getFace("cfont", 18)
         top_stack[#top_stack + 1] = TextBoxWidget_:new{
             text  = book.author,
             face  = mauthor_face,
@@ -7242,7 +7409,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- Metadata + filename block: cheap-to-fetch supporting detail in a
     -- compact bottom slice of the top stack. Each chunk skipped when
     -- its source is unavailable.
-    local meta_face, meta_bold = BFont:getFace("cfont", 12)
+    local meta_face, meta_bold = BFont:getFace("cfont", 14)
     local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     local size_bytes, mtime
     if ok_lfs and lfs and lfs.attributes then
@@ -7317,7 +7484,7 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- passes nil because it doesn't want nav-into-self affordances.
     local pill_group = VerticalGroup_:new{ align = "left" }
     if pill_specs and #pill_specs > 0 then
-        local pill_face, pill_bold = BFont:getFace("cfont", 12, { bold = true })
+        local pill_face, pill_bold = BFont:getFace("cfont", 13, { bold = true })
         local pill_pad_h  = Size.padding.default  -- L/R inner padding
         local pill_pad_v  = Size.padding.small    -- T/B inner padding
         local pill_gap    = Size.padding.default  -- between pills
@@ -7505,13 +7672,29 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs)
     -- info_padding all around; this FrameContainer adds Size.padding.large
     -- on top + bottom so the cover gets a balanced visual frame
     -- (matching the left gap from dialog edge to cover).
-    return FrameContainer:new{
-        bordersize     = 0,
-        margin         = 0,
-        padding        = 0,
-        padding_top    = Size.padding.large,
-        padding_bottom = Size.padding.large,
+    local header_frame = FrameContainer:new{
+        bordersize = 0,
+        margin     = 0,
+        padding    = 0,
         body,
+    }
+    if not bm_link then
+        return header_frame
+    end
+    -- Overlay the bookmark link in the top-right corner. RightContainer
+    -- right-aligns it to the header width; the height-bounded dimen keeps
+    -- it in the top band, and the link's own padding_top aligns it with
+    -- the title. Same corner-anchoring idiom the hero card uses.
+    local RightContainer = require("ui/widget/container/rightcontainer")
+    local OverlapGroup   = require("ui/widget/overlapgroup")
+    local hsize = header_frame:getSize()
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = hsize.w, h = hsize.h },
+        header_frame,
+        RightContainer:new{
+            dimen = Geom:new{ w = hsize.w, h = bm_link:getSize().h },
+            bm_link,
+        },
     }
 end
 
@@ -8958,6 +9141,10 @@ function BookshelfWidget:_openBookMenu(item)
     -- call UIManager:close itself. Wrap with a closing helper so all callbacks
     -- close the dialog after their action runs.
     local dialog
+    -- Declared here (not at its detection block below) so _reinitDialog's
+    -- in-place header rebuild can re-pass it and the bookmark link survives
+    -- staging a status / rating change.
+    local bookmark_action
     local function closing(fn)
         return function()
             if fn then fn() end
@@ -8987,7 +9174,8 @@ function BookshelfWidget:_openBookMenu(item)
     local function _reinitDialog()
         if not (dialog and dialog.reinit) then return end
         if dialog._added_widgets then
-            local new_header = bw:_buildBookMenuHeader(book, nil, pill_specs)
+            local new_header = bw:_buildBookMenuHeader(book,
+                dialog:getAddedWidgetAvailableWidth(), pill_specs, bookmark_action)
             if new_header then
                 dialog._added_widgets[1] = new_header
             end
@@ -9759,13 +9947,73 @@ function BookshelfWidget:_openBookMenu(item)
     buttons[#buttons + 1] = { delete_btn, refresh_button }
     buttons[#buttons + 1] = { select_btn, cancel_btn, apply_btn }
 
-    dialog = ButtonDialog:new{ buttons = buttons }
+    -- Inset the header by the shelf's inter-column book gap, and ONLY that:
+    -- override ButtonDialog's default title_padding (Size.padding.large) so
+    -- our header frame doesn't stack a second inset on top of it, and zero
+    -- the title_margin so the inset is exactly the gap. The header builder
+    -- adds no inset of its own and uses this same gap cover<->text.
+    local menu_pad = self:_bookGap(math.min(
+        math.floor(Size.padding.fullscreen * 2 * 0.8),
+        math.floor(self.width * 0.03)))
+    dialog = ButtonDialog:new{
+        buttons       = buttons,
+        title_padding = menu_pad,
+        title_margin  = 0,
+    }
+    -- Close the menu if a book is opened from underneath us -- e.g. the
+    -- bookmark browser's "View in book" navigates into the reader. KOReader
+    -- broadcasts ShowingReader as the reader takes over (same hook
+    -- FileManager uses to tear itself down); without this the menu would
+    -- linger on top of the opening book. A plain browser-close sends no
+    -- such event, so the menu still persists then -- the intended
+    -- peek-then-return behaviour.
+    dialog.onShowingReader = function()
+        UIManager:close(dialog)
+    end
+
+    -- Bookmark-browser shortcut (#67): a "N bookmark(s) ›" link in the
+    -- header's top-right corner (NOT a full-width button -- it's a
+    -- contextual peek, not a file action). Built only when this KOReader
+    -- build has the browser widget AND the book actually has annotations
+    -- (bookmarks / highlights / notes) to show, so books with nothing show no link and
+    -- the icon never opens an empty browser. hasSidecarFile gates the
+    -- DocSettings open, so never-opened books (no sidecar) pay nothing.
+    do
+        local ok_bb, BookmarkBrowser = pcall(require, "ui/widget/bookmarkbrowser")
+        if ok_bb and BookmarkBrowser and book.filepath then
+            local DocSettings = require("docsettings")
+            if DocSettings:hasSidecarFile(book.filepath) then
+                local ok_ds, ds = pcall(DocSettings.open, DocSettings, book.filepath)
+                local ann = ok_ds and ds and ds:readSetting("annotations")
+                if type(ann) == "table" and #ann > 0 then
+                    local fp = book.filepath
+                    bookmark_action = {
+                        count  = #ann,
+                        on_tap = function()
+                            -- Leave the book menu OPEN underneath: the browser
+                            -- shows on top, and closing it returns to the menu.
+                            local FileManager = require("apps/filemanager/filemanager")
+                            -- files must be a SET keyed by filepath:
+                            -- getBookList iterates `for file in pairs(files)`
+                            -- and uses the KEY as the path (an array would
+                            -- yield integer keys -> a downstream crash).
+                            BookmarkBrowser:show({ [fp] = true }, FileManager.instance)
+                        end,
+                    }
+                end
+            end
+        end
+    end
+
     -- Cover thumbnail + title/author/metadata/filename header above
     -- the button rows, with the tappable nav pill strip at the bottom
     -- of the header. addWidget composes header into the dialog's
     -- title group; no title= field on the dialog itself -- the header
-    -- carries the book identity.
-    local header = self:_buildBookMenuHeader(book, nil, pill_specs)
+    -- carries the book identity. bookmark_action (when set) draws the
+    -- "N bookmark(s) ›" link in the header's top-right corner. Sized to the
+    -- dialog's added-widget width so it matches the button rows exactly.
+    local header = self:_buildBookMenuHeader(book,
+        dialog:getAddedWidgetAvailableWidth(), pill_specs, bookmark_action)
     if header then
         dialog:addWidget(header)
     end
@@ -10711,6 +10959,19 @@ function BookshelfWidget:_expandFolder(folder)
 end
 
 -- ─── Dismiss / passthrough ───────────────────────────────────────────────────
+
+function BookshelfWidget:_openStartMenu()
+    -- Defensive: with the start menu off there is no footer button and
+    -- no focusable "menu" slot, so nothing should reach this - but a
+    -- stale dispatcher action or queued gesture must not open it anyway.
+    if self:_startMenuPosition() == "off" then return end
+    local ok, StartMenu = pcall(require, "lib/bookshelf_start_menu")
+    if not ok or not StartMenu then
+        logger.warn("[bookshelf] start menu unavailable:", tostring(StartMenu))
+        return
+    end
+    StartMenu.open(self, self._footer_h_last or Screen:scaleBySize(40), self._burger_dimen)
+end
 
 function BookshelfWidget:onClose()
     UIManager:close(self)

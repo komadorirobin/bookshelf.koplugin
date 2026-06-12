@@ -2397,16 +2397,42 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
     if needs.book_count then
         -- Folder cards on the home/folder view have no book_count of their
         -- own; count their contents so "sort by Book count" orders folders
-        -- by how many books they hold (issue 90). Rides the cached
-        -- recursive walk -- getFolderBookPaths memoises per folder against
-        -- the same walk-list the badges use, so the sort value matches the
-        -- count shown on the card. Plain book entries have no folder-count
-        -- concept: they're left nil and the comparator (a.book_count or
-        -- #a.filepaths) sorts them to the end of their partition.
+        -- by how many books they hold (issue 90).
+        --
+        -- The obvious implementation -- getFolderBookPaths(e.fp) per folder
+        -- -- is O(folders x files): each call linear-scans the whole cached
+        -- walk-list with a fresh substring alloc per candidate. On a large
+        -- library (#113: ~hundreds of folders x ~1.6k files on a 1GHz Kobo)
+        -- that cost ~5.5s and froze the launch. Instead, walk every book's
+        -- parent chain upward ONCE and bump the first listed folder that's
+        -- an ancestor -- O(files x depth), the same attribution shape as the
+        -- last_opened block above. The count is identical to
+        -- getFolderBookPaths' prefix match (entries are siblings, so a book
+        -- under e.fp hits e.fp as its first listed ancestor), so the sort
+        -- value still matches the badge the card shows. Plain book entries
+        -- have no folder-count concept: they're left nil and the comparator
+        -- (a.book_count or #a.filepaths) sorts them to the end of their
+        -- partition.
+        local folder_by_fp = {}
         for _i, e in ipairs(entries) do
             if e.attr and e.attr.mode == "directory" then
-                local paths = Repo.getFolderBookPaths(e.fp)
-                e.book_count = paths and #paths or 0
+                e.book_count = 0
+                folder_by_fp[e.fp] = e
+            end
+        end
+        local home  = G_reader_settings:readSetting("home_dir") or "/"
+        local depth = BookshelfSettings.read("latest_walk_depth") or 3
+        local cands = cachedWalk(home, depth)
+        for i = 1, #cands do
+            local fp = cands[i].fp
+            local parent = fp and fp:match("^(.*)/[^/]+$")
+            while parent and parent ~= "" do
+                local folder = folder_by_fp[parent]
+                if folder then
+                    folder.book_count = folder.book_count + 1
+                    break
+                end
+                parent = parent:match("^(.*)/[^/]+$")
             end
         end
     end
@@ -4451,10 +4477,18 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
         -- page slice is rebuilt with full _safeBuildBookMeta below, so
         -- covers are still rendered correctly -- just for 8 books instead
         -- of 3000.
-        local function loadCandidatesByPredicate(pred)
+        local function loadCandidatesByPredicate(pred, walk_root)
             local home  = G_reader_settings:readSetting("home_dir") or "/"
             local depth = BookshelfSettings.read("latest_walk_depth") or 3
-            local cands = candidatesForScope(home, depth, scope)
+            -- walk_root lets a folder-scoped source (folder_flat, #76) walk
+            -- its own subtree directly instead of the whole home tree --
+            -- correct for folders OUTSIDE home_dir (Browse device), where a
+            -- home-rooted walk + prefix filter would find nothing. The light
+            -- metadata batch stays keyed to home; entries outside it fall
+            -- back to a per-file build in _lightMetaForFp.
+            local cands = walk_root
+                and cachedWalk(walk_root, depth)
+                or candidatesForScope(home, depth, scope)
             -- Pull the whole library's light metadata in a single batch
             -- SELECT instead of one prepared-statement call per file. On a
             -- 2000-book Calibre library that's ~50ms (one SQLite roundtrip)
@@ -4544,6 +4578,14 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             candidates = loadCandidatesByPredicate(function(b)
                 return type(b.filepath) == "string" and b.filepath:sub(1, #prefix) == prefix
             end)
+        elseif kind == "folder_flat" then
+            -- Flattened folder (#76): every book under source.id at any
+            -- depth, no folder cards -- the folder equivalent of "library"
+            -- (Home flattened). Walk the folder root directly so it works
+            -- for folders both inside and outside home_dir; the walk is
+            -- already scoped to the subtree, so the predicate is tautological.
+            candidates = loadCandidatesByPredicate(function(_b) return true end,
+                (source.id or ""):gsub("/+$", ""))
         elseif kind == "collection" then
             local rc  = require("readcollection")
             local set = {}

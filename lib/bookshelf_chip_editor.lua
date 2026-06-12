@@ -86,6 +86,11 @@ local SOURCE_SORT_DEFAULTS = {
     latest        = { { key = "date_added",      reverse = true  } },
     favorites     = { { key = "last_opened",     reverse = true  } },
     folder        = { { key = "filename",        reverse = false } },
+    -- Flattened folder (#76): a recursive book list with no folder cards,
+    -- so it sorts like "library" (Home flattened) rather than by filename.
+    folder_flat   = { { key = "author_surname",  reverse = false },
+                      { key = "series_name",     reverse = false },
+                      { key = "series_index",    reverse = false } },
     collection    = { { key = "last_opened",     reverse = true  } },
     tag           = { { key = "last_opened",     reverse = true  } },
     genre         = { { key = "author_surname",  reverse = false },
@@ -152,7 +157,7 @@ local function _applySourceDefaults(draft)
             -- Specific-X sources (folder, single_series, etc.): use the
             -- id as the label, with folder basename special-cased so
             -- long paths don't blow out the chip pill.
-            if draft.source.kind == "folder" then
+            if draft.source.kind == "folder" or draft.source.kind == "folder_flat" then
                 fresh = draft.source.id:match("([^/]+)/?$") or draft.source.id
             else
                 fresh = draft.source.id
@@ -208,6 +213,7 @@ SOURCE_LABEL = {
     favorites     = function() return _("Favourites")         end,
     -- "Specific X" kinds carry an id; the resolver appends it.
     folder        = function() return _("Folder")             end,
+    folder_flat   = function() return _("Folder (flattened)")  end,
     collection    = function() return _("Collection")         end,
     tag           = function() return _("Collection")         end,
     genre         = function() return _("Genre")              end,
@@ -231,7 +237,7 @@ local function _resolveSourceLabel(source)
         -- For folder paths, show the basename to keep the row tidy --
         -- "/mnt/us/Calibre/library/Pratchett" reads worse than "Pratchett".
         local id = source.id
-        if source.kind == "folder" then
+        if source.kind == "folder" or source.kind == "folder_flat" then
             id = id:match("([^/]+)/?$") or id
         end
         return label .. ": " .. id
@@ -401,19 +407,14 @@ function Editor:editTab(tab_id, opts)
 
         local function open_label_dialog()
             local label_dialog
-            -- Build the button row. "Insert icon..." only appears when
-            -- bookends's IconsLibrary is available; without it the row
-            -- collapses to Cancel / OK.
+            local IconsLibrary = require("lib/bookshelf_icons_library")
             local row = {
                 {
                     text     = _("Cancel"),
                     id       = "close",
                     callback = function() UIManager:close(label_dialog) end,
                 },
-            }
-            local ok_il, IconsLibrary = pcall(require, "menu.icons_library")
-            if ok_il and IconsLibrary and IconsLibrary.show then
-                row[#row + 1] = {
+                {
                     text     = _("Insert icon\xE2\x80\xA6"),
                     callback = function()
                         -- Dismiss the on-screen keyboard before showing the
@@ -440,13 +441,14 @@ function Editor:editTab(tab_id, opts)
                         if label_dialog then
                             label_dialog.deny_keyboard_hiding = true
                         end
+                        -- Chip labels render literally (no token
+                        -- expansion), so dynamic %tokens are excluded.
                         IconsLibrary:show(function(glyph)
                             if label_dialog then
                                 label_dialog.deny_keyboard_hiding = false
                             end
-                            -- Insert the glyph at cursor in the InputDialog.
-                            -- KOReader's InputDialog exposes addTextToInput
-                            -- (lifts the bookends_line_editor pattern).
+                            -- Insert the glyph at cursor in the InputDialog
+                            -- via KOReader's InputDialog addTextToInput.
                             if glyph and glyph ~= ""
                                     and label_dialog and label_dialog.addTextToInput then
                                 pcall(function() label_dialog:addTextToInput(glyph) end)
@@ -454,10 +456,10 @@ function Editor:editTab(tab_id, opts)
                             if label_dialog and label_dialog.onShowKeyboard then
                                 pcall(function() label_dialog:onShowKeyboard() end)
                             end
-                        end)
+                        end, { dynamic = false })
                     end,
-                }
-            end
+                },
+            }
             row[#row + 1] = {
                 text             = _("OK"),
                 is_enter_default = true,
@@ -951,7 +953,7 @@ function Editor:_pickSource(draft, on_close)
     -- Uses bookshelf_library_modal (ported from bookends) so bookshelf
     -- works standalone. ButtonDialog fallback retained as a safety net
     -- in case the LibraryModal require ever fails.
-    local function pickById(kind, choices, on_pick)
+    local function pickById(kind, choices, on_pick, opts)
         local ok_lm, LibraryModal = pcall(require, "lib/bookshelf_library_modal")
         if ok_lm and LibraryModal and LibraryModal.new then
             local Font          = require("ui/font")
@@ -983,7 +985,7 @@ function Editor:_pickSource(draft, on_close)
             local modal
             modal = LibraryModal:new{
                 config = {
-                    title              = _("Choose ") .. kind,
+                    title              = (opts and opts.title) or (_("Choose ") .. kind),
                     search_placeholder = function() return _("Search\xE2\x80\xA6") end,
                     on_search_submit   = function(q)
                         query = q
@@ -1008,8 +1010,25 @@ function Editor:_pickSource(draft, on_close)
                         UIManager:close(modal)
                         on_pick(item.value)
                     end,
-                    footer_actions = {
-                        {
+                    footer_actions = (function()
+                        -- Extra actions (e.g. the folder picker's "Browse
+                        -- device") sit to the LEFT of Close. Each is wrapped
+                        -- so the modal is torn down before the handler runs --
+                        -- the handler typically opens another widget and
+                        -- shouldn't have to juggle this modal's handle.
+                        local actions = {}
+                        if opts and opts.extra_footer_actions then
+                            for _i, a in ipairs(opts.extra_footer_actions) do
+                                actions[#actions + 1] = {
+                                    label  = a.label,
+                                    on_tap = function()
+                                        UIManager:close(modal)
+                                        a.on_tap()
+                                    end,
+                                }
+                            end
+                        end
+                        actions[#actions + 1] = {
                             label  = _("Close"),
                             -- Signal cancel via nil so the caller can
                             -- reopen the parent picker. Without this, Close
@@ -1019,8 +1038,9 @@ function Editor:_pickSource(draft, on_close)
                                 UIManager:close(modal)
                                 on_pick(nil)
                             end,
-                        },
-                    },
+                        }
+                        return actions
+                    end)(),
                 },
             }
             UIManager:show(modal)
@@ -1036,11 +1056,22 @@ function Editor:_pickSource(draft, on_close)
                 callback = function() on_pick(c.value); UIManager:close(k) end,
             }}
         end
+        if opts and opts.extra_footer_actions then
+            for _i, a in ipairs(opts.extra_footer_actions) do
+                rows[#rows + 1] = {{
+                    text     = a.label,
+                    callback = function() UIManager:close(k); a.on_tap() end,
+                }}
+            end
+        end
         rows[#rows + 1] = {{
             text     = _("Cancel"),
             callback = function() UIManager:close(k); on_pick(nil) end,
         }}
-        k = ButtonDialog:new{ title = _("Choose " .. kind), buttons = rows }
+        k = ButtonDialog:new{
+            title   = (opts and opts.title) or _("Choose " .. kind),
+            buttons = rows,
+        }
         UIManager:show(k)
     end
     -- Built-in shortcuts + working custom kinds.
@@ -1145,18 +1176,65 @@ function Editor:_pickSource(draft, on_close)
     -- subtitle (rendered by pickById's cell renderer) so duplicate basenames
     -- can be disambiguated. The picked path is the source id; getBySource
     -- prefix-matches it against book filepaths.
-    local function open_folder_picker()
+    -- folder_kind is "folder" (tree view, subfolders as cards) or
+    -- "folder_flat" (#76: every book under the path, no folder cards).
+    -- Both share the same picker + Browse-device flow; only the stored
+    -- source kind differs.
+    local function open_folder_picker(folder_kind)
+        folder_kind = folder_kind or "folder"
         local choices = Repo.getFolderChoices() or {}
         UIManager:close(d)
+
+        local function pick_path(picked)
+            draft.source = { kind = folder_kind, id = picked }
+            _applySourceDefaults(draft)
+            on_close()
+        end
+
+        -- "Browse device": KOReader's own folder navigator, unrooted, so any
+        -- folder on the device can back a chip -- including ones outside the
+        -- home folder that getFolderChoices (home-tree + book-bearing only)
+        -- never offers. Folder-only config matches Settings:_pickImageLibraryPath.
+        local function browse_device()
+            local PathChooser = require("ui/widget/pathchooser")
+            local confirmed = false
+            UIManager:show(PathChooser:new{
+                path             = G_reader_settings:readSetting("home_dir") or "/",
+                select_directory = true,
+                select_file      = false,
+                show_files       = false,
+                onConfirm        = function(folder)
+                    confirmed = true
+                    -- Normalise to getFolderChoices' no-trailing-slash id form
+                    -- so both entry points store the path identically.
+                    folder = (folder == "/") and "/" or folder:gsub("/+$", "")
+                    pick_path(folder)
+                end,
+                -- Backing out of the browser without choosing returns to the
+                -- source picker rather than dropping to the shelf -- the
+                -- editor's dialog `d` was already closed when the flat-list
+                -- picker opened, so there's nothing underneath to fall back to.
+                -- close_callback fires on any close, hence the confirmed guard.
+                close_callback   = function()
+                    if not confirmed then
+                        Editor:_pickSource(draft, on_close)
+                    end
+                end,
+            })
+        end
+
         pickById("folder", choices, function(picked)
             if not picked then
                 Editor:_pickSource(draft, on_close)
                 return
             end
-            draft.source = { kind = "folder", id = picked }
-            _applySourceDefaults(draft)
-            on_close()
-        end)
+            pick_path(picked)
+        end, {
+            title = _("Choose folder within home folder"),
+            extra_footer_actions = {
+                { label = _("Browse device\xE2\x80\xA6"), on_tap = browse_device },
+            },
+        })
     end
 
     local function btn(kind_value, label, on_tap)
@@ -1182,15 +1260,21 @@ function Editor:_pickSource(draft, on_close)
             btn("latest",    _("Latest added")),
             btn("favorites", _("\xE2\x98\x85 Favourites")),  -- ★ Favourites
         },
-        -- Row 2: full-library flattened view, full-width (no specific pair)
-        {
-            btn("library",   _("Home (flattened)")),
-        },
-        -- Row 3: folder pair -- Home (folders) browses the tree, the
-        -- specific-picker pins one folder subtree as the chip target.
+        -- Home pair: folders (tree view) on the left, flattened (every book,
+        -- no subfolder cards) on the right.
         {
             btn("all",       _("Home (folders)")),
-            specific_btn("folder", _("Specific folder\xE2\x80\xA6"), open_folder_picker),
+            btn("library",   _("Home (flattened)")),
+        },
+        -- Specific-folder pair (#76): same folder picker + Browse-device
+        -- flow, differing only in render. Left pins a folder subtree as a
+        -- tree (subfolder cards); right flattens it to every book under the
+        -- path with no subfolder cards. Mirrors the Home pair above.
+        {
+            specific_btn("folder", _("Specific folder\xE2\x80\xA6"),
+                function() open_folder_picker("folder") end),
+            specific_btn("folder_flat", _("Flattened folder\xE2\x80\xA6"),
+                function() open_folder_picker("folder_flat") end),
         },
         -- Rows 4+: browse-all on the left, specific-picker on the right
         {
@@ -1414,53 +1498,16 @@ function Editor:_pickSortLevel(draft, level_index, on_close)
     }
     UIManager:show(d)
 end
--- _pickIcon -- opens bookends's IconsLibrary if present, otherwise falls back
--- to a small built-in list of useful nerd-font glyphs. Selection writes the
--- glyph (UTF-8 string) into draft.icon; "(none)" clears it.
+-- _pickIcon -- opens the bundled icons library (categorised glyph grid).
+-- Selection writes the glyph (UTF-8 string) into draft.icon. Dynamic
+-- %tokens are excluded: both consumers (chip icons, start menu icons)
+-- render the value literally, with no token expansion.
 function Editor:_pickIcon(draft, on_close)
-    -- Try bookends IconsLibrary first (richer picker with categories)
-    local ok, IconsLibrary = pcall(require, "menu.icons_library")
-    if ok and IconsLibrary and IconsLibrary.show then
-        IconsLibrary:show(function(value)
-            draft.icon = value and value ~= "" and value or nil
-            on_close()
-        end)
-        return
-    end
-    -- Fallback: a curated short list of bookshelf-relevant glyphs.
-    local FALLBACK_ICONS = {
-        { glyph = nil,            label = _("(none)")        },
-        { glyph = "\xE2\x98\x85", label = _("Star")          }, -- ★
-        { glyph = "\xE2\x99\xA5", label = _("Heart")         }, -- ♥
-        { glyph = "\xE2\x9C\x93", label = _("Check")         }, -- ✓
-        { glyph = "\xE2\x96\xB6", label = _("Play")          }, -- ▶
-        { glyph = "\xF0\x9F\x93\x96", label = _("Book")      }, -- 📖
-        { glyph = "\xF0\x9F\x93\x9A", label = _("Books")     }, -- 📚
-        { glyph = "\xF0\x9F\x94\x8D", label = _("Search")    }, -- 🔍
-    }
-    local d
-    local buttons = {}
-    for _i,opt in ipairs(FALLBACK_ICONS) do
-        local prefix = (draft.icon == opt.glyph) and "\xE2\x9C\x93 " or "  "
-        local display = opt.glyph and (opt.glyph .. "  " .. opt.label) or opt.label
-        buttons[#buttons + 1] = {{
-            text     = prefix .. display,
-            callback = function()
-                draft.icon = opt.glyph
-                UIManager:close(d)
-                on_close()
-            end,
-        }}
-    end
-    buttons[#buttons + 1] = {{
-        text     = _("Close"),
-        callback = function() UIManager:close(d); on_close() end,
-    }}
-    d = ButtonDialog:new{
-        title   = _("Chip icon"),
-        buttons = buttons,
-    }
-    UIManager:show(d)
+    local IconsLibrary = require("lib/bookshelf_icons_library")
+    IconsLibrary:show(function(value)
+        draft.icon = value and value ~= "" and value or nil
+        on_close()
+    end, { dynamic = false })
 end
 
 -- Exposed for tests/_test_chip_editor.lua (config tables + the pure

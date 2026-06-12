@@ -49,6 +49,21 @@ local Bookshelf = WidgetContainer:extend{
     is_doc_only = false, -- must be false: hook fires in Reader context
 }
 
+-- Canonical order of the plugin's main-menu entries. Consumed by the
+-- KOMenu order hook below AND by the start menu's "Bookshelf menu"
+-- action, which probes addToMainMenu and hosts these in this order.
+Bookshelf.MENU_ORDER = {
+    "bookshelf_toggle",
+    "bookshelf_hero_card",
+    "bookshelf_shelf_tabs",
+    "bookshelf_collections",
+    "bookshelf_hardcover",
+    "bookshelf_settings",
+    "bookshelf_selection_mode",
+    "bookshelf_updates",
+    "bookshelf_about",
+}
+
 -- Color picker UI: attached lazily on first use. The palette module
 -- pulls ~two dozen widget modules (InputText among them) for a dialog
 -- most sessions never open; requiring it at plugin load taxed every
@@ -465,17 +480,7 @@ function Bookshelf:_extendMenuOrder()
     -- pass (which hardcodes table.insert([1], v)) doesn't dump unrelated
     -- plugin entries into the Bookshelf tab.
     table.insert(order["KOMenu:menu_buttons"], 2, "bookshelf_tab")
-    order.bookshelf_tab = {
-        "bookshelf_toggle",
-        "bookshelf_hero_card",
-        "bookshelf_shelf_tabs",
-        "bookshelf_collections",
-        "bookshelf_hardcover",
-        "bookshelf_settings",
-        "bookshelf_selection_mode",
-        "bookshelf_updates",
-        "bookshelf_about",
-    }
+    order.bookshelf_tab = Bookshelf.MENU_ORDER
 end
 
 -- True when the BookshelfWidget singleton is in the UIManager window stack
@@ -713,6 +718,13 @@ function Bookshelf:show(profile_key)
     -- splits paint + deferred shelf reload.
     local diag_t0 = _gettime()
     local diag_branch
+    -- Stash the plugin ref for settings callbacks (hideMenu, color picker).
+    -- addToMainMenu also stashes it, but FileManagerMenu builds its item
+    -- table lazily on first menu open - the start menu's "Bookshelf
+    -- settings" host can be reached before that ever happens (e.g.
+    -- start_with auto-open), so anchor the ref to the widget's own
+    -- lifecycle too.
+    require("lib/bookshelf_settings")._plugin = self
     -- Record the FileManager path the overlay is (re)appearing over, so
     -- onPathChanged can tell its own-takeover PathChanged (same path) apart
     -- from a real navigation underneath (different path -> drill in).

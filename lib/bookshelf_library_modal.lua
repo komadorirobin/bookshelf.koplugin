@@ -958,7 +958,9 @@ function LibraryModal:refresh()
     local cw = self.content_w
     -- modal_w is passed so _renderTitleBar can draw an edge-to-edge separator.
     local title = self:_renderTitleBar(cw, self.modal_w)
-    local search = self:_renderSearchInput(cw)
+    -- Domains with a handful of items (e.g. the module picker) can opt out
+    -- of the search row entirely via config.no_search.
+    local search = not self.config.no_search and self:_renderSearchInput(cw) or nil
     local chips = self:_renderChipStrip(cw)
     local pagination = self:_renderPagination(cw)
     local footer = self:_renderFooter(cw)
@@ -1011,9 +1013,11 @@ function LibraryModal:refresh()
         align = "left",
         title,                                       -- spans full modal_w (separator inside)
         VerticalSpan:new{ width = MARGIN },
-        padded(search),
-        VerticalSpan:new{ width = MARGIN },
     }
+    if search then
+        table.insert(body, padded(search))
+        table.insert(body, VerticalSpan:new{ width = MARGIN })
+    end
     if chips then
         table.insert(body, padded(chips))
         table.insert(body, VerticalSpan:new{ width = MARGIN })
