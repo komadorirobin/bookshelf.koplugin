@@ -611,33 +611,43 @@ function StartMenu:_build()
     -- The pager row (if active) adds roughly one row_stride to the total, so
     -- its estimated height is included in the overflow check.
     local avail_panel_h = sh - self.bottom_inset
-    local slice, has_prev, has_next, root_frame, root_rows
-    repeat
+    -- Module rows render taller than the _row_h estimate _maxRows uses, so the
+    -- first build may overflow. Rather than decrement max_rows by 1 and rebuild
+    -- repeatedly (each rebuild re-renders every module), build ONCE, then if it
+    -- overflows use the MEASURED row heights to pick how many bottom rows fit
+    -- and rebuild ONCE at that count. Worst case two builds, not ~N.
+    local function _overflows(frame, hp, hn)
+        local h = frame:getSize().h
+        if hp or hn then h = h + self._row_h + 2 * self._focus_border end
+        return h > avail_panel_h
+    end
+    local slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
+    local root_frame, root_rows = self:_buildPanel(slice, root_w)
+    local need_rebuild = false
+    if max_rows > 1 and _overflows(root_frame, has_prev, has_next) then
+        -- Sum measured row heights from the bottom (the panel is bottom-
+        -- anchored), reserving the pager slot, to find how many rows fit.
+        local chrome = 2 * (self._panel_border + self._panel_pad)
+        local budget = avail_panel_h - chrome - (self._row_h + 2 * self._focus_border)
+        local acc, fit = 0, 0
+        for i = #root_rows, 1, -1 do
+            acc = acc + root_rows[i].row:getSize().h
+            if acc > budget then break end
+            fit = fit + 1
+        end
+        local new_max = math.max(2, fit + 1) -- +1: _pageSlice reserves a pager row
+        if new_max < max_rows then max_rows = new_max; need_rebuild = true end
+    end
+    -- Clamp the scroll offset to the final max_rows (bottom-seeded _page).
+    if max_rows > 1 then
+        local _per   = math.max(1, max_rows - 1)
+        local _pages = math.max(1, math.ceil(#self._items / _per))
+        if self._page > _pages then self._page = _pages; need_rebuild = true end
+    end
+    if need_rebuild then
+        root_frame:free()
         slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
         root_frame, root_rows = self:_buildPanel(slice, root_w)
-        local panel_h = root_frame:getSize().h
-        if has_prev or has_next then
-            panel_h = panel_h + self._row_h + 2 * self._focus_border
-        end
-        if panel_h <= avail_panel_h or max_rows <= 1 then break end
-        root_frame:free()
-        max_rows = max_rows - 1
-    until false
-    -- Clamp _page to the range [1, actual_pages] now that the overflow loop has
-    -- determined the effective max_rows. _reload()/_rebuild_only() skip this
-    -- computation because they use the nominal (pre-overflow) max_rows.
-    if max_rows > 1 then
-        local _total = #self._items
-        if _total > max_rows then
-            local _per   = max_rows - 1
-            local _pages = math.max(1, math.ceil(_total / _per))
-            if self._page > _pages then
-                self._page = _pages
-                root_frame:free()
-                slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
-                root_frame, root_rows = self:_buildPanel(slice, root_w)
-            end
-        end
     end
     self._root_pager = nil
     if has_prev or has_next then
