@@ -2197,6 +2197,14 @@ function BookshelfWidget:_pollExtraction()
     end
     local max_tries = BIM.max_extract_tries or 3
     local ready_paths   = {}
+    -- Subset of ready_paths whose extraction included a COVER (had
+    -- cover_specs). These need their ScaledCoverCache entry dropped before
+    -- the re-render: the bb we seeded on first paint may be an UPSCALE of a
+    -- too-small thumbnail (blurry), and the re-render skips re-decoding while
+    -- has(fp) is true -- so without the drop it repaints the stale blurry bb
+    -- and the cover only sharpens once a larger (hero) render forces a fresh
+    -- decode, i.e. when the user taps it (issue #125).
+    local ready_cover_paths = {}
     local still_pending = {}
     local gave_up_count = 0
     for _i, f in ipairs(files) do
@@ -2232,6 +2240,7 @@ function BookshelfWidget:_pollExtraction()
         local outcome
         if meta_ready and inprog == 0 and cover_ready then
             ready_paths[f.filepath] = true
+            if f.cover_specs then ready_cover_paths[f.filepath] = true end
             outcome = "READY"
         elseif info and inprog >= max_tries then
             -- BIM gave up on this file; stop watching it.
@@ -2282,6 +2291,18 @@ function BookshelfWidget:_pollExtraction()
         end)
     end
     if next(ready_paths) and self._inner_vgroup and self._shelf_dims then
+        -- A just-extracted cover is sharper than whatever we seeded on first
+        -- paint -- which, for a thumbnail that started smaller than the slot,
+        -- was an upscale (blurry). Drop those stale ScaledCoverCache entries
+        -- so the re-render below decodes the fresh BIM cover instead of
+        -- repainting the cached blurry bb. Without this the cover only
+        -- sharpens once a larger (hero) render forces a fresh decode, i.e.
+        -- when the user taps the book (issue #125). drop() is a no-op when
+        -- there's no entry (the no-cover -> cover case never seeded one).
+        if next(ready_cover_paths) then
+            local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+            for fp in pairs(ready_cover_paths) do ScaledCoverCache:drop(fp) end
+        end
         -- _swapShelvesInPlace re-fetches Book records (which re-query
         -- BIM) and re-arms polling for whatever is still missing.
         self:_swapShelvesInPlace()
