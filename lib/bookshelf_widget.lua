@@ -326,8 +326,16 @@ function BookshelfWidget:_handleSimpleUIBottomBarHold(ev)
     end
 
     local action_id, kind = self:_simpleUIBottomBarSlot(ev.pos)
+    local sig = tostring(kind) .. ":" .. tostring(action_id)
+    if ev.ges == "hold_release" and self._simpleui_bottom_hold_sig then
+        self._simpleui_bottom_hold_sig = nil
+        return true
+    end
     if kind == "outside" then return false end
-    if ev.ges ~= "hold_release" then return true end
+    if ev.ges == "hold" then
+        if self._simpleui_bottom_hold_sig == sig then return true end
+        self._simpleui_bottom_hold_sig = sig
+    end
 
     if kind == "prev" then
         if self.page > 1 then
