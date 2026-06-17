@@ -17,6 +17,11 @@ return {
                                       -- (or a function(ctx) -> bool, resolved at tap time)
     wants_minute_tick = true,         -- optional: re-render every minute (clocks)
     show_settings = function(ctx) ... end, -- optional settings dialog
+    -- Hero-grid hints (all optional) -- see "Hero-grid hints" below:
+    aspect       = "square",          -- pack as a square (clocks, icon cards)
+    network      = { "api.example.com" }, -- data-source domains; flags network-required
+    hero_only    = true,              -- hide from the start-menu picker
+    tap_feedback = true,              -- instant pressed border on tap (launchers)
 }
 ```
 
@@ -75,8 +80,15 @@ end
 
 `fitText` reports its **natural** height when the text fits within `max_h` (so
 the host's grow can still enlarge the font), and ellipsis-clamps to `max_h` only
-at the extreme. `quote_of_day` and `trivia` use this for the quote body / the
-question. Do **not** run your own scale loop — it fights the host's.
+at the extreme. Do **not** run your own scale loop — it fights the host's.
+
+**Pass `max_h` only to protect *other* parts of the card.** `trivia` does: it
+reserves room for the answer options, so a very long question ellipsis-clamps
+rather than pushing the options off. But if the flexible text *is* the whole
+card (e.g. `quote_of_day`), **omit `max_h`** and return the text at its natural
+height — clamping it would make the card "fit" by truncating, so the host would
+never see the overflow and never shrink the font. Without the clamp the host
+shrinks the font to fit and only clips at the very extreme.
 
 ### Aspect (optional `shape`)
 
@@ -161,6 +173,32 @@ the Add picker renders *every* registered module's preview, so an unguarded
 fetch fires a burst of network calls (and has crashed the picker before). A
 broken `render` is `pcall`'d and skipped, so it won't take down the menu — but a
 blocking one will freeze the UI.
+
+## Hero-grid hints (optional spec fields)
+
+These tune how a module behaves in the home-screen hero grid. All are optional;
+omit them and you get the sensible default (a flex/text card offered everywhere).
+
+- `aspect = "square"` — pack this card as a square (the grid fits more per row
+  and centres your content) instead of letting it stretch across the row. Use it
+  for clocks and icon/launcher cards; leave it off for text cards, which should
+  fill the row width. The 6th `render` arg `shape` reports the resulting cell
+  aspect (see **Aspect** above).
+- `network = { "host", ... }` — the data-source domains your module fetches from.
+  Declaring it marks the module network-required: the Add picker shows a
+  "Network required / Data provided by: …" panel for it instead of live-rendering
+  a preview, so browsing the picker never fires a fetch. Pair it with a `summary`
+  that ends in "Needs internet."
+- `hero_only = true` — the module only makes sense in the hero grid (e.g.
+  `action`, a launcher); it's hidden from the start-menu module picker.
+- `tap_feedback = true` — draw an instant pressed border when the card is tapped,
+  for launcher-style cards that *do* something on tap. Leave it off for passive
+  cards (a tap that only re-rolls or does nothing shouldn't flash a border).
+
+Arrangement is the **host's** job, not yours: the user moves a card, resizes its
+width, and assigns it to one of the grid's pages from the long-press menu; the
+grid paginates and renders only the visible page. A module never reads or writes
+its page/size/position — just render your content and let the host place it.
 
 ## `summary`
 
