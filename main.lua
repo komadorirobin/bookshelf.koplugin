@@ -937,6 +937,18 @@ function Bookshelf:onDispatcherRegisterActions()
         title    = _("Bookshelf: open Comics profile"),
         general  = true,
     })
+    Dispatcher:registerAction("open_bookshelf_prose_start_menu", {
+        category = "none",
+        event    = "OpenBookshelfProseStartMenu",
+        title    = _("Bookshelf: open Books start menu"),
+        general  = true,
+    })
+    Dispatcher:registerAction("open_bookshelf_comics_start_menu", {
+        category = "none",
+        event    = "OpenBookshelfComicsStartMenu",
+        title    = _("Bookshelf: open Comics start menu"),
+        general  = true,
+    })
     Dispatcher:registerAction("open_bookshelf_auto", {
         category = "none",
         event    = "OpenBookshelfAuto",
