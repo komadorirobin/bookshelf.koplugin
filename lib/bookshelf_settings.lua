@@ -3054,6 +3054,129 @@ function Settings:_pickStartMenuFontScale(touchmenu_instance)
     UIManager:show(dialog)
 end
 
+function Settings:_pickPaginationFooterFontScale(touchmenu_instance)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local key = "pagination_footer_font_scale"
+    local original = BookshelfSettings.read(key, 100)
+    local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
+
+    local function getValue() return BookshelfSettings.read(key, 100) end
+    local function setValue(v)
+        v = math.max(50, math.min(200, v))
+        BookshelfSettings.save(key, v)
+    end
+    local function rebuild()
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+
+    local dialog
+    local function nudge(delta)
+        setValue(getValue() + delta)
+        rebuild()
+        Focus.reinit(dialog)
+    end
+    local function close() UIManager:close(dialog); restoreMenu() end
+    local function revert() setValue(original); rebuild() end
+
+    dialog = ButtonDialog:new{
+        dismissable = false,
+        title = _("Pagination footer font scale"),
+        buttons = {
+            {
+                { text = "-10", callback = function() nudge(-10) end },
+                { text = "-5",  callback = function() nudge(-5)  end },
+                { text_func = function() return tostring(getValue()) .. "%" end,
+                  enabled = false },
+                { text = "+5",  callback = function() nudge(5)   end },
+                { text = "+10", callback = function() nudge(10)  end },
+            },
+            {
+                { text = _("Cancel"), callback = function() revert(); close() end },
+                { text = _("Default"),
+                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+        tap_close_callback = revert,
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+end
+
+function Settings:_pickPaginationFooterMargin(touchmenu_instance, key, title)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local original = BookshelfSettings.read(key, 0)
+    local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
+
+    local function getValue() return BookshelfSettings.read(key, 0) end
+    local function setValue(v)
+        v = math.max(0, math.min(60, v))
+        BookshelfSettings.save(key, v)
+    end
+    local function rebuild()
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+
+    local dialog
+    local function nudge(delta)
+        setValue(getValue() + delta)
+        rebuild()
+        Focus.reinit(dialog)
+    end
+    local function close() UIManager:close(dialog); restoreMenu() end
+    local function revert() setValue(original); rebuild() end
+
+    dialog = ButtonDialog:new{
+        dismissable = false,
+        title = title,
+        buttons = {
+            {
+                { text = "-4", callback = function() nudge(-4) end },
+                { text = "-1", callback = function() nudge(-1) end },
+                { text_func = function() return tostring(getValue()) .. " px" end,
+                  enabled = false },
+                { text = "+1", callback = function() nudge(1)  end },
+                { text = "+4", callback = function() nudge(4)  end },
+            },
+            {
+                { text = _("Cancel"), callback = function() revert(); close() end },
+                { text = _("Default"),
+                  callback = function() setValue(0); rebuild(); Focus.reinit(dialog) end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+        tap_close_callback = revert,
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+end
+
+function Settings:_pickPaginationFooterTopMargin(touchmenu_instance)
+    self:_pickPaginationFooterMargin(
+        touchmenu_instance,
+        "pagination_footer_top_margin",
+        _("Pagination footer top margin"))
+end
+
+function Settings:_pickPaginationFooterBottomMargin(touchmenu_instance)
+    self:_pickPaginationFooterMargin(
+        touchmenu_instance,
+        "pagination_footer_bottom_margin",
+        _("Pagination footer bottom margin"))
+end
+
 -- Bookshelf UI font picker -- reuses the hero line editor's font picker
 -- (bookends-rich preview when available, FontList file picker otherwise).
 -- Applies on tap: the chosen font is saved and the live bookshelf rebuilt
@@ -3086,11 +3209,11 @@ function Settings:_textSizeSubItems()
     -- through `row(_("..."), ...)` instead of `row("...", ...)` so
     -- xgettext sees the literal strings -- dynamic `_(label_key)` in
     -- text_func would not be picked up by extraction.
-    local function row(label, setting_key, default, pick_fn)
+    local function row(label, setting_key, default, pick_fn, suffix)
         return {
             text_func = function()
                 local v = BookshelfSettings.read(setting_key, default)
-                return label .. ": " .. tostring(v) .. "%"
+                return label .. ": " .. tostring(v) .. (suffix or "%")
             end,
             keep_menu_open = true,
             callback = function(touchmenu_instance)
@@ -3112,6 +3235,9 @@ function Settings:_textSizeSubItems()
         row(_("Expanded shelf labels"), "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
         row(_("Cover badges"),          "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
         row(_("Start menu"),            "start_menu_font_scale",     100, "_pickStartMenuFontScale"),
+        row(_("Pagination footer"),     "pagination_footer_font_scale", 100, "_pickPaginationFooterFontScale"),
+        row(_("Pagination top margin"), "pagination_footer_top_margin", 0, "_pickPaginationFooterTopMargin", " px"),
+        row(_("Pagination bottom margin"), "pagination_footer_bottom_margin", 0, "_pickPaginationFooterBottomMargin", " px"),
     }
 end
 

@@ -126,6 +126,16 @@ local function _androidSafeModeEnabled()
         and BookshelfSettings.nilOrTrue("android_safe_mode")
 end
 
+local function _paginationFooterFontScale()
+    local v = tonumber(BookshelfSettings.read("pagination_footer_font_scale", 100)) or 100
+    return math.max(50, math.min(200, v))
+end
+
+local function _paginationFooterMarginPx(key)
+    local v = tonumber(BookshelfSettings.read(key, 0)) or 0
+    return Screen:scaleBySize(math.max(0, math.min(60, v)))
+end
+
 -- ─── BookshelfWidget ──────────────────────────────────────────────────────────
 
 local BookshelfWidget = InputContainer:extend{
@@ -141,6 +151,25 @@ local BookshelfWidget = InputContainer:extend{
     -- Tags / Authors chips can drill multiple levels.
     _drilldown_path  = {},
 }
+
+function BookshelfWidget:_paginationFooterTextSize()
+    return math.max(8, math.floor(15 * _paginationFooterFontScale() / 100 + 0.5))
+end
+
+function BookshelfWidget:_paginationFooterTopMargin()
+    return _paginationFooterMarginPx("pagination_footer_top_margin")
+end
+
+function BookshelfWidget:_paginationFooterBottomMargin()
+    return _paginationFooterMarginPx("pagination_footer_bottom_margin")
+end
+
+function BookshelfWidget:_paginationFooterHeight()
+    return Screen:scaleBySize(32) + 2 * Screen:scaleBySize(4)
+        + Screen:scaleBySize(12)
+        + self:_paginationFooterTopMargin()
+        + self:_paginationFooterBottomMargin()
+end
 
 -- _coverNeedsResize(info, specs) — bookshelf-specific re-extract gate.
 -- BIM's isCachedCoverInvalid flips true on any pixel difference; with our
@@ -1366,8 +1395,7 @@ function BookshelfWidget:_rebuild()
     -- state — bordersize and margin swap when focused, but together
     -- they always reserve 2*focus_border of outer space.
     --   outer = chev_size + 2*focus_border + hit_extension
-    local FOOTER_H             = Screen:scaleBySize(32) + 2 * Screen:scaleBySize(4)
-                                 + Screen:scaleBySize(12)
+    local FOOTER_H             = self:_paginationFooterHeight()
     local FOOTER_BOTTOM_MARGIN = 0
     local footer_h             = FOOTER_H + FOOTER_BOTTOM_MARGIN
     local show_footer_row      = (not self._simpleui_bar_ctx)
@@ -3926,7 +3954,7 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         -- resolves text_font_face via Font:getFace, and the UI-font setting
         -- stores a resolvable face, so the name can be passed straight in.
         text_font_face = BFont.getUIFontFace() or "cfont",
-        text_font_size = 15,
+        text_font_size = self:_paginationFooterTextSize(),
         width      = slot(SLOT_PAGE),
         callback   = function() bw:_openPageJump() end,
         margin     = bm("page"), bordersize = bs("page"), radius = br("page"),
@@ -4288,20 +4316,25 @@ function BookshelfWidget:_buildFooterRow(content_w, total_pages, footer_h)
     local CenterContainer = require("ui/widget/container/centercontainer")
     local LeftContainer   = require("ui/widget/container/leftcontainer")
     local RightContainer  = require("ui/widget/container/rightcontainer")
-    local chev_row  = self:_buildPaginationFooter(content_w, footer_h, total_pages)
+    local margin_top    = self:_paginationFooterTopMargin()
+    local margin_bottom = self:_paginationFooterBottomMargin()
+    local content_h     = math.max(1, footer_h - margin_top - margin_bottom)
+    local chev_row      = self:_buildPaginationFooter(content_w, content_h, total_pages)
     -- Wrap chev_row in a CenterContainer of footer_h height so the row
     -- centers vertically — same treatment the X and bucket get below.
     local centered_chev = CenterContainer:new{
-        dimen = Geom:new{ w = content_w, h = footer_h },
+        dimen = Geom:new{ w = content_w, h = content_h },
         chev_row,
     }
+    local centered_footer = CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = content_h },
+        centered_chev,
+    }
+    centered_footer.overlap_offset = { 0, margin_top }
     local row = OverlapGroup:new{
         dimen = Geom:new{ w = self.width, h = footer_h },
         allow_mirroring = false,
-        CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = footer_h },
-            centered_chev,
-        },
+        centered_footer,
     }
     if self._selection:isActive() then
         -- Side-strip width = space between the chev nav strip (75% of
@@ -4314,16 +4347,20 @@ function BookshelfWidget:_buildFooterRow(content_w, total_pages, footer_h)
         local focused_slot   = in_overlay and (self._sel_overlay_slot or "bucket")
         local exit_focused   = focused_slot == "exit_x"
         local bucket_focused = focused_slot == "bucket"
-        local exit_icon   = self:_buildExitIcon(exit_focused, side_strip_w, footer_h)
-        local bucket_icon = self:_buildBucketIcon(bucket_focused, side_strip_w, footer_h)
-        row[#row + 1] = LeftContainer:new{
-            dimen = Geom:new{ w = self.width, h = footer_h },
+        local exit_icon   = self:_buildExitIcon(exit_focused, side_strip_w, content_h)
+        local bucket_icon = self:_buildBucketIcon(bucket_focused, side_strip_w, content_h)
+        local exit_container = LeftContainer:new{
+            dimen = Geom:new{ w = self.width, h = content_h },
             exit_icon,
         }
-        row[#row + 1] = RightContainer:new{
-            dimen = Geom:new{ w = self.width, h = footer_h },
+        exit_container.overlap_offset = { 0, margin_top }
+        row[#row + 1] = exit_container
+        local bucket_container = RightContainer:new{
+            dimen = Geom:new{ w = self.width, h = content_h },
             bucket_icon,
         }
+        bucket_container.overlap_offset = { 0, margin_top }
+        row[#row + 1] = bucket_container
     else
         local menu_pos = self:_startMenuPosition()
         if menu_pos == "off" then
@@ -4337,12 +4374,14 @@ function BookshelfWidget:_buildFooterRow(content_w, total_pages, footer_h)
             local side_strip_w = math.floor((self.width - nav_strip_w) / 2)
             local burger_focused = (self._focus_zone == "footer")
                 and (self._footer_cursor_btn == "menu")
-            local burger = self:_buildStartMenuIcon(burger_focused, side_strip_w, footer_h)
+            local burger = self:_buildStartMenuIcon(burger_focused, side_strip_w, content_h)
             local Container = menu_pos == "right" and RightContainer or LeftContainer
-            row[#row + 1] = Container:new{
-                dimen = Geom:new{ w = self.width, h = footer_h },
+            local burger_container = Container:new{
+                dimen = Geom:new{ w = self.width, h = content_h },
                 burger,
             }
+            burger_container.overlap_offset = { 0, margin_top }
+            row[#row + 1] = burger_container
         end
         -- Footer micro-module button (placement == "fullscreen"): a grid icon in
         -- the corner OPPOSITE the start menu so they don't collide; tap opens the
@@ -4356,10 +4395,12 @@ function BookshelfWidget:_buildFooterRow(content_w, total_pages, footer_h)
                 and (self._footer_cursor_btn == "micromod")
             local mm_icon      = self:_buildMicroModuleIcon(mm_focused, side_strip_w)
             local MMContainer  = grid_side == "right" and RightContainer or LeftContainer
-            row[#row + 1] = MMContainer:new{
-                dimen = Geom:new{ w = self.width, h = footer_h },
+            local mm_container = MMContainer:new{
+                dimen = Geom:new{ w = self.width, h = content_h },
                 mm_icon,
             }
+            mm_container.overlap_offset = { 0, margin_top }
+            row[#row + 1] = mm_container
         else
             self._micromod_dimen = nil
         end
@@ -6755,12 +6796,12 @@ function BookshelfWidget:_layoutPrimitives()
     local content_w   = self.width - PAD * 2
     local chip_font_scale = BookshelfSettings.read("chip_font_scale") or 100
     local chip_h = math.floor(Size.item.height_default * chip_font_scale / 100 + 0.5)
-    local footer_full_h = Screen:scaleBySize(32) + 2 * Screen:scaleBySize(4)
-                         + Screen:scaleBySize(12)
+    local footer_full_h = self:_paginationFooterHeight()
     local has_simpleui = self._simpleui_bar_ctx ~= nil
         or self:_getSimpleUIBarContext() ~= nil
     local show_footer_row = (not has_simpleui)
         or (self._selection and self._selection:isActive())
+        or SIMPLEUI_USE_OFFICIAL_FOOTER
     local footer_h = show_footer_row and footer_full_h or 0
     return PAD, content_w, chip_h, footer_h
 end
