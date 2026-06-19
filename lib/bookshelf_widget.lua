@@ -60,6 +60,10 @@ local function _getSimpleUISettings()
     return ok and mod or nil
 end
 
+-- Test branch only: let Bookshelf render its official footer above the
+-- SimpleUI navbar instead of the fork's compact one-line page strip.
+local SIMPLEUI_USE_OFFICIAL_FOOTER = true
+
 -- ─── Module constants ────────────────────────────────────────────────────────
 
 -- DPI-INDEPENDENT column model (portrait). The cover-size setting maps
@@ -415,7 +419,9 @@ function BookshelfWidget:_wrapWithSimpleUIBottomBar(content_widget)
     }
     bar.overlap_offset = { 0, bar_y + ctx.top_sp }
 
-    local overlay = self:_buildSimpleUIPaginationOverlay()
+    local overlay = (not SIMPLEUI_USE_OFFICIAL_FOOTER)
+        and self:_buildSimpleUIPaginationOverlay()
+        or nil
     local children = {
         content_widget,
         sep_line,
@@ -1365,6 +1371,7 @@ function BookshelfWidget:_rebuild()
     local footer_h             = FOOTER_H + FOOTER_BOTTOM_MARGIN
     local show_footer_row      = (not self._simpleui_bar_ctx)
                                  or self._selection:isActive()
+                                 or SIMPLEUI_USE_OFFICIAL_FOOTER
     local label_h              = show_footer_row and footer_h or 0
 
     -- Detect "all chips disabled" early so the hero can grow into the
