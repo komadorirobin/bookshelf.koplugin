@@ -260,6 +260,53 @@ function Edit.show(menu, entry)
         end
     end
 
+    -- Show-in scope: which context the entry appears in -- the library home
+    -- screen, the in-reader launcher, or both. Stored as entry.scope
+    -- ("library" | "reader"); nil means "both" (the default, so existing menus
+    -- are unaffected). Folders carry it too, gating the whole group.
+    do
+        local SCOPES = {
+            { nil,       _("Library and reader") },
+            { "library", _("Library only") },
+            { "reader",  _("Reader only") },
+        }
+        local function curScope()
+            local _l, _i, fresh = Model.findById(Model.load(), id)
+            local s = fresh and fresh.scope
+            return (s == "library" or s == "reader") and s or nil
+        end
+        local function scopeLabel(val)
+            for _j, s in ipairs(SCOPES) do if s[1] == val then return s[2] end end
+            return _("Library and reader")
+        end
+        rows[#rows + 1] = {
+            { text = _("Show in") .. ": " .. scopeLabel(curScope()),
+              callback = close(function()
+                local sub
+                local srows = {}
+                for _j, s in ipairs(SCOPES) do
+                    local val = s[1]
+                    srows[#srows + 1] = {
+                        { text = (curScope() == val and "\xE2\x9C\x93 " or "  ") .. s[2],
+                          callback = function()
+                            UIManager:close(sub)
+                            mutate(menu, function(items)
+                                local _l2, _i2, e = Model.findById(items, id)
+                                if not e or e.scope == val then return false end
+                                e.scope = val
+                            end)
+                          end },
+                    }
+                end
+                srows[#srows + 1] = { { text = _("Cancel"), id = "close",
+                    callback = function() UIManager:close(sub) end } }
+                sub = ButtonDialog:new{ title = _("Show in"), title_align = "center",
+                    width_factor = 0.65, buttons = srows }
+                UIManager:show(sub)
+            end) },
+        }
+    end
+
     local function doDelete()
         mutate(menu, function(items)
             return Model.removeById(items, id)

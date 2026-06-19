@@ -6792,6 +6792,11 @@ function BookshelfWidget:paintTo(bb, x, y)
         local _diag_paint_t0 = _gettime()
         InputContainer.paintTo(self, bb, x, y)
         self:_clearHeroMarker()
+        do
+            local FG = require("lib/bookshelf_footer_geom")
+            if self._burger_dimen and self._burger_dimen.x then FG.rememberButtonRect(self._burger_dimen) end
+            if self._micromod_dimen and self._micromod_dimen.x then FG.rememberGridRect(self._micromod_dimen) end
+        end
         logger.dbg(string.format(
             "[bookshelf perf] paintTo: FIRST first_paint=%.0fms chip=%s",
             (_gettime() - _diag_paint_t0) * 1000, self.chip))
@@ -6799,6 +6804,13 @@ function BookshelfWidget:paintTo(bb, x, y)
     end
     InputContainer.paintTo(self, bb, x, y)
     self:_clearHeroMarker()
+    -- Remember the footer buttons' real painted rects so the in-reader launcher
+    -- matches them exactly (single Lua state; see bookshelf_footer_geom).
+    do
+        local FG = require("lib/bookshelf_footer_geom")
+        if self._burger_dimen and self._burger_dimen.x then FG.rememberButtonRect(self._burger_dimen) end
+        if self._micromod_dimen and self._micromod_dimen.x then FG.rememberGridRect(self._micromod_dimen) end
+    end
 end
 
 -- Clear the home-screen hero crash marker once the shelf has actually painted.
@@ -11959,7 +11971,8 @@ function BookshelfWidget:_openStartMenu(force)
         logger.warn("[bookshelf] start menu unavailable:", tostring(StartMenu))
         return
     end
-    StartMenu.open(self, self._footer_h_last or Screen:scaleBySize(40), self._burger_dimen)
+    StartMenu.open(self, self._footer_h_last or Screen:scaleBySize(40),
+        self._burger_dimen, "library")
 end
 
 -- Open the full-screen micro-module grid (Micro-modules placement ==

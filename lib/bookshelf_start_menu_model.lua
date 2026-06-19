@@ -146,6 +146,35 @@ function M.findById(items, id)
     return nil
 end
 
+-- Filter to entries visible in `context` ("library" | "reader"). An entry's
+-- scope ("library" | "reader") restricts it to that context; nil scope (the
+-- default) shows everywhere, so existing menus are unaffected. Folders are
+-- filtered recursively and dropped once they'd be empty / are themselves scoped
+-- out. Returns a fresh filtered list -- never mutates or saves.
+function M.filterByScope(items, context)
+    local function visible(e) return e.scope == nil or e.scope == context end
+    local out = {}
+    for _i, it in ipairs(items or {}) do
+        if visible(it) then
+            if it.type == "folder" then
+                local kids = {}
+                for _j, c in ipairs(it.children or {}) do
+                    if visible(c) then kids[#kids + 1] = c end
+                end
+                if #kids > 0 then
+                    local copy = {}
+                    for k, v in pairs(it) do copy[k] = v end
+                    copy.children = kids
+                    out[#out + 1] = copy
+                end
+            else
+                out[#out + 1] = it
+            end
+        end
+    end
+    return out
+end
+
 -- dir = -1 (up) / 1 (down). Returns true if moved.
 function M.moveBy(items, id, dir)
     local list, i = M.findById(items, id)

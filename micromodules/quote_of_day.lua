@@ -78,10 +78,12 @@ return {
     key   = "quote_of_day", -- stable id stored in user menus; never change it
     title = _("Quote of the day"),
     summary = _("From your highlights. Works offline."),
-    -- avail_h (4th arg, optional): the cell height a caller (the hero grid)
-    -- wants the module to fill. When given, the quote box grows to as many
-    -- lines as fit instead of the fixed 4-line clamp used in the start menu.
-    render = function(width, scale_pct, _preview, avail_h)
+    -- preview (3rd) / avail_h (4th): the Add-picker renders a preview=true
+    -- thumbnail and passes the cell height as avail_h, so we truncate the quote
+    -- to fit it at a readable size (issue #183). The hero grid passes neither
+    -- preview nor a clamp, so the quote keeps its natural height for the fit
+    -- engine to shrink to the cell.
+    render = function(width, scale_pct, preview, avail_h)
         local Fonts         = require("lib/bookshelf_fonts")
         local TextWidget    = require("ui/widget/textwidget")
         local VerticalGroup = require("ui/widget/verticalgroup")
@@ -110,12 +112,15 @@ return {
         -- wraps in a narrow cell so the author still shows.
         local attr = Kit.fitText{ text = attribution, size = 15, scale_pct = scale_pct,
             width = mw, fgcolor = Kit.COLOR_MUTED, opts = { italic = true } }
-        -- Quote body reports its NATURAL height (no max_h / ellipsis clamp) so
-        -- the parent hero fit engine (_renderFitted) shrinks the font until quote
-        -- + attribution fit, instead of the quote truncating. q.text is char-
-        -- capped upstream, so the worst case is bounded.
+        -- In the picker preview, truncate the quote to the room left after the
+        -- attribution so it fits the cell on a few lines at a readable size
+        -- (issue #183). Everywhere else the quote body reports its NATURAL height
+        -- (no max_h / ellipsis clamp) so the hero fit engine (_renderFitted)
+        -- shrinks the font until quote + attribution fit, instead of truncating.
+        local max_h = (preview and avail_h and avail_h > 0)
+            and math.max(1, avail_h - attr:getSize().h) or nil
         local quote_box = Kit.fitText{ text = quote_text, size = 15, scale_pct = scale_pct,
-            width = mw }
+            width = mw, max_h = max_h }
         return VerticalGroup:new{ align = "left", quote_box, attr }
     end,
     show_settings = showSettings,

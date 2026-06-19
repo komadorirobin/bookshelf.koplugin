@@ -166,7 +166,10 @@ end
 
 function HeroModules._hold(bw, entry)
     local ok, Edit = pcall(require, "lib/bookshelf_hero_modules_edit")
-    if ok and Edit then Edit.show(bw, entry) end
+    -- pcall the show too: in the reader overlay bw is a minimal context shim, so
+    -- an edit path that reaches for a widget-only method must fail safe, not
+    -- crash the reader.
+    if ok and Edit then pcall(Edit.show, bw, entry) end
 end
 
 -- Render a module to fit the cell: parent-enforced auto-fit. A module is asked
