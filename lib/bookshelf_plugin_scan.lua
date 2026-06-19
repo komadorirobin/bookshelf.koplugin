@@ -1,7 +1,8 @@
 --[[
-Finds launchable plugin modules on the live FileManager instance, so start
-menu items can launch them directly (games etc.) without the user wading
-through the full Dispatcher action list.
+Finds launchable plugin modules on the live app instance -- FileManager, or
+ReaderUI when a book is open -- so start menu items can launch them directly
+(games etc.) without the user wading through the full Dispatcher action list,
+from both the library and the in-reader launcher.
 
 FileManager registers its modules twice: as array entries (fm[i], tables
 with a .name string) and as named fields (fm[key] = same table). scan()
@@ -95,9 +96,16 @@ local function splitIconGlyph(text)
     return icon, rest
 end
 
-local function liveFM()
-    local fm_mod = package.loaded["apps/filemanager/filemanager"]
-    return fm_mod and fm_mod.instance or nil
+-- The live app instance to scan/launch against: ReaderUI when a book is open
+-- (FileManager is torn down then), else FileManager. Both register their modules
+-- the same way (array entries + named fields), so the scan logic is identical --
+-- this is what lets plugins (games etc.) launch from the in-reader launcher too,
+-- not just the library.
+local function liveUI()
+    local rd = package.loaded["apps/reader/readerui"]
+    if rd and rd.instance then return rd.instance end
+    local fm = package.loaded["apps/filemanager/filemanager"]
+    return fm and fm.instance or nil
 end
 
 -- Probe the module's addToMainMenu for its own menu entry. Returns the
@@ -155,7 +163,7 @@ end
 -- place of the default puzzle icon.
 function M.scan()
     local ok, results = pcall(function()
-        local fm = liveFM()
+        local fm = liveUI()
         if not fm then return {} end
         -- Reverse map: module table -> its fm field key.
         local key_of = {}
@@ -168,7 +176,12 @@ function M.scan()
         for _i, mod in ipairs(fm) do
             local key = type(mod) == "table" and type(mod.name) == "string"
                 and key_of[mod] or nil
-            if key and not NATIVE[key] and not seen[key]
+            -- Skip reader-internal modules (readerfooter, readerhighlight,
+            -- readertoc, …): when scanning ReaderUI they'd otherwise surface as
+            -- "plugins" via their menu submenus. Real plugins (games etc.) don't
+            -- use the "reader" prefix. NATIVE covers the FM-side internals.
+            if key and not NATIVE[key] and not key:find("^reader")
+                    and not seen[key]
                     and type(mod.addToMainMenu) == "function" then
                 seen[key] = true
                 local method = findMethod(mod, key)
@@ -198,7 +211,7 @@ end
 -- so it is safe to run on every menu rebuild.
 function M.exists(key, method)
     if type(key) ~= "string" or type(method) ~= "string" then return false end
-    local fm = liveFM()
+    local fm = liveUI()
     local mod = fm and fm[key]
     if type(mod) ~= "table" then return false end
     if method == M.SENTINEL or method == M.SUBMENU then
@@ -218,7 +231,7 @@ local TOUCHMENU_STUB = {
 -- -> zero-arg launcher bound to the live module, or nil when unresolvable.
 function M.resolve(key, method)
     if type(key) ~= "string" or type(method) ~= "string" then return nil end
-    local fm = liveFM()
+    local fm = liveUI()
     local mod = fm and fm[key]
     if type(mod) ~= "table" then return nil end
     if method == M.SENTINEL then

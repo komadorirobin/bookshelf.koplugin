@@ -130,11 +130,22 @@ local StartMenu = InputContainer:extend{}
 -- Entry point used by bookshelf_widget. bottom_inset = footer height (+margin).
 -- burger_dimen: live Geom of the hamburger InputContainer (optional); when
 -- provided the overlay paints an opaque close glyph over that region.
-function StartMenu.open(bw, bottom_inset, burger_dimen)
+-- context: "library" (home screen, default) | "reader" (in-reader launcher).
+-- Items whose scope is set to the other context are filtered out (#scope feat).
+function StartMenu.open(bw, bottom_inset, burger_dimen, context)
+    -- In reader context there's no bookshelf widget to repaint the area an
+    -- in-place rebuild vacates (e.g. a closed folder flyout), so the flyout
+    -- pixels would linger. Target ReaderUI instead, so the page beneath repaints
+    -- and clears it. (In the library, bw -- the bookshelf -- does this.)
+    local under = (context == "reader")
+        and package.loaded["apps/reader/readerui"]
+        and package.loaded["apps/reader/readerui"].instance or nil
     local menu = StartMenu:new{
-        bw           = bw,
-        bottom_inset = bottom_inset + Screen:scaleBySize(6),
-        burger_dimen = burger_dimen,
+        bw            = bw,
+        bottom_inset  = bottom_inset + Screen:scaleBySize(6),
+        burger_dimen  = burger_dimen,
+        context       = (context == "reader") and "reader" or "library",
+        _repaint_under = under,
     }
     UIManager:show(menu, "ui", menu._dirty_region)
     StartMenu._live = menu -- test/introspection hook; cleared in onCloseWidget
@@ -148,6 +159,9 @@ function StartMenu:_loadItems()
     if Store.microPlacement() == "off" then
         items = stripModules(items)
     end
+    -- Hide entries scoped to the other context (library vs the in-reader
+    -- launcher). nil scope shows in both, so default menus are unaffected.
+    items = Model.filterByScope(items, self.context or "library")
     return items
 end
 
@@ -1050,7 +1064,7 @@ function StartMenu:_reload(scope_rect)
     -- shrinking rebuild would otherwise leave the vacated area's old pixels
     -- on screen. Repainting the bookshelf underneath restores the backdrop
     -- before we paint on top.
-    UIManager:setDirty(self.bw or self, function() return "ui", region end)
+    UIManager:setDirty(self.bw or self._repaint_under or self, function() return "ui", region end)
 end
 
 function StartMenu:_toggleFlyout(folder_id)
@@ -1215,7 +1229,7 @@ function StartMenu:_rebuild_only()
     self:_build()
     local region = self._dirty_region:copy()
     if old_region then region = region:combine(old_region) end
-    UIManager:setDirty(self.bw or self, function() return "ui", region end)
+    UIManager:setDirty(self.bw or self._repaint_under or self, function() return "ui", region end)
 end
 
 -- Ensure focus points at a visible focusable. If the focused panel itself is

@@ -11,6 +11,7 @@
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local ClipContainer   = require("lib/bookshelf_clip_container")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
@@ -53,16 +54,18 @@ local ModulePicker = {}
 function ModulePicker._networkInfo(def, w)
     local TextWidget = require("ui/widget/textwidget")
     local muted = Modules.COLOR_MUTED or Blitbuffer.COLOR_DARK_GRAY
-    local hf, hb = BFont:getFace("cfont", 13, { bold = true })
+    local hf, hb = BFont:getFace("cfont", 15, { bold = true })
     local g = VerticalGroup:new{ align = "left" }
     g[#g + 1] = TextWidget:new{ text = _("Network required"),
         face = hf, bold = hb, fgcolor = Blitbuffer.COLOR_BLACK, max_width = w }
     g[#g + 1] = VerticalSpan:new{ width = Screen:scaleBySize(4) }
+    -- Secondary text bumped from 11 to 13: the muted source line was hard to
+    -- read at the smaller size on e-ink.
     g[#g + 1] = TextWidget:new{ text = _("Data provided by:"),
-        face = BFont:getFace("cfont", 11), fgcolor = muted, max_width = w }
+        face = BFont:getFace("cfont", 13), fgcolor = muted, max_width = w }
     for _i, domain in ipairs(def.network) do
         g[#g + 1] = TextWidget:new{ text = "\xE2\x80\xA2 " .. domain,
-            face = BFont:getFace("cfont", 11), fgcolor = muted, max_width = w }
+            face = BFont:getFace("cfont", 13), fgcolor = muted, max_width = w }
     end
     return g
 end
@@ -78,6 +81,23 @@ function ModulePicker._renderCell(item, dimen)
     local inner_h = card_h - 2 * (border + card_pad)
     local preview_w = inner_w - 2 * card_pad
 
+    -- Title row + grey-area height computed up front so the preview render below
+    -- can be told the height to fit (avail_h) and truncate to it at a readable
+    -- size, rather than render tall and lean on the clip (issue #183).
+    local title_face, title_bold = BFont:getFace("cfont", 14, { bold = true })
+    local title_w = TextWidget:new{
+        text = item.title,
+        face = title_face,
+        bold = title_bold,
+        fgcolor = Blitbuffer.COLOR_BLACK,
+        max_width = inner_w,
+    }
+    local title_gap = Screen:scaleBySize(6)
+    -- Grey preview area: all remaining inner height once the title row is
+    -- reserved — uniform across the grid, independent of preview height.
+    local reserved = title_w:getSize().h + title_gap
+    local grey_h = math.max(Screen:scaleBySize(40), inner_h - reserved)
+
     -- FRESH preview per render (never the menu's own instance): the same
     -- contract as bookshelf_start_menu._buildModuleRow, including the
     -- title-text fallback when render fails or returns nil.
@@ -92,12 +112,11 @@ function ModulePicker._renderCell(item, dimen)
     elseif def then
         local Store = require("lib/bookshelf_settings_store")
         local scale_pct = Store.read("start_menu_font_scale") or 100
-        -- 3rd arg = preview hint: lets a module render a compact, fixed-size
-        -- thumbnail for the chooser grid instead of its full configured form
-        -- (e.g. the analogue clock forces its small face size so a large
-        -- square doesn't overflow the fixed-height preview cell).
-        -- preview=true; shape "square" (preview cells are fixed squares).
-        local ok, widget = pcall(def.render, preview_w, scale_pct, true, nil, nil, "square")
+        -- 3rd arg preview=true: render a compact, fixed-size thumbnail (e.g. the
+        -- analogue clock forces its small face). 4th arg avail_h=grey_h: the
+        -- cell height to fit, so a text module truncates to it (issue #183)
+        -- instead of overflowing. shape "square" (preview cells are squares).
+        local ok, widget = pcall(def.render, preview_w, scale_pct, true, grey_h, nil, "square")
         preview = ok and widget or nil
         if not ok then
             logger.warn("[bookshelf] module picker preview render failed:",
@@ -111,29 +130,18 @@ function ModulePicker._renderCell(item, dimen)
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
     end
-    local title_face, title_bold = BFont:getFace("cfont", 14, { bold = true })
-    local title_w = TextWidget:new{
-        text = item.title,
-        face = title_face,
-        bold = title_bold,
-        fgcolor = Blitbuffer.COLOR_BLACK,
-        max_width = inner_w,
-    }
-    local title_gap = Screen:scaleBySize(6)
-    -- Grey preview area: all remaining inner height once the title row is
-    -- reserved — uniform across the grid, independent of preview height.
-    local reserved = title_w:getSize().h + title_gap
-    local grey_h = math.max(Screen:scaleBySize(40), inner_h - reserved)
     local grey_card = FrameContainer:new{
         background = Modules.CARD_BG,
         radius     = Screen:scaleBySize(4),
         bordersize = 0,
         padding    = 0,
-        -- Preview centred in the capped grey area at its natural height;
-        -- the (inner_w - preview_w)/2 horizontal slack = card_pad, the
-        -- same inset the start menu's module rows use.
-        CenterContainer:new{
-            dimen = Geom:new{ w = inner_w, h = grey_h },
+        -- Preview centred in the capped grey area; ClipContainer bounds it to
+        -- inner_w × grey_h so a tall module (e.g. a long Quote of the day at
+        -- natural height) is clipped to the cell instead of spilling over the
+        -- title and neighbouring cells (issue #183). A preview that fits is
+        -- still centred; the (inner_w - preview_w)/2 horizontal slack = card_pad.
+        ClipContainer:new{
+            w = inner_w, h = grey_h, bg = Modules.CARD_BG,
             preview,
         },
     }
