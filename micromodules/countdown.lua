@@ -85,7 +85,7 @@ return {
         -- Picker preview (no real config yet): a representative sample.
         if preview and not date then
             return Kit.valueCard{ width = width, scale_pct = scale_pct,
-                value = "42", suffix = _("days"), sub = _("until …") }
+                value = "42", suffix = " " .. _("days"), sub = _("until …") }
         end
 
         local y, m, d = parseDate(date)
@@ -107,7 +107,7 @@ return {
         local sub     = (n > 0) and T(_("until %1"), label)
                                 or  T(_("since %1"), label)
         return Kit.valueCard{ width = width, scale_pct = scale_pct,
-            value = tostring(abs), suffix = dayword, sub = sub }
+            value = tostring(abs), suffix = " " .. dayword, sub = sub }
     end,
 
     -- Add flow: pick a date, then a label. Cancelling either aborts the add.
