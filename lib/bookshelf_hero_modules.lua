@@ -376,8 +376,9 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, 
     -- left/right. Square modules (clock/action) are icon-centred already and use
     -- the full cell. The ClipContainer below stays at inner_w, so the narrower
     -- render is centred horizontally — giving the L/R margin. Tunable.
-    local is_sq  = def and def.aspect == "square"
-    local text_w = is_sq and inner_w or math.max(50, inner_w - 2 * Screen:scaleBySize(10))
+    local is_sq      = def and def.aspect == "square"
+    local base_inset = Screen:scaleBySize(10)
+    local text_w     = is_sq and inner_w or math.max(50, inner_w - 2 * base_inset)
 
     local content, errored
     if def then
@@ -390,11 +391,39 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, 
         -- User size knob for hero micro-modules (issue #180), default 100 — a
         -- multiplier on the cell auto-fit, independent of the Hero card text size.
         local user_mult = BookshelfSettings.read("hero_module_font_scale", 100)
-        local ok, c = Breaker.guard(function()
-            return _renderFitted(def, text_w, inner_h, scale_pct, refresh, entry, user_mult, bw)
-        end)
+        local function renderAt(w)
+            return Breaker.guard(function()
+                return _renderFitted(def, w, inner_h, scale_pct, refresh, entry, user_mult, bw)
+            end)
+        end
+        local ok, c = renderAt(text_w)
         content = ok and c or nil
         errored = not ok
+
+        -- Equalise the card padding. A non-square module is centred vertically
+        -- in a fixed-height cell, so short content leaves a large top/bottom gap
+        -- while the L/R inset is fixed — the four card-edge margins never match
+        -- (issue #185). Measure the rendered height, derive the per-side
+        -- vertical slack, and widen the L/R inset to match it so all four gaps
+        -- are equal; then re-render the content at that narrower width (its
+        -- width feeds the module's own layout, so it must actually re-run).
+        -- Capped at 20% of the cell per side so a very tall cell can't narrow
+        -- content enough to trip a module's width-based reflow (e.g. shelf_size
+        -- wrapping to 2 columns). Only re-renders when there's real slack to
+        -- reclaim, so height-filling modules pay nothing.
+        if content and not is_sq then
+            local ok_h, ch = pcall(function() return content:getSize().h end)
+            if ok_h and type(ch) == "number" then
+                local v_slack   = math.floor((inner_h - ch) / 2)
+                local max_inset = math.floor(inner_w * 0.20)
+                local inset     = math.max(base_inset, math.min(v_slack, max_inset))
+                local target_w  = math.max(50, inner_w - 2 * inset)
+                if target_w < text_w - Screen:scaleBySize(2) then
+                    local ok2, c2 = renderAt(target_w)
+                    if ok2 and c2 then content = c2 end
+                end
+            end
+        end
     end
     if not content then
         local label = (def and def.title) or entry.module
