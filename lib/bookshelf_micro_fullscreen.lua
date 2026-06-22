@@ -125,7 +125,14 @@ function MicroFullscreen.open(bw, button_dimen, footer_h)
         button_dimen = button_dimen,
         footer_h     = footer_h or Screen:scaleBySize(40),
     }
-    UIManager:show(self)
+    -- Pass an explicit refreshtype + region. UIManager:show with no refreshtype
+    -- calls setDirty(self, nil), and current KOReader DROPS a nil-mode refresh
+    -- ("to avoid enqueuing a useless full-screen refresh") -- so the overlay
+    -- paints to the framebuffer but never flushes to the e-ink panel, leaving
+    -- the bookshelf visible underneath until some per-cell module refresh (e.g.
+    -- the analogue clock tick) happens to flush its region. init()>_build() has
+    -- already set self.dimen to the full screen. Mirrors StartMenu.open.
+    UIManager:show(self, "ui", self.dimen)
     return self
 end
 
