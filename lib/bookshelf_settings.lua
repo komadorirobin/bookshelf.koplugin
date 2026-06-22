@@ -2385,6 +2385,24 @@ function Settings:_advancedSubItems()
             end,
         },
         {
+            text = _("Include folder names in search results"),
+            help_text = _("When searching, also match the names of folders in"
+                .. " your library and list them as folder results. Off by"
+                .. " default: most libraries file books into author, series or"
+                .. " genre folders, so a matching folder just duplicates the"
+                .. " author / series / genre result of the same name. Turn on"
+                .. " if you navigate by folder and want folders in search."),
+            checked_func   = function()
+                return BookshelfSettings.read("search_include_folders") == true
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.read("search_include_folders") == true
+                BookshelfSettings.save("search_include_folders", not enabled)
+                BookshelfSettings.flush()
+            end,
+        },
+        {
             text = _("Sort Chinese text by pinyin"),
             help_text = _("Sorts Chinese characters by their Mandarin "
                 .. "pinyin reading, so Chinese titles and authors file "
