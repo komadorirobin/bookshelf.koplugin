@@ -18,11 +18,14 @@ local Chooser = dofile("lib/bookshelf_action_chooser.lua")
 local helpers = dofile("tests/_helpers.lua")
 local t = helpers.runner()
 
-t.test("actionRows returns the three action choices", function()
+t.test("actionRows returns the four action choices", function()
     local rows = Chooser.actionRows(function(fn) return fn end, function() end)
-    assert(#rows == 3, "expected 3 rows, got " .. #rows)
-    assert(rows[1][1].text and rows[2][1].text and rows[3][1].text,
+    assert(#rows == 4, "expected 4 rows, got " .. #rows)
+    assert(rows[1][1].text and rows[2][1].text and rows[3][1].text and rows[4][1].text,
         "each row needs a labelled button")
+    -- row 3 is the new "Menu action…" option (between System action and Bookshelf action)
+    assert(rows[3][1].text:find("Menu action", 1, true),
+        "row 3 should be the Menu action choice, got " .. rows[3][1].text)
 end)
 
 t.test("System action row yields {label, action} to on_pick", function()

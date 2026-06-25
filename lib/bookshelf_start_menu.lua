@@ -69,6 +69,11 @@ local CHEVRON_RIGHT = "\xEE\xA1\x81" -- U+E841 mdi-chevron-right (used by book m
 -- "Change icon" still overrides it.
 local FOLDER_ICON      = "\xEE\xA5\x8A" -- U+E94A mdi-folder
 local FOLDER_ICON_OPEN = "\xEE\xB9\xAE" -- U+EE6E mdi-folder-open (flyout open)
+-- Render-time checkbox glyphs for a menu shortcut that targets a toggle item;
+-- the live on/off state comes from MenuShortcut.toggleState (same glyphs the
+-- menu host uses). Static icon is the fallback when state can't be resolved.
+local CHECK_ON_ICON    = "\xEF\x85\x8A" -- U+F14A fa-check-square
+local CHECK_OFF_ICON   = "\xEF\x82\x96" -- U+F096 fa-square-o
 
 -- Drop shadow matching the shelf cover cards (bookshelf_spine_widget) but at
 -- HALF their distance: same mode-aware grey and the panel's own corner radius,
@@ -359,6 +364,15 @@ function StartMenu:_buildRow(entry, w, focused, in_flyout)
         -- custom icons are left alone).
         if icon_text == FOLDER_ICON and self._flyout_for == entry.id then
             icon_text = FOLDER_ICON_OPEN
+        end
+    elseif entry.menu_path and entry.menu_toggle then
+        -- Menu shortcut targeting a toggle: show its live on/off state as a
+        -- checkbox. toggleState builds the menu once (then cached) and reads the
+        -- item's checked_func; nil (unresolvable) keeps the static icon.
+        local ok_ms, MS = pcall(require, "lib/bookshelf_menu_shortcut")
+        local state = ok_ms and MS.toggleState and MS.toggleState(entry.menu_path)
+        if state ~= nil then
+            icon_text = state and CHECK_ON_ICON or CHECK_OFF_ICON
         end
     end
     local icon

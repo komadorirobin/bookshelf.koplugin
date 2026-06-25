@@ -56,6 +56,18 @@ t.test("sanitize drops malformed entries", function()
     assert(s[1].id == "a" and s[2].id == "c")
 end)
 
+t.test("sanitize keeps a menu_path action (#142 shortcut), drops an empty one", function()
+    local s, changed = Model.sanitize({
+        { id = "m", type = "action", label = "HTTP proxy",
+          menu_path = { { id = "setting" }, { id = "network" }, { id = "network_proxy" } } },
+        { id = "e", type = "action", label = "empty path", menu_path = {} },
+    })
+    assert(#s == 1, "expected the valid menu_path entry kept, got " .. #s)
+    assert(s[1].id == "m", "wrong survivor")
+    assert(s[1].menu_path and #s[1].menu_path == 3, "menu_path field not preserved")
+    assert(changed, "dropping the empty-path entry should report changed")
+end)
+
 t.test("sanitize strips nested folders (one-level rule)", function()
     local s = Model.sanitize({
         { id = "f", type = "folder", label = "Games", children = {

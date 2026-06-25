@@ -53,7 +53,7 @@ A chip can point at:
 - A **specific** series, author, genre, collection, format, rating, folder, or reading status -- a shelf showing just that one slice of your library.
 - **Favourites** -- the built-in starred shelf.
 
-Each chip remembers its own reading-status filter (Unread, Reading, On hold, Finished), sort priority (up to three levels deep, e.g. *surname, then series, then series number*), label, icon, and whether it's enabled.
+Each chip remembers its own **filters** (reading status, genre, language, format, rating, collection, or folder -- see [Chip sources, filters, and sorts](#chip-sources-filters-and-sorts)), sort priority (up to three levels deep, e.g. *surname, then series, then series number*), label, icon, and whether it's enabled.
 
 **To edit a chip:** long-press it. The footer of the editor has **+ Add new chip** if you'd like to start a fresh one.
 
@@ -138,6 +138,7 @@ Tap the menu button in the bottom corner of the shelf, in line with the page arr
 Each item can be:
 
 - A **KOReader action** -- history, the reading calendar, Wi-Fi, night mode, sleep, frontlight, and anything else from KOReader's action list.
+- A **menu action** -- capture any item from KOReader's own menus and replay it with one tap. Browse to the item, tap **Add as shortcut**, and it becomes a menu entry; toggle items (like Wi-Fi) show their current on/off state.
 - **Another plugin** -- launch any installed plugin that has a menu entry (games included).
 - A **Bookshelf action** -- the full Bookshelf menu (settings, the book detail editor, collections, and the rest), or exit Bookshelf.
 - A **folder** -- group items together; it flies out to the side when you tap it.
@@ -418,6 +419,7 @@ The pagination row uses wide tap zones across the middle 75% of the screen. The 
 
 </details>
 
+<a id="chip-sources-filters-and-sorts"></a>
 <details>
 <summary><strong>Chip sources, filters, and sorts</strong></summary>
 
@@ -434,9 +436,16 @@ Each chip points at one of:
 - **Specific** series / author / genre / collection / format / rating / language / folder / reading status -- a shelf scoped to a single chosen value.
 - **Folder (flattened)** -- a single folder shown as every book beneath it in one list, no sub-folder cards (vs. the plain folder source, which keeps the sub-folder tree).
 
-#### Reading-status filter
+#### Filters
 
-Any combination of **Unread**, **Reading**, **On hold**, and **Finished**. Off by default (everything visible).
+Each chip can narrow its shelf with any combination of filters, set from **Filters…** in the chip editor:
+
+- **Reading status** -- Unread, Reading, On hold, Finished.
+- **Genre**, **Language**, **Format**, **Collection** -- pick any number of values.
+- **Rating** -- one to five stars, or Unrated.
+- **Folder** -- include and/or exclude folders (an exclude wins over an include, and both apply to sub-folders).
+
+Picks within one filter match *any* of them, so two chosen genres show books in either. Picks across different filters must *all* match, so adding a 5-star rating then limits those to 5-star books only. Each choice shows how many books currently match given the other selected filters. All filters are off by default (everything visible).
 
 #### Sort priority
 

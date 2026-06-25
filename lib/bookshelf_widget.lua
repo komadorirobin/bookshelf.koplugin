@@ -28,6 +28,7 @@ local _           = require("lib/bookshelf_i18n").gettext
 
 local Repo        = require("lib/bookshelf_book_repository")
 local Profiles    = require("lib/bookshelf_profiles")
+local Filter      = require("lib/bookshelf_filter")
 local HeroCard    = require("lib/bookshelf_hero_card")
 local ChipBar   = require("lib/bookshelf_chip_bar")
 local ShelfRow    = require("lib/bookshelf_shelf_row")
@@ -2177,8 +2178,7 @@ function BookshelfWidget:_rebuild()
         -- fall into one of the branches above with a generic message. The
         -- filter is the actual reason there are no books, so override the
         -- placeholder when statuses are set.
-        if _tab and _tab.filter and _tab.filter.statuses
-                and next(_tab.filter.statuses) then
+        if _tab and _tab.filter and Filter.isActive(_tab.filter) then
             local label = _tab.label or self:_chipLabel()
             placeholder_text = string.format(
                 _("Nothing in %s yet \xC2\xB7 Long-press the chip to edit its filter"),

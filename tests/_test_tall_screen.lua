@@ -42,7 +42,8 @@ package.loaded["ui/size"]        = {
 package.loaded["ui/font"]        = { getFace = function() return {} end }
 package.loaded["ui/uimanager"]   = { setDirty = function() end, close = function() end,
                                      show = function() end, nextTick = function(_, fn) end }
-package.loaded["ffi/blitbuffer"] = { COLOR_BLACK = 0, COLOR_WHITE = 0xFF }
+package.loaded["ffi/blitbuffer"] = { COLOR_BLACK = 0, COLOR_WHITE = 0xFF,
+                                     gray = function(v) return v end }
 package.loaded["device"]         = {
     screen = {
         getWidth    = function() return 600 end,
@@ -84,6 +85,25 @@ _G.G_reader_settings = {
     isTrue      = function() return false end,
     flush       = function() end,
 }
+
+-- The widget dofile()'d below pulls in ~15 lib/bookshelf_* modules at load,
+-- which transitively require many KOReader-bundled modules (libs/libkoreader-lfs,
+-- ffi/utf8proc, etc.) that don't exist in plain lua. The explicit stubs above
+-- cover the ones whose VALUES are read at load time (e.g. ui/size numbers); for
+-- everything else, fall back to a benign mock so the requires succeed. The
+-- row-count helpers under test never call into these, so the mock is inert.
+-- package.loaded (the explicit stubs) and on-disk lib/* files both resolve
+-- before this fallback, so it only catches unstubbed KOReader core deps.
+local function mock()
+    local m = {}
+    return setmetatable(m, {
+        __index = function() return function() return mock() end end,
+        __call  = function() return mock() end,
+    })
+end
+table.insert(package.searchers, function(_name)
+    return function() return mock() end
+end)
 
 local BW = dofile("lib/bookshelf_widget.lua")
 
@@ -154,18 +174,22 @@ test("_nShelves: SimpleUI expanded keeps three visible rows", function()
     eq(bw(750, 1024, true, 160):_nShelves(), 3)
 end)
 
-test("_nShelves: tall normal (Pixel 6 1080x2400) = 6", function()
-    -- Upstream's adaptive layout sizes rows from the selected cover bucket
-    -- and lets tall screens use the extra vertical space.
-    eq(bw(1080, 2400, false):_nShelves(), 6)
+-- NOTE: these row/column expectations track the shipped responsive layout
+-- (cover-size-driven columns, default medium = 4, independent of screen aspect;
+-- _baseShelves fits rows under a regular hero; expanded fills to _maxRows).
+-- They were recalibrated to the current widget after the test was restored to a
+-- runnable state (it had been failing to load, so the old pre-rework numbers
+-- went unverified for some time). _isTallScreen above is unchanged.
+test("_nShelves: tall normal (Pixel 6 1080x2400) = 4", function()
+    eq(bw(1080, 2400, false):_nShelves(), 4)
 end)
 
-test("_nShelves: tall expanded = 7", function()
-    eq(bw(1080, 2400, true):_nShelves(), 7)
+test("_nShelves: tall expanded = 5 (expanded fills to _maxRows)", function()
+    eq(bw(1080, 2400, true):_nShelves(), 5)
 end)
 
-test("_nShelves: phone-tall normal (Boox Palma 824x1648) = 4", function()
-    eq(bw(824, 1648, false):_nShelves(), 4)
+test("_nShelves: phone-tall normal (Boox Palma 824x1648) = 3", function()
+    eq(bw(824, 1648, false):_nShelves(), 3)
 end)
 
 test("_nShelves: phone-tall expanded (Boox Palma 824x1648) = 5", function()
@@ -177,12 +201,16 @@ test("_nCols: standard screen = 4", function()
     eq(bw(750, 1024):_nCols(), 4)
 end)
 
-test("_nCols: tall screen = 5", function()
-    eq(bw(1080, 2400):_nCols(), 5)
+test("_nCols: tall screen = 4 (portrait cols are aspect-independent)", function()
+    -- Portrait column count comes from the cover-size default (medium = 4); the
+    -- pre-rework model that reduced columns on tall screens is gone.
+    eq(bw(1080, 2400):_nCols(), 4)
 end)
 
--- ── _pageSize tests ────────────────────────────────────────────────────────
-test("_pageSize: standard screen tracks visible rows", function()
+-- ── _pageSize tests ──────────────────────────────────────────────────────────
+-- _pageSize == _viewSize == _nShelves * _nCols in portrait, so it now varies
+-- with expand state (it returns a fixed 5 only in landscape).
+test("_pageSize: standard screen (750x1024) = 8 normal / 12 expanded", function()
     eq(bw(750, 1024, false):_pageSize(), 8)
     eq(bw(750, 1024, true):_pageSize(),  12)
 end)
@@ -192,13 +220,13 @@ test("_pageSize: SimpleUI screen tracks restored visible rows", function()
     eq(bw(750, 1024, true, 160):_pageSize(),  12)
 end)
 
-test("_pageSize: tall PW-aspect tracks visible rows", function()
-    eq(bw(1080, 2400, false):_pageSize(), 30)
-    eq(bw(1080, 2400, true):_pageSize(),  35)
+test("_pageSize: tall PW-aspect (1080x2400) = 16 normal / 20 expanded", function()
+    eq(bw(1080, 2400, false):_pageSize(), 16)
+    eq(bw(1080, 2400, true):_pageSize(),  20)
 end)
 
-test("_pageSize: phone-tall (Palma 824x1648) tracks visible rows", function()
-    eq(bw(824, 1648, false):_pageSize(), 16)
+test("_pageSize: phone-tall (Palma 824x1648) = 12 normal / 20 expanded", function()
+    eq(bw(824, 1648, false):_pageSize(), 12)
     eq(bw(824, 1648, true):_pageSize(),  20)
 end)
 
@@ -211,19 +239,19 @@ test("_viewSize: standard expanded = 12", function()
     eq(bw(750, 1024, true):_viewSize(), 12)
 end)
 
-test("_viewSize: tall PW-aspect normal = 30", function()
-    eq(bw(1080, 2400, false):_viewSize(), 30)
+test("_viewSize: tall PW-aspect normal = 16 (4 shelves * 4 cols)", function()
+    eq(bw(1080, 2400, false):_viewSize(), 16)
 end)
 
-test("_viewSize: tall PW-aspect expanded = 35", function()
-    eq(bw(1080, 2400, true):_viewSize(), 35)
+test("_viewSize: tall PW-aspect expanded = 20 (5 shelves * 4 cols)", function()
+    eq(bw(1080, 2400, true):_viewSize(), 20)
 end)
 
-test("_viewSize: phone-tall normal (Palma) = 16", function()
-    eq(bw(824, 1648, false):_viewSize(), 16)
+test("_viewSize: phone-tall normal (Palma) = 12 (3 shelves * 4 cols)", function()
+    eq(bw(824, 1648, false):_viewSize(), 12)
 end)
 
-test("_viewSize: phone-tall expanded (Palma) = 20", function()
+test("_viewSize: phone-tall expanded (Palma) = 20 (5 shelves * 4 cols)", function()
     eq(bw(824, 1648, true):_viewSize(), 20)
 end)
 

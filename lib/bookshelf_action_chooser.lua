@@ -12,6 +12,7 @@ local UIManager    = require("ui/uimanager")
 local _            = require("lib/bookshelf_i18n").gettext
 
 local PLUGIN_DEFAULT_ICON = "\xEE\xAC\xB0" -- U+EB30 mdi-puzzle (start-menu default)
+local MENU_DEFAULT_ICON   = "\xEE\xA9\x9E" -- U+EA5E (default for menu shortcuts)
 
 local Chooser = {}
 
@@ -49,6 +50,15 @@ function Chooser.actionRows(close, on_pick)
                     on_pick{ label = name, action = action }
                 end,
             }
+        end) } },
+        { { text = _("Menu action\xE2\x80\xA6"), callback = close(function()
+            local MenuShortcut = require("lib/bookshelf_menu_shortcut")
+            MenuShortcut.openCapture(function(picked)
+                -- Toggle items get a live checkbox icon at render time
+                -- (menu_toggle); the static icon is the fallback / non-toggle case.
+                on_pick{ label = picked.label, icon = MENU_DEFAULT_ICON,
+                         menu_path = picked.menu_path, menu_toggle = picked.menu_toggle }
+            end)
         end) } },
         { { text = _("Bookshelf action\xE2\x80\xA6"), callback = close(function()
             local sub

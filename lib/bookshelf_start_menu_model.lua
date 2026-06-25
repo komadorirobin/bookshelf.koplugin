@@ -52,6 +52,7 @@ local function validAction(it)
         or (type(it.plugin) == "table"
             and type(it.plugin.key) == "string"
             and type(it.plugin.method) == "string")
+        or (type(it.menu_path) == "table" and #it.menu_path > 0)
 end
 
 -- Returns (out, changed). Does NOT mutate any input table.
