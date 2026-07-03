@@ -490,7 +490,7 @@ function Settings:_tagsRegionSubItems()
         {
             text_func = function()
                 return _("Font size") .. ": "
-                    .. tostring(Regions.read().tags.font_size or 12)
+                    .. tostring(Regions.read().tags.font_size or 14)
             end,
             keep_menu_open = true,
             callback = function(touchmenu_instance)
@@ -500,8 +500,8 @@ function Settings:_tagsRegionSubItems()
                 -- submenu (and refreshes its rows) when the nudge closes.
                 local LineEditor  = require("lib/bookshelf_hero_line_editor")
                 local restoreMenu = LineEditor.hideParentMenu(touchmenu_instance)
-                local cur     = Regions.read().tags.font_size or 12
-                local default = Regions.DEFAULTS.tags.font_size or 12
+                local cur     = Regions.read().tags.font_size or 14
+                local default = Regions.DEFAULTS.tags.font_size or 14
                 LineEditor.showSizeNudge(
                     cur, default,
                     -- on_change: persist + live-refresh the hero each nudge.
@@ -524,6 +524,34 @@ function Settings:_tagsRegionSubItems()
                 alignmentRow("center", _("Centre")),
                 alignmentRow("right",  _("Right")),
             },
+        },
+        {
+            -- Caps how many rows of pills the hero shows; the overflow folds
+            -- into the tappable "+N" button (which opens the full tags sheet).
+            -- 1 row reads cleanest now that nothing is lost to the cap; more
+            -- rows suit a hero with the spare height (e.g. description off).
+            text_func = function()
+                return _("Maximum tag rows") .. ": "
+                    .. tostring(Regions.read().tags.max_rows or 2)
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local SpinWidget = require("ui/widget/spinwidget")
+                local UIManager_ = require("ui/uimanager")
+                local cur = tonumber(Regions.read().tags.max_rows) or 2
+                UIManager_:show(SpinWidget:new{
+                    title_text = _("Maximum tag rows"),
+                    info_text  = _("How many rows of tag pills the hero shows before the rest collapse into a tappable +N button."),
+                    value      = cur,
+                    value_min  = 1,
+                    value_max  = 5,
+                    value_step = 1,
+                    ok_text    = _("Set"),
+                    callback   = function(spin)
+                        setTagsField("max_rows", spin.value, touchmenu_instance)
+                    end,
+                })
+            end,
         },
     }
 end
@@ -2169,6 +2197,33 @@ function Settings:_expandedShelfSubItems()
             end,
         }
     end
+    -- What a tap on a book in the expanded shelf does. Defaults (via
+    -- expandedTapAction) honour the legacy tap_to_open_double toggle so
+    -- existing users keep their behaviour; that toggle still governs the
+    -- hero-card double-tap separately.
+    local tap_labels = {
+        show_detail = _("Show book detail in hero"),
+        open        = _("Open with a single tap"),
+        open_double = _("Open with a double tap"),
+    }
+    local function tapRow(action, label)
+        return {
+            text           = label,
+            checked_func   = function() return BookshelfSettings.expandedTapAction() == action end,
+            radio          = true,
+            keep_menu_open = true,
+            callback       = function(touchmenu_instance)
+                BookshelfSettings.save("expanded_tap_action", action)
+                BookshelfSettings.flush()
+                -- Clear any pending tap-selection so switching mid-session
+                -- doesn't leave a stale focus ring.
+                if self._bw then self._bw._tap_selected_fp = nil end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end,
+        }
+    end
     return {
         {
             text_func = function()
@@ -2180,6 +2235,22 @@ function Settings:_expandedShelfSubItems()
                     optionRow("author", labels.author),
                     optionRow("series", labels.series),
                     optionRow("none",   labels.none),
+                }
+            end,
+        },
+        {
+            text_func = function()
+                return _("Tap a book") .. ": " .. tap_labels[BookshelfSettings.expandedTapAction()]
+            end,
+            help_text = _("What tapping a book does in the expanded shelf: show"
+                .. " that book's detail in the hero area, open it with a single"
+                .. " tap, or open it with a double tap (first tap selects). The"
+                .. " hero card's own double-tap-to-open is set in Advanced settings."),
+            sub_item_table_func = function()
+                return {
+                    tapRow("show_detail", tap_labels.show_detail),
+                    tapRow("open",        tap_labels.open),
+                    tapRow("open_double", tap_labels.open_double),
                 }
             end,
         },
@@ -2312,7 +2383,7 @@ end
 
 function Settings:_advancedSubItems()
     local plugin = self._plugin
-    return {
+    local items = {
         -- ── library & metadata ──
         {
             text     = _("Scan all library metadata"),
@@ -2615,6 +2686,32 @@ function Settings:_advancedSubItems()
             end,
         },
     }
+
+    -- Kobo virtual-library shelf (beta). Always listed (like the calibre beta
+    -- toggle) so Kobo users can reliably find and enable it -- on non-Kobo
+    -- devices the option simply does nothing, because the "Kobo" chip is
+    -- separately gated on this setting AND KoboSource.isAvailable() (false
+    -- off-Kobo). Toggling rebuilds so the chip appears/disappears immediately.
+    items[#items + 1] = {
+        text = _("BETA: Kobo library shelf"),
+        help_text = _("Adds a \"Kobo\" chip that surfaces your Kobo "
+            .. "virtual library (the books managed by the Kobo store / "
+            .. "OGKevin's kobo.koplugin) as a Bookshelf shelf. Read-only; "
+            .. "covers and opening depend on that plugin. Kobo devices only."),
+        checked_func = function()
+            return BookshelfSettings.read("kobo_shelf") == true
+        end,
+        keep_menu_open = true,
+        callback = function()
+            local enabled = BookshelfSettings.read("kobo_shelf") == true
+            BookshelfSettings.save("kobo_shelf", not enabled)
+            if self._bw and self._bw._rebuild then
+                self._bw:_rebuild()
+                UIManager:setDirty(self._bw, "ui")
+            end
+        end,
+    }
+    return items
 end
 
 --- @param extra_button table|nil  Optional shortcut button rendered between

@@ -135,6 +135,107 @@ local function splitGenreTags(src)
     return #t > 0 and t or nil
 end
 
+-- The KOReader custom Keywords override (.sdr custom_props.keywords) for a book,
+-- or nil when none is set. An explicit empty string is preserved (the user
+-- cleared the keywords) so the embedded source reads as "no genres", not a
+-- fall-back to the file's own keywords.
+local function _customKeywords(filepath)
+    if not filepath then return nil end
+    local ok, DocSettings = pcall(require, "docsettings")
+    if not (ok and DocSettings and DocSettings.findCustomMetadataFile) then return nil end
+    local cmf = DocSettings:findCustomMetadataFile(filepath)
+    if not cmf then return nil end
+    local ok2, cp = pcall(function()
+        return DocSettings.openSettingsFile(cmf):readSetting("custom_props")
+    end)
+    if ok2 and type(cp) == "table" and cp.keywords ~= nil then return cp.keywords end
+    return nil
+end
+
+-- Per-source genre lists (each nil when that source has none for this book).
+local function _calibreGenres(cb)
+    if cb and type(cb.tags) == "table" and #cb.tags > 0 then return splitGenreTags(cb.tags) end
+    return nil
+end
+local function _embeddedGenres(filepath, info)
+    local kw = _customKeywords(filepath)
+    if kw == nil then kw = info and info.keywords end
+    if kw and kw ~= "" then return splitGenreTags(kw) end
+    return nil
+end
+
+-- Resolve a book's genres honouring the per-book source preference, AND return
+-- the per-source lists (for the source chip bar). Calibre and embedded are
+-- resolved here; "hardcover" leaves the base (calibre > embedded), which
+-- Hardcover.enrichBook then overrides (and stamps sources.hardcover). No
+-- preference = auto priority calibre > embedded (the previous behaviour).
+-- Returns: resolved_list, sources_table { calibre=, embedded= }.
+local function genreData(filepath, cb, info)
+    local calibre  = _calibreGenres(cb)
+    local embedded = _embeddedGenres(filepath, info)
+    local pref = BookshelfSettings.genreSource and BookshelfSettings.genreSource(filepath)
+    local resolved
+    if pref == "calibre"  and calibre  then resolved = calibre
+    elseif pref == "embedded" and embedded then resolved = embedded
+    else resolved = calibre or embedded end
+    return resolved, { calibre = calibre, embedded = embedded }
+end
+
+-- Write an edit of the embedded genres to KOReader's custom Keywords override
+-- (the same field Show info edits), shared both ways. `genres` is the full
+-- replacement list; an empty list clears the keywords (shows as no genres).
+-- Creates the custom-metadata file with a copy of the original doc_props (as
+-- KOReader expects) when none exists, flushes it, and broadcasts so KOReader's
+-- own book-info UIs refresh. Invalidates the book cache so genres re-resolve.
+function Repo.setEmbeddedGenres(filepath, genres)
+    if not filepath then return end
+    local DocSettings = require("docsettings")
+    local keywords = (type(genres) == "table" and #genres > 0)
+        and table.concat(genres, ", ") or ""
+    local cmf = DocSettings:findCustomMetadataFile(filepath)
+    local cds
+    if cmf then
+        cds = DocSettings.openSettingsFile(cmf)
+    else
+        cds = DocSettings.openSettingsFile()
+        -- KOReader's own setCustomMetadata stashes a copy of the ORIGINAL
+        -- doc_props here (title/authors/keywords/...) so a never-opened book
+        -- still resolves its metadata when CoverBrowser is off. A never-opened
+        -- book has no regular sidecar, so DocSettings:open() yields nothing;
+        -- fall back to BIM's extracted props (originals, no custom file exists
+        -- yet to overlay) so the copy isn't empty.
+        local props
+        local ok, sds = pcall(function() return DocSettings:open(filepath) end)
+        if ok and sds then props = sds:readSetting("doc_props") end
+        if not props or next(props) == nil then
+            local ok_bim, BookInfoManager = pcall(require, "bookinfomanager")
+            if ok_bim and BookInfoManager and BookInfoManager.getDocProps then
+                local bim_props = BookInfoManager:getDocProps(filepath)
+                if bim_props and next(bim_props) ~= nil then props = bim_props end
+            end
+        end
+        cds:saveSetting("doc_props", props or {})  -- originals, for restore/“customized”
+    end
+    local custom_props = cds:readSetting("custom_props", {})
+    custom_props.keywords = keywords
+    cds:flushCustomMetadata(filepath)
+    -- The file's effective keywords changed: drop the grouping caches AND the
+    -- light-meta records (invalidateBookCache keeps the latter warm) so genres
+    -- re-resolve from the new override on the next read.
+    Repo.invalidateBookCache("embedded-genres")
+    Repo.invalidateLightMeta()
+    local ok_ev, Event = pcall(require, "ui/event")
+    local ok_um, UIManager = pcall(require, "ui/uimanager")
+    if ok_ev and ok_um then
+        -- InvalidateMetadataCache deletes BIM's cached row so its next
+        -- getDocProps re-extracts and overlays the new keywords; without it
+        -- KOReader's Show-info keeps showing the pre-edit keywords (it reads
+        -- the stale cached row). BookMetadataChanged then refreshes the UIs.
+        UIManager:broadcastEvent(Event:new("InvalidateMetadataCache", filepath))
+        UIManager:broadcastEvent(Event:new("BookMetadataChanged", { filepath = filepath }))
+    end
+end
+
 -- Supported e-book extensions (used in getCurrent and walkBooks via
 -- _supportedExt). Mirrors the document formats KOReader itself registers
 -- (frontend/document/*), minus pure images and code/scripts -- those are
@@ -688,13 +789,10 @@ function Repo.buildBookMeta(filepath, opts)
         title = filename
     end
 
-    -- Genres: Calibre `tags` (array) → BIM `keywords` (string) → none.
-    local genres
-    if cb and type(cb.tags) == "table" and #cb.tags > 0 then
-        genres = splitGenreTags(cb.tags)
-    elseif info.keywords and info.keywords ~= "" then
-        genres = splitGenreTags(info.keywords)
-    end
+    -- Genres honour the per-book source preference (calibre / embedded /
+    -- hardcover); with none set, auto priority Calibre > embedded. The Hardcover
+    -- override (when chosen, or auto + sync) is applied later by enrichBook.
+    local genres, genre_sources = genreData(filepath, cb, info)
 
     local book = {
         filepath    = filepath,
@@ -712,6 +810,9 @@ function Repo.buildBookMeta(filepath, opts)
         author_sort = cb and type(cb.author_sort) == "string"
                        and cb.author_sort ~= "" and cb.author_sort or nil,
         genres      = genres,
+        -- Per-source genre lists for the book-detail Tags tab's source chip bar
+        -- (Hardcover added by enrichBook). Cheap by-products of genre resolution.
+        genre_sources = genre_sources,
         -- `series` is the raw "Foundation #1" string used by some
         -- consumers; reconstruct it from Calibre fields when needed.
         series      = info.series
@@ -841,12 +942,7 @@ local function _buildLightMetaFromInfo(fp, info)
         authors = authorsFromInfo(fp, info)
     end
 
-    local genres
-    if cb and type(cb.tags) == "table" and #cb.tags > 0 then
-        genres = splitGenreTags(cb.tags)
-    elseif info.keywords and info.keywords ~= "" then
-        genres = splitGenreTags(info.keywords)
-    end
+    local genres, genre_sources = genreData(fp, cb, info)
 
     local filename = (fp:match("([^/]+)$") or fp):gsub("%.[^.]+$", "")
     local title
@@ -876,6 +972,7 @@ local function _buildLightMetaFromInfo(fp, info)
         author_sort = cb and type(cb.author_sort) == "string"
                        and cb.author_sort ~= "" and cb.author_sort or nil,
         genres      = genres,
+        genre_sources = genre_sources,
         title       = title,
         lang        = (cb and type(cb.languages) == "table" and cb.languages[1])
                        or info.language,
@@ -1086,10 +1183,35 @@ end
 -- ─── getCurrent ──────────────────────────────────────────────────────────────
 -- Returns the Book record for the last opened file, or nil if none.
 
+-- Kobo books open via a decrypted /tmp copy, so KOReader's lastfile is that
+-- temp path (no extension), not the virtual book -- the hero would never tie it
+-- back. _openBook calls noteKoboOpen so getCurrent/currentFilepath can map that
+-- temp path to the virtual Kobo record (#203). In-memory only (lost on restart,
+-- as is the temp file). [[project_kobo_virtual_library_integration]]
+local _last_kobo_open = nil
+function Repo.noteKoboOpen(decrypted_path, record)
+    if decrypted_path and record then
+        _last_kobo_open = { path = decrypted_path, record = record, virtual = record.filepath }
+    end
+end
+
 function Repo.getCurrent()
-    local lastfile = Repo.currentFilepath()
-    if not lastfile then return nil end
-    return Repo.buildBook(lastfile)
+    local lastfile = G_reader_settings:readSetting("lastfile")
+    if _last_kobo_open and lastfile == _last_kobo_open.path then
+        -- Recently-opened Kobo book: return a fresh shallow copy of the virtual
+        -- record with a fresh cover, so the hero shows it as current.
+        local r = {}
+        for k, v in pairs(_last_kobo_open.record) do r[k] = v end
+        local ok_k, KoboSource = pcall(require, "lib/bookshelf_kobo_source")
+        if ok_k and KoboSource and r.filepath then
+            local bb, cw, ch = KoboSource.coverBB(r.filepath)
+            if bb then r.cover_bb, r.cover_w, r.cover_h, r.has_cover = bb, cw, ch, true end
+        end
+        return r
+    end
+    local fp = Repo.currentFilepath()
+    if not fp then return nil end
+    return Repo.buildBook(fp)
 end
 
 -- Repo.currentFilepath() — the filepath getCurrent() would build, or nil,
@@ -1100,6 +1222,11 @@ end
 function Repo.currentFilepath()
     local lastfile = G_reader_settings:readSetting("lastfile")
     if not lastfile then return nil end
+    -- A just-opened Kobo book: report the virtual path (which ends .epub, so it
+    -- passes the format gate) instead of the extensionless /tmp decrypted copy.
+    if _last_kobo_open and lastfile == _last_kobo_open.path then
+        return _last_kobo_open.virtual
+    end
     if not _supportedExt(lastfile) then return nil end
     return lastfile
 end
@@ -2095,6 +2222,30 @@ function Repo.getFolderBookPaths(path)
     local out = {}
     for i = 1, #paths do out[i] = paths[i] end
     return out
+end
+
+function Repo.markFolderRead(path, _max_depth)
+    local paths = Repo.getFolderBookPaths(path)
+    local DocSettings = getDocSettings()
+    local marked = 0
+    for _i, filepath in ipairs(paths) do
+        local ok_ds, ds = pcall(function() return DocSettings:open(filepath) end)
+        if ok_ds and ds then
+            local ok_sum, summary = pcall(ds.readSetting, ds, "summary")
+            if not ok_sum or type(summary) ~= "table" then summary = {} end
+            summary.status = "complete"
+            summary.modified = os.date("%Y-%m-%d", os.time())
+            pcall(ds.saveSetting, ds, "summary", summary)
+            pcall(ds.saveSetting, ds, "percent_finished", 1)
+            pcall(ds.flush, ds)
+            Repo.invalidateProgressCache(filepath)
+            marked = marked + 1
+        end
+    end
+    if marked > 0 then
+        Repo.invalidateBookCache("mark-folder-read")
+    end
+    return marked
 end
 
 -- _makeAllSort(sort_key): factory for the All-tab comparator. After v1.2
@@ -4186,7 +4337,7 @@ local function _buildRatingGroups()
             table.sort(books_meta, within_cmp)
             local g = {
                 kind        = "rating",
-                series_name = key == "unrated" and "Unrated" or _STAR_REPEAT[key],
+                series_name = key == "unrated" and tr("Unrated") or _STAR_REPEAT[key],
                 books       = {},
                 latest      = 0,
                 avg_rating  = key == "unrated" and 0 or key,
@@ -4679,6 +4830,38 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
     local scope, opts = _resolveScopeAndOpts(scope_or_opts, maybe_opts)
     if not source or not source.kind then return {}, 0 end
     local kind = source.kind
+    -- Kobo virtual library (OGKevin/kobo.koplugin): records come from the plugin
+    -- bridge, not the filesystem/BIM. Sort the full set with the SortEngine (the
+    -- Kobo chip's sort_priority) and paginate. Empty + cheap when the plugin is
+    -- unavailable, so this is inert on non-Kobo devices.
+    if kind == "kobo" then
+        local ok_kobo, KoboSource = pcall(require, "lib/bookshelf_kobo_source")
+        if not (ok_kobo and KoboSource and KoboSource.isAvailable()) then return {}, 0 end
+        local books = KoboSource.listBooks()
+        if sort_priority and #sort_priority > 0 then
+            local ok_sort = pcall(table.sort, books, SortEngine.chainedComparator(sort_priority))
+            if not ok_sort then table.sort(books, function(a, b)
+                return (a.title or "") < (b.title or "") end) end
+        end
+        local total = #books
+        local off, lim = offset or 0, limit or #books
+        local page = {}
+        for i = off + 1, math.min(off + lim, total) do
+            local rec = books[i]
+            -- Attach the cover eagerly for the VISIBLE slice only: BIM can't read
+            -- the DRM'd kepub, so there's no lazy ScaledCoverCache path -- the
+            -- plugin hands back a fresh (copied) blitbuffer the spine can free
+            -- after paint. nil (no extracted sidecar cover yet) -> placeholder.
+            -- Re-fetched each rebuild, so the freed bb is never reused.
+            local bb, cw, ch = KoboSource.coverBB(rec.filepath)
+            if bb then
+                rec.cover_bb, rec.cover_w, rec.cover_h = bb, cw, ch
+                rec.has_cover = true
+            end
+            page[#page + 1] = rec
+        end
+        return page, total
+    end
     -- Diag: wrap getBySource so chip-switch / pagination logs can be
     -- correlated with fetch cost. The repo's existing per-fetcher logs
     -- show the *internal* breakdown; this outer log shows the

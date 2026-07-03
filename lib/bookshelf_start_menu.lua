@@ -14,7 +14,9 @@ local GestureRange    = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local InputContainer  = require("ui/widget/container/inputcontainer")
+local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
+local Size            = require("ui/size")
 local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
@@ -27,6 +29,16 @@ local Breaker         = require("lib/bookshelf_module_breaker")
 local Store           = require("lib/bookshelf_settings_store")
 local _               = require("lib/bookshelf_i18n").gettext
 local T               = require("ffi/util").template
+
+-- Wall-clock timer for perf instrumentation, matching bookshelf_widget.lua's
+-- own [bookshelf perf] convention.
+local _gettime
+do
+    local ok, s = pcall(require, "socket")
+    _gettime = (ok and s and type(s.gettime) == "function")
+        and function() return s.gettime() end
+        or  os.clock
+end
 
 -- When the "Disable micro-modules" advanced setting is on, micro-module
 -- entries are hidden from the start menu (the model keeps them, so re-enabling
@@ -41,6 +53,43 @@ local function stripModules(items)
                 local copy = {}
                 for k, v in pairs(e) do copy[k] = v end
                 copy.children = stripModules(e.children)
+                out[#out + 1] = copy
+            else
+                out[#out + 1] = e
+            end
+        end
+    end
+    return out
+end
+
+-- Drop menu-action shortcuts whose captured menu item doesn't resolve in the
+-- current view's menu (reader vs file manager) -- so each auto-appears only
+-- where it works (#211). Display-only: folders are shallow-copied when their
+-- children change, never mutating the stored model. Fail-open via
+-- MenuShortcut.isAvailable (shows everything if the menu tree can't be built).
+local function filterByMenuAvailability(items)
+    local ok_ms, MS = pcall(require, "lib/bookshelf_menu_shortcut")
+    if not ok_ms or not MS or type(MS.isAvailable) ~= "function" then return items end
+    local function keep(e)
+        -- Only "Auto" menu actions (scope nil) are availability-gated. An
+        -- explicit scope (library/reader/both) is the user's manual override --
+        -- honour it as-is, even into a view where the item may not exist.
+        if type(e) == "table" and type(e.menu_path) == "table" and e.scope == nil then
+            return MS.isAvailable(e.menu_path)
+        end
+        return true
+    end
+    local out = {}
+    for _i, e in ipairs(items) do
+        if keep(e) then
+            if e.type == "folder" and e.children then
+                local kids = {}
+                for _j, c in ipairs(e.children) do
+                    if keep(c) then kids[#kids + 1] = c end
+                end
+                local copy = {}
+                for k, v in pairs(e) do copy[k] = v end
+                copy.children = kids
                 out[#out + 1] = copy
             else
                 out[#out + 1] = e
@@ -167,17 +216,52 @@ end
 -- Model.load, so the stored model (with its module entries) is never touched by
 -- the filtering -- toggling the surface back on restores the cards untouched.
 function StartMenu:_loadItems()
+    local _t0 = _gettime()
     local items = Model.load()
+    local _t1 = _gettime()
     if not Store.microInStartMenu() then
         items = stripModules(items)
     end
+    local _t2 = _gettime()
     -- Hide entries scoped to the other context (library vs the in-reader
     -- launcher). nil scope shows in both, so default menus are unaffected.
     items = Model.filterByScope(items, self.context or "library")
+    local _t3 = _gettime()
+    -- Hide menu-action shortcuts whose captured menu item doesn't exist in the
+    -- CURRENT view's menu (reader vs file manager), so a shortcut auto-appears
+    -- only where it works -- no "not available" tap, no manual scoping (#211).
+    -- Display-only (like the scope filter); folder entries are shallow-copied
+    -- when their children change so the stored model is never mutated.
+    items = filterByMenuAvailability(items)
+    local _t4 = _gettime()
+    logger.dbg(string.format(
+        "[bookshelf perf] StartMenu:_loadItems: load=%.0fms stripModules=%.0fms"
+        .. " filterByScope=%.0fms filterByMenuAvailability=%.0fms TOTAL=%.0fms context=%s",
+        (_t1 - _t0) * 1000, (_t2 - _t1) * 1000, (_t3 - _t2) * 1000, (_t4 - _t3) * 1000,
+        (_t4 - _t0) * 1000, tostring(self.context)))
     return items
 end
 
+-- Set of entry ids currently RENDERED in this view (top level + folder
+-- children), i.e. the post-filter list the user can actually see. Used as the
+-- visibility predicate for reorder so a move skips entries hidden from this view
+-- (Auto menu shortcuts not available here) and lands the held row past its
+-- nearest visible neighbour in one tap. Greyed rows are present in _items, so
+-- they count as visible -- only truly-hidden entries are skipped.
+function StartMenu:_visibleIds()
+    local set = {}
+    local function walk(list)
+        for _i, it in ipairs(list or {}) do
+            if it.id then set[it.id] = true end
+            if it.type == "folder" then walk(it.children) end
+        end
+    end
+    walk(self._items)
+    return set
+end
+
 function StartMenu:init()
+    local _t0 = _gettime()
     -- Menu-open signal: bump the loader's generation counter exactly once
     -- per open (init runs once per StartMenu instance; _reload does not
     -- re-init). Modules key per-open caches on it — see the README.
@@ -211,7 +295,9 @@ function StartMenu:init()
     self._panel_border = Screen:scaleBySize(2) -- panel FrameContainer border
     self._panel_pad    = Screen:scaleBySize(3) -- panel FrameContainer padding
     self:_applyFontScale()
+    local _t1 = _gettime()
     self._items    = self:_loadItems()
+    local _t2 = _gettime()
     -- Open on the LAST page (the menu is anchored bottom-left, so the final
     -- rows sit by the thumb). Seeding the page past the end makes the first
     -- build clamp it to the real last page; _build runs once per open, so this
@@ -244,7 +330,9 @@ function StartMenu:init()
         }
         self._focus = { panel = "root", entry_id = nil }
     end
+    local _t3 = _gettime()
     self:_build()
+    local _t4 = _gettime()
     -- Seed focus after the first build so _panelEntries can inspect the
     -- rendered rows. If nothing is focusable yet (empty menu with no __add)
     -- _focus.entry_id stays nil and the menu opens without a focus ring.
@@ -257,6 +345,12 @@ function StartMenu:init()
             self:_rebuild_only()
         end
     end
+    local _t5 = _gettime()
+    logger.dbg(string.format(
+        "[bookshelf perf] StartMenu:init: setup=%.0fms loadItems=%.0fms"
+        .. " prebuild=%.0fms build=%.0fms focusSeed=%.0fms TOTAL=%.0fms context=%s items=%d",
+        (_t1 - _t0) * 1000, (_t2 - _t1) * 1000, (_t3 - _t2) * 1000, (_t4 - _t3) * 1000,
+        (_t5 - _t4) * 1000, (_t5 - _t0) * 1000, tostring(self.context), #self._items))
 end
 
 function StartMenu:_panelWidthBounds()
@@ -444,6 +538,41 @@ function StartMenu:_buildRow(entry, w, focused, in_flyout)
     }
     local sm = self
     local row = InputContainer:new{ dimen = frame:getSize(), frame }
+
+    -- Instant tap feedback: underline the label the moment the row is pressed,
+    -- before _activate runs its (possibly slow) action -- otherwise a tap reads
+    -- as dead until the menu closes/redraws. Modelled on the tag pills' pre-
+    -- callback highlight (widgetRepaint + fast setDirty + forceRePaint). Skipped
+    -- for folders, which already give feedback by opening their flyout (and would
+    -- otherwise keep a stuck underline while the root panel stays painted).
+    --
+    -- Folders instead get the SAME underline as a persistent active-state cue
+    -- while they're the currently-open folder -- mirrors the open-folder icon
+    -- glyph swap above (icon_text == FOLDER_ICON_OPEN), so other menu items
+    -- (tap feedback) and open folders (active feedback) both read consistently
+    -- via an underline. Driven by folder_open (rebuilt fresh on every flyout
+    -- toggle, like the icon) rather than the transient _tapped flag.
+    local is_folder     = entry.type == "folder"
+    local folder_open   = is_folder and self._flyout_for == entry.id
+    local ul_tap_enable = not is_folder
+    local ul_x_off  = focus_border + self._pad + icon_w + icon_gap
+    local ul_w      = label:getSize().w
+    local ul_h      = label:getSize().h
+    local ul_row_h  = self._row_h
+    local ul_fg     = fg
+    if ul_tap_enable or folder_open then
+        function row:paintTo(bb, x, y)
+            InputContainer.paintTo(self, bb, x, y)
+            if (folder_open or self._tapped) and ul_w > 0 then
+                local th = Screen:scaleBySize(2)
+                -- Just below the vertically-centred label baseline.
+                local cy = y + focus_border
+                    + math.floor((ul_row_h + ul_h) / 2) + Screen:scaleBySize(1)
+                bb:paintRect(x + ul_x_off, cy, ul_w, th, ul_fg)
+            end
+        end
+    end
+
     if Device:isTouchDevice() then
         row.ges_events = {
             Tap  = { GestureRange:new{ ges = "tap",  range = row.dimen } },
@@ -461,6 +590,16 @@ function StartMenu:_buildRow(entry, w, focused, in_flyout)
     end
     function row:onTap(_a, ges)
         if flyoutOwns(ges) then return false end
+        -- Flush the underline to the panel BEFORE _activate (which may close the
+        -- menu or run a slow action); forceRePaint drains the queue so the eink
+        -- panel actually shows it first. The follow-up action either tears the
+        -- panel down or re-renders this row fresh (without _tapped), clearing it.
+        if ul_tap_enable and self.dimen then
+            self._tapped = true
+            UIManager:widgetRepaint(self, self.dimen.x, self.dimen.y)
+            UIManager:setDirty(nil, "fast", self.dimen)
+            UIManager:forceRePaint()
+        end
         -- Pass the tapped row's painted rect so a keep_open re-render can scope
         -- its refresh to this row and below, rather than flashing the whole
         -- panel (rows above the tapped one shouldn't redraw).
@@ -625,6 +764,42 @@ function StartMenu:_buildModuleRow(entry, w, focused, in_flyout)
     return row
 end
 
+-- A divider row: a bare horizontal line, no label/icon, matching KOReader's
+-- own native menu-separator styling (touchmenu.lua's split_line: medium-
+-- weight gray line inset on both sides). Not tappable. Holdable for the
+-- generic Move up/down + Delete options (Edit.show trims the rest for this
+-- type). Deliberately NOT given an `entry` field by _buildPanel's row list,
+-- so it never appears in d-pad/chevron focus navigation -- nothing to land
+-- on, nothing to activate.
+function StartMenu:_buildDividerRow(entry, w)
+    local inset = Size.span.horizontal_default
+    local line = HorizontalGroup:new{
+        align = "center",
+        HorizontalSpan:new{ width = inset },
+        LineWidget:new{
+            background = Blitbuffer.COLOR_GRAY,
+            dimen = Geom:new{ w = w - 2 * inset, h = Size.line.medium },
+        },
+        HorizontalSpan:new{ width = inset },
+    }
+    local row_h = math.floor(self._row_h / 2)
+    local centered = CenterContainer:new{
+        dimen = Geom:new{ w = w, h = row_h },
+        line,
+    }
+    local row = InputContainer:new{ dimen = Geom:new{ w = w, h = row_h }, centered }
+    local sm = self
+    if Device:isTouchDevice() then
+        row.ges_events = {
+            Hold = { GestureRange:new{ ges = "hold", range = row.dimen } },
+        }
+    end
+    function row:onHold()
+        sm:_editEntry(entry); return true
+    end
+    return row
+end
+
 -- Builds one panel (list of entries) as a framed VerticalGroup.
 -- folder_id: when non-nil, the "Add..." synthetic row in an empty panel
 -- targets that folder rather than the top level.
@@ -644,11 +819,18 @@ function StartMenu:_buildPanel(entries, w, folder_id)
     end
     for _i, entry in ipairs(entries) do
         local is_focused = self._focus and self._focus.entry_id == entry.id
-        local row = entry.type == "module"
-            and self:_buildModuleRow(entry, w, is_focused, in_flyout)
-            or  self:_buildRow(entry, w, is_focused, in_flyout)
+        local row
+        if entry.type == "divider" then
+            row = self:_buildDividerRow(entry, w)
+        elseif entry.type == "module" then
+            row = self:_buildModuleRow(entry, w, is_focused, in_flyout)
+        else
+            row = self:_buildRow(entry, w, is_focused, in_flyout)
+        end
         vg[#vg + 1] = row
-        rows[#rows + 1] = { row = row, entry = entry }
+        -- Dividers are never focus targets -- omit `entry` so _panelEntries
+        -- (which filters on its truthiness) skips them for free.
+        rows[#rows + 1] = { row = row, entry = entry.type ~= "divider" and entry or nil }
     end
     local frame = PanelFrame:new{
         bordersize = self._panel_border,
@@ -744,10 +926,22 @@ function StartMenu:_markUnresolved(items)
     local ok, Dispatcher = pcall(require, "dispatcher")
     local unknown_sentinel = ok and require("gettext")("Unknown item") or nil
     local ok_ps, PluginScan = pcall(require, "lib/bookshelf_plugin_scan")
+    local ok_ms, MS = pcall(require, "lib/bookshelf_menu_shortcut")
     local ids = {}
     local function walk(list)
         for _i, it in ipairs(list) do
-            if it.type == "action" and type(it.plugin) == "table" then
+            if it.type == "action" and type(it.menu_path) == "table" then
+                -- Menu shortcut: grey it out when its target item doesn't exist
+                -- in the current view. Auto-scoped shortcuts (scope nil) are
+                -- already dropped by filterByMenuAvailability before this runs,
+                -- so this only marks explicitly-scoped ones the user forced into
+                -- a view where the item isn't available -- the tap is a no-op,
+                -- and the grey signals that up front. isAvailable fails open, so
+                -- a transient menu-build hiccup never greys a working shortcut.
+                if ok_ms and MS.isAvailable and not MS.isAvailable(it.menu_path) then
+                    if it.id then ids[it.id] = true end
+                end
+            elseif it.type == "action" and type(it.plugin) == "table" then
                 -- exists() never calls third-party code (resolve() may
                 -- probe the plugin's addToMainMenu), so marking stays
                 -- cheap even though _build runs on every focus step.
@@ -777,8 +971,10 @@ function StartMenu:_markUnresolved(items)
 end
 
 function StartMenu:_build()
+    local _bt0 = _gettime()
     self:_applyFontScale()
     self:_markUnresolved(self._items)
+    local _bt1 = _gettime()
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
     local max_rows = self:_maxRows()
@@ -804,7 +1000,9 @@ function StartMenu:_build()
         return h > avail_panel_h
     end
     local slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
+    local _bt2 = _gettime()
     local root_frame, root_rows = self:_buildPanel(slice, root_w)
+    local _bt3 = _gettime()
     local need_rebuild = false
     if max_rows > 1 and _overflows(root_frame, has_prev, has_next) then
         -- Sum measured row heights from the bottom (the panel is bottom-
@@ -826,11 +1024,13 @@ function StartMenu:_build()
         local _pages = math.max(1, math.ceil(#self._items / _per))
         if self._page > _pages then self._page = _pages; need_rebuild = true end
     end
+    local _bt4 = _gettime()
     if need_rebuild then
         root_frame:free()
         slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
         root_frame, root_rows = self:_buildPanel(slice, root_w)
     end
+    local _bt5 = _gettime()
     self._root_pager = nil
     if has_prev or has_next then
         local sm = self
@@ -879,6 +1079,7 @@ function StartMenu:_build()
         w = root_sz.w + PANEL_SHADOW_DIST, h = root_sz.h + PANEL_SHADOW_DIST }
 
     -- Flyout panel
+    local _bt6 = _gettime()
     self._flyout_region = nil
     self._flyout_rows = nil
     if self._flyout_for then
@@ -940,7 +1141,7 @@ function StartMenu:_build()
             local acc = root_y + root_frame.margin + root_frame.bordersize
                 + root_frame.padding
             for _j, r in ipairs(self._root_rows) do
-                if r.entry.id == self._flyout_for then
+                if r.entry and r.entry.id == self._flyout_for then
                     row_top = acc
                     break
                 end
@@ -1041,6 +1242,13 @@ function StartMenu:_build()
     if self._burger_region then
         self._dirty_region = self._dirty_region:combine(self._burger_region)
     end
+    logger.dbg(string.format(
+        "[bookshelf perf] StartMenu:_build: markUnresolved=%.0fms rootPanel=%.0fms"
+        .. " overflowCheck=%.0fms rebuildPanel=%.0fms flyout=%.0fms TOTAL=%.0fms"
+        .. " items=%d rows=%d flyout_for=%s",
+        (_bt1 - _bt0) * 1000, (_bt3 - _bt2) * 1000, (_bt4 - _bt3) * 1000,
+        (_bt5 - _bt4) * 1000, (_gettime() - _bt6) * 1000, (_gettime() - _bt0) * 1000,
+        #self._items, #root_rows, tostring(self._flyout_for)))
 end
 
 -- Rebuild from the store and repaint (after edits / paging / flyout toggle).

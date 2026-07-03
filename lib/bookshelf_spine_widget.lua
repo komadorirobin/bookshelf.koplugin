@@ -8,6 +8,8 @@
 -- impression of light from below-left. The slot's outer (w × h)
 -- footprint is preserved so adjacent shelf cells don't overlap.
 
+local ffi             = require("ffi")
+local BD              = require("ui/bidi")
 local Blitbuffer      = require("ffi/blitbuffer")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
@@ -23,13 +25,96 @@ local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local Size            = require("ui/size")
 local InputContainer  = require("ui/widget/container/inputcontainer")
-local Screen          = require("device").screen
+local Device          = require("device")
+local Screen          = Device.screen
 local CoverProgress   = require("lib/bookshelf_cover_progress")
 
 local FADED_FINISHED_AMOUNT = 0.5
 
 local function fadeFinishedBooksEnabled()
     return BookshelfSettings.isTrue("fade_finished_books")
+end
+
+-- Blitbuffer's plain paintBorder flattens its color argument to luminance
+-- via getColor8() before painting (paintRect's fast path always does this
+-- internally), so a ColorRGB32 border on a color screen would go down as
+-- its grey luminance. paintBorderRGB32 preserves true color instead --
+-- same dispatch-by-type pattern as bookshelf_cover_progress.lua's
+-- _paintBorder, applied here too so the card border can finally show a
+-- real color, not just luminance.
+local ColorRGB32_t = ffi.typeof("ColorRGB32")
+
+-- #217: bb:paintBorder's rounded-corner arc only takes its fast, invert-safe
+-- Color8 path -- a ColorRGB32 border (any color screen, e.g. Android) falls
+-- back to a Lua pixel loop that applies its own night-mode invert. On
+-- Android that stacks with the single invert the whole frame gets at blit
+-- time, landing back on the raw, un-inverted color (the white corners from
+-- #217). Suppress that redundant invert for the duration of just this call
+-- instead of flattening the color away -- paintRectRGB32's straight edges
+-- already paint raw and rely solely on the end-of-frame invert on Android,
+-- same as the plain Color8 path, so this only needs to cover the corner
+-- arc's Lua fallback. Shared by RoundedCornerCard and ColorSafeFrame below
+-- -- every place in this file that paints a rounded border in the user's
+-- "Border color" setting needs the same treatment.
+local function _paintColorSafeBorder(bb, x, y, w, h, border_size, color, radius, anti_alias)
+    if not color or not border_size or border_size <= 0 then return end
+    local is_rgb32 = ffi.istype(ColorRGB32_t, color)
+    local suppress_invert = is_rgb32 and Device:isAndroid() and bb:getInverse() == 1
+    if suppress_invert then bb:setInverse(0) end
+    if is_rgb32 then
+        bb:paintBorderRGB32(x, y, w, h, border_size, color, radius, anti_alias)
+    else
+        bb:paintBorder(x, y, w, h, border_size, color, radius, anti_alias)
+    end
+    if suppress_invert then bb:setInverse(1) end
+end
+
+-- Thin FrameContainer subclass that routes its border paint through
+-- _paintColorSafeBorder instead of calling bb:paintBorder directly.
+-- Upstream FrameContainer:paintTo already dispatches correctly for its
+-- *background* fill (paintRoundedRect vs paintRoundedRectRGB32), but never
+-- does so for the border -- so any FrameContainer painting the shared
+-- "Border color" setting on a color screen has the same #217 bug as
+-- RoundedCornerCard did: the border shows as grayscale, and on Android
+-- night mode a rounded one gets the white-corner artifact too. Deliberately
+-- narrower than upstream paintTo: drops stripe/invert/dim/inner_bordersize
+-- and the focus-border swap, since nothing in this file uses them on a
+-- ColorSafeFrame; add them here first if a future call site needs one.
+local ColorSafeFrame = FrameContainer:extend{}
+
+function ColorSafeFrame:paintTo(bb, x, y)
+    local my_size = self:getSize()
+    if not self.dimen then
+        self.dimen = Geom:new{ x = x, y = y, w = my_size.w, h = my_size.h }
+    else
+        self.dimen.x = x
+        self.dimen.y = y
+    end
+    local container_width  = self.width or my_size.w
+    local container_height = self.height or my_size.h
+
+    local shift_x = 0
+    if BD.mirroredUILayout() and self.allow_mirroring then
+        shift_x = container_width - my_size.w
+    end
+
+    if self.background then
+        local radius = (self.radius and self.bordersize) and self.radius + self.bordersize or self.radius
+        local paintRoundedRect = ffi.istype(ColorRGB32_t, self.background)
+                                  and bb.paintRoundedRectRGB32 or bb.paintRoundedRect
+        paintRoundedRect(bb, x, y, container_width, container_height, self.background, radius)
+    end
+    if self.bordersize > 0 then
+        local anti_alias = G_reader_settings:nilOrTrue("anti_alias_ui")
+        _paintColorSafeBorder(bb, x + self.margin, y + self.margin,
+            container_width - self.margin * 2, container_height - self.margin * 2,
+            self.bordersize, self.color, self.radius, anti_alias)
+    end
+    if self[1] then
+        self[1]:paintTo(bb,
+            x + self.margin + self.bordersize + self._padding_left + shift_x,
+            y + self.margin + self.bordersize + self._padding_top)
+    end
 end
 
 -- Lazy reference to bookshelf_book_repository for the lazy-cover-decode
@@ -415,16 +500,35 @@ function RoundedCornerCard:paintTo(bb, x, y)
             end
             if cutoff_bot > 0 then
                 bb:paintRect(x, y + h - r + dy, cutoff_bot, 1, bg)          -- BL
-                -- BR may overlap the enclosing shadow — keep per-pixel for
-                -- correct shadow-color restoration. cutoff_bot pixels at the
-                -- right edge of this row need painting.
+                -- BR may overlap the enclosing shadow, so it isn't a flat
+                -- bg strip. #217: bb:setPixel always applies its own
+                -- night-mode invert, whereas bb:paintRect (on Android) stays
+                -- on the fast path that skips per-pixel inversion and relies
+                -- on a single invert of the whole frame at blit time -- a
+                -- per-pixel setPixel loop here double-inverts on Android,
+                -- landing back on the raw, un-inverted color. Run-length
+                -- encode the shadow/bg boundary instead and paint each run
+                -- with paintRect so this corner gets the same single-invert
+                -- treatment as the other three.
                 if self.shadow_color then
+                    local py = h - r + dy
+                    local run_start, run_in_shadow
                     for dx = 0, cutoff_bot - 1 do
                         local px = w - cutoff_bot + dx
-                        local py = h - r + dy
-                        local color = self:_pixelInShadow(px, py)
-                                          and shadow_paint or bg
-                        bb:setPixel(x + px, y + py, color)
+                        local in_shadow = self:_pixelInShadow(px, py)
+                        if run_start == nil then
+                            run_start, run_in_shadow = dx, in_shadow
+                        elseif in_shadow ~= run_in_shadow then
+                            bb:paintRect(x + w - cutoff_bot + run_start, y + py,
+                                         dx - run_start, 1,
+                                         run_in_shadow and shadow_paint or bg)
+                            run_start, run_in_shadow = dx, in_shadow
+                        end
+                    end
+                    if run_start then
+                        bb:paintRect(x + w - cutoff_bot + run_start, y + py,
+                                     cutoff_bot - run_start, 1,
+                                     run_in_shadow and shadow_paint or bg)
                     end
                 else
                     bb:paintRect(x + w - cutoff_bot, y + h - r + dy,
@@ -443,10 +547,9 @@ function RoundedCornerCard:paintTo(bb, x, y)
             local ok_cp, c = pcall(CoverProgress.resolvedColors)
             if ok_cp and c then border_color = c.border end
         end
-        bb:paintBorder(x, y, self.width, self.height,
-                       self.border_size,
-                       border_color or Blitbuffer.COLOR_BLACK,
-                       self.radius, true)
+        border_color = border_color or Blitbuffer.COLOR_BLACK
+        _paintColorSafeBorder(bb, x, y, self.width, self.height,
+                              self.border_size, border_color, self.radius, true)
     end
 end
 
@@ -897,7 +1000,7 @@ function SpineWidget:_renderShadowedCard(inner)
             VerticalSpan:new{ width = Screen:scaleBySize(1) },
             check_widget,
         }
-        local pill = FrameContainer:new{
+        local pill = ColorSafeFrame:new{
             bordersize     = Size.border.thin,
             background     = colors.badge_bg,
             color          = colors.border,
@@ -953,7 +1056,7 @@ function SpineWidget:_renderShadowedCard(inner)
             -- alone provides breathing room) so the pill height stays
             -- close to the bar height.
             local pc_face, pc_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
-            badge_widget = FrameContainer:new{
+            badge_widget = ColorSafeFrame:new{
                 bordersize     = Size.border.thin,
                 background     = colors.badge_bg,
                 color          = colors.border,
@@ -1026,7 +1129,7 @@ function SpineWidget:_renderShadowedCard(inner)
         local TextWidget     = require("ui/widget/textwidget")
         local colors        = CoverProgress.resolvedColors()
         local sn_face, sn_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
-        local badge = FrameContainer:new{
+        local badge = ColorSafeFrame:new{
             bordersize     = Size.border.thin,
             background     = colors.badge_bg,
             color          = colors.border,
@@ -1568,7 +1671,7 @@ function SpineWidget:_renderFallback()
     -- second border is what makes it read as "ornate" vs a plain card.
     -- Border color follows the user's "Border color" setting so the
     -- placeholder cover ages with the rest of the chrome.
-    local inner_frame = FrameContainer:new{
+    local inner_frame = ColorSafeFrame:new{
         bordersize = Size.border.thin,
         color      = colors.border,
         background = inner_bg,
@@ -1586,7 +1689,7 @@ function SpineWidget:_renderFallback()
     -- VerticalGroup composes [top spacer | inner_frame | bottom spacer]
     -- so the inner-frame sits in the upper portion when the bottom inset
     -- is enlarged for the progress bar (asymmetric insets).
-    local card = FrameContainer:new{
+    local card = ColorSafeFrame:new{
         bordersize = border,
         color      = colors.border,
         radius     = CARD_RADIUS,

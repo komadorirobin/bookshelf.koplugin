@@ -1408,6 +1408,7 @@ function Bookshelf:_wireFastFileBrowserTab(force)
     local items = menu_ref.menu_items
     if not (items and items.filemanager) then return end
     local plugin = self
+    local prev_callback = items.filemanager.callback
     items.filemanager.callback = function()
         if menu_ref.onTapCloseMenu then menu_ref:onTapCloseMenu() end
         -- Decoupled from "Start with" (issue #98): route back to Bookshelf
@@ -1426,11 +1427,19 @@ function Bookshelf:_wireFastFileBrowserTab(force)
         if plugin:_isShowing() then
             -- Bookshelf is home: same fast-path as the gesture.
             plugin:_safeShow()
+        elseif prev_callback then
+            -- Another home-screen plugin (e.g. SimpleUI) wrapped this
+            -- callback before us. We won the last-writer race but should
+            -- not discard their logic: defer to them so their home-restore
+            -- path (e.g. closeReaderToHomescreen) runs instead of our plain
+            -- onClose + showFileManager, which would bypass their HS show.
+            -- onTapCloseMenu has already been called above; calling it
+            -- again inside prev_callback is harmless (idempotent).
+            prev_callback()
         else
-            -- File browser is home: plain go-to-FM, no bookshelf raise.
-            -- onClose(false) to suppress reader's internal full refresh,
-            -- showFileManager re-instantiates FM. Bookshelf may still be
-            -- on the stack from earlier gestures, but FM lands on top.
+            -- No prior callback: plain go-to-FM.
+            -- onClose(false) suppresses the reader's internal full refresh;
+            -- showFileManager re-instantiates FM.
             local file = plugin.ui and plugin.ui.document
                 and plugin.ui.document.file
             UIManager:nextTick(function()

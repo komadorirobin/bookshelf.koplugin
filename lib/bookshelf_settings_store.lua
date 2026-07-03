@@ -239,6 +239,18 @@ function Store.microFullscreenButton()
     return legacyPlacement() == "fullscreen"
 end
 
+-- What a tap on a book in the EXPANDED shelf does:
+--   "show_detail"  -- restore the hero showing that book
+--   "open"         -- open the book on a single tap (default)
+--   "open_double"  -- first tap selects, second tap opens
+-- Backward compatible: when unset, honour the legacy tap_to_open_double toggle
+-- so existing double-tap users keep that behaviour in the expanded shelf.
+function Store.expandedTapAction()
+    local v = Store.read("expanded_tap_action")
+    if v == "show_detail" or v == "open" or v == "open_double" then return v end
+    return Store.isTrue("tap_to_open_double") and "open_double" or "open"
+end
+
 -- Kill switch: true while ANY surface is on. When false the micro-module
 -- registry scan / loader is skipped entirely (no rendering, no async fetches).
 function Store.microAnyEnabled()
@@ -285,6 +297,24 @@ function Store.nilOrTrue(key)
     local sub = subStoreFor(key)
     if sub then _open(); local v = sub.read(key); return v == nil or v == true end
     return _open():nilOrTrue(key)
+end
+
+-- Per-book preferred genre source ("calibre" | "embedded" | "hardcover").
+-- Stored as one filepath-keyed map; nil clears the override (back to auto).
+-- Read by the repository's genre resolution and by the Hardcover enrichment
+-- (so an explicit non-Hardcover choice suppresses its genre override).
+function Store.genreSource(filepath)
+    if not filepath then return nil end
+    local map = Store.read("genre_source")
+    return (type(map) == "table") and map[filepath] or nil
+end
+
+function Store.setGenreSource(filepath, source)
+    if not filepath then return end
+    local map = Store.read("genre_source")
+    if type(map) ~= "table" then map = {} end
+    map[filepath] = source  -- source string, or nil to clear
+    Store.save("genre_source", map)
 end
 
 -- Path the settings live at. Exposed so a future "uninstall plugin"

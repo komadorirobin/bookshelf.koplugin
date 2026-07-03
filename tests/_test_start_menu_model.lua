@@ -23,7 +23,7 @@ local t = helpers.runner()
 t.test("first load seeds defaults and sets seeded flag", function()
     kv = {}
     local items = Model.load()
-    assert(#items == 7, "expected starter set, got " .. #items)
+    assert(#items == 8, "expected starter set, got " .. #items)
     assert(kv.start_menu_seeded == true, "seeded flag not set")
     assert(type(kv.start_menu_items) == "table", "items not persisted")
 end)
@@ -200,6 +200,27 @@ t.test("moveBy moves within its own list and clamps at edges", function()
     assert(f.children[1].id == "y" and f.children[2].id == "x")
 end)
 
+t.test("moveBy with is_visible skips hidden neighbours in one step", function()
+    -- a (vis), h (hidden), b (vis): moving b up should swap with a in one tap,
+    -- leaving h parked at its slot.
+    local items = {
+        { id = "a", type = "action", label = "A", action = { history = true } },
+        { id = "h", type = "action", label = "H", action = { history = true } },
+        { id = "b", type = "action", label = "B", action = { history = true } },
+    }
+    local vis = { a = true, b = true } -- h hidden
+    assert(Model.moveBy(items, "b", -1, function(e) return vis[e.id] end))
+    assert(items[1].id == "b" and items[2].id == "h" and items[3].id == "a",
+        "b swaps with a across hidden h; h stays put")
+    -- b now at the top edge: another up, with only hidden h below the new top,
+    -- clamps (no visible neighbour above) rather than swapping with h.
+    assert(not Model.moveBy(items, "b", -1, function(e) return vis[e.id] end),
+        "no visible neighbour above -> clamp")
+    -- nil predicate keeps plain adjacent behaviour (b swaps with h).
+    assert(Model.moveBy(items, "b", 1))
+    assert(items[1].id == "h" and items[2].id == "b")
+end)
+
 t.test("removeById removes nested entries", function()
     local items = fixture()
     assert(Model.removeById(items, "y"))
@@ -240,6 +261,125 @@ t.test("imageIconName extracts NAME from [icon=NAME] whole-value tokens", functi
     assert(Model.imageIconName("[icon=]") == nil, "empty name -> nil")
     assert(Model.imageIconName("a[icon=x]b") == nil, "not a whole-value token -> nil")
     assert(Model.imageIconName(nil) == nil, "nil -> nil")
+end)
+
+t.test("filterByScope hides sm_close in reader and shows sm_reader_home only in reader", function()
+    local d = Model.DEFAULTS()
+    local lib = Model.filterByScope(d, "library")
+    local rdr = Model.filterByScope(d, "reader")
+
+    local function hasId(list, id)
+        for _, e in ipairs(list) do if e.id == id then return true end end
+        return false
+    end
+
+    assert(hasId(lib, "sm_close"),      "sm_close should appear in library")
+    assert(not hasId(rdr, "sm_close"),  "sm_close should not appear in reader")
+    assert(hasId(rdr, "sm_reader_home"), "sm_reader_home should appear in reader")
+    assert(not hasId(lib, "sm_reader_home"), "sm_reader_home should not appear in library")
+end)
+
+t.test("filterByScope never drops a folder for being empty, only for its own scope (#221)", function()
+    local function hasId(list, id)
+        for _, e in ipairs(list) do if e.id == id then return true end end
+        return false
+    end
+
+    local items = {
+        { id = "f_new", type = "folder", label = "New folder", children = {} },
+        { id = "f_scoped_out", type = "folder", label = "Reader only", children = {
+            { id = "a1", type = "action", label = "x", scope = "reader" },
+        } },
+        { id = "f_self_scoped", type = "folder", label = "Reader folder",
+          scope = "reader", children = {} },
+    }
+    local lib = Model.filterByScope(items, "library")
+
+    assert(hasId(lib, "f_new"),
+        "a folder with no children at all should still render")
+    assert(hasId(lib, "f_scoped_out"),
+        "a folder left empty by scope-filtering its children should still render -- " ..
+        "it can be populated via its flyout or deleted manually, not hidden")
+    assert(not hasId(lib, "f_self_scoped"),
+        "a folder scoped to a different context than the one being rendered should still be hidden -- " ..
+        "that's the folder's OWN scope, unrelated to whether it's empty")
+end)
+
+t.test("sanitize keeps a bare divider entry, filterByScope never drops it (#221)", function()
+    local out, changed = Model.sanitize({
+        { id = "d1", type = "divider" },
+    })
+    assert(#out == 1, "divider entry should survive sanitize")
+    assert(out[1].type == "divider", "type should be preserved")
+    assert(changed == false, "a clean divider entry shouldn't be flagged as changed")
+
+    local function hasId(list, id)
+        for _, e in ipairs(list) do if e.id == id then return true end end
+        return false
+    end
+    local lib = Model.filterByScope(out, "library")
+    assert(hasId(lib, "d1"), "a divider should never be filtered out")
+end)
+
+t.test("migrate scopes sm_close to library and injects sm_reader_home after it", function()
+    kv = {}
+    kv.start_menu_seeded = true
+    kv.start_menu_items = {
+        { id = "sm_settings", type = "action", label = "Bookshelf menu", internal = "settings" },
+        { id = "sm_close",    type = "action", label = "Exit bookshelf", internal = "close" },
+        { id = "sm_sleep",    type = "action", label = "Sleep", action = { suspend = true } },
+    }
+    local items = Model.load()
+    local function find(id)
+        for i, e in ipairs(items) do if e.id == id then return i, e end end
+    end
+    local ci, ce = find("sm_close")
+    local ri, _  = find("sm_reader_home")
+    assert(ce and ce.scope == "library", "sm_close not scoped to library")
+    assert(ri, "sm_reader_home not injected")
+    assert(ri == ci + 1, "sm_reader_home not inserted after sm_close (ci=" .. tostring(ci) .. " ri=" .. tostring(ri) .. ")")
+    assert(type(kv.start_menu_items) == "table", "migrated result not persisted")
+end)
+
+t.test("migrate does not re-inject sm_reader_home when already present", function()
+    kv = {}
+    kv.start_menu_seeded = true
+    kv.start_menu_items = {
+        { id = "sm_close",       type = "action", label = "Exit bookshelf", internal = "close", scope = "library" },
+        { id = "sm_reader_home", type = "action", label = "Close book",
+          menu_path = { { id = "filemanager" } }, scope = "reader" },
+    }
+    local items = Model.load()
+    local count = 0
+    for _, e in ipairs(items) do if e.id == "sm_reader_home" then count = count + 1 end end
+    assert(count == 1, "sm_reader_home duplicated, count=" .. count)
+end)
+
+t.test("migrate does not touch sm_close that already has an explicit scope", function()
+    kv = {}
+    kv.start_menu_seeded = true
+    kv.start_menu_items = {
+        { id = "sm_close", type = "action", label = "Exit bookshelf", internal = "close", scope = "both" },
+    }
+    local items = Model.load()
+    local function find(id)
+        for _, e in ipairs(items) do if e.id == id then return e end end
+    end
+    local ce = find("sm_close")
+    assert(ce and ce.scope == "both", "migrate changed an explicitly scoped sm_close")
+end)
+
+t.test("migrate does not add sm_reader_home if sm_close absent", function()
+    kv = {}
+    kv.start_menu_seeded = true
+    kv.start_menu_items = {
+        { id = "sm_sleep", type = "action", label = "Sleep", action = { suspend = true } },
+    }
+    local items = Model.load()
+    local has_reader_home = false
+    for _, e in ipairs(items) do if e.id == "sm_reader_home" then has_reader_home = true end end
+    assert(not has_reader_home, "sm_reader_home should not be injected when sm_close absent")
+    assert(#items == 1 and items[1].id == "sm_sleep", "original item should remain untouched")
 end)
 
 t.done()

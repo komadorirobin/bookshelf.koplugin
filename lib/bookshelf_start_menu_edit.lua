@@ -40,6 +40,9 @@ local function displayLabel(entry)
     if entry.type == "module" then
         return Modules.title(entry.module) or entry.module
     end
+    if entry.type == "divider" then
+        return _("Divider")
+    end
     return entry.label or "?"
 end
 
@@ -77,8 +80,9 @@ function Edit.show(menu, entry)
     end
 
     local id        = entry.id
-    local is_module = entry.type == "module"
-    local is_folder = entry.type == "folder"
+    local is_module  = entry.type == "module"
+    local is_folder  = entry.type == "folder"
+    local is_divider = entry.type == "divider"
     -- Fresh lookup for structure facts (parent, sibling folders): the
     -- captured entry may predate earlier edits.
     local items_now = Model.load()
@@ -87,7 +91,7 @@ function Edit.show(menu, entry)
 
     local rows = {}
 
-    if not is_module then
+    if not is_module and not is_divider then
         -- Rename edits the label text only. Unlike a chip (whose glyph is
         -- folded into the label string), a start-menu entry's icon is a
         -- SEPARATE field rendered in its own column -- and folders drive a
@@ -209,17 +213,30 @@ function Edit.show(menu, entry)
         -- clamped no-op (already at the edge) skips the save + reload.
         -- Move up / down as chevron glyphs (mdi-chevron-up / -down, the same
         -- family as the chip editor's move chevrons).
+        -- The predicate is computed per tap (menu._items refreshes on each
+        -- _reload), so the move skips entries hidden from the current view and
+        -- steps past the nearest VISIBLE neighbour -- no dead taps on hidden
+        -- rows. nil-safe: an older widget without _visibleIds falls back to the
+        -- plain adjacent swap.
         { text = "\xEE\xA1\x82", font_face = "symbols", font_size = 28,
           font_bold = false, callback = function()
-            mutate(menu, function(items) return Model.moveBy(items, id, -1) end)
+            local vis = menu._visibleIds and menu:_visibleIds()
+            mutate(menu, function(items)
+                return Model.moveBy(items, id, -1,
+                    vis and function(e) return vis[e.id] end or nil)
+            end)
         end },
         { text = "\xEE\xA0\xBF", font_face = "symbols", font_size = 28,
           font_bold = false, callback = function()
-            mutate(menu, function(items) return Model.moveBy(items, id, 1) end)
+            local vis = menu._visibleIds and menu:_visibleIds()
+            mutate(menu, function(items)
+                return Model.moveBy(items, id, 1,
+                    vis and function(e) return vis[e.id] end or nil)
+            end)
         end },
     }
 
-    if not is_folder then
+    if not is_folder and not is_divider then
         if in_folder then
             rows[#rows + 1] = {
                 { text = _("Move out of folder"), callback = close(function()
@@ -270,20 +287,32 @@ function Edit.show(menu, entry)
     -- screen, the in-reader launcher, or both. Stored as entry.scope
     -- ("library" | "reader"); nil means "both" (the default, so existing menus
     -- are unaffected). Folders carry it too, gating the whole group.
-    do
-        local SCOPES = {
+    if not is_divider then
+        -- Menu-action shortcuts get an "Auto" scope (nil): shown wherever the
+        -- menu item exists, governed by the availability filter. They also get
+        -- an explicit "both" to force showing in both views regardless. Other
+        -- item types keep the plain Library/Reader/both(nil) choices.
+        local _l0, _i0, e0 = Model.findById(Model.load(), id)
+        local is_menu_action = type(e0) == "table" and type(e0.menu_path) == "table"
+        local SCOPES = is_menu_action and {
+            { nil,       _("Auto") },
+            { "library", _("Library only") },
+            { "reader",  _("Reader only") },
+            { "both",    _("Library and reader") },
+        } or {
             { nil,       _("Library and reader") },
             { "library", _("Library only") },
             { "reader",  _("Reader only") },
         }
+        local valid = { library = true, reader = true, both = is_menu_action or nil }
         local function curScope()
             local _l, _i, fresh = Model.findById(Model.load(), id)
             local s = fresh and fresh.scope
-            return (s == "library" or s == "reader") and s or nil
+            return valid[s] and s or nil
         end
         local function scopeLabel(val)
             for _j, s in ipairs(SCOPES) do if s[1] == val then return s[2] end end
-            return _("Library and reader")
+            return SCOPES[1][2]
         end
         rows[#rows + 1] = {
             { text = _("Show in") .. ": " .. scopeLabel(curScope()),
@@ -469,6 +498,14 @@ function Edit.showAdd(menu, anchor_id, folder_id)
                         return { id = Model.nextId(), type = "folder",
                                  label = name, children = {} }
                     end)
+                end)
+            end) },
+        }
+        rows[#rows + 1] = {
+            -- No name prompt -- a divider is a bare line, nothing to label.
+            { text = _("Divider"), callback = close(function()
+                insertEntry(function()
+                    return { id = Model.nextId(), type = "divider" }
                 end)
             end) },
         }

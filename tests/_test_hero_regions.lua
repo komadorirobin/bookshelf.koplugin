@@ -129,7 +129,7 @@ end)
 
 test("tags region: default font_size and alignment", function()
     local t = Regions.read().tags
-    eq(t.font_size, 12, "font_size")
+    eq(t.font_size, 14, "font_size")
     eq(t.alignment, "left", "alignment")
 end)
 

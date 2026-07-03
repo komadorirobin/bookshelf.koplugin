@@ -102,11 +102,14 @@ Regions.DEFAULTS = {
         show_collections = true,
         show_genres      = true,
         show_folder      = true,
-        -- Pill base point-size (was hardcoded 12 in the tags_builder). Still
-        -- multiplied by the global hero font-scale knob at render time.
-        font_size        = 12,
+        -- Pill base point-size. Still multiplied by the global hero font-scale
+        -- knob at render time.
+        font_size        = 14,
         -- Horizontal alignment of the pill block within the hero column.
         alignment        = "left",
+        -- How many rows of pills to show before the overflow folds into the
+        -- tappable "+N" button. 1..5; 2 keeps the pre-setting behaviour.
+        max_rows         = 2,
     },
 }
 

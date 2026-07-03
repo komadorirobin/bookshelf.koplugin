@@ -1985,7 +1985,16 @@ function Hardcover.applyMetadata(book)
         for i = 1, math.min(max, #enrichment.genres) do
             g[i] = enrichment.genres[i]
         end
-        if #g > 0 then book.genres = g end
+        if #g > 0 then
+            -- Apply unless the user explicitly chose a non-Hardcover source for
+            -- this book (the Hardcover source itself is exposed to the chip bar
+            -- by enrichBook, independent of this sync gate).
+            local pref = BookshelfSettings.genreSource and
+                BookshelfSettings.genreSource(book.filepath)
+            if pref ~= "embedded" and pref ~= "calibre" then
+                book.genres = g
+            end
+        end
     end
 end
 
@@ -2042,6 +2051,23 @@ function Hardcover.enrichBook(book)
     if link.use_description == true and book.hardcover_description_text then
         book.description = book.hardcover_description_text
         book.hardcover_description = true
+    end
+    -- Expose the Hardcover genre list to the book-detail source chip bar even
+    -- when the global "Use Hardcover metadata" toggle is off, so a per-book
+    -- source choice can pick Hardcover for one book. Capped like applyMetadata.
+    if type(enrichment.genres) == "table" and #enrichment.genres > 0 then
+        local max = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
+        if max < 0 then max = 0 end
+        local g = {}
+        for i = 1, math.min(max, #enrichment.genres) do g[i] = enrichment.genres[i] end
+        if #g > 0 then
+            book.genre_sources = book.genre_sources or {}
+            book.genre_sources.hardcover = g
+            if (BookshelfSettings.genreSource
+                    and BookshelfSettings.genreSource(book.filepath)) == "hardcover" then
+                book.genres = g
+            end
+        end
     end
     if link.use_cover == true then
         -- Cover lives in the book's .sdr as KOReader's custom cover; point

@@ -101,7 +101,8 @@ local function mock()
         __call  = function() return mock() end,
     })
 end
-table.insert(package.searchers, function(_name)
+-- package.searchers (5.2+) is package.loaders under luajit/5.1 (the runtime).
+table.insert(package.searchers or package.loaders, function(_name)
     return function() return mock() end
 end)
 

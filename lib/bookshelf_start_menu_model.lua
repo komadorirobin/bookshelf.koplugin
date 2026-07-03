@@ -6,6 +6,7 @@ Entry shapes (discriminated by `type`):
   { id, type = "action", label, icon?, plugin = { key, method } }  -- FM plugin launcher
   { id, type = "folder", label, icon?, children = { <action/module entries> } }
   { id, type = "module", module = "stats" }
+  { id, type = "divider" }  -- bare separator line, root-level only
 Folders only at top level (one-level rule), enforced by sanitize().
 ]]
 local BookshelfSettings = require("lib/bookshelf_settings_store")
@@ -40,7 +41,10 @@ function M.DEFAULTS()
         { id = "sm_settings", type = "action", label = _("Bookshelf menu"),
           icon = "\xE2\x9A\x99", internal = "settings" },                -- U+2699 ⚙
         { id = "sm_close",    type = "action", label = _("Exit bookshelf"),
-          icon = "\xEE\xA4\x85", internal = "close" },                   -- U+E905 exit-to-app
+          icon = "\xEE\xA4\x85", internal = "close", scope = "library" }, -- U+E905 exit-to-app
+        { id = "sm_reader_home", type = "action", label = _("Close book"),
+          icon = "\xEE\xA4\x85", menu_path = { { id = "filemanager" } },  -- U+E905 exit-to-app
+          scope = "reader" },
         { id = "sm_sleep",    type = "action", label = _("Sleep"),
           icon = "\xEE\xAC\xA4", action = { suspend = true } },          -- U+EB24 power-sleep
     }
@@ -91,6 +95,8 @@ function M.sanitize(items)
                 keep = true
             elseif it.type == "module" and type(it.module) == "string" then
                 keep = true
+            elseif it.type == "divider" then
+                keep = true
             end
         end
         if keep then
@@ -116,11 +122,52 @@ function M.sanitize(items)
     return out, changed
 end
 
+-- One-time migration: set scope="library" on any sm_close entry that has no
+-- scope set, and inject sm_reader_home after it if absent. Self-heals saved
+-- configs that pre-date the context-scoping defaults (issue #216).
+local function _migrate(items)
+    local changed = false
+    local has_reader_home = false
+    local close_idx = nil
+    local close_was_unscoped = false
+
+    for i, it in ipairs(items) do
+        if it.id == "sm_close" and it.scope == nil then
+            it.scope = "library"
+            changed = true
+            close_idx = i
+            close_was_unscoped = true
+        end
+        if it.id == "sm_reader_home" then
+            has_reader_home = true
+        end
+    end
+
+    -- Only inject sm_reader_home if we just fixed an unscoped sm_close (and it's
+    -- not already present). This avoids re-populating configs the user has
+    -- deliberately cleared.
+    if close_was_unscoped and not has_reader_home then
+        local reader_home
+        for _, d in ipairs(M.DEFAULTS()) do
+            if d.id == "sm_reader_home" then reader_home = d; break end
+        end
+        if reader_home then
+            local pos = close_idx + 1
+            table.insert(items, pos, reader_home)
+            changed = true
+        end
+    end
+
+    return items, changed
+end
+
 function M.load()
     local saved = BookshelfSettings.read(STORAGE_KEY)
     if type(saved) == "table" then
         local out, changed = M.sanitize(saved)
-        if changed then M.save(out) end
+        local mig_changed
+        out, mig_changed = _migrate(out)
+        if changed or mig_changed then M.save(out) end
         return out
     end
     if BookshelfSettings.isTrue(SEEDED_KEY) then return {} end
@@ -148,12 +195,20 @@ function M.findById(items, id)
 end
 
 -- Filter to entries visible in `context` ("library" | "reader"). An entry's
--- scope ("library" | "reader") restricts it to that context; nil scope (the
--- default) shows everywhere, so existing menus are unaffected. Folders are
--- filtered recursively and dropped once they'd be empty / are themselves scoped
--- out. Returns a fresh filtered list -- never mutates or saves.
+-- scope restricts it: "library"/"reader" to that context; nil (the default) and
+-- "both" show everywhere. ("both" is the explicit "show in both views" a
+-- menu-action shortcut can be set to, vs nil which for menu actions means "Auto"
+-- -- shown wherever its menu item exists, gated separately by the availability
+-- filter.) A folder's OWN scope still gates it, same as any other entry, but
+-- an empty folder is never dropped for being empty -- whether it started that
+-- way (e.g. one the user just created) or ended up that way because all its
+-- children are scoped elsewhere (#221: a folder can always be populated via
+-- its flyout, or deleted manually if it's not wanted -- it doesn't need to be
+-- hidden either way). Returns a fresh filtered list -- never mutates.
 function M.filterByScope(items, context)
-    local function visible(e) return e.scope == nil or e.scope == context end
+    local function visible(e)
+        return e.scope == nil or e.scope == "both" or e.scope == context
+    end
     local out = {}
     for _i, it in ipairs(items or {}) do
         if visible(it) then
@@ -162,12 +217,10 @@ function M.filterByScope(items, context)
                 for _j, c in ipairs(it.children or {}) do
                     if visible(c) then kids[#kids + 1] = c end
                 end
-                if #kids > 0 then
-                    local copy = {}
-                    for k, v in pairs(it) do copy[k] = v end
-                    copy.children = kids
-                    out[#out + 1] = copy
-                end
+                local copy = {}
+                for k, v in pairs(it) do copy[k] = v end
+                copy.children = kids
+                out[#out + 1] = copy
             else
                 out[#out + 1] = it
             end
@@ -177,10 +230,22 @@ function M.filterByScope(items, context)
 end
 
 -- dir = -1 (up) / 1 (down). Returns true if moved.
-function M.moveBy(items, id, dir)
+-- is_visible (optional) is a predicate run on neighbouring entries: when given,
+-- the move skips over entries it rejects and swaps the target directly with its
+-- nearest VISIBLE neighbour, leaving the skipped ones parked at their slots.
+-- This keeps a single tap producing a single visible step when the live view
+-- hides some entries (e.g. Auto menu shortcuts not available here) -- without it
+-- the user taps once per hidden item to walk past them. nil predicate == the
+-- old plain-adjacent swap (every entry visible), so existing callers/tests are
+-- unaffected.
+function M.moveBy(items, id, dir, is_visible)
     local list, i = M.findById(items, id)
     if not list then return false end
+    local function visible(e) return is_visible == nil or is_visible(e) end
     local j = i + dir
+    while j >= 1 and j <= #list and not visible(list[j]) do
+        j = j + dir
+    end
     if j < 1 or j > #list then return false end
     list[i], list[j] = list[j], list[i]
     return true

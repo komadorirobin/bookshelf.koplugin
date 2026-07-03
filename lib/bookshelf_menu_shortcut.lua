@@ -6,6 +6,21 @@
 -- replay, added in a later task) lazy-requires FileManager/MenuHost so this
 -- module still loads under plain lua.
 
+-- logger/socket are KOReader-provided; this module must still load under
+-- plain lua for the headless test (see file header), so both are guarded.
+local ok_logger, logger = pcall(require, "logger")
+if not ok_logger then logger = { dbg = function() end } end
+
+-- Wall-clock timer for perf instrumentation, matching bookshelf_widget.lua's
+-- own [bookshelf perf] convention.
+local _gettime
+do
+    local ok, s = pcall(require, "socket")
+    _gettime = (ok and s and type(s.gettime) == "function")
+        and function() return s.gettime() end
+        or  os.clock
+end
+
 local MenuShortcut = {}
 
 -- A row's display label (text, or text_func resolved once), or "".
@@ -142,23 +157,44 @@ end
 -- (FileManagerMenu:setUpdateItemTable -> self.tab_item_table). Returns the root
 -- item tree, or nil if the file manager / menu module isn't available or
 -- assembly fails. pcall-guarded; this is the one version-coupled point.
-function MenuShortcut.buildMenuTree()
-    local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
-    if not ok_fm or not FileManager or not FileManager.instance then return nil end
-    local fmenu = FileManager.instance.menu
-    if type(fmenu) ~= "table" or type(fmenu.setUpdateItemTable) ~= "function" then return nil end
-    -- Prefer the already-assembled tree: setUpdateItemTable re-probes every
-    -- registered widget's addToMainMenu and can intermittently error in
-    -- MenuSorter when run repeatedly outside the normal menu-open flow, so only
-    -- build it when nothing is cached yet (mirrors onShowMenu).
-    local tree = fmenu.tab_item_table
+-- Build (or reuse) a menu's tab_item_table tree. Prefer the cached tree:
+-- setUpdateItemTable re-probes every registered widget's addToMainMenu and can
+-- intermittently error in MenuSorter when run repeatedly outside the normal
+-- menu-open flow, so only rebuild when nothing is cached yet (mirrors
+-- onShowMenu). nil when the menu can't produce a usable tree.
+local function treeFromMenu(menu)
+    if type(menu) ~= "table" or type(menu.setUpdateItemTable) ~= "function" then return nil end
+    local tree = menu.tab_item_table
     if type(tree) ~= "table" then
-        local ok = pcall(function() fmenu:setUpdateItemTable() end)
+        local _t0 = _gettime()
+        local ok = pcall(function() menu:setUpdateItemTable() end)
+        logger.dbg(string.format(
+            "[bookshelf perf] MenuShortcut.treeFromMenu: setUpdateItemTable"
+            .. " (cache MISS) ok=%s took=%.0fms", tostring(ok), (_gettime() - _t0) * 1000))
         if not ok then return nil end
-        tree = fmenu.tab_item_table
+        tree = menu.tab_item_table
     end
     if type(tree) ~= "table" then return nil end
     return tree
+end
+
+-- Source the menu of the ACTIVE UI: the reader's menu when a book is open, else
+-- the file manager's. ReaderUI.instance is set on reader open and cleared on
+-- close, so its presence reliably means "in the reader" -- and ReaderMenu
+-- exposes the same setUpdateItemTable/tab_item_table API as FileManagerMenu.
+-- This makes capture, replay and the toggle checkbox work in whichever view the
+-- start menu is open in (#211). When in the reader we do NOT fall back to a
+-- parked FileManager menu -- that would capture/replay the wrong view's items.
+function MenuShortcut.buildMenuTree()
+    local ok_r, ReaderUI = pcall(require, "apps/reader/readerui")
+    if ok_r and ReaderUI and ReaderUI.instance then
+        return treeFromMenu(ReaderUI.instance.menu)
+    end
+    local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
+    if ok_fm and FileManager and FileManager.instance then
+        return treeFromMenu(FileManager.instance.menu)
+    end
+    return nil
 end
 
 -- Open the file-manager menu in capture mode: drill submenus, tap a leaf to
@@ -196,6 +232,20 @@ function MenuShortcut.toggleState(menu_path)
     local ok, v = pcall(leaf.checked_func)
     if not ok then return nil end
     return v and true or false
+end
+
+-- Whether a menu shortcut should be shown in the CURRENT view: its captured
+-- path resolves to a callable leaf in the active UI's menu (reader vs file
+-- manager). Lets the start menu hide shortcuts that don't exist here, so each
+-- auto-appears only where it works -- no "not available" tap (#211).
+-- Fail-OPEN: a non-table path, or a menu tree that can't be built (transient
+-- MenuSorter error), returns true so shortcuts never vanish on a hiccup.
+function MenuShortcut.isAvailable(menu_path)
+    if type(menu_path) ~= "table" then return true end
+    local tree = MenuShortcut.buildMenuTree()
+    if type(tree) ~= "table" then return true end
+    local leaf = MenuShortcut.walk(tree, menu_path)
+    return type(leaf) == "table" and type(leaf.callback) == "function"
 end
 
 -- Replay a saved menu_path: re-assemble the menu, walk to the leaf, fire its
