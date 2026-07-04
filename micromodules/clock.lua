@@ -118,7 +118,7 @@ return {
                 max_width = mw,
             },
             TextWidget:new{
-                text = os.date("%A %d %B", now),
+                text = require("lib/bookshelf_localdate").localize(os.date("%A %d %B", now)),
                 face = Fonts:getFace("cfont", sc(14), {italic=true}),
                 fgcolor = SM.COLOR_PRIMARY,
                 max_width = mw,

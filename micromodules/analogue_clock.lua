@@ -258,15 +258,18 @@ return {
             content[#content + 1] = VerticalSpan:new{ width = pad } -- clock-to-date
             -- SHORTEN the format before shrinking the font: try full, then
             -- abbreviated, then numeric, and use the LONGEST that fits the cell
-            -- width at the stable date size. os.date's %a/%b come from the same
-            -- C locale as %A/%B, so this changes the date's LENGTH, not how it's
-            -- localised. Font shrink is a last resort for a cell so narrow even
+            -- width at the stable date size. Names are localized to the UI
+            -- language (os.date alone returns C-locale English) BEFORE
+            -- measuring, so the fit + font-shrink logic works on the string we
+            -- actually draw -- localized names can be longer/shorter than the
+            -- English. Font shrink is a last resort for a cell so narrow even
             -- "17/06" overflows. A small margin keeps us off the truncation edge.
+            local LocalDate = require("lib/bookshelf_localdate")
             local fit_w = mw * 0.96
             local face  = Fonts:getFace("cfont", date_px, { italic = true })
             local date_txt, date_w
             for _, fmt in ipairs({ "%A %d %B", "%a %d %b", "%d %b", "%d/%m" }) do
-                date_txt = os.date(fmt, now)
+                date_txt = LocalDate.localize(os.date(fmt, now))
                 date_w = TextWidget:new{ text = date_txt, face = face }:getSize().w
                 if date_w <= fit_w then break end
             end

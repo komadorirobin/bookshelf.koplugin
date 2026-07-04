@@ -623,6 +623,9 @@ local function timeNow(state)
     return (state and state.now) or os.time()
 end
 local function fmt(spec, state) return os.date(spec, timeNow(state)) end
+-- os.date weekday/month names come from the C locale (English on Kindle),
+-- bypassing gettext -- localize them to the active UI language.
+local LocalDate = require("lib/bookshelf_localdate")
 
 Tokens.expanders.time     = function(_b, s) return fmt("%H:%M", s) end
 Tokens.expanders.time_24h = function(_b, s) return fmt("%H:%M", s) end
@@ -630,11 +633,11 @@ Tokens.expanders.time_12h = function(_b, s)
     local t = fmt("%I:%M %p", s)
     return (t:gsub("^0", ""))
 end
-Tokens.expanders.date          = function(_b, s) return fmt("%d %b", s):gsub("^0", "") end
-Tokens.expanders.date_long     = function(_b, s) return fmt("%d %B %Y", s):gsub("^0", "") end
+Tokens.expanders.date          = function(_b, s) return LocalDate.localize(fmt("%d %b", s)):gsub("^0", "") end
+Tokens.expanders.date_long     = function(_b, s) return LocalDate.localize(fmt("%d %B %Y", s)):gsub("^0", "") end
 Tokens.expanders.date_numeric  = function(_b, s) return fmt("%d/%m/%Y", s) end
-Tokens.expanders.weekday       = function(_b, s) return fmt("%A", s) end
-Tokens.expanders.weekday_short = function(_b, s) return fmt("%a", s) end
+Tokens.expanders.weekday       = function(_b, s) return LocalDate.localize(fmt("%A", s)) end
+Tokens.expanders.weekday_short = function(_b, s) return LocalDate.localize(fmt("%a", s)) end
 
 local function minutesToHM(m)
     if not m or m <= 0 then return "" end
