@@ -31,18 +31,11 @@ jobs:
           done < <(find . -name '*.lua' -not -path './.git/*' -not -path './.claude/*' -print0)
           exit $fail
 
-      # The headless suite runs under standard Lua (not LuaJIT): the tests mock
-      # KOReader's modules, but a real LuaJIT would use its built-in ffi and trip
-      # over the missing KOReader C declarations. Each test exits non-zero on
-      # failure.
+      # The headless suite runs under standard Lua (not LuaJIT). Keep the skip
+      # list in tests/run.sh: a few tests require faithful KOReader/UI widget
+      # measurements and are intentionally exercised on device instead of CI.
       - name: Test suite (Lua)
-        run: |
-          fail=0
-          for f in tests/_test_*.lua; do
-            echo "== $f =="
-            lua5.4 "$f" || fail=1
-          done
-          exit $fail
+        run: sh tests/run.sh
 
       # A malformed .po fails to compile and silently disables that locale on
       # device (see #215). --check validates format + a few common mistakes.
