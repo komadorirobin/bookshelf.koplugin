@@ -67,7 +67,7 @@ end
 -- true here would make sendEvent re-walk the stack for an event FM already
 -- handled -- the same double-handling risk the broadcast-tag exclusion
 -- below exists to avoid on the other delivery path.
--- Three exclusions:
+-- Two exclusions:
 --   1. Lifecycle events targeting self_widget itself -- forwarding
 --      onCloseWidget/onFlushSettings/onShow/onClose to FM can tear FM down
 --      (e.g. nil'ing FileManager.instance) or otherwise misfire.
@@ -77,43 +77,38 @@ end
 --      redundant second delivery -- harmless for idempotent lifecycle
 --      broadcasts (Suspend, Resume) but corrupting for toggle broadcasts
 --      (ToggleNightMode would flip state twice, net zero -- issue #19).
---   3. Gesture-translated events (onSwipe / onTapClose / onMultiSwipe / ...).
---      InputContainer:onGesture re-dispatches a matched gesture as
---      Event:new(name, ges_args, ev), so the raw gesture rides along as an
---      arg (a table with a `.ges` field). These must NOT be forwarded: the
---      caller's own gesture handlers already offer FM its passthrough via
---      tryFMZones, and re-delivering the gesture lets FM act on it a SECOND
---      time -- e.g. a swipe reaching FM's open menu fires onCloseAllMenus,
---      whose close_callback is FileManager:onClose, tearing down the whole
---      home surface and exiting KOReader (issue #225). forwardToFM is only
---      for non-gesture Dispatcher action events.
+--
+-- FM-teardown guard: a forwarded event must never be able to quit KOReader.
+-- Some events, delivered to FM, drive it to FileManager:onClose -- e.g. a
+-- swipe that reaches an open FM menu fires onCloseAllMenus, whose
+-- close_callback is FileManager:onClose, which empties the window stack and
+-- exits the app (issue #225). We MUST still forward gesture-translated events
+-- (onSwipe etc.), because that is how FM's own gesture handlers get the
+-- brightness/warmth edge swipes and other actions while bookshelf is on top
+-- (issue #231 -- an over-broad "drop all gesture events" guard here silently
+-- killed those). So instead of dropping the event, we neutralise
+-- FileManager:onClose for the duration of the synchronous dispatch and
+-- restore it after: FM still handles the gesture, it just can't tear itself
+-- (and KOReader) down as a side effect.
 local NEVER_FORWARD = {
     onCloseWidget   = true,
     onFlushSettings = true,
     onShow          = true,
     onClose         = true,
 }
--- A gesture-translated event carries the raw gesture table (with a `.ges`
--- field) as one of its args. Checked by index (not ipairs): the first arg is
--- often nil (the ges_event's own `.args`), and the gesture is the next one.
-local function carriesGesture(event)
-    local args = event.args
-    if type(args) ~= "table" then return false end
-    for i = 1, 3 do
-        local a = args[i]
-        if type(a) == "table" and a.ges then return true end
-    end
-    return false
-end
 function GestureZones.forwardToFM(event, self_widget)
     if NEVER_FORWARD[event.handler] then return false end
     if event._bookshelf_from_broadcast then return false end
-    if carriesGesture(event) then return false end
     local fm = require("apps/filemanager/filemanager").instance
-    if fm and fm ~= self_widget then
-        return fm:handleEvent(event) and true or false
-    end
-    return false
+    if not (fm and fm ~= self_widget) then return false end
+    -- Neutralise FM teardown for this synchronous forward (see above, #225).
+    -- rawget/restore so a pre-existing instance override is preserved and a
+    -- nil restores the normal class method; pcall so an error still restores.
+    local saved_onClose = rawget(fm, "onClose")
+    fm.onClose = function() return true end
+    local ok, consumed = pcall(fm.handleEvent, fm, event)
+    fm.onClose = saved_onClose
+    return (ok and consumed) and true or false
 end
 
 return GestureZones

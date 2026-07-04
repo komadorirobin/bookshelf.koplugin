@@ -1179,11 +1179,10 @@ function ChipBar:onTapStrip(_, ges)
                     -- have nothing to clear it.
                     if self.on_change then self.on_change(chip.key) end
                 elseif chip.key == self.active then
-                    -- Tap on the already-active navigable tab opens the
-                    -- editor -- same affordance as long-press, surfaced
-                    -- via single-tap for users who reach for the focused
-                    -- chip when they want to edit it.
-                    if self.on_hold then self.on_hold(chip.key) end
+                    -- Tapping the already-active chip does nothing. Editing is
+                    -- long-press only (on_hold); a stray tap on the focused
+                    -- chip used to open the editor, which was easy to trigger
+                    -- by accident (#224). Consume the tap so it's a clean no-op.
                 else
                     -- Switch to a different tab.
                     if self.on_change then

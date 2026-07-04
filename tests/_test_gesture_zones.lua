@@ -182,12 +182,11 @@ t.test("no fm instance does not crash, and returns false", function()
     assert(consumed == false)
 end)
 
--- Regression for #225: a gesture-translated event (InputContainer:onGesture
--- re-dispatches as Event:new(name, ges_args, ev), so the raw gesture rides
--- along as an arg with a `.ges` field) must NOT be forwarded to FM -- doing so
--- let a swipe reach FM's menu, fire onCloseAllMenus -> FileManager:onClose, and
--- exit KOReader. Gestures get their FM passthrough via tryFMZones instead.
-t.test("a gesture-carrying event is not forwarded to FM (#225)", function()
+-- Gesture-translated events (onSwipe etc.) ARE forwarded to FM -- that's how
+-- FM's own gesture handlers get the brightness/warmth edge swipes while
+-- bookshelf is on top (#231). An earlier "drop all gesture events" guard
+-- killed those.
+t.test("a gesture-carrying event is still forwarded to FM (#231)", function()
     local forwarded = false
     package.loaded["apps/filemanager/filemanager"] = {
         instance = { handleEvent = function() forwarded = true; return true end },
@@ -195,19 +194,32 @@ t.test("a gesture-carrying event is not forwarded to FM (#225)", function()
     -- Mirrors Event:new("Swipe", gsseq.args, ev): args[1] nil, args[2] the ges.
     local ev = { handler = "onSwipe", args = { nil, { ges = "swipe", pos = {} } } }
     local consumed = Zones.forwardToFM(ev, {})
-    assert(not forwarded, "a gesture event must not be handed to FileManager")
-    assert(consumed == false)
+    assert(forwarded, "a gesture event must reach FileManager (brightness edge swipes)")
+    assert(consumed == true)
 end)
 
-t.test("a non-gesture arg does not block forwarding", function()
-    local forwarded = false
-    package.loaded["apps/filemanager/filemanager"] = {
-        instance = { handleEvent = function() forwarded = true; return true end },
+-- Regression for #225: a forwarded event that drives FM to onClose (a swipe
+-- reaching an open FM menu -> onCloseAllMenus -> close_callback = onClose ->
+-- quit KOReader) must NOT be able to tear FM down. forwardToFM neutralises
+-- FileManager:onClose for the synchronous dispatch, then restores it.
+t.test("a forwarded event cannot tear FileManager down (#225)", function()
+    local real_closed, restored_ok = false, false
+    local fm
+    fm = {
+        onClose = function() real_closed = true end,  -- the "real" teardown
+        handleEvent = function(self)
+            -- Simulate the menu-close chain calling the (now neutralised) onClose.
+            self.onClose()
+            return true
+        end,
     }
-    -- A Dispatcher action with a plain value arg (no .ges) still forwards.
-    local consumed = Zones.forwardToFM({ handler = "onSetNightMode", args = { true } }, {})
-    assert(forwarded, "a non-gesture action event must still forward")
-    assert(consumed == true)
+    package.loaded["apps/filemanager/filemanager"] = { instance = fm }
+    local ev = { handler = "onSwipe", args = { nil, { ges = "swipe", pos = {} } } }
+    Zones.forwardToFM(ev, {})
+    assert(not real_closed, "FM:onClose must be neutralised during the forward")
+    -- And restored afterwards (a later real close still works).
+    fm.onClose()
+    assert(real_closed, "FM:onClose must be restored after the forward")
 end)
 
 t.done()
