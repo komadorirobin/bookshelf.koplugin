@@ -173,23 +173,30 @@ Each module can carry its own settings (reached via **Module settings…** when 
 
 ## The book menu (long-press a cover)
 
-Long-press any cover on the shelf or in the hero card to open the book menu. The header shows a cover thumbnail, the book's title and author, and a strip of **navigation pills** -- tappable shortcuts to the book's author, series, collections, genres, and parent folder. Tap any pill to drill into that shelf. When a book has bookmarks or highlights, a **N bookmarks ›** link sits under the header; tap it to open KOReader's bookmark browser for that book (and jump into it).
+Long-press any cover on the shelf or in the hero card -- or tap a book's **+N** tags pill -- to open the book detail popup, a tabbed window with everything about the book. The header shows a cover thumbnail, the title and author, and (when the book has bookmarks or highlights) a **N bookmarks ›** link in the top-right corner; tap it to open KOReader's bookmark browser for that book and jump into it. Along the bottom sit **Close**, two **zoom** buttons (magnifier icons) for text size, and **Open**.
 
-Below the header you'll find:
+There are four tabs:
+
+- **Description** -- the book's blurb. When a Hardcover description is cached, a chip bar switches between the embedded and Hardcover text.
+- **Reviews** -- spoiler-free Hardcover reviews for a linked book, cached so they reopen offline once fetched (see [Hardcover enrichment](#hardcover-enrichment)).
+- **Tags** -- **navigation pills** grouped into Author, Series, Collections, Genres, and Folder. Tap any pill to drill into that shelf; each section has an **Edit…** button for changing membership (this is where you add or remove the book from collections, edit genres, and so on).
+- **Edit** -- the book's actions:
 
 | Button | What it does |
 |--------|--------------|
 | **Unopened / Reading / On hold / Finished** | Reading status. Tap to change. Unopened clears progress and drops the book from Recent without touching highlights or bookmarks. |
+| **Favourite** | Toggle the book in and out of Favourites. |
+| **Your rating** | Set a 1-to-5 star rating, or clear it. |
 | **Show info** | KOReader's built-in book info dialog. |
-| **Collections (N)…** | Add or remove the book from any collection (Favourites, To Be Read, your own). The number shows current membership. |
-| **Rating** | Set a 1-to-5 star rating, or clear it. |
-| **Link to Hardcover** / **Edit Hardcover link** | Sits in its own row at the top of the menu, shown only when `hardcoverapp.koplugin` is enabled. Link the book to a Hardcover edition, or edit an existing link. When linked, a **Hardcover reviews** button appears beside it. See [Hardcover enrichment](#hardcover-enrichment). |
 | **Refresh metadata** | Re-read the cover and metadata from the file (useful after editing metadata externally). |
 | **Remove from history** | Drop the book from Recent without changing anything else on disk. |
 | **Reset book data…** | A wider purge with checkboxes for progress, bookmarks, highlights, notes, custom cover, and custom metadata. |
 | **Delete** | Permanently remove the file from disk (with a confirmation). |
+| **Link… / Edit…** (Hardcover) | Shown only when `hardcoverapp.koplugin` is enabled. Link the book to a Hardcover edition, or edit an existing link. See [Hardcover enrichment](#hardcover-enrichment). |
 
-If another plugin adds its own entries to KOReader's file long-press menu (for example "Open Incognito", or an AI assistant's "About this book"), those appear at the bottom of the book menu too, so you can use them straight from Bookshelf.
+If another plugin adds its own entries to KOReader's file long-press menu (for example "Open Incognito", or an AI assistant's "About this book"), those appear in the Edit tab too, so you can use them straight from Bookshelf.
+
+**Text size.** The footer's **zoom** buttons resize the current tab's text, and each tab remembers its own size -- so you can enlarge a long Description or the Reviews without also inflating the Edit tab's buttons or the Tags pills. To resize the **tab labels** themselves (handy if Description/Reviews/Tags/Edit wrap onto a second row on a small screen), use **menu -> Text size -> Modal tabs**.
 
 Long-pressing a series, author, genre, collection, format, rating, or folder stack instead opens a single **Pin to chip bar** prompt -- the fastest way to turn a stack you've drilled into into a permanent shelf.
 
@@ -204,7 +211,7 @@ Collections are named lists of books, and Bookshelf uses KOReader's built-in col
 
 Open **menu -> Manage collections…** to add new collections, rename or delete existing ones, and **pin** any collection to your chip bar as a dedicated shelf.
 
-To put a book into a collection, long-press its cover and tap **Collections (N)…**. Tick the collections you want, then Save. The pill strip in the book menu's header updates immediately to reflect what's changed.
+To put a book into a collection, open its popup (long-press the cover), go to the **Tags** tab and tap **Edit…** in the Collections section. Tick the collections you want, then Save. The Collections pills update immediately to reflect what's changed.
 
 ---
 
@@ -212,7 +219,7 @@ To put a book into a collection, long-press its cover and tap **Collections (N)�
 
 If you also use `hardcoverapp.koplugin`, Bookshelf can link books to Hardcover and cache a small amount of Hardcover metadata for display. These features only appear when that plugin is installed and enabled, so they stay out of the way if you don't use Hardcover. The **Hardcover enrichment** menu (in the bookshelf menu, below Manage collections) also stays available if you've linked books before, so you keep access to already-cached data even after removing the plugin.
 
-**Linking a book.** Long-press a cover; with the plugin enabled, a Hardcover row sits at the top of the book menu. **Link to Hardcover** (or **Edit Hardcover link** once linked) opens the link menu:
+**Linking a book.** Open a book's popup (long-press its cover) and go to the **Edit** tab; with the plugin enabled, a Hardcover row sits below File & metadata. **Link…** (or **Edit…** once linked) opens the link menu:
 
 - **Auto link** -- links without searching, using identifiers embedded in the EPUB (an ISBN, or a Hardcover id/edition baked into the file). The most specific identifier wins (a Hardcover edition, then ISBN, then a Hardcover book/slug). If the file carries no usable identifier, Auto link falls back to a best-guess search by title and author.
 - **Manual link…** -- searches Hardcover by title and author and lets you pick the right book.
@@ -220,7 +227,7 @@ If you also use `hardcoverapp.koplugin`, Bookshelf can link books to Hardcover a
 - **Use Hardcover image** / **Use Hardcover description** -- per-book toggles (shown once linked) that override the book's own cover or description with Hardcover's. See below for how these are set automatically.
 - **Clear link** -- remove the Hardcover link.
 
-When a book is linked, a **Hardcover reviews** button appears in the book menu (and the hero rating row's "N reviews" opens the same popup). Reviews are filtered to spoiler-free ones, and cached, so they reopen offline once fetched.
+When a book is linked, its popup gains a **Reviews** tab (and the hero rating row's "N reviews" opens the popup straight to it). Reviews are filtered to spoiler-free ones, and cached, so they reopen offline once fetched.
 
 **Linking the whole library at once.** **Hardcover enrichment -> Auto-link all books** links every unlinked book in one pass, fetching each match's details (description, cover, rating) as it goes. You pick how to match:
 

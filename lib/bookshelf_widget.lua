@@ -8479,6 +8479,29 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs, 
                     return true
                 end
             end
+            -- Embedded cover: load the FULL-resolution cover straight from the
+            -- document, exactly like KOReader's native Book information > Cover
+            -- image (filemanagerbookinfo:getCoverImage, which also picks up a
+            -- DocSettings custom cover). The BIM cover_bb used as the fallback
+            -- below is a grid-sized THUMBNAIL -- feeding it to ImageViewer
+            -- upscales blurry, even at "original size" (#228). Guarded with a
+            -- pcall + the thumbnail fallback so an older build still shows
+            -- something.
+            local ok_bi, BookInfo = pcall(require, "apps/filemanager/filemanagerbookinfo")
+            if ok_bi and BookInfo and BookInfo.getCoverImage then
+                local ok_bb, full_bb = pcall(function()
+                    return BookInfo:getCoverImage(nil, fp, false)
+                end)
+                if ok_bb and full_bb then
+                    UIManager:show(require("ui/widget/imageviewer"):new{
+                        image            = full_bb,
+                        image_disposable = true,  -- getCoverPageImage bb is ours
+                        title_text       = title_for_viewer,
+                        fullscreen       = true,
+                    })
+                    return true
+                end
+            end
             local preview = Repo.buildBookMeta(fp)
             if not preview or not preview.cover_bb then return true end
             UIManager:show(require("ui/widget/imageviewer"):new{

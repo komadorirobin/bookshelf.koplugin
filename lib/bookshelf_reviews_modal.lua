@@ -62,15 +62,36 @@ function InvertedFrame:paintTo(bb, x, y)
     end
 end
 
--- Reader-adjustable font size for the HTML body (description + reviews share
--- this modal, so they share one setting). Stored as a base point size and run
--- through Screen:scaleBySize like KOReader's dictionary popup. The A- / A+
--- footer buttons step it within [MIN, MAX] and persist the choice.
+-- Reader-adjustable font size for each tab's body (Edit buttons, Description
+-- HTML, Reviews HTML, Tags pills). Stored as a base point size and run through
+-- Screen:scaleBySize like KOReader's dictionary popup. The A- / A+ footer
+-- buttons step it within [MIN, MAX] and persist the choice.
+--
+-- One key per tab (issue: zooming Reviews shouldn't also blow up the Edit
+-- tab's buttons). DESC_FONT_KEY keeps its original name for the description
+-- tab specifically, so upgraders' existing custom size carries over
+-- untouched. TAB_FONT_KEYS maps a tab's `id` to its own key; a tab that has
+-- never been zoomed falls back to the CURRENT desc_font_size value (not a
+-- hardcoded default) in _readFontSize, so nobody's text size jumps on
+-- upgrade -- it only diverges once a tab is zoomed independently.
 local DESC_FONT_KEY     = "desc_font_size"
 local DESC_FONT_DEFAULT = 20
 local DESC_FONT_MIN     = 12
 local DESC_FONT_MAX     = 40
 local DESC_FONT_STEP    = 2
+local TAB_FONT_KEYS = {
+    edit        = "edit_font_size",
+    description = DESC_FONT_KEY,
+    reviews     = "reviews_font_size",
+    tags        = "tags_font_size",
+}
+
+-- Percentage scale applied to the tab bar's own label text (issue: labels
+-- wrapped to a second row for some users). Global -- one value for the whole
+-- label row, set via Settings > Text size > Modal tabs -- unlike the
+-- per-tab content sizes above.
+local TAB_LABEL_FONT_KEY     = "modal_tab_font_scale"
+local TAB_LABEL_FONT_BASE    = 13
 
 -- Nerd Font zoom glyphs for the font-size buttons, rendered via KOReader's
 -- built-in "symbols" face (the bundled Nerd Font symbols font).
@@ -118,6 +139,7 @@ local TabBar = InputContainer:extend{
     active_dark = false, -- active tab's body is dark -> keep its open-bottom black
     width       = nil,
     left_inset  = nil,   -- x of the first tab; align with the body text's left
+    font_size   = nil,   -- base point size before Screen:scaleBySize; default below
     on_select   = nil,
 }
 
@@ -128,7 +150,7 @@ function TabBar:init()
     self.pad_v      = Screen:scaleBySize(6)
     self.border     = Size.border.thin         -- segmented-control frame + separators
     self.sep_w      = Size.border.thin
-    self.face       = Font:getFace("cfont", Screen:scaleBySize(13))
+    self.face       = Font:getFace("cfont", Screen:scaleBySize(self.font_size or 13))
 
     -- Pack tabs into rows that fit self.width, wrapping when the next tab would
     -- overflow (so a narrow screen / high DPI keeps every tab reachable instead
@@ -324,19 +346,16 @@ function ReviewsModal:init()
     self.width  = self.width  or (screen_w - Screen:scaleBySize(30))
     self.height = self.height or (screen_h - Screen:scaleBySize(30))
 
-    -- Persisted, reader-adjustable body font size (shared by description +
-    -- reviews). Clamp on read so a hand-edited settings file can't break layout.
-    local saved = tonumber(Store.read(DESC_FONT_KEY, DESC_FONT_DEFAULT)) or DESC_FONT_DEFAULT
-    if saved < DESC_FONT_MIN then saved = DESC_FONT_MIN end
-    if saved > DESC_FONT_MAX then saved = DESC_FONT_MAX end
-    self.font_size = saved
-
     -- Source tabs (e.g. File vs Hardcover description). Only meaningful with 2+.
     self._tabs = (type(self.tabs) == "table" and #self.tabs > 0) and self.tabs or nil
     self._active_tab = self.active_tab or 1
     if self._tabs and (self._active_tab < 1 or self._active_tab > #self._tabs) then
         self._active_tab = 1
     end
+
+    -- Persisted, reader-adjustable body font size for the now-active tab.
+    -- Must run after self._tabs/_active_tab are set (_fontSizeKey needs them).
+    self.font_size = self:_readFontSize()
 
     -- A tab may carry multiple HTML "sources" (e.g. Embedded vs Hardcover
     -- description), toggled by a chip bar above the body rather than a top-level
@@ -893,9 +912,31 @@ function ReviewsModal:_assemble()
         (_t4 - _t3) * 1000, (_t5 - _t4) * 1000, (_t5 - _t0) * 1000))
 end
 
--- _changeFontSize(delta): step the body font size, persist it, and re-render
--- the HTML in place (no modal reopen, so the buttons stay put). Clamped to
--- [DESC_FONT_MIN, DESC_FONT_MAX]; a no-op at the clamp edges.
+-- _fontSizeKey(): the Store key for the currently active tab's font size.
+-- Falls back to DESC_FONT_KEY for the rare caller with no tabs (single-body
+-- modal) or a tab missing an id.
+function ReviewsModal:_fontSizeKey()
+    local tab = self._tabs and self._tabs[self._active_tab]
+    local id = tab and tab.id
+    return (id and TAB_FONT_KEYS[id]) or DESC_FONT_KEY
+end
+
+-- _readFontSize(): clamped font size for the active tab. A tab that has never
+-- been zoomed independently falls back to the current DESC_FONT_KEY value
+-- (not a hardcoded default), so upgraders see no size change until they zoom
+-- a tab for the first time.
+function ReviewsModal:_readFontSize()
+    local legacy = tonumber(Store.read(DESC_FONT_KEY, DESC_FONT_DEFAULT)) or DESC_FONT_DEFAULT
+    local saved = tonumber(Store.read(self:_fontSizeKey(), legacy)) or legacy
+    if saved < DESC_FONT_MIN then saved = DESC_FONT_MIN end
+    if saved > DESC_FONT_MAX then saved = DESC_FONT_MAX end
+    return saved
+end
+
+-- _changeFontSize(delta): step the active tab's body font size, persist it
+-- under that tab's own key, and re-render the HTML in place (no modal reopen,
+-- so the buttons stay put). Clamped to [DESC_FONT_MIN, DESC_FONT_MAX]; a
+-- no-op at the clamp edges.
 function ReviewsModal:_changeFontSize(delta)
     local new = (self.font_size or DESC_FONT_DEFAULT) + delta
     if new < DESC_FONT_MIN then new = DESC_FONT_MIN end
@@ -905,7 +946,7 @@ function ReviewsModal:_changeFontSize(delta)
     -- Deferred: users tap A-/A+ repeatedly hunting for a comfortable
     -- size, and each sync save cost a full settings-file write between
     -- re-renders. Flushed once at onCloseWidget.
-    Store.saveDeferred(DESC_FONT_KEY, new)
+    Store.saveDeferred(self:_fontSizeKey(), new)
     self._font_size_dirty = true
     -- Re-render the HTML scroller at the new size, then reassemble. _assemble
     -- rebuilds the active body fresh, so native tabs (pills sized from
@@ -955,12 +996,14 @@ function ReviewsModal:_buildTabRow()
     local labels = {}
     for i, t in ipairs(self._tabs) do labels[i] = t.label or tostring(i) end
     local active = self._tabs[self._active_tab]
+    local label_scale = tonumber(Store.read(TAB_LABEL_FONT_KEY, 100)) or 100
     return TabBar:new{
         tabs        = labels,
         active      = self._active_tab,
         active_dark = active and active.dark_body or false,
         width       = self.width,
         left_inset  = self._side_pad,
+        font_size   = TAB_LABEL_FONT_BASE * label_scale / 100,
         on_select   = function(i) self:_switchTab(i) end,
     }
 end
@@ -1001,6 +1044,9 @@ function ReviewsModal:_switchTab(i)
     if not self._tabs or i == self._active_tab
             or i < 1 or i > #self._tabs then return end
     self._active_tab = i
+    -- Each tab remembers its own zoom level (see TAB_FONT_KEYS); reload
+    -- before anything reads self.font_size below.
+    self.font_size = self:_readFontSize()
     local tab = self._tabs[i]
     if self._tab_row then
         self._tab_row.active = i
@@ -1015,13 +1061,35 @@ function ReviewsModal:_switchTab(i)
 end
 
 function ReviewsModal:onShow()
+    -- Track the visible popup so the Settings "Modal tabs" font-scale picker
+    -- can preview a label-size change live (see refreshTabBar). Cleared in
+    -- onCloseWidget. Idempotent across repeated onShow (e.g. a sub-dialog
+    -- closing over us).
+    ReviewsModal._live = self
     UIManager:setDirty(self, function()
         return "ui", self.frame.dimen
     end)
     return true
 end
 
+-- refreshTabBar(): re-read the tab-label font scale and rebuild the tab strip
+-- in place, then reassemble. Called live from the Settings "Modal tabs"
+-- font-scale picker so the change previews without a close/reopen. Only the
+-- strip's own height changes here; the body keeps its current size (a full
+-- re-layout, which rebalances the body budget, happens on the next open), so
+-- the fixed, centred frame just grows or shrinks a little around it.
+function ReviewsModal:refreshTabBar()
+    if self._dismissed then return end
+    self._tab_row = self:_buildTabRow()
+    self:_assemble()
+    UIManager:setDirty(self, function() return "ui", self.frame.dimen end)
+end
+
 function ReviewsModal:onCloseWidget()
+    -- Drop the live-popup reference (see onShow) so the Settings picker stops
+    -- targeting a torn-down widget. Guarded in case another popup opened after
+    -- us and already reclaimed it.
+    if ReviewsModal._live == self then ReviewsModal._live = nil end
     -- Settle the deferred font-size write (see _changeFontSize) now the
     -- tap burst is definitely over.
     if self._font_size_dirty then
