@@ -4806,10 +4806,10 @@ end
 -- or nil when the animation should not run (off, or not an e-ink screen — on
 -- LCD the per-strip refreshes coalesce so nothing shows and it's wasted work).
 local PageWipe = require("lib/bookshelf_page_wipe")
+-- Delegates to the shared resolver: e-ink + the "shelf_page_animation" setting,
+-- which now governs shelf pagination, chip-bar pagination, and the start menu.
 local function _pageAnimSteps()
-    if not (Device.hasEinkScreen and Device:hasEinkScreen()) then return nil end
-    local mode = BookshelfSettings.read("shelf_page_animation") or "medium"
-    return PageWipe.STEPS[mode]  -- nil for "off" / unknown
+    return PageWipe.resolveSteps()
 end
 
 -- _swapShelvesInPlace — pagination fast-path. Rebuilds only the shelf rows
@@ -11330,20 +11330,25 @@ function BookshelfWidget:_showBookDetail(book, opts)
     local link = ok_hc and Hardcover and Hardcover.getLink
         and Hardcover.getLink(book.filepath) or nil
     local book_id = book.hardcover_book_id or (link and link.book_id)
-    local has_reviews = (ok_hc and Hardcover and book_id) and true or false
+    -- Only when the plugin is live: with it uninstalled/disabled we suppress all
+    -- Hardcover.app data, so no community-reviews tab even if reviews are cached.
+    local has_reviews = (ok_hc and Hardcover and Hardcover.isAvailable
+        and Hardcover.isAvailable() and book_id) and true or false
     -- No title: the popup header already shows the book title/author. The
     -- rating/counts summary is a native row (_buildReviewsHeader), not part
     -- of this HTML -- only the review list itself renders here.
     local function reviewsListHtml(result)
         return Tokens.reviewsHtml{ reviews = result and result.reviews }
     end
-    local reviews_pending
     local reviews_tab  -- forward ref: refreshReviews mutates it, its
                         -- widget_builder (below) reads it back each rebuild.
-    -- Named so both the initial cache-miss load and the header's Refresh
-    -- button can trigger the same re-fetch; `modal` is assigned after this
-    -- closure is created but before either caller can actually invoke it
-    -- (upvalue, read at call time).
+    -- The ONLY thing that fetches reviews (a network call that prompts for WiFi
+    -- when offline) is the header's Refresh button -- never opening the popup
+    -- and never just viewing the Reviews tab. This keeps battery/network use to
+    -- explicit user action; opening a linked book to read its description no
+    -- longer prompts for WiFi (issue 253). Cached reviews still show offline.
+    -- `modal` is assigned after this closure is created but before Refresh can
+    -- invoke it (upvalue, read at call time).
     local function refreshReviews()
         if not reviews_tab then return end
         reviews_tab.busy = true
@@ -11379,8 +11384,9 @@ function BookshelfWidget:_showBookDetail(book, opts)
             data = cached
             html = reviewsListHtml(cached)
         else
-            html = "<p>" .. _("Loading reviews\xE2\x80\xA6") .. "</p>"
-            reviews_pending = true
+            -- No cached reviews: invite an explicit fetch rather than loading
+            -- automatically (that would hit the network on open -- issue 253).
+            html = "<p>" .. _("Tap Refresh to load reviews.") .. "</p>"
         end
         reviews_tab = {
             id = "reviews", label = _("Reviews"), data = data, html = html,
@@ -11453,13 +11459,9 @@ function BookshelfWidget:_showBookDetail(book, opts)
     local ReviewsModal = require("lib/bookshelf_reviews_modal")
     modal = ReviewsModal:new(args)
     UIManager:show(modal)
-
-    -- Cache miss: fetch reviews online, then drop them into the reviews tab in
-    -- place. refreshReviews itself guards against the user closing the popup
-    -- before it returns.
-    if reviews_pending then
-        refreshReviews()
-    end
+    -- No fetch on open: reviews load only when the user taps Refresh on the
+    -- Reviews tab (see refreshReviews / issue 253). Cached reviews, if any,
+    -- are already shown from the cache_only peek above.
 end
 
 -- Hardcover reviews now live as a tab in the unified book-detail popup, so this

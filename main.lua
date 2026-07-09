@@ -668,14 +668,13 @@ function Bookshelf:addToMainMenu(menu_items)
     }
 
     -- Hardcover enrichment, promoted from Settings to the top level (below
-    -- Manage collections). Only present when Hardcover is in play -- the plugin
-    -- is installed/enabled, or we have cached Hardcover data -- mirroring the
-    -- old Settings-submenu gate. Defined conditionally (rather than greyed out)
-    -- so it's hidden entirely otherwise; the order list keeps its slot and
-    -- KOMenu skips a missing key.
+    -- Manage collections). Only shown while the Hardcover plugin is live
+    -- (installed and enabled); uninstalling/disabling it hides the menu and
+    -- reverts all Hardcover data to native. Defined conditionally rather than
+    -- greyed out -- the order list keeps its slot and KOMenu skips a missing key.
     do
         local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
-        if ok_hc and HC and HC.shouldShowEnrichmentUI and HC.shouldShowEnrichmentUI() then
+        if ok_hc and HC and HC.isAvailable and HC.isAvailable() then
             menu_items.bookshelf_hardcover = {
                 text                = _("Hardcover enrichment"),
                 sub_item_table_func = function()

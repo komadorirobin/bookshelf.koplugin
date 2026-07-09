@@ -645,10 +645,28 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- present -- predictable target for tap-to-rate.
     if regions.rating and not regions.rating.disabled and book then
         local hardcover_mode = BookshelfSettings.isTrue("hardcover_hero_rating")
+        -- The Hardcover rating is display-only; showing it replaces the user's
+        -- own tappable stars. If the Hardcover plugin isn't live (uninstalled or
+        -- disabled), fall back to the interactive local rating for every book --
+        -- regardless of any still-cached Hardcover ratings -- so the user never
+        -- loses the ability to rate. The setting is left saved, so it resumes if
+        -- the plugin is reinstalled.
+        if hardcover_mode then
+            local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
+            if not (ok_hc and HC and HC.isAvailable and HC.isAvailable()) then
+                hardcover_mode = false
+            end
+        end
         local rating
         if hardcover_mode then
             rating = tonumber(book.hardcover_rating)
-        else
+        end
+        -- Plugin is live but this particular book has no cached Hardcover rating:
+        -- fall back to the user's own local rating rather than hiding the row.
+        if hardcover_mode and rating == nil then
+            hardcover_mode = false
+        end
+        if not hardcover_mode then
             rating = tonumber(book.rating) or 0
         end
         if (hardcover_mode or self.on_rating_change) and (not hardcover_mode or rating) then

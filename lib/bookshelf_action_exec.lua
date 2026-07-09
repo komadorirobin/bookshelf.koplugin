@@ -70,7 +70,11 @@ function Exec.dispatch(entry, bw)
         end
     elseif type(entry.menu_path) == "table" then
         local MenuShortcut = require("lib/bookshelf_menu_shortcut")
-        MenuShortcut.replay(entry.menu_path)
+        if entry.menu_page then
+            MenuShortcut.replayPage(entry.menu_path, entry.label)
+        else
+            MenuShortcut.replay(entry.menu_path)
+        end
     elseif type(entry.action) == "table" then
         local ok, Dispatcher = pcall(require, "dispatcher")
         if ok then Dispatcher:execute(entry.action) end

@@ -122,12 +122,18 @@ local function shallowCopyRecord(record)
 end
 
 -- Split a genre/tag string (or array of strings) on common EPUB delimiters
--- (comma, semicolon, pipe, slash) and return a trimmed array, or nil.
+-- (comma, semicolon, pipe, newline) and return a trimmed array, or nil.
+-- Slash is handled specially: only a SPACED slash ("Fiction / Fantasy",
+-- BISAC-style subject hierarchies) separates genres. A bare slash is part
+-- of the tag itself ("hurt/comfort" -- issue #240), so it must NOT split.
+-- Normalise the spaced form to the newline delimiter up front, then split
+-- on the remaining separators with bare "/" no longer among them.
 local function splitGenreTags(src)
     local t = {}
     local inputs = type(src) == "table" and src or { src }
     for _i, s in ipairs(inputs) do
-        for part in s:gmatch("[^,;|/\n]+") do
+        local norm = s:gsub("%s+/%s+", "\n")
+        for part in norm:gmatch("[^,;|\n]+") do
             local trimmed = part:match("^%s*(.-)%s*$")
             if trimmed and trimmed ~= "" then t[#t + 1] = trimmed end
         end

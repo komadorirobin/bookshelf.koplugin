@@ -273,7 +273,18 @@ local function cachedFilenameKey(b)
     ensureEpoch(b)
     local v = b._filename_key_cache
     if v == nil then
-        v = b.filename or b.file or b.name or b.series_name
+        v = b.filename or b.file
+        -- Group-shape meta (_cacheGroupShapes) carries no `filename` field, so a
+        -- "Filename" within-group sort used to fall through to series_name --
+        -- which clustered series members and pushed standalones to the end
+        -- (issue #235). Derive the name from the filepath (every book record has
+        -- one), stripping the extension to match buildBookMeta's own derivation.
+        -- series_name stays as the last resort for group cards, which have no
+        -- filepath and legitimately sort a "Filename" key by their label.
+        if (v == nil or v == "") and b.filepath then
+            v = (b.filepath:match("([^/]+)$") or b.filepath):gsub("%.[^.]+$", "")
+        end
+        v = v or b.name or b.series_name
         v = (v ~= nil and v ~= "") and pinyinise(tostring(v):lower()) or false
         b._filename_key_cache = v
     end

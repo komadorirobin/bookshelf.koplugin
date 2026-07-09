@@ -57,7 +57,8 @@ function Chooser.actionRows(close, on_pick)
                 -- Toggle items get a live checkbox icon at render time
                 -- (menu_toggle); the static icon is the fallback / non-toggle case.
                 on_pick{ label = picked.label, icon = MENU_DEFAULT_ICON,
-                         menu_path = picked.menu_path, menu_toggle = picked.menu_toggle }
+                         menu_path = picked.menu_path, menu_toggle = picked.menu_toggle,
+                         menu_page = picked.menu_page }
             end)
         end) } },
         { { text = _("Bookshelf action\xE2\x80\xA6"), callback = close(function()

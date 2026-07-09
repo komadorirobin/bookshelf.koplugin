@@ -177,5 +177,43 @@ test("isAvailable: fail-open when the tree can't be built / bad path", function(
     eq("non-table path -> show", MS.isAvailable("nope"), true)
 end)
 
+-- ── Enclosing-menu (page) shortcuts (#237) ──────────────────────────────────
+test("buildCaptureTree: no pinned 'add page' row at the root level", function()
+    local tree = fakeTree()
+    local cap = MS.buildCaptureTree(tree, function() end, {},
+        function() end, "+ Add this menu page")
+    for _i, row in ipairs(cap) do
+        eq("root row not the pin", row.text ~= "+ Add this menu page", true)
+    end
+end)
+
+test("buildCaptureTree: drilled level prepends the pinned row, capturing path+title", function()
+    local tree = fakeTree()
+    local captured
+    local cap = MS.buildCaptureTree(tree, function() end, {},
+        function(path, title) captured = { path = path, title = title } end,
+        "+ Add this menu page")
+    -- Drill into "Settings" (first row is the Settings submenu).
+    local settings_row
+    for _i, r in ipairs(cap) do if r.text == "Settings" then settings_row = r end end
+    eq("settings has drill", type(settings_row.sub_item_table_func), "function")
+    local sub = settings_row.sub_item_table_func()
+    eq("pinned row first", sub[1].text, "+ Add this menu page")
+    sub[1].callback()
+    eq("captured title", captured.title, "Settings")
+    eq("captured path len", #captured.path, 1)
+    eq("captured path seg", captured.path[1].id, "setting")
+end)
+
+test("isAvailable(is_page=true): true when node has children, false for a leaf", function()
+    local orig = MS.buildMenuTree
+    MS.buildMenuTree = function() return fakeTree() end
+    eq("submenu node -> available",
+        MS.isAvailable({ {id="setting"}, {id="network"} }, true), true)
+    eq("leaf as page -> not available",
+        MS.isAvailable({ {id="setting"}, {id="network"}, {id="network_proxy"} }, true), false)
+    MS.buildMenuTree = orig
+end)
+
 io.write(("menu_shortcut: %d passed, %d failed\n"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

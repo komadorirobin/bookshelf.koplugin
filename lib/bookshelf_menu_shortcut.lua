@@ -114,10 +114,22 @@ end
 -- calling the func. Leaves get a callback reporting their path + label to
 -- on_capture. Non-actionable rows (separators, unmatchable) are dropped. `path`
 -- is the accumulated segments to the parent.
-function MenuShortcut.buildCaptureTree(items, on_capture, path)
+-- on_capture_page (optional): called with (path, title) to capture the CURRENT
+-- submenu as a page-opening shortcut. When supplied together with
+-- add_page_label, a pinned "add this page" row is prepended to every DRILLED
+-- level (never the root, which has no node to capture). add_page_label / title
+-- are passed in so gettext stays in the caller and this core function still
+-- loads and tests under plain lua.
+function MenuShortcut.buildCaptureTree(items, on_capture, path, on_capture_page, add_page_label, title)
     path = path or {}
     local out = {}
     if type(items) ~= "table" then return out end
+    if on_capture_page and add_page_label and #path > 0 then
+        out[#out + 1] = {
+            text = add_page_label,
+            callback = function() on_capture_page(path, title or "") end,
+        }
+    end
     for _i, it in ipairs(items) do
         if type(it) == "table" then
             local seg = MenuShortcut._segment(it)
@@ -135,7 +147,8 @@ function MenuShortcut.buildCaptureTree(items, on_capture, path)
                     text = disp,
                     sub_item_table_func = function()
                         return MenuShortcut.buildCaptureTree(
-                            MenuShortcut._childrenOf(it), on_capture, this_path)
+                            MenuShortcut._childrenOf(it), on_capture, this_path,
+                            on_capture_page, add_page_label, disp)
                     end,
                 }
             elseif type(it.callback) == "function" and has_key then
@@ -215,7 +228,14 @@ function MenuShortcut.openCapture(on_pick)
         if host then MenuHost.close(host) end
         on_pick{ label = label, menu_path = menu_path, menu_toggle = is_toggle or nil }
     end
-    local capture_tree = MenuShortcut.buildCaptureTree(tree, on_capture, {})
+    -- Capture the current submenu as a page-opening shortcut (replayPage hosts
+    -- its children when activated).
+    local function on_capture_page(menu_path, label)
+        if host then MenuHost.close(host) end
+        on_pick{ label = label, menu_path = menu_path, menu_page = true }
+    end
+    local capture_tree = MenuShortcut.buildCaptureTree(
+        tree, on_capture, {}, on_capture_page, "+ " .. _("Add this menu page"))
     host = MenuHost.show{ title = _("Add as shortcut"), item_table = capture_tree }
 end
 
@@ -240,12 +260,18 @@ end
 -- auto-appears only where it works -- no "not available" tap (#211).
 -- Fail-OPEN: a non-table path, or a menu tree that can't be built (transient
 -- MenuSorter error), returns true so shortcuts never vanish on a hiccup.
-function MenuShortcut.isAvailable(menu_path)
+-- is_page: for a page-opening shortcut, availability means the node resolves
+-- to a submenu with children (not a callable leaf).
+function MenuShortcut.isAvailable(menu_path, is_page)
     if type(menu_path) ~= "table" then return true end
     local tree = MenuShortcut.buildMenuTree()
     if type(tree) ~= "table" then return true end
-    local leaf = MenuShortcut.walk(tree, menu_path)
-    return type(leaf) == "table" and type(leaf.callback) == "function"
+    local node = MenuShortcut.walk(tree, menu_path)
+    if is_page then
+        local children = node and MenuShortcut._childrenOf(node)
+        return type(children) == "table" and #children > 0
+    end
+    return type(node) == "table" and type(node.callback) == "function"
 end
 
 -- Replay a saved menu_path: re-assemble the menu, walk to the leaf, fire its
@@ -272,6 +298,29 @@ function MenuShortcut.replay(menu_path)
     }
     local ok = pcall(leaf.callback, shim)
     if not ok then unavailable() end
+end
+
+-- Replay a PAGE shortcut: walk to the submenu node, resolve its children, and
+-- host them as a standalone menu page via MenuHost (drill-down, toggles, holds,
+-- back all handled there). Same fail-safe toast as replay() when the node or
+-- its children can't be resolved.
+function MenuShortcut.replayPage(menu_path, label)
+    local _ = require("lib/bookshelf_i18n").gettext
+    local UIManager    = require("ui/uimanager")
+    local Notification = require("ui/widget/notification")
+    local function unavailable()
+        UIManager:show(Notification:new{ text = _("That menu item isn't available") })
+    end
+    local tree = MenuShortcut.buildMenuTree()
+    if not tree then return unavailable() end
+    local node = MenuShortcut.walk(tree, menu_path)
+    local children = node and MenuShortcut._childrenOf(node)
+    if type(children) ~= "table" or #children == 0 then return unavailable() end
+    local MenuHost = require("lib/bookshelf_menu_host")
+    MenuHost.show{
+        title      = (type(label) == "string" and label ~= "") and label or _("Menu"),
+        item_table = children,
+    }
 end
 
 return MenuShortcut

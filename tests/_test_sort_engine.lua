@@ -439,5 +439,25 @@ test("perf: 3000 books, one parse per book during sort", function()
     assert(cached == 3000, "expected 3000 cached, got " .. cached)
 end)
 
+test("filename key derives from filepath when no filename field (#235)", function()
+    -- Group-shape meta (_cacheGroupShapes) carries filepath + series_name but
+    -- no `filename`. A "Filename" within-group sort must order by the real file
+    -- name, NOT fall through to series_name (which clustered series members and
+    -- pushed standalones to the end). Series books share a series_name; without
+    -- the fix they'd cluster + tie to title, and the standalone would sort last.
+    local books = {
+        { id = 1, filepath = "/b/Greek Myths - 2 - Heroes.epub",  series_name = "Greek Myths" },
+        { id = 2, filepath = "/b/Greek Myths - 1 - Mythos.epub",  series_name = "Greek Myths" },
+        { id = 3, filepath = "/b/Mythology - Edith Hamilton.epub" },  -- standalone, no series
+    }
+    SortEngine.sort(books, { { key = "filename", reverse = false } })
+    -- Real filename order (natsort): "Greek Myths - 1 - Mythos", "…- 2 - Heroes",
+    -- "Mythology…" => ids 2, 1, 3. The old fallback-to-series_name tied the two
+    -- series books on "Greek Myths" (no filename/title to break it) so they kept
+    -- input order 1, 2 => a different result, which is what this guards against.
+    assert(eq(ids(books), { 2, 1, 3 }),
+        "expected filename order 2,1,3 (Mythos, Heroes, Mythology), got " .. table.concat(ids(books), ","))
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

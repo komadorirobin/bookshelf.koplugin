@@ -1944,6 +1944,10 @@ end
 -- grouping records, keeping the genre/author/series chips in sync with the
 -- per-book tag pills. Cover/description stay under their per-book toggles.
 function Hardcover.applyMetadata(book)
+    -- Reached directly on the light grouping-record path (not just via
+    -- enrichBook), so it needs its own availability gate: with the plugin gone,
+    -- the chips/stacks fall back to native title/author/series/genres too.
+    if not Hardcover.isAvailable() then return end
     if not BookshelfSettings.isTrue("hardcover_use_metadata") then return end
     if type(book) ~= "table" or not book.filepath then return end
     local link = Hardcover.getLink(book.filepath)
@@ -2000,6 +2004,13 @@ end
 
 function Hardcover.enrichBook(book)
     if not book or not book.filepath then return book end
+    -- When the Hardcover plugin isn't live (uninstalled/disabled), apply no
+    -- enrichment: the record keeps its native title/author/series/genres,
+    -- description, rating, review count and cover. Records are rebuilt fresh on
+    -- each read, so this reverts cleanly and re-applies automatically if the
+    -- plugin returns. Non-destructive -- any downloaded cover stays in the .sdr
+    -- (and its cache), we just stop pointing bookshelf at it.
+    if not Hardcover.isAvailable() then return book end
     local link = Hardcover.getLink(book.filepath)
     if not link then return book end
 
