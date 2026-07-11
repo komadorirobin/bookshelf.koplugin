@@ -27,18 +27,38 @@ end
 
 -- ─── Module-local helpers ────────────────────────────────────────────────────
 
+-- True for FictionBook files (.fb2 / .fb2.zip), whose author strings need
+-- the comma treatment below.
+local function _isFb2(fp)
+    if type(fp) ~= "string" then return false end
+    local lower = fp:lower()
+    return lower:match("%.fb2$") ~= nil or lower:match("%.fb2%.zip$") ~= nil
+end
+
 -- Split a newline-separated author string into a trimmed array, or
 -- return nil. KOReader's BIM joins multiple <dc:creator> entries with
--- "\n"; that's the only separator we should split on. Splitting on
--- comma corrupts library-format names like "Clarke, Arthur C." into
--- ["Clarke", "Arthur C."] and creates phantom author entries on the
--- Authors tab (issue #74 follow-up). Calibre's own metadata bypasses
--- this helper entirely -- it arrives pre-split as cb.authors (table).
-local function splitAuthors(s)
+-- "\n"; for most formats that's the only separator we should split on.
+-- Splitting on comma corrupts library-format names like
+-- "Clarke, Arthur C." into ["Clarke", "Arthur C."] and creates phantom
+-- author entries on the Authors tab (issue #74 follow-up).
+--
+-- fb2 is the exception (#242): crengine composes each fb2 author from the
+-- format's structured first/middle/last fields and joins multiple authors
+-- with ", " -- so there a comma can only be the join, never part of a
+-- "Surname, Forename" name, and without the extra split a co-authored
+-- fb2 becomes one bogus merged author. The empty middle-name slot also
+-- leaves "Alpha  Tester"-style double spaces, collapsed below so fb2 and
+-- EPUB copies of the same author match exactly.
+--
+-- Calibre's own metadata bypasses this helper entirely -- it arrives
+-- pre-split as cb.authors (table).
+local function splitAuthors(s, fp)
     if not s or s == "" then return nil end
+    local pat = _isFb2(fp) and "[^\n,]+" or "[^\n]+"
     local t = {}
-    for part in s:gmatch("[^\n]+") do
+    for part in s:gmatch(pat) do
         local cleaned = part:match("^%s*(.-)%s*$")  -- trim whitespace
+            :gsub("%s+", " ")                       -- collapse internal runs
         if cleaned ~= "" then t[#t + 1] = cleaned end
     end
     return #t > 0 and t or nil
@@ -84,7 +104,7 @@ end
 -- group the book under the translator. If BIM reports multiple creators,
 -- peek at the OPF and prefer creators explicitly marked as authors.
 local function authorsFromInfo(filepath, info)
-    local authors = splitAuthors(info and info.authors)
+    local authors = splitAuthors(info and info.authors, filepath)
     if authors and #authors > 1 then
         local ok_mod, EpubMetadata = pcall(require, "lib/bookshelf_epub_metadata")
         local ok_authors, role_authors = false, nil
@@ -1353,7 +1373,7 @@ local _walk_cache = {}      -- { [key] = { list = {...}, expires_at = number } }
 -- refreshes both — a just-read book's read-time bubble-up still lands
 -- on the next chip rebuild.
 local SERIES_CACHE_TTL = WALK_CACHE_TTL
-local _series_cache    = {}  -- { [key] = { groups = {...}, expires_at = number } }
+local _series_cache    = {}  -- { [key] = { groups = {...}, standalones = {...}, expires_at = number } }
 -- Authors and Genres group caches. Same TTL + invalidation pattern as
 -- the series cache: filepaths-only "shape" so the cover_bb lifetime
 -- hazard from caching Book records doesn't apply.
@@ -2227,6 +2247,20 @@ function Repo.getFolderBookPaths(path)
         if fp and fp:sub(1, #prefix) == prefix then
             paths[#paths + 1] = fp
         end
+    end
+    -- Deep-nesting fallback (#202): the home-rooted walk is bounded by
+    -- latest_walk_depth, so a folder whose books all sit deeper than that
+    -- prefix-matches nothing -- even though drilling into it shows books
+    -- (browsing scans one level per drill). When the prefix filter comes
+    -- up empty, walk the asked-about folder ITSELF with the same depth
+    -- budget: cost scales with that subtree only, each drill level
+    -- re-anchors the budget (matching what browsing reveals), and a truly
+    -- empty folder confirms cheaply. Memoised below either way; the cache
+    -- clears in lockstep with the walk cache.
+    if #paths == 0 then
+        local found = {}
+        walkBooks(path, depth, found)
+        for i = 1, #found do paths[#paths + 1] = found[i].fp end
     end
     _folder_book_paths_cache[path] = { paths = paths }
     -- Return a copy so caller mutations don't poison the cache.
@@ -3146,6 +3180,91 @@ local function hydrateSeriesShape(shape, filter, light_only)
     }
 end
 
+-- Read-time assembly for the Series source: choose which cached shapes
+-- participate, filter, sort and hydrate one combined, paginated list.
+-- Shared by getSeriesGroups' cache HIT and MISS paths so they can't drift.
+--
+-- The chip's RAW series_membership filter value drives participation (#160):
+--   nil / "in_series" -> stacks only (the historical behaviour)
+--   "both"            -> stacks + standalone books as plain singles
+--   "standalone"      -> standalone books only
+-- ("both" never compiles into the per-book filter, so the other dimensions
+-- keep working; "standalone"/"in_series" compile as before and stay
+-- consistent with what this participation choice emits.)
+--
+-- hide_single (#127) interaction: in the mixed "both" view a one-book series
+-- isn't noise, it's just a book -- so instead of being dropped it DEGRADES to
+-- a plain single. Elsewhere the drop behaviour is unchanged.
+local function _seriesReadout(group_shapes, standalone_shapes, filter,
+                              hide_single, sk, limit, offset, light_only)
+    local mode = filter and filter.series_membership
+    local want_groups  = mode ~= "standalone"
+    local want_singles = mode == "both" or mode == "standalone"
+    local degrade      = hide_single and mode == "both"
+    local sorted = {}
+    if want_groups then
+        for _i, s in ipairs(group_shapes or {}) do
+            -- Degraded 1-book stacks are re-added as singles below.
+            if not (degrade and s.filepaths and #s.filepaths == 1)
+                    and _shapeVisible(s, filter, hide_single) then
+                sorted[#sorted + 1] = s
+            end
+        end
+    end
+    if want_singles then
+        local compiled = _filterIsActive(filter)
+            and Filter.compile(filter, Repo.filterOpts()) or nil
+        local function addSingle(std)
+            if not compiled or _recordMatches(std, compiled) then
+                sorted[#sorted + 1] = std
+            end
+        end
+        for _i, std in ipairs(standalone_shapes or {}) do addSingle(std) end
+        if degrade then
+            for _i, s in ipairs(group_shapes or {}) do
+                if s.filepaths and #s.filepaths == 1 then
+                    local m = (s.books_meta and s.books_meta[1]) or {}
+                    addSingle({
+                        standalone  = true,
+                        filepath    = s.filepaths[1],
+                        -- Sort/display fallbacks: a 1-book series is named
+                        -- after its series for ordering purposes.
+                        series_name = s.series_name,
+                        series_num  = m.series_num,
+                        genres      = m.genres,
+                        lang        = m.lang,
+                        latest      = s.latest,
+                        book_count  = 1,
+                    })
+                end
+            end
+        end
+    end
+    table.sort(sorted, _groupShapeCmp(sk))
+    local total = #sorted
+    local out   = {}
+    offset      = offset or 0
+    local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", light_only)
+    for i = offset + 1, stop do
+        local s = sorted[i]
+        if s.standalone then
+            if light_only then
+                -- Letter-jump index: sort-key fields only, never rendered.
+                out[#out + 1] = { filepath = s.filepath, title = s.title,
+                                  filename = s.filename, series_name = s.series_name }
+            else
+                -- Plain Book record: shelf_row renders it as a single cover
+                -- and taps open the book, same as any book-list chip.
+                local b = Repo.buildBookMeta(s.filepath)
+                if b then out[#out + 1] = b end
+            end
+        else
+            out[#out + 1] = hydrateSeriesShape(s, filter, light_only)
+        end
+    end
+    return out, total
+end
+
 function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_filter, maybe_filter, maybe_opts)
     local scope, filter, opts
     sort_priority_override, scope, filter, opts =
@@ -3166,22 +3285,10 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
     -- cache.
     local cached = _series_cache[key]
     if cached then
-        local _t0   = _gettime()
-        local sk    = sort_priority_override or Repo.getSortPriority("series")
-        local sorted = {}
-        for _i, s in ipairs(cached.groups) do
-            if _shapeVisible(s, filter, hide_single) then
-                sorted[#sorted + 1] = s
-            end
-        end
-        table.sort(sorted, _groupShapeCmp(sk))
-        local total = #sorted
-        local out   = {}
-        offset      = offset or 0
-        local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", opts and opts.light_only)
-        for i = offset + 1, stop do
-            out[#out + 1] = hydrateSeriesShape(sorted[i], filter, opts and opts.light_only)
-        end
+        local _t0 = _gettime()
+        local sk  = sort_priority_override or Repo.getSortPriority("series")
+        local out, total = _seriesReadout(cached.groups, cached.standalones,
+            filter, hide_single, sk, limit, offset, opts and opts.light_only)
         logger.dbg(string.format("[bookshelf perf] getSeriesGroups: HIT hydrate=%.0fms groups=%d/%d",
             (_gettime() - _t0) * 1000, #out, total))
         return out, total
@@ -3202,8 +3309,9 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
     local candidates = candidatesForScope(home, depth, scope)
     local light_cache = _getLightMetaCache(home, depth)
 
-    local groups = {}  -- keyed by series_name
-    local order  = {}  -- preserves insertion order for deterministic tie-break
+    local groups      = {}  -- keyed by series_name
+    local order       = {}  -- preserves insertion order for deterministic tie-break
+    local standalones = {}  -- books with no series (#160), in walk order
     for _i, c in ipairs(candidates) do
         -- Lightweight walk: only text fields needed for grouping/sorting.
         -- Using buildBookMeta here kept all cover BlitBuffers live for the
@@ -3237,6 +3345,29 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
             end
             local t = read_time[book.filepath] or c.mtime or 0
             if t > g.latest then g.latest = t end
+        elseif book then
+            -- No series: a standalone shape (#160), cached alongside the
+            -- group shapes. Carries the same sort-key fields the comparator
+            -- reads on group shapes (filename fallbacks, latest, book_count)
+            -- so _groupShapeCmp interleaves the mixed list for free, plus
+            -- genres/lang/filepath so the per-book filter dimensions work.
+            standalones[#standalones + 1] = {
+                standalone   = true,
+                filepath     = book.filepath,
+                filename     = book.filename,
+                title        = book.title,
+                genres       = book.genres,
+                lang         = book.lang,
+                latest       = read_time[book.filepath] or c.mtime or 0,
+                latest_added = c.mtime or 0,
+                -- Sort-only field (hydration replaces this shape with a real
+                -- Book record). 0, not 1: under a book-count sort a standalone
+                -- isn't a series at all, so it ranks below a 1-book series
+                -- rather than tying with it in arbitrary order. Degraded
+                -- 1-book stacks (hide_single + "both") keep count 1 -- they
+                -- ARE a series, just rendered as a single.
+                book_count   = 0,
+            }
         end
     end
     -- Flatten to list. Sort runs at hydrate time on the cached shapes (see
@@ -3265,11 +3396,15 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
             -- (live readProgress, cached) can run against the same
             -- structure as the other group kinds. genres/lang are carried
             -- so genre and language filters work on group chips.
+            -- series_name too: without it the compiled series_membership
+            -- check saw every member as standalone, so an explicit "Only
+            -- books in series" filter emptied the Series chip (#160).
             books_meta[#books_meta + 1] = {
-                filepath   = b.filepath,
-                series_num = b.series_num,
-                genres     = b.genres,
-                lang       = b.lang,
+                filepath    = b.filepath,
+                series_num  = b.series_num,
+                series_name = group.series_name,
+                genres      = b.genres,
+                lang        = b.lang,
             }
         end
         shapes[#shapes + 1] = {
@@ -3279,23 +3414,15 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
             latest      = group.latest,
         }
     end
-    _series_cache[key] = { groups = shapes, expires_at = now + SERIES_CACHE_TTL }
+    _series_cache[key] = { groups = shapes, standalones = standalones,
+                           expires_at = now + SERIES_CACHE_TTL }
 
-    -- MISS path: sort shapes and hydrate the current page, matching the
-    -- HIT path. Both paths now go through hydrateSeriesShape so cover_bb
-    -- lifetime is identical regardless of cache state.
+    -- MISS path: same readout as the HIT path (sort + hydrate one combined,
+    -- paginated list), so cover_bb lifetime and the series_membership
+    -- participation rules are identical regardless of cache state.
     local sk = sort_priority_override or Repo.getSortPriority("series")
-    local sorted = {}
-    for _i, s in ipairs(shapes) do
-        if _shapeVisible(s, filter, hide_single) then sorted[#sorted + 1] = s end
-    end
-    table.sort(sorted, _groupShapeCmp(sk))
-
-    local total = #sorted
-    local out   = {}
-    offset      = offset or 0
-    local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", opts and opts.light_only)
-    for i = offset + 1, stop do out[#out + 1] = hydrateSeriesShape(sorted[i], filter, opts and opts.light_only) end
+    local out, total = _seriesReadout(shapes, standalones, filter,
+        hide_single, sk, limit, offset, opts and opts.light_only)
     logger.dbg(string.format("[bookshelf perf] getSeriesGroups: MISS build=%.0fms cands=%d groups=%d/%d",
         (_gettime() - _t0) * 1000, #candidates, #out, total))
     return out, total

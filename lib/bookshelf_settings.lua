@@ -736,6 +736,10 @@ function Settings:_coverDisplaySubItems()
                 end,
             }
         end)(),
+        -- Fade finished books like the on-hold faded cover (#138). Opt-in
+        -- (default off) and independent of the badge style above, mirroring
+        -- the #121 split of badge vs fade for on-hold books.
+        toggleRow("finished_fade_enabled", _("Fade finished books"), false, true),
         -- Show series #: three-state. "always" (default), "in_series"
         -- (only inside a single-series view), or "never". Legacy boolean
         -- values are still honoured: true reads as "always", false as
@@ -2383,6 +2387,48 @@ end
 
 function Settings:_advancedSubItems()
     local plugin = self._plugin
+    -- Shared builder for the two animation-speed rows (#259): the page-turn
+    -- wipe (shelf pagination + chip-bar paging) and the start-menu reveal.
+    -- Same Off/Fast/Medium/Slow choices, separate keys; defaults come from
+    -- PageWipe.DEFAULTS (the menu repaints a taller region, so it defaults
+    -- snappier than the page wipe).
+    local function animRow(title, key, help)
+        local PageWipe = require("lib/bookshelf_page_wipe")
+        local MODE_LABELS = { off    = _("Off"),
+                              fast   = _("Fast"),
+                              medium = _("Medium"),
+                              slow   = _("Slow") }
+        local default = PageWipe.DEFAULTS[key]
+        local function cur()
+            return BookshelfSettings.read(key) or default
+        end
+        return {
+            text_func = function()
+                return title .. ": " .. (MODE_LABELS[cur()] or MODE_LABELS[default])
+            end,
+            help_text = help,
+            keep_menu_open = true,
+            sub_item_table_func = function()
+                local function row(label, value)
+                    return {
+                        text = label,
+                        radio = true,
+                        checked_func = function() return cur() == value end,
+                        callback = function()
+                            BookshelfSettings.save(key, value)
+                            BookshelfSettings.flush()
+                        end,
+                    }
+                end
+                return {
+                    row(_("Off"),    "off"),
+                    row(_("Fast"),   "fast"),
+                    row(_("Medium"), "medium"),
+                    row(_("Slow"),   "slow"),
+                }
+            end,
+        }
+    end
     local items = {
         -- ── library & metadata ──
         {
@@ -2583,45 +2629,18 @@ function Settings:_advancedSubItems()
                 if self._bw then self._bw._tap_selected_fp = nil end
             end,
         },
-        {
-            text_func = function()
-                local v = BookshelfSettings.read("shelf_page_animation") or "medium"
-                local label = ({ off    = _("Off"),
-                                 fast   = _("Fast"),
-                                 medium = _("Medium"),
-                                 slow   = _("Slow") })[v] or _("Medium")
-                return _("Animation speed") .. ": " .. label
-            end,
-            help_text = _("Animate transitions with a wipe effect: shelf page "
-                .. "turns, chip-bar paging, and the start menu opening and "
-                .. "closing. E-ink only (the effect relies on the panel's "
-                .. "refresh, so it does nothing on LCD screens). Fast / Medium "
-                .. "/ Slow trade snappiness for smoothness. Slow looks "
-                .. "smoothest but takes longer on older panels."),
-            keep_menu_open = true,
-            sub_item_table_func = function()
-                local function row(label, value)
-                    return {
-                        text = label,
-                        radio = true,
-                        checked_func = function()
-                            local v = BookshelfSettings.read("shelf_page_animation") or "medium"
-                            return v == value
-                        end,
-                        callback = function()
-                            BookshelfSettings.save("shelf_page_animation", value)
-                            BookshelfSettings.flush()
-                        end,
-                    }
-                end
-                return {
-                    row(_("Off"),    "off"),
-                    row(_("Fast"),   "fast"),
-                    row(_("Medium"), "medium"),
-                    row(_("Slow"),   "slow"),
-                }
-            end,
-        },
+        animRow(_("Page turn animation"), "shelf_page_animation",
+            _("Animate shelf page turns and chip-bar paging with a wipe "
+            .. "effect. E-ink only (the effect relies on the panel's "
+            .. "refresh, so it does nothing on LCD screens). Fast / Medium "
+            .. "/ Slow trade snappiness for smoothness. Slow looks "
+            .. "smoothest but takes longer on older panels.")),
+        animRow(_("Start menu animation"), "start_menu_animation",
+            _("Animate the start menu opening and closing. Separate from "
+            .. "the page-turn wipe, so you can keep one and turn off the "
+            .. "other - the menu reveal repaints a taller area and can "
+            .. "look choppy on some screens, particularly while reading. "
+            .. "E-ink only.")),
         {
             text = _("Closing book notification"),
             help_text = _("Show a 'Closing book…' message in the centre "

@@ -126,6 +126,24 @@ test("complete with tickbox style → complete_tickbox", function()
     local r = CP.decide(book("complete", 1.0))
     eq(r.glyph, "complete_tickbox")
 end)
+test("complete does not fade by default (#138 opt-in)", function()
+    setAll(true); S.finished_fade_enabled = nil
+    local r = CP.decide(book("complete", 1.0))
+    eq(r.on_hold_fade, nil, "fade")
+end)
+test("finished_fade_enabled → fade, badge kept (independent cues)", function()
+    setAll(true); S.finished_fade_enabled = true
+    local r = CP.decide(book("finished", 1.0))
+    eq(r.on_hold_fade, true, "fade")
+    eq(r.glyph, "complete_bookmark", "badge unaffected by fade")
+    S.finished_fade_enabled = nil
+end)
+test("finished fade does not leak to reading/on-hold decisions", function()
+    setAll(true); S.finished_fade_enabled = true; S.on_hold_display = "pause"
+    eq(CP.decide(book("reading", 0.5)).on_hold_fade, nil, "reading")
+    eq(CP.decide(book("on_hold", 0.5)).on_hold_fade, nil, "on-hold pause-only")
+    S.finished_fade_enabled = nil; S.on_hold_display = nil
+end)
 
 -- On hold --------------------------------------------------------------------
 test("on-hold badge ON → on_hold=true, corner glyph suppressed", function()

@@ -318,7 +318,31 @@ t.test("sanitize keeps a bare divider entry, filterByScope never drops it (#221)
         return false
     end
     local lib = Model.filterByScope(out, "library")
-    assert(hasId(lib, "d1"), "a divider should never be filtered out")
+    assert(hasId(lib, "d1"), "an unscoped divider should never be filtered out")
+end)
+
+t.test("a scoped divider follows its scope like any other entry (#256)", function()
+    local function hasId(list, id)
+        for _, e in ipairs(list) do if e.id == id then return true end end
+        return false
+    end
+    local items = {
+        { id = "d_lib", type = "divider", scope = "library" },
+        { id = "d_rdr", type = "divider", scope = "reader" },
+        { id = "d_any", type = "divider" },
+    }
+    local out, changed = Model.sanitize(items)
+    assert(#out == 3 and changed == false,
+        "scoped dividers should survive sanitize unchanged")
+
+    local lib = Model.filterByScope(out, "library")
+    local rdr = Model.filterByScope(out, "reader")
+    assert(hasId(lib, "d_lib") and not hasId(rdr, "d_lib"),
+        "library-scoped divider should show only in library")
+    assert(hasId(rdr, "d_rdr") and not hasId(lib, "d_rdr"),
+        "reader-scoped divider should show only in reader")
+    assert(hasId(lib, "d_any") and hasId(rdr, "d_any"),
+        "unscoped divider should show in both")
 end)
 
 t.test("migrate scopes sm_close to library and injects sm_reader_home after it", function()

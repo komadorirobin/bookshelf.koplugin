@@ -773,6 +773,14 @@ function BookshelfWidget:init()
         self.key_events = self.key_events or {}
         self.key_events.NextPage = { { Device.input.group.PgFwd } }
         self.key_events.PrevPage = { { Device.input.group.PgBack } }
+        -- Device Back inside a chip drilldown pops one breadcrumb level
+        -- (#239), matching the "Back in file browser: parent folder"
+        -- expectation. Without this the key falls through to the
+        -- FileChooser underneath, which walks the REAL file browser up to
+        -- its parent -- and bookshelf mirrors that as a folder view of
+        -- whatever lies above the library. At top level the handler
+        -- declines the event, keeping the historical fall-through.
+        self.key_events.BSDrillBack = { { Device.input.group.Back } }
     end
     if Device:hasDPad() then
         self.key_events = self.key_events or {}
@@ -7284,6 +7292,14 @@ function BookshelfWidget:_previewNeighbourBook(direction)
     end
     if #books == 0 then return end
     local n = #books
+    -- The visible window (all_items indices). The swipe should relate to
+    -- the page the user is LOOKING at (#226): anchoring on a stale preview
+    -- (or defaulting to the list edge) warped the shelf back to page 1
+    -- after they'd paged elsewhere.
+    local view      = self:_viewSize()
+    local cur_first = self._cursor or 1
+    local cur_last  = cur_first + view - 1
+    local function inView(ai) return ai and ai >= cur_first and ai <= cur_last end
     local current_idx
     if self._preview_book and self._preview_book.filepath then
         for i, b in ipairs(books) do
@@ -7291,12 +7307,33 @@ function BookshelfWidget:_previewNeighbourBook(direction)
                 current_idx = i; break
             end
         end
+        -- Previewed book no longer on the visible page (the user paged
+        -- away since the last preview): re-anchor to what's on screen
+        -- rather than snapping the shelf back to the stale book's page.
+        if current_idx and not inView(books_to_all[current_idx]) then
+            current_idx = nil
+        end
     end
-    -- No preview yet: a forward swipe should land on book 1, a backward
-    -- swipe on the last book. Anchor current_idx so the wrap arithmetic
-    -- below produces the right destination.
+    -- No usable anchor: a forward swipe lands on the visible page's first
+    -- book, a backward swipe on its last (offset by one so the wrap
+    -- arithmetic below produces exactly that). Pages with no previewable
+    -- book (all series stacks) fall back to the list edges.
     if not current_idx then
-        current_idx = direction > 0 and 0 or 1
+        local first_b, last_b
+        for bi = 1, n do
+            local ai = books_to_all[bi]
+            if inView(ai) then
+                first_b = first_b or bi
+                last_b  = bi
+            elseif ai > cur_last then
+                break
+            end
+        end
+        if first_b then
+            current_idx = direction > 0 and (first_b - 1) or (last_b + 1)
+        else
+            current_idx = direction > 0 and 0 or 1
+        end
     end
     local next_idx = ((current_idx - 1 + direction) % n) + 1
     local target = books[next_idx]
@@ -8077,6 +8114,18 @@ end
 function BookshelfWidget:onNextPage() return self:_paginateNext() end
 function BookshelfWidget:onPrevPage() return self:_paginatePrev() end
 
+-- Device Back key: pop one drilldown level when drilled in (#239).
+-- Returning false at top level lets the event keep falling through to
+-- whatever KOReader would do without us (unchanged behaviour).
+function BookshelfWidget:onBSDrillBack()
+    local n = self._drilldown_path and #self._drilldown_path or 0
+    if n > 0 then
+        self:_drillBackTo(n - 1)
+        return true
+    end
+    return false
+end
+
 function BookshelfWidget:onBookshelfNextChip()
     if self._chip_bar_hidden then return true end
     local key = self:_chipNeighbour(1)
@@ -8089,6 +8138,31 @@ function BookshelfWidget:onBookshelfPrevChip()
     local key = self:_chipNeighbour(-1)
     if key then self:_setActiveChip(key) end
     return true
+end
+
+-- Flip the chip STRIP's page (the paging the edge chevrons / a swipe on the
+-- strip do), as a gesture-assignable action (#257) -- the chevrons sit at
+-- the far screen edges, out of one-handed reach. Wraps at either end so a
+-- single repeated gesture cycles through every page. No-op while drilled
+-- into a folder (breadcrumb mode never sets _pages) or with one page.
+function BookshelfWidget:_flipChipPage(direction)
+    if self._chip_bar_hidden then return true end
+    local bar = self._chip_bar
+    local pages = bar and bar._pages
+    if not pages then return true end
+    local num = math.max(1, pages.num_pages)
+    if num <= 1 then return true end
+    local cur = bar._page or 1
+    bar:_gotoPage(((cur - 1 + direction) % num) + 1)
+    return true
+end
+
+function BookshelfWidget:onBookshelfNextChipPage()
+    return self:_flipChipPage(1)
+end
+
+function BookshelfWidget:onBookshelfPrevChipPage()
+    return self:_flipChipPage(-1)
 end
 
 function BookshelfWidget:onBookshelfToggleHero()
