@@ -2370,6 +2370,37 @@ function Settings:_performanceSubItems()
             end,
         },
         {
+            text = _("Preload Bookshelf while reading (experimental)"),
+            help_text = _("When a book was opened outside Bookshelf, wait "
+                .. "until the reader has been idle for a short while, then "
+                .. "build the matching Bookshelf view under the open book. "
+                .. "This lets Instant book close return to the correct "
+                .. "Bookshelf shelf much faster later. If you notice a pause "
+                .. "while reading, turn this off."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("reader_prewarm")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("reader_prewarm")
+                BookshelfSettings.save("reader_prewarm", not enabled)
+            end,
+        },
+        {
+            text = _("Show preload indicator while reading"),
+            help_text = _("Show a small corner icon while Bookshelf is being "
+                .. "preloaded under the open book. The icon disappears when "
+                .. "the preload finishes or is skipped."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("reader_prewarm_indicator")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("reader_prewarm_indicator")
+                BookshelfSettings.save("reader_prewarm_indicator", not enabled)
+            end,
+        },
+        {
             text = _("Pre-warm chip cache"),
             help_text = _("Warms each chip's data in the background shortly"
                 .. " after launch so switching chips is instant. On a large"
