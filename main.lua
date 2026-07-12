@@ -1220,7 +1220,6 @@ function Bookshelf:_safeShow(profile_key, target_file)
     local Park = require("lib/bookshelf_reader_park")
     local prewarmed_only = _live_widget
         and _live_widget._bookshelf_reader_prewarmed_only
-        and not _live_widget._bookshelf_reader_return_target
     if not prewarmed_only and Park.park(self) then
         if profile_key or target_file then
             UIManager:nextTick(function()
@@ -1494,7 +1493,7 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     widget._bookshelf_reader_prewarmed = true
     if opts.explicit_return_target then
         widget._bookshelf_reader_return_target = true
-        widget._bookshelf_reader_prewarmed_only = nil
+        widget._bookshelf_reader_prewarmed_only = true
     elseif not opened_here then
         widget._bookshelf_reader_prewarmed_only = true
     else
