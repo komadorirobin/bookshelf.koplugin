@@ -1172,6 +1172,7 @@ function Bookshelf:_raiseInPlace()
         local entry = table.remove(stack, idx)
         table.insert(stack, entry)
     end
+    _live_widget._bookshelf_reader_prewarmed_only = nil
     -- "ui" rather than "partial": on Colorsoft, "partial" of a full-
     -- screen region gets promoted to a full flash refresh by the EPDC
     -- driver. "ui" uses a smoother waveform that doesn't get promoted.
@@ -1198,6 +1199,7 @@ end
 -- the 1–3s onClose disk-I/O block. _suppress_close_document_show stops
 -- onCloseDocument's parallel nextTick(show) so we don't double-trigger.
 function Bookshelf:_safeShow(profile_key, target_file)
+    self:_cancelReaderPrewarm()
     local readerui = self.ui
     if not (readerui and readerui.document and readerui.onClose) then
         self:show(profile_key)
@@ -1213,13 +1215,17 @@ function Bookshelf:_safeShow(profile_key, target_file)
     -- (book opened from the raw FileManager - #110 "return to where you
     -- came from").
     local Park = require("lib/bookshelf_reader_park")
-    if Park.park(self) then
+    local prewarmed_only = _live_widget
+        and _live_widget._bookshelf_reader_prewarmed_only
+    if not prewarmed_only and Park.park(self) then
         if profile_key or target_file then
             UIManager:nextTick(function()
                 self:_showAfterReaderReturnWhenChromeReady(profile_key, 0, target_file)
             end)
         end
         return
+    elseif prewarmed_only then
+        logger.dbg("[bookshelf] skipping hot-park for prewarmed-only shelf")
     end
     -- Feedback: centered InfoMessage with scoped partial refresh so the
     -- show doesn't trigger a full-screen flash. Skip when:
@@ -1439,6 +1445,12 @@ function Bookshelf:_hideReaderPrewarmIndicator(keep_visible_briefly)
     UIManager:forceRePaint()
 end
 
+function Bookshelf:_cancelReaderPrewarm()
+    _reader_prewarm_token = _reader_prewarm_token + 1
+    _reader_prewarm_probe_token = _reader_prewarm_probe_token + 1
+    self:_hideReaderPrewarmIndicator(false)
+end
+
 function Bookshelf:_isReaderShown(readerui)
     local stack = UIManager._window_stack
     if not stack then return false end
@@ -1453,6 +1465,7 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     local t0 = _gettime()
     local widget = _live_widget
     local created = false
+    local opened_here = widget and widget._opened_book == true
 
     if not (widget and UIManager:isWidgetShown(widget)) then
         local ok_widget, BookshelfWidget = pcall(require, "lib/bookshelf_widget")
@@ -1472,7 +1485,11 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     self._widget = widget
     widget._suppress_transition_paint = true
     widget._bookshelf_reader_prewarmed = true
-    widget._opened_book = true
+    if not opened_here then
+        widget._bookshelf_reader_prewarmed_only = true
+    else
+        widget._bookshelf_reader_prewarmed_only = nil
+    end
 
     local outer = self
     local widget_instance = widget
@@ -2127,6 +2144,7 @@ function Bookshelf:onCloseWidget()
 end
 
 function Bookshelf:onCloseDocument()
+    self:_cancelReaderPrewarm()
     -- Hot parking: any real close (different-book open tearing down the
     -- parked reader, History switch, KOReader exit) invalidates parking.
     require("lib/bookshelf_reader_park").noteRealClose()
