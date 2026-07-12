@@ -1416,9 +1416,11 @@ function Bookshelf:_showReaderPrewarmIndicator(readerui)
     self._reader_prewarm_indicator = Indicator:new{}
     self._reader_prewarm_indicator_ui = readerui
     self._reader_prewarm_indicator_shown_at = _gettime()
-    readerui.view:registerViewModule("bookshelf_prewarm_indicator",
-        self._reader_prewarm_indicator)
-    UIManager:setDirty(readerui.view, "ui")
+    -- ReaderView builds its paint-module order during initialisation. Modules
+    -- registered later are not reliably painted on all KOReader versions, so
+    -- show this small non-interactive widget as a normal overlay instead.
+    UIManager:show(self._reader_prewarm_indicator, "ui")
+    UIManager:setDirty(self._reader_prewarm_indicator, "ui")
     UIManager:forceRePaint()
 end
 
@@ -1437,11 +1439,8 @@ function Bookshelf:_hideReaderPrewarmIndicator(keep_visible_briefly)
             return
         end
     end
-    local readerui = self._reader_prewarm_indicator_ui or self.ui
-    if readerui and readerui.view and readerui.view.view_modules then
-        readerui.view.view_modules.bookshelf_prewarm_indicator = nil
-        UIManager:setDirty(readerui.view, "ui")
-    end
+    local indicator = self._reader_prewarm_indicator
+    pcall(function() UIManager:close(indicator, "ui") end)
     self._reader_prewarm_indicator = nil
     self._reader_prewarm_indicator_ui = nil
     self._reader_prewarm_indicator_shown_at = nil
@@ -1556,6 +1555,16 @@ function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override, opts
     end
     if not BookshelfSettings.nilOrTrue("hot_park") then
         logger.dbg("[bookshelf] reader prewarm skipped: instant close disabled")
+        return
+    end
+
+    -- A book launched by Bookshelf already has its complete widget parked
+    -- immediately below ReaderUI. Rebuilding or rebinding that live widget is
+    -- redundant and can invalidate the callback/state used by hot parking on
+    -- close. The existing widget is the warm return target in this case.
+    if _live_widget and _live_widget._opened_book == true
+            and UIManager:isWidgetShown(_live_widget) then
+        logger.dbg("[bookshelf] reader prewarm skipped: shelf already warm")
         return
     end
 
