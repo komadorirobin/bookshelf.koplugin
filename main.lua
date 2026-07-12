@@ -1483,7 +1483,10 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
             return false
         end
         require("lib/bookshelf_settings")._plugin = self
-        widget = BookshelfWidget:new{ profile_key = profile_key }
+        widget = BookshelfWidget:new{
+            profile_key = profile_key,
+            _simpleui_bar_host = opts.simpleui_bar_host,
+        }
         created = true
     elseif profile_key and not (widget.profile and widget.profile.key == profile_key)
             and type(widget.setProfile) == "function" then
@@ -1491,6 +1494,9 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     end
 
     self._widget = widget
+    if opts.simpleui_bar_host and widget.setSimpleUIBarHost then
+        widget:setSimpleUIBarHost(opts.simpleui_bar_host)
+    end
     widget._suppress_transition_paint = true
     widget._bookshelf_reader_prewarmed = true
     widget._bookshelf_reader_return_ready = nil
@@ -1687,9 +1693,11 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
     if not BookshelfSettings.nilOrTrue("hot_park") then return false end
 
     local requested_file
+    local simpleui_bar_host
     local event_source = source or "external"
     if type(payload) == "table" then
         requested_file = payload.requested_file or payload.file
+        simpleui_bar_host = payload.simpleui_bar_host
         event_source = payload.source or event_source
     elseif type(payload) == "string" then
         requested_file = payload
@@ -1715,6 +1723,7 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
                 explicit_return_target = true,
                 profile_file = requested_file,
                 target_file = requested_file or live_file,
+                simpleui_bar_host = simpleui_bar_host,
                 source = event_source,
             })
             return

@@ -262,8 +262,14 @@ end
 
 function BookshelfWidget:_getSimpleUIBarContext()
     local ok_fm, FM = pcall(require, "apps/filemanager/filemanager")
-    local fm = ok_fm and FM and FM.instance or nil
-    local plugin = fm and fm._simpleui_plugin
+    local live_fm = ok_fm and FM and FM.instance or nil
+    local live_plugin = live_fm and live_fm._simpleui_plugin
+    if live_fm and live_plugin and live_plugin._onTabTap then
+        self._simpleui_bar_host = { fm = live_fm, plugin = live_plugin }
+    end
+    local host = self._simpleui_bar_host
+    local fm = live_fm or (host and host.fm)
+    local plugin = live_plugin or (host and host.plugin)
     if not (fm and plugin and plugin._onTabTap) then return nil end
 
     local Bottombar = _getSimpleUIBottombar()
@@ -301,6 +307,13 @@ function BookshelfWidget:_getSimpleUIBarContext()
         sep_h         = Bottombar.SEP_H(),
         navbar_transparent = navbar_transparent,
     }
+end
+
+function BookshelfWidget:setSimpleUIBarHost(host)
+    if type(host) ~= "table" then return end
+    if host.fm and host.plugin and host.plugin._onTabTap then
+        self._simpleui_bar_host = { fm = host.fm, plugin = host.plugin }
+    end
 end
 
 function BookshelfWidget:_simpleUIReservedBottom()
