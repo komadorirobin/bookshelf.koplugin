@@ -191,6 +191,8 @@ local READER_PREWARM_INDICATOR_MIN_S = 2
 local _reader_prewarm_last_input = 0
 local _reader_prewarm_token = 0
 local _reader_prewarm_probe_token = 0
+local _reader_prewarm_explicit_file = nil
+local _reader_prewarm_explicit_until = 0
 
 -- Close a TouchMenu we received as the first callback argument. Used
 -- whenever a menu callback changes the visible UI layer (e.g. opens or
@@ -1173,6 +1175,7 @@ function Bookshelf:_raiseInPlace()
         table.insert(stack, entry)
     end
     _live_widget._bookshelf_reader_prewarmed_only = nil
+    _live_widget._bookshelf_reader_return_target = nil
     -- "ui" rather than "partial": on Colorsoft, "partial" of a full-
     -- screen region gets promoted to a full flash refresh by the EPDC
     -- driver. "ui" uses a smoother waveform that doesn't get promoted.
@@ -1217,6 +1220,7 @@ function Bookshelf:_safeShow(profile_key, target_file)
     local Park = require("lib/bookshelf_reader_park")
     local prewarmed_only = _live_widget
         and _live_widget._bookshelf_reader_prewarmed_only
+        and not _live_widget._bookshelf_reader_return_target
     if not prewarmed_only and Park.park(self) then
         if profile_key or target_file then
             UIManager:nextTick(function()
@@ -1448,6 +1452,8 @@ end
 function Bookshelf:_cancelReaderPrewarm()
     _reader_prewarm_token = _reader_prewarm_token + 1
     _reader_prewarm_probe_token = _reader_prewarm_probe_token + 1
+    _reader_prewarm_explicit_file = nil
+    _reader_prewarm_explicit_until = 0
     self:_hideReaderPrewarmIndicator(false)
 end
 
@@ -1460,8 +1466,9 @@ function Bookshelf:_isReaderShown(readerui)
     return false
 end
 
-function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
+function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     if not (profile_key and readerui and readerui.document) then return false end
+    opts = opts or {}
     local t0 = _gettime()
     local widget = _live_widget
     local created = false
@@ -1485,7 +1492,10 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     self._widget = widget
     widget._suppress_transition_paint = true
     widget._bookshelf_reader_prewarmed = true
-    if not opened_here then
+    if opts.explicit_return_target then
+        widget._bookshelf_reader_return_target = true
+        widget._bookshelf_reader_prewarmed_only = nil
+    elseif not opened_here then
         widget._bookshelf_reader_prewarmed_only = true
     else
         widget._bookshelf_reader_prewarmed_only = nil
@@ -1534,7 +1544,8 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     return true
 end
 
-function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override)
+function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override, opts)
+    opts = opts or {}
     local readerui = readerui_override or self.ui
     if not (readerui and readerui.document and readerui.view) then
         logger.dbg("[bookshelf] reader prewarm skipped: no reader context")
@@ -1552,11 +1563,22 @@ function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override)
     local file = file_override
         or (readerui.document and readerui.document.file)
         or self:_currentDocumentFile()
-    local profile_key = Profiles.matchFile(file)
+    local profile_file = opts.profile_file or file
+    local profile_key = Profiles.matchFile(file) or Profiles.matchFile(profile_file)
     if not profile_key then
         logger.dbg("[bookshelf] reader prewarm skipped: no profile for "
-            .. tostring(file))
+            .. tostring(file) .. " / " .. tostring(profile_file))
         return
+    end
+    if not opts.explicit_return_target
+            and _reader_prewarm_explicit_file == file
+            and _gettime() < (_reader_prewarm_explicit_until or 0) then
+        logger.dbg("[bookshelf] reader prewarm skipped: explicit target active")
+        return
+    end
+    if opts.explicit_return_target then
+        _reader_prewarm_explicit_file = file
+        _reader_prewarm_explicit_until = _gettime() + 3600
     end
     _installReaderPrewarmInputStamp()
     _reader_prewarm_last_input = _gettime()
@@ -1584,7 +1606,7 @@ function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override)
         end
         self:_showReaderPrewarmIndicator(readerui)
         local ok, err = pcall(function()
-            self:_prewarmShelfBehindReader(profile_key, readerui)
+            self:_prewarmShelfBehindReader(profile_key, readerui, opts)
         end)
         if not ok then
             logger.warn("[bookshelf] reader prewarm failed: " .. tostring(err))
@@ -1630,6 +1652,54 @@ function Bookshelf:_scheduleActiveReaderPrewarmProbe(reason)
     end
 
     UIManager:scheduleIn(1, function() probe(0) end)
+end
+
+function Bookshelf:onPrepareBookshelfReturn(payload, source)
+    if not BookshelfSettings.nilOrTrue("reader_prewarm") then return false end
+    if not BookshelfSettings.nilOrTrue("hot_park") then return false end
+
+    local requested_file
+    local event_source = source or "external"
+    if type(payload) == "table" then
+        requested_file = payload.requested_file or payload.file
+        event_source = payload.source or event_source
+    elseif type(payload) == "string" then
+        requested_file = payload
+    end
+
+    _reader_prewarm_probe_token = _reader_prewarm_probe_token + 1
+    local token = _reader_prewarm_probe_token
+
+    local function probe(attempt)
+        if _reader_prewarm_probe_token ~= token then return end
+        local ReaderUI = package.loaded["apps/reader/readerui"]
+        if not ReaderUI then
+            local ok_rui, mod = pcall(require, "apps/reader/readerui")
+            if ok_rui then ReaderUI = mod end
+        end
+        local readerui = ReaderUI and ReaderUI.instance or nil
+        local live_file = readerui and readerui.document and readerui.document.file
+        if readerui and readerui.view and live_file then
+            logger.dbg("[bookshelf] explicit reader prewarm from "
+                .. tostring(event_source) .. ": live=" .. tostring(live_file)
+                .. " requested=" .. tostring(requested_file))
+            self:_scheduleReaderPrewarm(readerui, live_file, {
+                explicit_return_target = true,
+                profile_file = requested_file,
+                source = event_source,
+            })
+            return
+        end
+        if attempt < 10 then
+            UIManager:scheduleIn(0.5, function() probe(attempt + 1) end)
+        else
+            logger.dbg("[bookshelf] explicit reader prewarm gave up from "
+                .. tostring(event_source) .. ": " .. tostring(requested_file))
+        end
+    end
+
+    UIManager:scheduleIn(0.5, function() probe(0) end)
+    return true
 end
 
 -- Re-align the reader launcher after a screen-geometry change (device rotation
