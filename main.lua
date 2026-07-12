@@ -185,8 +185,8 @@ end
 -- a scheduled backstop so a close that opens no shelf can't leave it stuck.
 local _restoring_from_reader = false
 
-local READER_PREWARM_IDLE_S = 15
-local READER_PREWARM_CHECK_S = 5
+local READER_PREWARM_IDLE_S = 5
+local READER_PREWARM_CHECK_S = 2
 local READER_PREWARM_INDICATOR_MIN_S = 2
 local _reader_prewarm_last_input = 0
 local _reader_prewarm_token = 0
@@ -1176,6 +1176,7 @@ function Bookshelf:_raiseInPlace()
     end
     _live_widget._bookshelf_reader_prewarmed_only = nil
     _live_widget._bookshelf_reader_return_target = nil
+    _live_widget._bookshelf_reader_return_ready = nil
     -- "ui" rather than "partial": on Colorsoft, "partial" of a full-
     -- screen region gets promoted to a full flash refresh by the EPDC
     -- driver. "ui" uses a smoother waveform that doesn't get promoted.
@@ -1220,12 +1221,14 @@ function Bookshelf:_safeShow(profile_key, target_file)
     local Park = require("lib/bookshelf_reader_park")
     local prewarmed_only = _live_widget
         and _live_widget._bookshelf_reader_prewarmed_only
-    if not prewarmed_only and Park.park(self) then
-        if profile_key or target_file then
-            UIManager:nextTick(function()
-                self:_showAfterReaderReturnWhenChromeReady(profile_key, 0, target_file)
-            end)
-        end
+    local prewarmed_ready = _live_widget
+        and _live_widget._bookshelf_reader_return_ready
+    if (not prewarmed_only or prewarmed_ready) and Park.park(self) then
+        -- The live Bookshelf widget already retains its profile/page when it
+        -- launched the book. Explicit prewarm positions externally opened
+        -- books before setting _bookshelf_reader_return_ready. Running a
+        -- second profile/location update here races Park.park's own deferred
+        -- softRefresh and can corrupt the live widget during the close gesture.
         return
     elseif prewarmed_only then
         logger.dbg("[bookshelf] skipping hot-park for prewarmed-only shelf")
@@ -1490,6 +1493,7 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     self._widget = widget
     widget._suppress_transition_paint = true
     widget._bookshelf_reader_prewarmed = true
+    widget._bookshelf_reader_return_ready = nil
     if opts.explicit_return_target then
         widget._bookshelf_reader_return_target = true
         widget._bookshelf_reader_prewarmed_only = true
@@ -1534,6 +1538,22 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
         local entry = table.remove(stack, shelf_idx)
         if shelf_idx < reader_idx then reader_idx = reader_idx - 1 end
         table.insert(stack, reader_idx, entry)
+    end
+
+    -- External launchers know the file we should return to. Resolve profile,
+    -- chip and pagination while the reader still covers the shelf, so the
+    -- eventual close only has to raise an already-final widget.
+    if opts.explicit_return_target and opts.target_file
+            and type(widget.showFileLocation) == "function" then
+        local ok_target, target_err = pcall(function()
+            widget:showFileLocation(opts.target_file)
+        end)
+        if not ok_target then
+            logger.warn("[bookshelf] reader prewarm target failed: "
+                .. tostring(target_err))
+        else
+            widget._bookshelf_reader_return_ready = true
+        end
     end
     UIManager:setDirty(readerui, "ui")
     logger.dbg(string.format(
@@ -1694,6 +1714,7 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
             self:_scheduleReaderPrewarm(readerui, live_file, {
                 explicit_return_target = true,
                 profile_file = requested_file,
+                target_file = requested_file or live_file,
                 source = event_source,
             })
             return
