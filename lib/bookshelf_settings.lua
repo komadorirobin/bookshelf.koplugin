@@ -619,6 +619,28 @@ function Settings:_coverDisplaySubItems()
         }
     end
     return {
+        -- Layout-affecting toggle, kept at the top and separated from the
+        -- "what to show on a cover" rows below.
+        {
+            text = _("True cover aspect ratio"),
+            help_text = _("Show each cover at its real shape instead of a "
+                .. "uniform book rectangle. Covers keep the same width but "
+                .. "vary in height: on the shelf they sit along the bottom "
+                .. "shelf line, and in the hero area they align to the top. "
+                .. "Wide or square covers stop being cropped or stretched. "
+                .. "Off by default (uniform grid)."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("true_cover_aspect")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                BookshelfSettings.save("true_cover_aspect",
+                    not BookshelfSettings.isTrue("true_cover_aspect"))
+                BookshelfSettings.flush()
+                markDirty()
+            end,
+            separator = true,
+        },
         toggleRow("progress_bookmark_enabled",
                   _("Show reading bookmarks"), false),
         -- On-hold display: four-state. "both" (default; pause badge +
@@ -1401,6 +1423,7 @@ function Settings:_settingsSubItems()
             return self:_expandedShelfSubItems()
         end,
     }
+    -- ("True cover aspect ratio" lives in the Cover display submenu.)
     -- Micro-module placement: three INDEPENDENT surfaces (start menu / hero /
     -- full-screen button), each a checkbox, so any combination can run at once.
     -- Promoted here from Advanced so it sits directly above "Hero area starts
@@ -2328,6 +2351,25 @@ end
 function Settings:_performanceSubItems()
     return {
         {
+            text = _("Instant book close (beta)"),
+            help_text = _("Show Bookshelf immediately when leaving a "
+                .. "book. The book finishes closing at the next quiet "
+                .. "moment - opening another book, half a minute of "
+                .. "inactivity, or leaving Bookshelf - so browsing "
+                .. "never has to wait for it. Until then, going "
+                .. "straight back into the same book is instant. Turn "
+                .. "this off to close books fully before Bookshelf "
+                .. "appears, as before."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("hot_park")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("hot_park")
+                BookshelfSettings.save("hot_park", not enabled)
+            end,
+        },
+        {
             text = _("Pre-warm chip cache"),
             help_text = _("Warms each chip's data in the background shortly"
                 .. " after launch so switching chips is instant. On a large"
@@ -2641,6 +2683,21 @@ function Settings:_advancedSubItems()
             .. "other - the menu reveal repaints a taller area and can "
             .. "look choppy on some screens, particularly while reading. "
             .. "E-ink only.")),
+        {
+            text = _("Cover opening effect"),
+            help_text = _("When you open a book, briefly flex its cover open "
+                .. "before the page appears. Purely cosmetic; turn it off for "
+                .. "an instant, plain open. On by default."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("open_cover_effect")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local on = BookshelfSettings.nilOrTrue("open_cover_effect")
+                BookshelfSettings.save("open_cover_effect", not on)
+                BookshelfSettings.flush()
+            end,
+        },
         {
             text = _("Closing book notification"),
             help_text = _("Show a 'Closing book…' message in the centre "

@@ -437,6 +437,10 @@ function RoundedCornerCard:_pixelInShadow(px, py)
 end
 
 function RoundedCornerCard:paintTo(bb, x, y)
+    -- Record the painted screen position so transient framebuffer effects
+    -- (the opening-book squeeze in bookshelf_widget) can target the exact
+    -- cover card rather than reconstructing layout geometry.
+    self.dimen.x, self.dimen.y = x, y
     if self.inner then
         self.inner:paintTo(bb, x + self.border_size, y + self.border_size)
     end
@@ -860,13 +864,18 @@ function SpineWidget:_renderShadowedCard(inner)
                 + GLYPH_DANGLE_GROWTH_SHARE * (widget_h - base_widget_h)
             local y_offset = card_h
                 + math.floor(dangle_h * (1 - lift) + 0.5) - widget_h
-            children[#children + 1] = FrameContainer:new{
+            local glyph_frame = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
                 padding_top  = y_offset - halo_w,
                 padding_left = _glyphLeftInset() - halo_w,
                 outlined,
             }
+            children[#children + 1] = glyph_frame
+            -- Overhangs the card bottom: the opening effect repaints it on
+            -- top of the ring erase + flex (frame stamps its painted rect).
+            self._overhang_glyph_widgets = self._overhang_glyph_widgets or {}
+            table.insert(self._overhang_glyph_widgets, glyph_frame)
         end
     end
 
@@ -946,13 +955,17 @@ function SpineWidget:_renderShadowedCard(inner)
                 + GLYPH_DANGLE_GROWTH_SHARE * (widget_h - base_widget_h)
             local y_offset = card_h
                 + math.floor(dangle_h * (1 - lift) + 0.5) - widget_h
-            children[#children + 1] = FrameContainer:new{
+            local glyph_frame = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
                 padding_top  = y_offset - halo_w,
                 padding_left = _glyphLeftInset() - halo_w,
                 outlined,
             }
+            children[#children + 1] = glyph_frame
+            -- Same overhang-repaint note as the in-progress glyph above.
+            self._overhang_glyph_widgets = self._overhang_glyph_widgets or {}
+            table.insert(self._overhang_glyph_widgets, glyph_frame)
         end
     end
 
@@ -1262,8 +1275,19 @@ function SpineWidget:_renderShadowedCard(inner)
                 local center_shift =
                     math.floor((_badgeSize(_glyphSize(card_w)) - glyph_h) / 2)
                 local x_offset = _glyphLeftInset() - halo_w + center_shift
-                outlined.overlap_offset = { x_offset, y_offset }
-                children[#children + 1] = outlined
+                -- Zero-chrome wrapper purely so the painted rect gets
+                -- stamped (the halo/shadow group's synthetic dimen carries
+                -- no position): the opening effect repaints the glyph on
+                -- top of the ring erase + flex.
+                local fav_wrap = FrameContainer:new{
+                    bordersize = 0,
+                    padding    = 0,
+                    outlined,
+                }
+                fav_wrap.overlap_offset = { x_offset, y_offset }
+                children[#children + 1] = fav_wrap
+                self._overhang_glyph_widgets = self._overhang_glyph_widgets or {}
+                table.insert(self._overhang_glyph_widgets, fav_wrap)
             end
         end
     end
@@ -1556,6 +1580,9 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         cover_args.shadow_radius   = CARD_RADIUS
     end
     local cover = RoundedCornerCard:new(cover_args)
+    -- Stash for the opening-book effect: the card's painted dimen is the
+    -- precise cover rect (border included, shadow and title excluded).
+    self._cover_card = cover
     return (self:_renderShadowedCard(cover))
 end
 
@@ -1710,6 +1737,9 @@ function SpineWidget:_renderFallback()
             VerticalSpan:new{ width = inset_v_bottom - border },
         },
     }
+    -- Same stash as the cover path: ColorSafeFrame:paintTo records its
+    -- painted dimen, so the opening-book effect works on fallback covers.
+    self._cover_card = card
     return (self:_renderShadowedCard(card))
 end
 
@@ -1721,6 +1751,12 @@ function SpineWidget:onTap(_, ges)
     if ges and ges.pos and ges.pos.y < Screen:scaleBySize(60) then
         return false
     end
+    -- Rendezvous for the opening-book effect: record WHICH widget was
+    -- tapped (hero cover and a shelf spine can show the same book, so a
+    -- filepath search can't disambiguate - issue seen with the badge
+    -- painting on the shelf copy when the hero was tapped). Consumers
+    -- validate book identity and clear it; a stale value is inert.
+    SpineWidget.last_tapped = self
     self.on_tap(self.book)
     return true
 end
@@ -1728,6 +1764,65 @@ function SpineWidget:onHold()
     if not self.on_hold then return false end
     self.on_hold(self.book)
     return true
+end
+
+-- Additive exports so other surfaces (the Cover-picker grid) can draw the
+-- exact same selection ring the shelf uses, without duplicating the geometry
+-- or re-deriving the scaled constants. BorderOverlay is a file-local Widget
+-- (see above); SELECTED_BORDER/CARD_RADIUS are the shared scaled sizes.
+SpineWidget.BorderOverlay   = BorderOverlay
+SpineWidget.SELECTED_BORDER = SELECTED_BORDER
+SpineWidget.CARD_RADIUS     = CARD_RADIUS
+
+-- Per-axis chrome overhead between the widget box (self.width/self.height)
+-- and the actual cover IMAGE: the drop-shadow offset plus the 1dp card
+-- border on both sides. Exposed so the true-aspect shelf grid can size a
+-- cover box whose inner image lands at an exact aspect ratio:
+--   img_w = slot_w - COVER_CHROME ;  box_h = round(img_w * aspect) + COVER_CHROME
+SpineWidget.COVER_CHROME = SHADOW_OFFSET + 2 * CARD_BORDER
+
+-- True-aspect ceiling: 2:3 + ~10% overshoot. ~98% of real covers render
+-- untrimmed under it; taller freaks clamp here so they can't blow past the row.
+SpineWidget.COVER_ASPECT_CAP = 1.65
+
+-- SpineWidget.bookAspect(book) -- height/width ratio from BIM's cover_sizetag
+-- ("WxH", the ORIGINAL cover pixel size present on every record at layout
+-- time, not the lazy cover_bb). Clamped to the cap, with a sanity floor for
+-- degenerate metadata; falls back to 2:3 when the tag is missing/unparseable.
+-- Shared by the true-aspect shelf grid and hero so their aspect maths agree.
+function SpineWidget.bookAspect(book)
+    local tag = book and book.cover_sizetag
+    if type(tag) == "string" then
+        local w, h = tag:match("^(%d+)x(%d+)")
+        w, h = tonumber(w), tonumber(h)
+        if w and h and w > 0 and h > 0 then
+            local a = h / w
+            if a > SpineWidget.COVER_ASPECT_CAP then a = SpineWidget.COVER_ASPECT_CAP end
+            if a < 0.5 then a = 0.5 end
+            return a
+        end
+    end
+    return 1.5
+end
+
+-- SpineWidget.trueAspectBoxHeight(box_w, book, max_h) -- the widget-box HEIGHT
+-- (self.height) that makes THIS book's inner cover image land at its own
+-- aspect for a given box width, clamped to max_h. Centralises the
+-- img_w/COVER_CHROME arithmetic so callers don't re-derive it.
+function SpineWidget.trueAspectBoxHeight(box_w, book, max_h)
+    local iw = box_w - SpineWidget.COVER_CHROME
+    local h  = math.floor(iw * SpineWidget.bookAspect(book) + 0.5) + SpineWidget.COVER_CHROME
+    if max_h and h > max_h then h = max_h end
+    return h
+end
+
+-- SpineWidget.trueAspectBoxWidth(box_h, book) -- inverse of the above: the box
+-- WIDTH that makes the inner image land at the book's aspect for a target box
+-- height. Used by the hero to narrow a too-tall cover so it fits the fixed
+-- region height without distortion (rather than shrinking every cover).
+function SpineWidget.trueAspectBoxWidth(box_h, book)
+    local ih = box_h - SpineWidget.COVER_CHROME
+    return math.floor(ih / SpineWidget.bookAspect(book) + 0.5) + SpineWidget.COVER_CHROME
 end
 
 return SpineWidget

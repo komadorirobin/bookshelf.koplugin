@@ -643,7 +643,13 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- Sits ABOVE title/author so the stars anchor to a fixed y position
     -- regardless of how long the title is or whether the author line is
     -- present -- predictable target for tap-to-rate.
-    if regions.rating and not regions.rating.disabled and book then
+    -- The interactive local rating (tappable stars) is governed by the
+    -- Rating region's `disabled` flag. Hardcover community stars are
+    -- display-only and INDEPENDENT of that toggle (issue #264 regression:
+    -- pre-v3.8.8 they showed regardless; v3.8.8 wrongly folded both behind the
+    -- same gate). So enter the block for either purpose, and only fall back to
+    -- the tappable rating when the region is actually enabled.
+    if regions.rating and book then
         local hardcover_mode = BookshelfSettings.isTrue("hardcover_hero_rating")
         -- The Hardcover rating is display-only; showing it replaces the user's
         -- own tappable stars. If the Hardcover plugin isn't live (uninstalled or
@@ -662,14 +668,19 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
             rating = tonumber(book.hardcover_rating)
         end
         -- Plugin is live but this particular book has no cached Hardcover rating:
-        -- fall back to the user's own local rating rather than hiding the row.
+        -- there's no community rating to display for it.
         if hardcover_mode and rating == nil then
             hardcover_mode = false
         end
-        if not hardcover_mode then
+        -- Tappable local rating only when the Rating region is enabled. When
+        -- it's disabled the user has opted out of hero stars entirely, so we
+        -- must NOT fall back to it -- only Hardcover community stars (above)
+        -- may still show.
+        local show_interactive = (not regions.rating.disabled) and self.on_rating_change ~= nil
+        if not hardcover_mode and show_interactive then
             rating = tonumber(book.rating) or 0
         end
-        if (hardcover_mode or self.on_rating_change) and (not hardcover_mode or rating) then
+        if hardcover_mode or show_interactive then
             local star_size = regions.rating.font_size or 16
             local face      = fontFace(nil, hardcover_mode and star_size
                 or math.floor(star_size * 1.25 + 0.5))
@@ -1090,10 +1101,36 @@ function HeroCard:_renderFull()
     -- stays unchanged (the hero layout was sized for cover_w x cover_h).
     local SHADOW_OFFSET = Screen:scaleBySize(4)
 
+    -- True-aspect: render the hero cover at the book's OWN aspect, TOP-anchored
+    -- within the fixed-height region, WITHOUT shrinking ordinary covers.
+    --   * A cover that fits the region at full width keeps full width; if it's
+    --     shorter than the region it top-anchors with headroom below (the right
+    --     column holds the region height, so the chip bar never moves).
+    --   * A genuinely tall (>1.5) cover would overflow the region at full width,
+    --     so it (and only it) is narrowed just enough to fit the height,
+    --     undistorted. Ordinary 2:3 covers stay full-size, matching the shelf.
+    -- Off = the historical full-height 2:3 box.
+    local sw_w = self.cover_w - SHADOW_OFFSET
+    local sw_h = cover_h - SHADOW_OFFSET
+    if BookshelfSettings.isTrue("true_cover_aspect") then
+        local fit_h = SpineWidget.trueAspectBoxHeight(sw_w, self.book)
+        if fit_h <= sw_h then
+            sw_h = fit_h                                            -- fits: keep width, top-anchor
+        else
+            sw_w = SpineWidget.trueAspectBoxWidth(sw_h, self.book)  -- too tall: narrow to fit height
+        end
+    end
+    -- Cover footprint width (SpineWidget + the SHADOW_OFFSET left padding of its
+    -- wrapper). When true-aspect narrows a tall cover this shrinks, so recompute
+    -- the right column from it rather than the full reserved cover_w -- the text
+    -- gains the freed width instead of a gap (and right_w only ever grows, so
+    -- the #87 max_width<=0 guard is never at risk).
+    local cover_footprint_w = sw_w + SHADOW_OFFSET
+
     local cover = SpineWidget:new{
         book        = self.book,
-        width       = self.cover_w - SHADOW_OFFSET,
-        height      = cover_h - SHADOW_OFFSET,
+        width       = sw_w,
+        height      = sw_h,
         on_tap      = self.on_tap,
         on_hold     = self.on_hold,
         is_selected      = self.is_selected,
@@ -1126,7 +1163,7 @@ function HeroCard:_renderFull()
     -- can never hand the right-column TextWidgets a max_width <= 0, which
     -- aborts makeLine natively. The real fix caps cover_w upstream in
     -- bookshelf_widget._rebuild; this just guarantees the abort is impossible.
-    local right_w = math.max(1, self.width - self.cover_w - text_padding)
+    local right_w = math.max(1, self.width - cover_footprint_w - text_padding)
 
     local regions = Regions.read()
     local right = self:_buildRightColumn(

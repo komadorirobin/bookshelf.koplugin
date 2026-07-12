@@ -106,13 +106,23 @@ local _suppress_close_document_show = false
 -- and opened a book from the raw FileManager stay in the FileManager on
 -- close, while a cold boot still lands on Bookshelf (issue #110).
 local _did_initial_takeover = false
+-- Short-lived PathChanged suppression used by the explicit reader-close
+-- shortcut. Upstream's positive onShow gate handles takeover ownership; this
+-- extra guard prevents transient FileManager restore paths from corrupting
+-- profile breadcrumbs during the same close cycle.
 local _suppress_path_changed_until = 0
--- One-shot: set by onCloseDocument when a book opened from the RAW FileManager
--- (shelf not parked, _isShowing() false) is closing back to the home view.
--- KOReader's showFileManager on that close fires a Show event, and onShow would
--- otherwise use it to hijack the FileManager back into Bookshelf -- breaking the
--- same #110 "stay in the FileManager" intent that onCloseDocument honours.
-local _skip_next_onshow_takeover = false
+-- One-shot POSITIVE gate for onShow's takeover. A Show event alone does not
+-- prove Bookshelf is the destination: another home UI (SimpleUI et al) may be
+-- about to claim the freshly shown FileManager, and its close pipeline can be
+-- slow enough (>2s observed on PW5) that any timed "skip the next takeover"
+-- flag expires before the Show arrives -- expiry then HIJACKED the home
+-- (SimpleUI regression). Inverting the gate makes expiry fail safe: takeover
+-- happens only when a path that KNOWS bookshelf is the destination announced
+-- it (init's cold boot; onCloseDocument closing a book that BOOKSHELF opened),
+-- and a stale flag can at worst cause a missed takeover (a brief FM flash),
+-- never a wrong one. Timed clears are backstops for announcements that never
+-- get consumed (a boot/close that opens no FileManager).
+local _expect_onshow_takeover = false
 
 local function _simpleUIExpected()
     local ok_store, SUISettings = pcall(require, "sui_store")
@@ -370,6 +380,10 @@ function Bookshelf:init()
         -- could see different state.
         local FileManager = require("apps/filemanager/filemanager")
         local fm_instance = FileManager.instance
+        -- Announce the boot takeover so onShow's positive gate lets the
+        -- synchronous Show catch beat the first FM paint.
+        _expect_onshow_takeover = true
+        UIManager:scheduleIn(10, function() _expect_onshow_takeover = false end)
         UIManager:nextTick(function() self:_takeOver(fm_instance) end)
     end
 end
@@ -577,7 +591,16 @@ function Bookshelf:addToMainMenu(menu_items)
     -- nothing useful to add to the reader menu. is_doc_only=false is required
     -- only so onCloseDocument fires; self.ui.document is nil in FM context.
     if self.ui.document then return end
+    self:buildMenuItems(menu_items)
+end
 
+-- buildMenuItems - the real menu body, host-agnostic. Split from
+-- addToMainMenu so the start menu's "Bookshelf menu" action
+-- (bookshelf_action_exec) can probe it directly in READER context while a
+-- book is parked under the shelf (hot parking: no FileManager instance
+-- exists then, so fm.bookshelf is gone). addToMainMenu keeps its
+-- reader-context bail above, so the actual reading menu stays uncluttered.
+function Bookshelf:buildMenuItems(menu_items)
     local outer = self
     local S = require("lib/bookshelf_settings")
     -- Stash plugin ref now so _updateSubItems callbacks resolve correctly.
@@ -591,6 +614,15 @@ function Bookshelf:addToMainMenu(menu_items)
         end,
         callback = function(touchmenu_instance)
             if outer:_isShowing() then
+                -- Hot parking: with a reader parked underneath, plainly
+                -- closing the widget would drop the user back INTO the
+                -- book. "Close Bookshelf" means "leave the shelf for the
+                -- file manager", so real-close the parked book to raw FM.
+                local Park = require("lib/bookshelf_reader_park")
+                if Park.closeShelfToFileManager(_live_widget) then
+                    _closeTouchMenu(touchmenu_instance)
+                    return
+                end
                 UIManager:close(_live_widget)
                 -- Workaround: SimpleUI (since April 2026 v1.5.0
                 -- changes) installs a covers_fullscreen=true
@@ -803,8 +835,13 @@ function Bookshelf:show(profile_key)
         -- and request a repaint so freshly-closed books surface in Recent etc.
         -- Restore screen rotation saved before the reader opened — the reader
         -- may have left the display in a different orientation (upside-down,
-        -- landscape) and KOReader does not reset it on close.
-        if self._widget._pre_read_rotation ~= nil then
+        -- landscape) and KOReader does not reset it on close. NOT while that
+        -- reader is parked underneath (hot parking): the parked reader is
+        -- still laid out for its own rotation, and yanking the panel under
+        -- it would corrupt the eventual unpark. The restore happens on the
+        -- real-close return instead; _pre_read_rotation stays stashed.
+        if self._widget._pre_read_rotation ~= nil
+                and not require("lib/bookshelf_reader_park").isParked() then
             local Screen = require("device").screen
             Screen:setRotationMode(self._widget._pre_read_rotation)
             self._widget._pre_read_rotation = nil
@@ -827,7 +864,21 @@ function Bookshelf:show(profile_key)
         return
     end
     diag_branch = "cold-create"
-    local BookshelfWidget = require("lib/bookshelf_widget")
+    -- Guard the cold-create require: bookshelf_widget pulls in the whole
+    -- widget module tree at load time, so a single missing/corrupt lib file
+    -- (e.g. after a partial update unpack) throws here. Without this guard the
+    -- error propagates through the event dispatcher and panics all of KOReader
+    -- (the "Don't Panic" bomb screen) rather than failing to just the shelf.
+    local ok_widget, BookshelfWidget = pcall(require, "lib/bookshelf_widget")
+    if not ok_widget then
+        logger.err("[bookshelf] cold-create failed to load bookshelf_widget: "
+            .. tostring(BookshelfWidget))
+        local InfoMessage = require("ui/widget/infomessage")
+        UIManager:show(InfoMessage:new{
+            text = _("Bookshelf couldn't open. Some of its files may be missing or corrupted after an update. Try reinstalling the plugin."),
+        })
+        return
+    end
     local t_pre_new = _gettime()
     self._widget = BookshelfWidget:new{ profile_key = profile_key }
     local t_post_new = _gettime()
@@ -1147,6 +1198,20 @@ function Bookshelf:_safeShow(profile_key, target_file)
         return
     end
     local file = readerui.document.file
+    -- Hot parking fast path: leave the book open and splice the shelf on
+    -- top (lib/bookshelf_reader_park). Falls through to the full close
+    -- path below when the setting is off or the shelf is not on the stack
+    -- (book opened from the raw FileManager - #110 "return to where you
+    -- came from").
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.park(self) then
+        if profile_key or target_file then
+            UIManager:nextTick(function()
+                self:_showAfterReaderReturnWhenChromeReady(profile_key, 0, target_file)
+            end)
+        end
+        return
+    end
     -- Feedback: centered InfoMessage with scoped partial refresh so the
     -- show doesn't trigger a full-screen flash. Skip when:
     --   a. SimpleUI is set to "always" mode (it'll show its own
@@ -1436,6 +1501,15 @@ function Bookshelf:_wireFastFileBrowserTab(force)
         -- when Start with = Bookshelf. The session-once takeover guard keeps
         -- the cold-boot FM init from re-raising Bookshelf behind this.
         if plugin:_isShowing() then
+            -- Hot parking: the menu was opened OVER the parked shelf (the
+            -- shelf is the visible layer and the reader menu is hosting
+            -- for it). "File browser" here means the actual file manager,
+            -- not the shelf the user is already looking at - real-close
+            -- the parked book out to raw FM.
+            local Park = require("lib/bookshelf_reader_park")
+            if Park.isParked() and Park.closeShelfToFileManager(_live_widget) then
+                return
+            end
             -- Bookshelf is home: same fast-path as the gesture.
             plugin:_safeShow()
         elseif prev_callback then
@@ -1496,6 +1570,13 @@ end
 -- Close the live widget if showing, otherwise safe-show. Mirrors the
 -- "Open Bookshelf" / "Close Bookshelf" menu entry.
 function Bookshelf:onToggleBookshelf()
+    -- Hot parking: while a reader is parked under the visible shelf, the
+    -- toggle is an instant flip back into the book.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.isParked() then
+        Park.unpark(_live_widget)
+        return true
+    end
     -- Inside a book, the BookshelfWidget is still on the UIManager stack
     -- (left there by _openBook so the close-book path can reuse it) but
     -- is visually covered by the Reader. UIManager:isWidgetShown reports
@@ -1541,6 +1622,13 @@ end
 -- Explicit show/hide — used by the Set Bookshelf action with on/off args.
 -- Hide is a no-op when nothing's showing, mirroring how Set Bookends behaves.
 function Bookshelf:onSetBookshelf(visible)
+    -- Hot parking: the shelf is already the visible layer over a parked
+    -- reader. "on" is a no-op; "off" returns to the parked book.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.isParked() then
+        if not visible then Park.unpark(_live_widget) end
+        return true
+    end
     -- Same stack-shown ≠ visually-shown caveat as onToggleBookshelf. From
     -- a book: "on" routes through _safeShow; "off" is a no-op because
     -- nothing is visible to hide. (Issue #27.)
@@ -1631,7 +1719,7 @@ function Bookshelf:onOpenBookshelfAuto()
     if not profile_key then
         logger.dbg("[bookshelf] open_bookshelf_auto: no profile match for " .. tostring(file))
     end
-    self:_safeShow(profile_key)
+    self:_safeShow(profile_key, file)
     return true
 end
 
@@ -1643,6 +1731,11 @@ function Bookshelf:_takeOver(fm_instance)
     -- show() again here would softRefresh + queue an extra EPDC commit
     -- (visible as a second flash on color panels). (#35.)
     if _suppress_close_document_show then
+        return
+    end
+    -- Same skip for the hot-parking finish-close: its own _raiseInPlace +
+    -- show() pair already handles the fresh FM (see _fireFinish).
+    if require("lib/bookshelf_reader_park").isFinishingClose() then
         return
     end
     -- Leave FileManager loaded *underneath* Bookshelf — don't close it. Two
@@ -1683,13 +1776,14 @@ function Bookshelf:onShow()
     if G_reader_settings:readSetting("start_with") ~= "bookshelf" then return end
     if self.ui and self.ui.document then return end
     if _live_widget and UIManager:isWidgetShown(_live_widget) then return end
-    if _skip_next_onshow_takeover then
-        -- A book opened from the raw FileManager just closed (set in
-        -- onCloseDocument). Honour #110: stay in the FileManager rather than
-        -- hijacking it back to the shelf. One-shot.
-        _skip_next_onshow_takeover = false
+    if not _expect_onshow_takeover then
+        -- Nobody announced bookshelf as this Show's destination (see the
+        -- gate's declaration comment): stand down. Covers #110 (books
+        -- opened from the raw FileManager close back to it) and the
+        -- SimpleUI case (their home claims the FM after this event).
         return
     end
+    _expect_onshow_takeover = false
     -- CoverBrowser disabled: every code path that touches BIM crashes.
     -- Bail silently here (init showed the notification once); just let
     -- FM stay visible. (#49.)
@@ -1781,11 +1875,21 @@ function Bookshelf:onCloseWidget()
     if not _live_widget then return end
     if _preserve_live_widget_on_reader_close then return end
     if self.ui and self.ui.tearing_down then return end
+    -- Hot parking finish: the parked reader is real-closing BEHIND the
+    -- live shelf (Park._finishCore) - the shelf must survive this close.
+    -- Without the guard, the reader's CloseWidget cascade closed the
+    -- shelf here, and onShow then cold-created a replacement mid-finish:
+    -- a 200ms+ rebuild and two full repaints, visible as a flash ~30s
+    -- after leaving a book.
+    if require("lib/bookshelf_reader_park").isFinishingClose() then return end
     if not UIManager:isWidgetShown(_live_widget) then return end
     UIManager:close(_live_widget)
 end
 
 function Bookshelf:onCloseDocument()
+    -- Hot parking: any real close (different-book open tearing down the
+    -- parked reader, History switch, KOReader exit) invalidates parking.
+    require("lib/bookshelf_reader_park").noteRealClose()
     -- #204: enter the reader-return transition. The file manager will fire
     -- PathChanged echoes restoring its folder around the just-closed book;
     -- onPathChanged ignores them while this is set so the restored drilldown
@@ -1874,15 +1978,39 @@ function Bookshelf:onCloseDocument()
         end
         return
     end
+    -- Consume the "bookshelf opened this book" provenance here, on every
+    -- NON-SWITCH close path. Two placement constraints, both learned the
+    -- hard way:
+    --   * NOT at the top: a shelf-launched open of book B while book A is
+    --     parked real-closes A first (ShowingReader teardown, the
+    --     switching branch above) - consuming there would eat the flag
+    --     _launchReader just set FOR B. Switches inherit provenance.
+    --   * NOT only in the final re-show branch: the park finish and the
+    --     explicit exits return early below, leaving the flag stale - a
+    --     book later opened from History then closed against the previous
+    --     book's TRUE and hijacked the return home.
+    local opened_here = _live_widget and _live_widget._opened_book or false
+    if _live_widget then _live_widget._opened_book = false end
     if not showing then
-        -- The book was opened from the RAW FileManager (the shelf was not parked
-        -- underneath) and is now closing back to the home view. KOReader will
-        -- showFileManager for this close; without this, the resulting Show event
-        -- makes onShow hijack the FileManager straight back into Bookshelf. Honour
-        -- the #110 intent — stay in the FileManager — by telling the next onShow
-        -- to stand down. Cleared on consumption, with a timed backstop.
-        _skip_next_onshow_takeover = true
-        UIManager:scheduleIn(2, function() _skip_next_onshow_takeover = false end)
+        -- The book was opened from the RAW FileManager (the shelf was not
+        -- parked underneath) and is closing back to the home view. No
+        -- takeover announcement is made, so onShow's positive gate keeps
+        -- the FileManager in charge (#110 intent).
+        return
+    end
+    -- Hot parking: an explicit "Close Bookshelf" / File-browser exit from
+    -- a parked shelf (Park.closeShelfToFileManager). That path manages the
+    -- shelf widget itself and the destination is the raw FileManager -
+    -- skip the re-show and stand the next onShow takeover down, same #110
+    -- idiom as the not-showing branch above.
+    if require("lib/bookshelf_reader_park").consumeClosingToFM() then
+        return
+    end
+    -- Hot parking: the deferred finish-close is running (the parked book
+    -- really closing behind the opaque shelf). It raises and shows the
+    -- shelf itself after showFileManager - our re-show here would stack a
+    -- duplicate softRefresh/EPDC commit (#35 double flash).
+    if require("lib/bookshelf_reader_park").isFinishingClose() then
         return
     end
     -- _safeShow already scheduled its own show() after the close+showFM
@@ -1893,13 +2021,41 @@ function Bookshelf:onCloseDocument()
     if _suppress_close_document_show then
         return
     end
+    -- "You return to whatever opened the book": the shelf can be ON the
+    -- stack yet buried under another home UI (SimpleUI et al bury rather
+    -- than close). Stack presence alone therefore over-claims - only
+    -- re-show when BOOKSHELF launched this book (_launchReader / unpark
+    -- set the flag; KOReader- or other-plugin-initiated opens never do).
+    if not opened_here then
+        return
+    end
     -- Normal path (close-document not via _safeShow, e.g. exit-to-FM
-    -- from KOReader's own menu): schedule show so bookshelf reappears
-    -- on the next tick. self:show()'s refresh path handles the repaint
-    -- without exposing FileManager.
+    -- from KOReader's own menu): announce the takeover (so onShow's
+    -- synchronous catch can beat the FM paint) and schedule show so
+    -- bookshelf reappears on the next tick even if no Show fires.
+    _expect_onshow_takeover = true
+    UIManager:scheduleIn(5, function() _expect_onshow_takeover = false end)
     UIManager:nextTick(function()
         self:show()
     end)
+end
+
+-- KOReader broadcasts ShowingReader just before ANY reader spins up (from
+-- the shelf, History, Collections, another plugin). If the shelf is on the
+-- stack, every repaint between now and the reader's arrival exposes it -
+-- e.g. the History menu closing over a parked shelf flashed the shelf for
+-- the whole document-load gap. Same suppression as the #172 reader-switch
+-- fix, engaged for every reader open; onReaderReady below lifts it, with
+-- show()/_raiseInPlace as backstops plus a timed clear for an open that
+-- never completes. Suppression only skips REpaints - pixels already on
+-- screen stay, so an open from the visible shelf is unaffected.
+function Bookshelf:onShowingReader()
+    if _live_widget and UIManager:isWidgetShown(_live_widget) then
+        _live_widget._suppress_transition_paint = true
+        UIManager:scheduleIn(10, function()
+            if _live_widget then _live_widget._suppress_transition_paint = false end
+        end)
+    end
 end
 
 -- New ReaderUI has finished loading after a Reader→Reader switch — the new
@@ -1908,7 +2064,16 @@ end
 -- widget is the shared singleton, so clearing it here unblocks the eventual
 -- return-to-shelf paint when this book is closed.
 function Bookshelf:onReaderReady()
-    if _live_widget then _live_widget._suppress_transition_paint = false end
+    if _live_widget then
+        _live_widget._suppress_transition_paint = false
+        -- Seamless open (opening-badge path): the reader arrived with a
+        -- "ui" refresh instead of the stock "full". One full refresh now
+        -- clears any shelf ghosting under the freshly painted page.
+        if _live_widget._seamless_open_full_pending then
+            _live_widget._seamless_open_full_pending = nil
+            UIManager:setDirty("all", "full")
+        end
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -2238,8 +2403,16 @@ function Bookshelf:_evictHomescreenOverlay()
         -- sits above bookshelf. _repaintAfterWake fires this on wake;
         -- without this guard the loop below closed the active reader,
         -- crashing KOReader on every wake-from-sleep while reading.
+        -- Hot parking refinement: a PARKED reader sits BELOW the shelf, and
+        -- the walk below only closes name=="homescreen" widgets ABOVE the
+        -- shelf, so it cannot touch the reader - keep the eviction (#77
+        -- SimpleUI defence) working while parked. The bail stays for an
+        -- ACTIVE reader (on top of the shelf), the #82 hazard.
         local ok_rui, ReaderUI = pcall(require, "apps/reader/readerui")
-        if ok_rui and ReaderUI and ReaderUI.instance then return end
+        if ok_rui and ReaderUI and ReaderUI.instance
+                and not require("lib/bookshelf_reader_park").isParked() then
+            return
+        end
         if not UIManager._window_stack then return end
         local bookshelf_idx
         for i, entry in ipairs(UIManager._window_stack) do

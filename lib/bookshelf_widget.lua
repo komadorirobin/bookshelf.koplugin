@@ -1047,11 +1047,36 @@ function BookshelfWidget:handleEvent(event)
         if self:_handleSimpleUIBottomBarHold(ev) then return true end
         if self:_handleSimpleUIBottomBarTap(ev) then return true end
         if self:_isInSimpleUIBottomBand(ev and ev.pos) then return true end
-        return GestureZones.tryFMZones(ev, fm)
+        if fm then return GestureZones.tryFMZones(ev, fm) end
+        -- Hot parking: no FileManager exists while a reader is parked
+        -- beneath the shelf. A menu-intent gesture (the reader's top-strip
+        -- menu zones) converts on the spot: finish the deferred close and
+        -- open the real FM menu, so the user never sees book actions on
+        -- the home screen. Everything else forwards to the reader host's
+        -- allowlisted zones (user gestures; page-turn zones excluded).
+        local Park = require("lib/bookshelf_reader_park")
+        if Park.isParked() then
+            local rui = require("apps/reader/readerui").instance
+            if GestureZones.matchesReaderMenuZone(ev, rui) then
+                Park.finishToMenu()
+                return true
+            end
+            return GestureZones.tryReaderZones(ev, rui)
+        end
+        return false
     end
 
     if InputContainer.handleEvent(self, event) then return true end
-    return GestureZones.forwardToFM(event, self)
+    if require("apps/filemanager/filemanager").instance then
+        return GestureZones.forwardToFM(event, self)
+    end
+    -- Parked reader hosts Dispatcher actions when there's no FM (see above).
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.isParked() then
+        local rui = require("apps/reader/readerui").instance
+        return GestureZones.forwardToReader(event, self, rui)
+    end
+    return false
 end
 
 -- ─── _rebuild ─────────────────────────────────────────────────────────────────
@@ -1577,7 +1602,7 @@ function BookshelfWidget:_rebuild()
     -- vertically compressed rather than dropping the bottom row.
     local book_gap       = self:_bookGap(PAD)
     local slot_w_natural = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
-    local slot_h_natural = math.floor(slot_w_natural * 1.5)
+    local slot_h_natural = math.floor(slot_w_natural * self:_coverAspect())
 
     -- Vertical layout (outer-top to outer-bottom):
     --   outer_top_PAD + hero + hero_chip_pad
@@ -1645,7 +1670,13 @@ function BookshelfWidget:_rebuild()
             local title_face_size = math.floor(14 * label_scale / 100 + 0.5)
             title_block_h = Size.padding.default + math.floor(title_face_size * 1.3)
         end
-        local capped_shelf_h = math.floor(slot_h_natural * 1.05) + title_block_h
+        -- The 1.05 lets uniform covers stretch 5% past 2:3 to soak up slack.
+        -- With true-aspect on, covers never stretch (they render at their own
+        -- ratio up to the 1.65 cap), so cap at exactly the reserved row height
+        -- -- extra slack stays below the grid instead of as dead headroom
+        -- above every bottom-anchored cover.
+        local cap_mult = BookshelfSettings.isTrue("true_cover_aspect") and 1.0 or 1.05
+        local capped_shelf_h = math.floor(slot_h_natural * cap_mult) + title_block_h
         if shelf_h > capped_shelf_h then shelf_h = capped_shelf_h end
         hero_h = strip_minimum
     else
@@ -1681,6 +1712,11 @@ function BookshelfWidget:_rebuild()
         hero_cover_h = hero_cover_h_natural
     else
         hero_cover_h = math.max(1, hero_h)
+        -- Cover WIDTH stays 2:3-derived so an ordinary cover fills the region at
+        -- full size (matching the shelf, where 2:3 covers keep their size). True
+        -- aspect is applied inside HeroCard: it keeps this width for covers that
+        -- fit, and narrows ONLY genuinely tall (>1.5) books enough to fit the
+        -- region height undistorted. So nothing shrinks or squashes needlessly.
         hero_cover_w = math.max(1, math.floor(hero_cover_h / 1.5))
         -- hero_cover_w is derived from the VERTICAL hero_h, so on a tall/narrow
         -- screen it can come out WIDER than content_w. HeroCard then computes
@@ -2284,7 +2320,7 @@ function BookshelfWidget:_rebuild()
     -- metadata. Cover-spec dims = single shelf slot (book_gap so the
     -- extracted cover matches the rendered, slightly-larger small-size slot).
     local slot_w  = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
-    local slot_h  = math.floor(slot_w * 1.5)
+    local slot_h  = math.floor(slot_w * self:_coverAspect())
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_cover_w, hero_cover_h)
 
     -- ── Assemble ──────────────────────────────────────────────────────────────
@@ -2510,6 +2546,11 @@ function BookshelfWidget:_rebuild()
     if (self._total_pages or 1) > (self.page or 1) then
         self:_schedulePreload(1)
     end
+    -- A full rebuild is followed by a full-screen refresh. On colour e-ink
+    -- the very next page-turn wipe stalls badly while that refresh is still
+    -- draining (issue #247); flag it so _swapShelvesInPlace can skip the
+    -- animation for that one turn. Consumed by the first real page-turn.
+    self._full_refresh_pending = true
 end
 
 -- ─── Background metadata extraction ──────────────────────────────────────────
@@ -3421,6 +3462,11 @@ function BookshelfWidget:_openBook(book, after_open_callback)
         -- Map the decrypted /tmp copy back to this virtual book so the hero can
         -- show it as recently-opened (#203 pt3).
         if Repo.noteKoboOpen then Repo.noteKoboOpen(real, book) end
+        -- Opening feedback at TAP time (the Kobo readiness poll below can
+        -- take seconds): flush pending paints so the capture sees current
+        -- pixels, then squeeze the tapped cover.
+        UIManager:forceRePaint()
+        pcall(function() self:_paintOpeningEffect(book.filepath) end)
         -- The decrypted copy can still be mid-write when realPathForOpen returns
         -- (#203); opening an empty file silently failed and needed the "open
         -- another, come back" dance. Wait until it has a size -- polling ~1s up
@@ -3440,6 +3486,13 @@ function BookshelfWidget:_openBook(book, after_open_callback)
             return
         end
     end
+    -- Opening feedback: flush pending paints so the capture sees current
+    -- pixels, then squeeze the tapped cover (validated against this book;
+    -- no-op when the tap didn't land on a visible cover). Painted before
+    -- the launch so it also precedes an unpark splice - the squeeze then
+    -- reads as the opening motion completing into the page.
+    UIManager:forceRePaint()
+    pcall(function() self:_paintOpeningEffect(book.filepath) end)
     self:_launchReader(open_path, after_open_callback)
 end
 
@@ -3450,13 +3503,34 @@ end
 -- reader may open in a different rotation, e.g. upside-down on Kobo). Suspends the
 -- status timer -- the minute heartbeat is wasted wakeups under the reader.
 function BookshelfWidget:_launchReader(open_path, after_open_callback)
+    -- Hot parking fast path: the requested book IS the parked document
+    -- (the dominant open - continuing the current read). Splice the live
+    -- reader back on top instead of a full document load. Kobo virtual
+    -- books arrive here with the resolved on-disk path, so the comparison
+    -- holds for them too.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.isParked() and Park.parkedFile() == open_path then
+        if Park.unpark(self, after_open_callback) then return end
+    end
     self._pre_read_rotation = Screen:getRotationMode()
+    -- Mark that BOOKSHELF launched this book. onCloseDocument's re-show is
+    -- gated on this, not on mere stack presence: another home UI (SimpleUI
+    -- etc.) can bury the shelf without closing it, and a book opened from
+    -- THERE must close back to there, not to us. "You return to whatever
+    -- opened the book."
+    self._opened_book = true
     -- Drop the memoised hero record: reading changes progress, so the
     -- close-rebuild must re-read fresh state, not the pre-read snapshot (#103).
     self._hero_current_memo = nil
     self:_stopStatusTimer()
+    -- The opening-cover squeeze already painted at tap time (_openBook).
+    -- The seamless flag below makes KOReader's own "Opening file"
+    -- InfoMessage invisible (readerui.lua showReaderCoroutine) and swaps
+    -- the reader's arrival refresh from "full" to "ui" — onReaderReady
+    -- issues one full refresh to clear any shelf ghosting under the page.
+    self._seamless_open_full_pending = true
     local ReaderUI = require("apps/reader/readerui")
-    ReaderUI:showReader(open_path, nil, nil, nil, after_open_callback)
+    ReaderUI:showReader(open_path, nil, true, nil, after_open_callback)
 end
 
 -- Kobo books decrypt to a /tmp copy that can still be mid-write when
@@ -4935,7 +5009,7 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- consumers get a single cached cover sized for the bigger of the two.
     local n_slots = self:_nCols()
     local slot_w  = math.floor((d.content_w - (d.book_gap or d.PAD) * (n_slots - 1)) / n_slots)
-    local slot_h  = math.floor(slot_w * 1.5)
+    local slot_h  = math.floor(slot_w * self:_coverAspect())
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, d.hero_cover_w, d.hero_cover_h)
 
     -- Swap each shelf row in place. Rows sit at shelf_top_idx, +2, +4, ...
@@ -4990,6 +5064,20 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- gap above the rows so overhanging cover badges (favourite heart, issue
     -- #92) aren't clipped. On any failure, fall back to the scoped refresh.
     local anim_steps = _wipe_dir and shelf_top and _pageAnimSteps()
+    -- Colour e-ink (Kaleido): the FIRST page-turn wipe after a full-screen
+    -- refresh (cold start, chip switch, book return) stalls ~1.6s - its
+    -- per-strip partial refreshes contend with the panel still draining the
+    -- full refresh, every other strip waiting ~340ms (issue #247; measured
+    -- on a Clara Colour). Warm wipes run ~35ms/strip and greyscale panels
+    -- never exhibit it, so skip the animation only for that one turn, only
+    -- on colour: an instant page now, smooth wipes once the panel settles.
+    if anim_steps and self._full_refresh_pending
+            and Device.hasColorScreen and Device:hasColorScreen() then
+        anim_steps = nil
+    end
+    -- Consume the flag on any real page-turn (whether or not we skipped),
+    -- so only the immediate post-refresh turn is affected.
+    if _wipe_dir then self._full_refresh_pending = nil end
     local wiped = false
     if anim_steps then
         local ry = math.max(0, shelf_top - (d and d.PAD or 0))
@@ -5005,8 +5093,18 @@ function BookshelfWidget:_swapShelvesInPlace()
     end
     if not wiped then
         if shelf_top then
+            -- Reclaim the PAD gap ABOVE row 1, same as the wipe path's region.
+            -- Cover badges overhang their cell: the favourite heart sits ~35%
+            -- above the cover top and the selection ring extends a few px
+            -- beyond it, both landing in this gap. A reshuffle (e.g. the
+            -- just-read book jumping to the top of Recent) changes which slot
+            -- carries them, and a refresh anchored AT shelf_top leaves the old
+            -- glyphs' above-cover pixels on the panel -- the ghost borders /
+            -- hearts reported on reader return. Starting the region a PAD
+            -- higher sweeps them.
+            local ry = math.max(0, shelf_top - (d and d.PAD or 0))
             UIManager:setDirty(self, "ui", Geom:new{
-                x = 0, y = shelf_top, w = self.width, h = self.height - shelf_top })
+                x = 0, y = ry, w = self.width, h = self.height - ry })
         else
             UIManager:setDirty(self, "ui")
         end
@@ -5198,6 +5296,228 @@ function BookshelfWidget:_refreshSpineInPlace(fp)
     return replaced
 end
 
+-- _paintOpeningEffect(fp) — transient "book opening" feedback painted
+-- straight onto the framebuffer: the tapped cover squeezes ~5% toward its
+-- left edge (the spine), revealing page-white along the right and thin
+-- wedges top/bottom — the front cover starting to swing open. Replaces
+-- KOReader's centre-screen "Opening file" box (suppressed via
+-- showReader's seamless flag). No widget is created and no re-render
+-- happens: the CURRENT on-screen pixels are captured, rescaled and
+-- blitted back, so the card's hairline border squeezes with the artwork
+-- while the drop shadow and everything outside the card stay untouched.
+--
+-- E-ink cannot animate during the blocking document open (the UI loop is
+-- busy inside openDocument), so this is a single frame, not a tween.
+--
+-- Target resolution: SpineWidget.last_tapped (recorded in its onTap) is
+-- validated against the opened filepath — a hero cover and a shelf spine
+-- can show the SAME book, so a filepath search cannot disambiguate which
+-- was tapped (the badge this replaces got that wrong). Opens with no
+-- tapped cover on screen (start menu, bookmarks, search) paint nothing.
+function BookshelfWidget:_paintOpeningEffect(fp)
+    if not fp then return end
+    local spine = SpineWidget.last_tapped
+    -- Consume the rendezvous flag even when the effect is off, so a stale
+    -- last_tapped can't corrupt a later paint (see the reviews-modal note).
+    SpineWidget.last_tapped = nil
+    -- Opt-out: the cover-opening flex is purely cosmetic. When disabled, open
+    -- plainly with no flex frame.
+    if not BookshelfSettings.nilOrTrue("open_cover_effect") then return end
+    if not (spine and spine.book and spine.book.filepath == fp) then return end
+    local card = spine._cover_card
+    local rect = card and card.dimen
+    if not (rect and rect.x and rect.w and rect.w > 8 and rect.h > 8) then return end
+    -- A selected book wears the thick ring (BorderOverlay) just outside the
+    -- card, which visually cages the flex - the 3D lift can't extend past
+    -- it. Erase the ring band in the same frame, so the cover pops free of
+    -- its highlight as it opens. Plain white restores the page background
+    -- (and inverts to the night background correctly). Band thickness
+    -- mirrors SELECTED_BORDER (= SHADOW_OFFSET, 4dp) plus rounding slack.
+    local ringed = spine.is_selected or spine.is_bulk_selected
+    local ring_t = Screen:scaleBySize(4) + 2
+    if ringed and Screen.bb then
+        local bb = Screen.bb
+        local W = Blitbuffer.COLOR_WHITE
+        -- Full-band erase; badge glyphs that overhang into the bands are
+        -- REPAINTED after the flex (their widgets are stashed with painted
+        -- rects), so nothing gets beheaded and no ring stub remains.
+        bb:paintRect(rect.x - ring_t, rect.y - ring_t, rect.w + 2 * ring_t, ring_t, W)
+        bb:paintRect(rect.x - ring_t, rect.y + rect.h, rect.w + 2 * ring_t, ring_t, W)
+        bb:paintRect(rect.x - ring_t, rect.y, ring_t, rect.h, W)
+        bb:paintRect(rect.x + rect.w, rect.y, ring_t, rect.h, W)
+        -- The selected cover's corner MASK is painted BLACK to blend with
+        -- the ring backdrop (RoundedCornerCard bg_color) - with the ring
+        -- gone, those pixels read as square black corners on the flexed
+        -- cover. Convert the outside-arc corner pixels to page white with
+        -- the same monotonic arc scan the mask painter uses.
+        local r = Screen:scaleBySize(4) -- mirrors CARD_RADIUS
+        local r_sq = r * r
+        for dy = 0, r - 1 do
+            local dx = 0
+            while dx < r do
+                local cx = r - dx - 0.5
+                local cy = r - dy - 0.5
+                if cx * cx + cy * cy <= r_sq then break end
+                dx = dx + 1
+            end
+            if dx > 0 then
+                local y_top = rect.y + dy
+                local y_bot = rect.y + rect.h - 1 - dy
+                bb:paintRect(rect.x, y_top, dx, 1, W)
+                bb:paintRect(rect.x + rect.w - dx, y_top, dx, 1, W)
+                bb:paintRect(rect.x, y_bot, dx, 1, W)
+                bb:paintRect(rect.x + rect.w - dx, y_bot, dx, 1, W)
+            end
+        end
+    end
+    -- Paint the flex WITHOUT refreshing: the ring erase (above), the flex,
+    -- and the glyph repaints (below) must land in ONE EPDC frame - separate
+    -- refreshes played out as visible steps (border blanking, then the
+    -- cover, then the icons popping back).
+    local fx, fy, fw, fh = BookshelfWidget.flexCoverOpen(rect, { skip_refresh = true })
+    -- Union of everything painted this frame, starting from the flex region.
+    local ux0, uy0 = fx or rect.x, fy or rect.y
+    local ux1 = (fx or rect.x) + (fw or rect.w)
+    local uy1 = (fy or rect.y) + (fh or rect.h)
+    if ringed then
+        ux0 = math.min(ux0, rect.x - ring_t)
+        uy0 = math.min(uy0, rect.y - ring_t)
+        ux1 = math.max(ux1, rect.x + rect.w + ring_t)
+        uy1 = math.max(uy1, rect.y + rect.h + ring_t)
+    end
+    -- Repaint the overhanging badge glyphs (heart above, bookmark dangle
+    -- below) at their original painted positions, on top of the ring erase
+    -- and the flexed cover - the glyphs stay whole and unmoved while the
+    -- cover opens beneath them.
+    local bb = Screen.bb
+    if bb and spine._overhang_glyph_widgets then
+        local m = Screen:scaleBySize(4) -- halo/shadow paint past the dimen
+        for _i, gw in ipairs(spine._overhang_glyph_widgets) do
+            local gd = gw.dimen
+            if gd and gd.x and gd.w and gd.w > 0 then
+                pcall(function() gw:paintTo(bb, gd.x, gd.y) end)
+                ux0 = math.min(ux0, gd.x - m)
+                uy0 = math.min(uy0, gd.y - m)
+                ux1 = math.max(ux1, gd.x + gd.w + m)
+                uy1 = math.max(uy1, gd.y + gd.h + m)
+            end
+        end
+    end
+    pcall(function() Screen:refreshUI(ux0, uy0, ux1 - ux0, uy1 - uy0) end)
+end
+
+-- flexCoverOpen(rect, opts) — the shared cover-opening flex painter,
+-- callable without a widget instance (the book-detail popup flexes its
+-- header cover through this too). rect is the cover's painted screen
+-- rect. opts.skip_refresh: paint only; the caller batches one refresh
+-- over a wider union so multi-part effects land in a single EPDC frame.
+-- Returns the affected region (x, y, w, h) for that union.
+function BookshelfWidget.flexCoverOpen(rect, opts)
+    if not (rect and rect.x and rect.w and rect.w > 8 and rect.h > 8) then return end
+    local bb = Screen.bb
+    if not bb then return end
+    -- Night mode inverts the framebuffer at refresh, so paint the logical
+    -- colours swapped there: the page block must DISPLAY white and the
+    -- hairline frame dark in both modes.
+    local night = G_reader_settings:isTrue("night_mode")
+    local page_color = night and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+    local ink_color  = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+    -- Flex the cover open around an axis ~5% in from its left edge, as if
+    -- the spine of a new book hasn't fully flexed yet: ONLY the region
+    -- right of the axis is captured and squeezed, strictly inside the
+    -- card. Everything else - the spine sliver, the drop shadow, a
+    -- selection ring, the page background, and the badge glyphs' out-of-
+    -- card overhang - is never touched. The glyphs sit right next to the
+    -- axis, so their in-card pixels shift by ~a pixel: no visible tear
+    -- against their untouched overhang. This replaced two rounds of
+    -- capture-and-restore geometry that tried to move the whole card and
+    -- separate travelling badges from static chrome - flexing around a
+    -- near-spine axis makes the separation unnecessary.
+    local SQUEEZE = 0.95
+    local LIFT    = 0.06
+    local ax = rect.x + math.floor(rect.w * 0.05)
+    local rw = rect.x + rect.w - ax
+    local rh = rect.h
+    if rw < 12 then return end
+    local new_w = math.floor(rw * SQUEEZE)
+    local lift_pad = math.ceil(rh * LIFT / 2) + 2
+    -- Screen bounds for clamping. The trapezoid lift blits taller-than-cover
+    -- bands whose dest can run above y=0 (top row / hero) or past the bottom
+    -- (last row); an out-of-bounds blit segfaults the C blitter with no Lua
+    -- trace (PW3, greyscale). pcall can't catch a native segfault, so we
+    -- must never hand blitFrom an off-screen dest - clamp every band.
+    local scr_w = (bb.getWidth and bb:getWidth()) or Screen:getWidth()
+    local scr_h = (bb.getHeight and bb:getHeight()) or Screen:getHeight()
+    local ok = pcall(function()
+        local src_bb = Blitbuffer.new(rw, rh, bb:getType())
+        src_bb:blitFrom(bb, 0, 0, ax, rect.y, rw, rh)
+        -- Banded trapezoid: bands grow taller toward the free edge (up to
+        -- +LIFT of the height, split above/below), so the cover face reads
+        -- as lifting OUT of the screen. Only the PAINT overdraws past the
+        -- card top/bottom near the right edge - a one-frame effect the
+        -- reader's arrival replaces; the capture itself stays in-card, and
+        -- bands near the axis barely grow, keeping the badge glyphs whole.
+        local n_bands = math.max(8, math.min(24, math.floor(new_w / 12)))
+        local prev_sx, prev_dx = 0, 0
+        for k = 1, n_bands do
+            local sx = math.floor(rw * k / n_bands)
+            local dx = math.floor(new_w * k / n_bands)
+            local bw_src = sx - prev_sx
+            local bw_dst = dx - prev_dx
+            if bw_src > 0 and bw_dst > 0 then
+                local grow = LIFT * ((k - 0.5) / n_bands)
+                local bh   = rh + 2 * math.floor(rh * grow / 2)
+                local band = Blitbuffer.new(bw_src, rh, bb:getType())
+                band:blitFrom(src_bb, 0, 0, prev_sx, 0, bw_src, rh)
+                local scaled = band:scale(bw_dst, bh)
+                -- Clamp the dest vertically into the framebuffer: shave any
+                -- overshoot above 0 / below scr_h and feed blitFrom the
+                -- matching source offset + reduced height, so the C blitter
+                -- only ever sees an in-bounds rect.
+                local dx2 = ax + prev_dx
+                local dy2 = rect.y - math.floor((bh - rh) / 2)
+                local sy2, hh2 = 0, bh
+                if dy2 < 0 then sy2 = -dy2; hh2 = hh2 + dy2; dy2 = 0 end
+                if dy2 + hh2 > scr_h then hh2 = scr_h - dy2 end
+                local ww2 = bw_dst
+                if dx2 + ww2 > scr_w then ww2 = scr_w - dx2 end
+                if hh2 > 0 and ww2 > 0 and dx2 >= 0 then
+                    bb:blitFrom(scaled, dx2, dy2, 0, sy2, ww2, hh2)
+                end
+                band:free()
+                scaled:free()
+            end
+            prev_sx, prev_dx = sx, dx
+        end
+        -- Page block where the cover face pulled away, hairline-framed on
+        -- its top/right/bottom so the book's top edge runs unbroken to
+        -- the corner (borderless, it read as a gap by the drop shadow).
+        local strip_x = ax + new_w
+        local strip_w = rect.x + rect.w - strip_x
+        if strip_w > 0 then
+            bb:paintRect(strip_x, rect.y, strip_w, rh, page_color)
+            local hair = math.max(1, Screen:scaleBySize(1))
+            bb:paintRect(strip_x, rect.y, strip_w, hair, ink_color)
+            bb:paintRect(strip_x, rect.y + rh - hair, strip_w, hair, ink_color)
+            bb:paintRect(rect.x + rect.w - hair, rect.y, hair, rh, ink_color)
+        end
+        src_bb:free()
+    end)
+    if not ok then
+        logger.dbg("[bookshelf] opening effect failed; skipping")
+        return
+    end
+    -- Push the flexed region (plus the lift overdraw above/below) to the
+    -- panel now - the document open that follows blocks the UI loop, so a
+    -- queued refresh would never land. Skipped when the caller batches.
+    if not (opts and opts.skip_refresh) then
+        pcall(function()
+            Screen:refreshUI(ax, rect.y - lift_pad, rw, rh + 2 * lift_pad)
+        end)
+    end
+    return ax, rect.y - lift_pad, rw, rh + 2 * lift_pad
+end
+
 -- softRefresh — lightweight return-to-bookshelf update. Splits the work
 -- the warm-path show() previously did as a single _rebuild() into two
 -- phases: the hero swap (synchronous, ~10ms — only depends on the current
@@ -5221,6 +5541,10 @@ end
 -- expanded/tall layouts the in-place swap helpers don't handle).
 function BookshelfWidget:softRefresh()
     if self:_rebuildIfSimpleUIContextChanged() then return end
+    -- Returning from a book triggers a full-screen refresh; on colour e-ink
+    -- the first page-turn wipe after it stalls (issue #247). Flag it like
+    -- _rebuild does so the first real turn skips the animation on colour.
+    self._full_refresh_pending = true
     local has_live_tree =
         self._inner_vgroup and self._shelf_dims
         and self._hero_parent and self._hero_dims
@@ -7014,6 +7338,17 @@ end
 -- method: _rebuild / _maxRows / _swapShelvesInPlace are defined earlier in
 -- the file and reach it via the metatable, which a module-local declared
 -- here wouldn't allow.
+-- _coverAspect() — natural cover-height ratio for shelf-row height budgeting
+-- and pagination row counts. 2:3 (1.5) normally; the 1.65 cap when "True cover
+-- aspect ratio" is on, so the grid reserves enough vertical space for the
+-- tallest untrimmed cover. Covers then render at their own aspect (fixed
+-- width, variable height), bottom-anchored, up to that cap (see ShelfRow).
+-- Every collapsed-grid site that derives a row height from slot width must use
+-- this so the render, the vertical budget, and the row-count math stay in lockstep.
+function BookshelfWidget:_coverAspect()
+    return BookshelfSettings.isTrue("true_cover_aspect") and 1.65 or 1.5
+end
+
 function BookshelfWidget:_bookGap(pad)
     if _readCoverSize() == "small" then
         return math.max(1, math.floor(pad * 0.75))
@@ -7037,7 +7372,7 @@ function BookshelfWidget:_maxRows()
     -- cost an expanded row.
     local slot_w = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
     if slot_w < 1 then return 1 end
-    local slot_h = math.floor(slot_w * 1.5)
+    local slot_h = math.floor(slot_w * self:_coverAspect())
     local row_h  = slot_h + PAD  -- shelf body + after-row PAD
     -- Chrome above + below the shelves. Mirrors the expanded-mode layout
     -- sum in _rebuild (outer top PAD + status strip + hero→chips gap +
@@ -7077,7 +7412,7 @@ function BookshelfWidget:_maxShelfRows()
     if n_cols < 1 then return 1 end
     local slot_w = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
     if slot_w < 1 then return 1 end
-    local slot_h = math.floor(slot_w * 1.5)
+    local slot_h = math.floor(slot_w * self:_coverAspect())
     local hero_chip_pad = Size.padding.large
     local usable = self.height - PAD - hero_chip_pad - chip_h - PAD - footer_h
     local row_unit = math.floor(slot_h * SHELF_PACK_FLOOR) + PAD
@@ -7106,7 +7441,7 @@ function BookshelfWidget:_baseShelves()
     if n_cols < 1 then return 1 end
     local slot_w = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
     if slot_w < 1 then return 1 end
-    local slot_h = math.floor(slot_w * 1.5)
+    local slot_h = math.floor(slot_w * self:_coverAspect())
     local hero_chip_pad = Size.padding.large
     local usable = self.height - self:_simpleUIReservedBottom()
                  - PAD - hero_chip_pad - chip_h - PAD - footer_h
@@ -7451,7 +7786,7 @@ function BookshelfWidget:_currentSlotDims()
     if not n or n < 1 then return nil end
     local sw = math.floor((d.content_w - (d.book_gap or d.PAD or 0) * (n - 1)) / n)
     if sw < 1 then return nil end
-    return sw, math.floor(sw * 1.5)
+    return sw, math.floor(sw * self:_coverAspect())
 end
 
 -- Append up to one page of {fp,w,h} cover jobs for `chip_key` at `cursor`
@@ -7897,7 +8232,16 @@ function BookshelfWidget:_paginateNext()
     -- >8 books needs to page through. Earlier this early-returned on
     -- _expanded_series because the footer label was hijacked for back;
     -- breadcrumb mode in the chip strip handles back now.
-    local _diag_t0 = _gettime()
+    -- Selection/focus is per-page: clear the d-pad focus cell and any pending
+    -- tap-to-open selection before the page changes, so their highlight can't
+    -- reappear on a DIFFERENT book at the same grid position on the new page
+    -- (issue #265). The hero-preview highlight (a real, filepath-matched book
+    -- choice) is left alone. D-pad arrow paging goes through _moveCursor, not
+    -- here, so key navigation keeps its focus cell.
+    self:_clearDpadFocus()
+    self._tap_selected_fp = nil
+    local _diag_t0     = _gettime()
+    local _diag_page0  = self.page
     local total = self._total_pages or 1
     if self.page < total then
         self:_advanceCursor(1)
@@ -7926,7 +8270,12 @@ function BookshelfWidget:_paginateNext()
 end
 
 function BookshelfWidget:_paginatePrev()
-    local _diag_t0 = _gettime()
+    -- See _paginateNext: clear per-page focus/tap-selection so a stale grid
+    -- position can't re-highlight a different book on the new page (issue #265).
+    self:_clearDpadFocus()
+    self._tap_selected_fp = nil
+    local _diag_t0    = _gettime()
+    local _diag_page0 = self.page
     if self.page > 1 then
         self:_advanceCursor(-1)
         self:_syncPageFromCursor()
@@ -8396,6 +8745,12 @@ end
 
 -- _browseFiles()  — close home screen, open FileManager.
 function BookshelfWidget:_browseFiles()
+    -- Hot parking: with a reader parked underneath, spawning a
+    -- FileManager while ReaderUI is still alive would leave two hosts
+    -- running (the state KOReader's doShowReader explicitly prevents).
+    -- Real-close the parked book out to the file manager instead.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.closeShelfToFileManager(self) then return end
     local FileManager = require("apps/filemanager/filemanager")
     local home = G_reader_settings:readSetting("home_dir") or "/"
     UIManager:close(self)
@@ -9100,6 +9455,9 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs, 
     -- Expose the persistent cover bb (rich header only) so the caller frees it
     -- once the cached header is discarded.
     result._owned_cover_bb = owned_cover_bb
+    -- Expose the cover thumb frame (stamps its painted dimen) so the detail
+    -- popup can flex it open as tap feedback on its Open button.
+    result._cover_thumb = thumb_widget and thumb_widget[1] or nil
     return result
 end
 
@@ -10528,24 +10886,50 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
             local chip_h = probe:getSize().h + 2 * Screen:scaleBySize(5)
             local chip_gap = Screen:scaleBySize(12)
             local row_gap  = Screen:scaleBySize(10)
-            local rows_vg = VerticalGroup:new{ align = "left" }
-            for ri, row in ipairs(plugin_rows) do
-                local hg = HorizontalGroup:new{ align = "center" }
-                local focus_row = {}
-                for ci, spec in ipairs(row) do
-                    if ci > 1 then hg[#hg + 1] = HorizontalSpan:new{ width = chip_gap } end
-                    local label = (spec.text_func and spec.text_func()) or spec.text or ""
-                    local chip = ChipButton.build{
-                        text = label, face = edit_face,
-                        height = chip_h, on_tap = spec.callback,
-                    }
-                    hg[#hg + 1] = chip
-                    focus_row[#focus_row + 1] = chip
-                end
-                focus_tables[#focus_tables + 1] = focusRow({ focus_row })
-                if ri > 1 then rows_vg[#rows_vg + 1] = VerticalSpan:new{ width = row_gap } end
-                rows_vg[#rows_vg + 1] = hg
+            -- Flatten every registration's row into one list, then lay the
+            -- chips out as a wrapping horizontal flow. Plugins each register a
+            -- single-button "row", so the old row-per-line layout stacked them
+            -- vertically once more than one plugin contributed; wrapping keeps
+            -- them inline (like the pill groups), only breaking to a new line
+            -- when the next chip wouldn't fit the content width.
+            local avail = content_w - 2 * inset
+            local specs = {}
+            for _ri, row in ipairs(plugin_rows) do
+                for _ci, spec in ipairs(row) do specs[#specs + 1] = spec end
             end
+            local rows_vg = VerticalGroup:new{ align = "left" }
+            local line, line_w, line_focus
+            local function newLine()
+                line = HorizontalGroup:new{ align = "center" }; line_w = 0; line_focus = {}
+            end
+            local function commitLine()
+                if line and #line_focus > 0 then
+                    if #rows_vg > 0 then
+                        rows_vg[#rows_vg + 1] = VerticalSpan:new{ width = row_gap }
+                    end
+                    rows_vg[#rows_vg + 1] = line
+                    focus_tables[#focus_tables + 1] = focusRow({ line_focus })
+                end
+            end
+            newLine()
+            for _si, spec in ipairs(specs) do
+                local label = (spec.text_func and spec.text_func()) or spec.text or ""
+                local chip = ChipButton.build{
+                    text = label, face = edit_face, height = chip_h, on_tap = spec.callback,
+                }
+                local cw = chip:getSize().w
+                if #line_focus > 0 and (line_w + chip_gap + cw) > avail then
+                    commitLine(); newLine()
+                end
+                if #line_focus > 0 then
+                    line[#line + 1] = HorizontalSpan:new{ width = chip_gap }
+                    line_w = line_w + chip_gap
+                end
+                line[#line + 1] = chip
+                line_w = line_w + cw
+                line_focus[#line_focus + 1] = chip
+            end
+            commitLine()
             vg[#vg + 1] = padded(rows_vg, Screen:scaleBySize(10), Screen:scaleBySize(20))
         end
 
@@ -10718,6 +11102,362 @@ function BookshelfWidget:_buildReviewsTab(tab, modal, avail_w, avail_h, refreshR
     return VerticalGroup:new{ align = "left", header, hairline, scroller }
 end
 
+-- _buildBookCoverTab — the Cover tab body: a toolbar (device picker + online
+-- search) above a paginated grid of candidate covers. Local candidates are
+-- cached on `state` for the modal's life; online ones live there after a search.
+-- Tapping a cell applies it immediately (self:_applyCoverCandidate). Returns the
+-- body with .focus_tables set for dpad nav. `state` is the cross-rebuild upvalue
+-- from _showBookDetail; `modal` the live ReviewsModal (== show_parent).
+function BookshelfWidget:_buildBookCoverTab(book, show_parent, avail_w, avail_h, state, modal)
+    local VerticalGroup   = require("ui/widget/verticalgroup")
+    local HorizontalGroup = require("ui/widget/horizontalgroup")
+    local HorizontalSpan  = require("ui/widget/horizontalspan")
+    local VerticalSpan    = require("ui/widget/verticalspan")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local LeftContainer   = require("ui/widget/container/leftcontainer")
+    local FrameContainer  = require("ui/widget/container/framecontainer")
+    local TextWidget      = require("ui/widget/textwidget")
+    local CoverApply      = require("lib/bookshelf_cover_apply")
+    local CoverGridCell   = require("lib/bookshelf_cover_grid_cell")
+    local Pagination      = require("lib/bookshelf_pagination")
+    local ChipButton      = require("lib/bookshelf_chip_button")
+    local SpineWidget     = require("lib/bookshelf_spine_widget")
+    local bw = self
+    -- show_parent IS the live ReviewsModal (see ReviewsModal:_activeBody). The
+    -- `modal` upvalue from _showBookDetail is still nil during the modal's first
+    -- _assemble (it's assigned only after ReviewsModal:new returns), so prefer
+    -- show_parent -- always the current instance.
+    modal = modal or show_parent
+
+    -- The body must fill the SAME region the other tabs do: full body height
+    -- (avail_h) and the same left/right content inset (_side_pad). avail_w is the
+    -- full modal width; other tabs inset their content by _side_pad. Matching it
+    -- keeps the modal frame the same size across tabs -- otherwise a shorter/
+    -- wider Cover body shrinks + recentres the whole modal and leaves the prior
+    -- tab's pixels around it (the reported painting glitch).
+    local side_pad  = (show_parent and show_parent._side_pad) or Screen:scaleBySize(28)
+    local content_w = avail_w - 2 * side_pad
+
+    if not state.local_candidates then
+        state.local_candidates = CoverApply.localCandidates(book)
+    end
+    local candidates = {}
+    local seen_local = {}
+    for _i, c in ipairs(state.local_candidates) do
+        candidates[#candidates + 1] = c
+        if c.filesize then
+            seen_local[table.concat({ c.width or "?", c.height or "?", c.filesize }, "\1")] = true
+        end
+    end
+    if type(state.online_candidates) == "table" then
+        for _i, c in ipairs(state.online_candidates) do
+            -- Skip an online result that IS a local candidate (e.g. the cover
+            -- just applied from this very search, now showing as "Current
+            -- cover") so it doesn't appear twice.
+            local key = c.filesize
+                and table.concat({ c.width or "?", c.height or "?", c.filesize }, "\1")
+            if not (key and seen_local[key]) then
+                candidates[#candidates + 1] = c
+            end
+        end
+    end
+    local total = #candidates
+
+    -- Toolbar (text-only chips), left-aligned and inset by _side_pad -- the
+    -- same left edge + padding as the tab content below.
+    -- Match the Edit/Tags-tab chip buttons exactly: cfont at the modal's base
+    -- size, sized to the same "pill height" (base text + small pad + thin
+    -- border top/bottom) as makeEditButton, rather than the old chunky fixed
+    -- 40px / 15pt look.
+    local base     = (modal and modal.font_size) or 18
+    local btn_face = BFont:getFace("cfont", base)
+    local btn_h
+    do
+        local pf = BFont:getFace("cfont", base, { bold = true })
+        btn_h = TextWidget:new{ text = "Hg", face = pf }:getSize().h
+            + 2 * Size.padding.small + 2 * Size.border.thin
+    end
+    local device_btn = ChipButton.build{
+        text = _("Choose from device"), face = btn_face, height = btn_h,
+        on_tap = function() bw:_pickBookCoverFromDevice(book, modal, state) end,
+    }
+    local online_btn = ChipButton.build{
+        text = _("Search online\xE2\x80\xA6"), face = btn_face, height = btn_h,
+        on_tap = function() bw:_searchOnlineCovers(book, state, modal) end,
+    }
+    local toolbar = HorizontalGroup:new{
+        align = "center",
+        device_btn, HorizontalSpan:new{ width = Screen:scaleBySize(10) }, online_btn,
+    }
+    local toolbar_row = LeftContainer:new{
+        dimen = Geom:new{ w = content_w, h = toolbar:getSize().h }, toolbar,
+    }
+    local toolbar_h = toolbar_row:getSize().h
+
+    -- Grid geometry: 2-4 columns by width; rows to fill the height.
+    local gap      = Screen:scaleBySize(10)
+    local min_cell = Screen:scaleBySize(120)
+    local n_cols   = math.max(2, math.min(4, math.floor((content_w + gap) / (min_cell + gap))))
+    local cell_w   = math.floor((content_w - gap * (n_cols - 1)) / n_cols)
+
+    local caption_font = math.max(10, math.min((modal and modal.font_size) or 13, 15))
+    local cap_h  = CoverGridCell.captionHeight(caption_font)
+    local ring   = SpineWidget.SELECTED_BORDER
+    -- Non-cover part of a cell (caption + gap + ring headroom top/bottom).
+    local chrome = Screen:scaleBySize(4) + cap_h + 2 * ring
+
+    local top_pad     = Screen:scaleBySize(12)   -- gap below the tab bar / above toolbar
+    local tb_gap      = Screen:scaleBySize(12)    -- gap below the toolbar
+    -- Space reserved below the grid for the pagination row plus a standard gap
+    -- beneath it (matching the pagination spacing used elsewhere) so the page
+    -- nav sits just off the modal's Close/Open footer, not jammed against it.
+    local nav_bottom_pad = Size.padding.fullscreen
+    local nav_reserve = Screen:scaleBySize(44) + nav_bottom_pad
+    local grid_avail_h = math.max(1, avail_h - top_pad - toolbar_h - tb_gap - nav_reserve)
+    -- Pack as many rows as fit while each cover stays at least ~1.05x its width
+    -- tall (still portrait), so the grid FILLS the body instead of one tall row
+    -- with dead space below. Capped by the candidate count so a handful of
+    -- candidates don't leave an empty trailing row.
+    local rows = 1
+    for r = 1, 4 do
+        local ch = math.floor((grid_avail_h - gap * (r - 1)) / r)
+        if (ch - chrome) >= math.floor(cell_w * 1.05) then rows = r end
+    end
+    rows = math.min(rows, math.max(1, math.ceil(total / n_cols)))
+    local cell_h = math.floor((grid_avail_h - gap * (rows - 1)) / rows)
+    -- Cap cell height to a natural cover (2:3) so a single row of one or two
+    -- candidates renders normal-sized covers, not full-body-height slabs. The
+    -- unused space becomes the trailing fill spacer below.
+    local cell_cap = math.floor(cell_w * 1.5) + chrome
+    if cell_h > cell_cap then cell_h = cell_cap end
+
+    local page_size   = n_cols * rows
+    local total_pages = math.max(1, math.ceil(total / math.max(1, page_size)))
+    if state.page > total_pages then state.page = total_pages end
+    if state.page < 1 then state.page = 1 end
+
+    local col = VerticalGroup:new{ align = "center" }
+    col[#col + 1] = VerticalSpan:new{ width = top_pad }   -- breathing room below the tab bar
+    col[#col + 1] = toolbar_row
+    col[#col + 1] = VerticalSpan:new{ width = tb_gap }
+
+    local focus_tables = {}
+    if total == 0 then
+        col[#col + 1] = CenterContainer:new{
+            dimen = Geom:new{ w = content_w, h = math.max(cell_h, Screen:scaleBySize(80)) },
+            TextWidget:new{
+                text = _("No covers stored yet. Use Search online or Choose from device."),
+                face = BFont:getFace("cfont", 15),
+                max_width = content_w - Screen:scaleBySize(20),
+            },
+        }
+    else
+        -- Build the grid as a FIXED-height block (rows * cell_h) so the
+        -- pagination row below sits at the same Y on every page -- a final page
+        -- with fewer rows pads the remainder rather than pulling the nav up.
+        local grid = VerticalGroup:new{ align = "center" }
+        local grid_h = 0
+        local start_i = (state.page - 1) * page_size
+        for r = 0, rows - 1 do
+            local has_any = false
+            for c = 0, n_cols - 1 do
+                if candidates[start_i + r * n_cols + c + 1] then has_any = true break end
+            end
+            if not has_any then break end  -- remaining rows are the block padding
+            local row_group = HorizontalGroup:new{ align = "top" }
+            local row_layout = {}
+            for c = 0, n_cols - 1 do
+                local idx = start_i + r * n_cols + c + 1
+                local cand = candidates[idx]
+                if cand then
+                    local cell = CoverGridCell.new{
+                        width = cell_w, height = cell_h, candidate = cand,
+                        font_size = caption_font,
+                        on_tap = function(cc) bw:_applyCoverCandidate(book, cc, modal, state) end,
+                    }
+                    row_group[#row_group + 1] = cell
+                    row_layout[#row_layout + 1] = cell
+                else
+                    row_group[#row_group + 1] = HorizontalSpan:new{ width = cell_w }
+                end
+                if c < n_cols - 1 then
+                    row_group[#row_group + 1] = HorizontalSpan:new{ width = gap }
+                end
+            end
+            if #grid > 0 then
+                grid[#grid + 1] = VerticalSpan:new{ width = gap }; grid_h = grid_h + gap
+            end
+            grid[#grid + 1] = row_group; grid_h = grid_h + cell_h
+            if #row_layout > 0 then focus_tables[#focus_tables + 1] = focusRow(row_layout) end
+        end
+        local grid_block_h = rows * cell_h + (rows - 1) * gap
+        if grid_h < grid_block_h then
+            grid[#grid + 1] = VerticalSpan:new{ width = grid_block_h - grid_h }
+        end
+        col[#col + 1] = grid
+    end
+
+    if total_pages > 1 then
+        local nav = Pagination.buildNav{
+            page = state.page, total_pages = total_pages, show_parent = show_parent,
+            on_goto = function(target)
+                state.page = target
+                if modal and modal.rebuildTab then modal:rebuildTab() end
+            end,
+        }
+        local nav_h = nav:getSize().h
+        -- Bottom-anchor the nav: push any leftover grid slack ABOVE it so it
+        -- always sits exactly nav_bottom_pad above the footer, instead of the
+        -- trailing fill piling up below it when the covers don't fill the
+        -- height (which was making the gap balloon).
+        local used = 0
+        for _i, ch in ipairs(col) do used = used + (ch.getSize and ch:getSize().h or 0) end
+        local slack = avail_h - used - nav_h - nav_bottom_pad
+        if slack > 0 then col[#col + 1] = VerticalSpan:new{ width = slack } end
+        col[#col + 1] = CenterContainer:new{
+            dimen = Geom:new{ w = content_w, h = nav_h }, nav,
+        }
+        col[#col + 1] = VerticalSpan:new{ width = nav_bottom_pad }
+    end
+
+    -- Pad the column to the full body height so the modal frame matches the
+    -- other tabs (they size their scroller to avail_h). Then inset horizontally
+    -- by side_pad. The white background erases the whole region on every
+    -- (re)assemble, so switching to/from this tab leaves no stale pixels.
+    -- Sum children directly rather than calling col:getSize() mid-build --
+    -- VerticalGroup caches its size/offsets on first getSize(), so measuring the
+    -- group before appending the spacer would freeze the short height and ignore
+    -- the pad (the VerticalGroup getSize caching gotcha).
+    local used_h = 0
+    for _i, ch in ipairs(col) do
+        used_h = used_h + (ch.getSize and ch:getSize().h or 0)
+    end
+    if used_h < avail_h then
+        col[#col + 1] = VerticalSpan:new{ width = avail_h - used_h }
+    end
+    local framed = FrameContainer:new{
+        bordersize = 0, margin = 0, padding = 0,
+        padding_left = side_pad, padding_right = side_pad,
+        background = Blitbuffer.COLOR_WHITE,
+        col,
+    }
+    framed.focus_tables = focus_tables
+    -- Expose the grid's pagination so the modal's horizontal swipe pages the
+    -- covers first and only cycles tabs once you're off the end (see
+    -- ReviewsModal:onSwipe). Absent when there's a single page.
+    if total_pages > 1 then
+        framed._pager = {
+            page = state.page,
+            total_pages = total_pages,
+            goto_page = function(target)
+                state.page = target
+                if modal and modal.rebuildTab then modal:rebuildTab() end
+            end,
+        }
+    end
+    return framed
+end
+
+-- Apply a tapped candidate as the book's cover (or revert to embedded), then
+-- close + reopen the modal on the Cover tab so the (cached) header thumbnail and
+-- the grid rings reflect the new active cover. Immediate-apply per the design.
+-- `state` is the Cover tab's cross-rebuild table, threaded through the reopen.
+function BookshelfWidget:_applyCoverCandidate(book, candidate, modal, state)
+    if not (book and book.filepath and candidate) then return end
+    local CoverApply = require("lib/bookshelf_cover_apply")
+    local ok, err
+    if candidate.kind == "embedded" then
+        ok, err = CoverApply.revertToEmbedded(book.filepath)
+    elseif not candidate.local_path then
+        self:_hardcoverToast(_("That cover is unavailable"))
+        return
+    else
+        ok, err = CoverApply.apply(book.filepath, candidate.local_path,
+                                   { label = candidate.source_label })
+    end
+    if not ok then
+        self:_hardcoverToast(err and tostring(err) or _("Couldn't set the cover"))
+        return
+    end
+    -- Stop Hardcover auto-injecting its own cover over a manual pick on linked
+    -- books (flag-only; the sidecar file is already handled here).
+    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+    if ok_hc and Hardcover and Hardcover.isAvailable and Hardcover.isAvailable()
+            and Hardcover.getLink and Hardcover.getLink(book.filepath)
+            and Hardcover.markUseCover then
+        pcall(Hardcover.markUseCover, book.filepath, false)
+    end
+    self:_refreshSingleBookCover(book.filepath, "cover-picker")
+
+    -- Carry the Cover-tab state (online results, page) across the reopen, but
+    -- drop the cached LOCAL list so the ring/current-cover entries rebuild
+    -- against the new sidecar state.
+    if type(state) == "table" then state.local_candidates = nil end
+    local bw = self
+    local fresh = Repo.buildBookMeta(book.filepath, { want_cover = true }) or book
+    if modal then UIManager:close(modal) end
+    UIManager:nextTick(function()
+        bw:_showBookDetail(fresh, { active = "cover", cover_state = state })
+    end)
+    self:_hardcoverToast(candidate.kind == "embedded"
+        and _("Reverted to embedded cover") or _("Cover updated"))
+end
+
+-- File picker (any image) -> apply as cover. Same PathChooser shape as
+-- _pickFolderImage; routes through _applyCoverCandidate so refresh/reopen match.
+function BookshelfWidget:_pickBookCoverFromDevice(book, modal, state)
+    if not (book and book.filepath) then return end
+    local PathChooser = require("ui/widget/pathchooser")
+    local ImageSource = require("lib/bookshelf_image_source")
+    local bw = self
+    local start_path = G_reader_settings:readSetting("home_dir")
+        or (book.filepath:match("^(.*)/[^/]+$")) or "/"
+    UIManager:show(PathChooser:new{
+        title            = _("Choose cover image"),
+        path             = start_path,
+        select_directory = false,
+        select_file      = true,
+        show_files       = true,
+        file_filter      = function(file) return ImageSource.isImageFile(file) end,
+        onConfirm        = function(image_path)
+            bw:_applyCoverCandidate(book,
+                { kind = "device", local_path = image_path, source_label = _("Device") },
+                modal, state)
+        end,
+    })
+end
+
+-- "Search online" -> fetch candidates (Wi-Fi-gated, user-initiated), then drop
+-- them into the grid. Wrapped in Trapper so per-source progress shows and the
+-- user can cancel; never auto-fetches (privacy invariant).
+function BookshelfWidget:_searchOnlineCovers(book, state, modal)
+    local CoverFetch = require("lib/bookshelf_cover_fetch")
+    local bw = self
+    CoverFetch.runWhenOnline(function()
+        local CoverSources = require("lib/bookshelf_cover_sources")
+        local ok_t, Trapper = pcall(require, "ui/trapper")
+        local function run()
+            local results = CoverSources.searchOnline(book)
+            state.online_candidates = results
+            state.page = 1
+            if modal and not modal._dismissed and modal.rebuildTab then
+                modal:rebuildTab()
+            end
+            if not results or #results == 0 then
+                bw:_hardcoverToast(_("No cover matches found"))
+            end
+        end
+        if ok_t and Trapper and Trapper.wrap then
+            Trapper:wrap(run)
+        else
+            run()
+        end
+    end, function(err)
+        bw:_hardcoverToast(_("Cover search failed"))
+        logger.warn("[bookshelf cover] online search error", tostring(err))
+    end)
+end
+
 -- _showBookDetail(book, opts) — the combined book-detail popup, a tabbed window:
 -- the book/Hardcover Description tab(s), a Hardcover Reviews tab when linked,
 -- a Tags tab (all the author / series / collections / genres / folder pills,
@@ -10759,7 +11499,15 @@ function BookshelfWidget:_showBookDetail(book, opts)
     local genre_source_at_open, genre_source_changed
 
     local tabs = {}
-    local edit_idx, tags_idx, desc_idx, reviews_idx
+    local edit_idx, tags_idx, desc_idx, reviews_idx, cover_idx
+    -- Cover tab's cross-rebuild state (current page, cached candidate lists).
+    -- An upvalue so pagination taps and "Search online" survive the tab's
+    -- rebuildTab (which re-invokes the widget_builder). An apply tears the modal
+    -- down and reopens; opts.cover_state carries this table across that reopen
+    -- so a completed online search isn't lost (re-searching would re-download
+    -- every candidate just to try a second cover).
+    local cover_tab_state = (type(opts.cover_state) == "table" and opts.cover_state)
+        or { page = 1 }
 
     -- Edit tab spec: the book actions (the old long-press menu), immediate-
     -- commit, scrollable. show_parent is the live modal instance during
@@ -11477,11 +12225,24 @@ function BookshelfWidget:_showBookDetail(book, opts)
         tabs[tags_idx] = tags_tab
     end
 
-    -- Edit last: the actions tab is reached for less often than Description/
-    -- Reviews/Tags, so it sits at the end of the strip rather than hogging
+    -- Edit next: the actions tab is reached for less often than Description/
+    -- Reviews/Tags, so it sits toward the end of the strip rather than hogging
     -- the first (default-focus) slot.
     edit_idx = #tabs + 1
     tabs[edit_idx] = edit_tab
+
+    -- Cover tab LAST: pick the book's cover from local sources / the device /
+    -- an online search. Native, paginated grid. Being last keeps its own
+    -- left/right swipe pagination out of the way of the tab-cycling swipe until
+    -- you page off the end (see ReviewsModal:onSwipe).
+    cover_idx = #tabs + 1
+    tabs[cover_idx] = {
+        id = "cover", label = _("Cover"),
+        widget_builder = function(avail_w, avail_h, show_parent)
+            return self:_buildBookCoverTab(book, show_parent, avail_w, avail_h,
+                                           cover_tab_state, modal)
+        end,
+    }
 
     if #tabs == 0 then return end  -- no pills, no description, no reviews
 
@@ -11494,6 +12255,8 @@ function BookshelfWidget:_showBookDetail(book, opts)
         active_tab = tags_idx
     elseif opts.active == "reviews" and reviews_idx then
         active_tab = reviews_idx
+    elseif opts.active == "cover" and cover_idx then
+        active_tab = cover_idx
     elseif desc_idx then
         active_tab = desc_idx  -- the chip bar defaults to the hero's source
     else
@@ -11546,49 +12309,63 @@ function BookshelfWidget:_showHardcoverReviews(book, opts)
     self:_showBookDetail(book, { active = "reviews", on_close = opts.on_close })
 end
 
-function BookshelfWidget:_refreshHardcoverEnrichmentView(reason, filepath)
-    Repo.invalidateBookCache(reason or "hardcover")
-    -- A cover toggle / re-link changes the cover image; drop the per-filepath
-    -- scaled bitmap (and progress memo) so the rebuild re-renders it. No
-    -- BIM re-extract needed -- the render prefers cover_image_path directly.
-    -- NOT a global image_source.invalidateCache() here: that re-decodes EVERY
-    -- visible cover (measured ~1.7-2s refresh on a single toggle). The new
-    -- cover is at a new path (or new mtime), so the path+mtime-keyed image
-    -- cache misses for it anyway; only this book's scaled bitmap needs dropping.
+-- Scoped single-book cover refresh. A cover change (Hardcover toggle, or the
+-- Cover picker applying an image) can't reorder the shelf or change chip
+-- membership (cover_image_path isn't a sort key), so the whole _rebuild -- fetch
+-- + sort + assemble, ~450ms on the All chip -- is wasted on a one-book change.
+-- Invalidate this book's caches, then refresh just its spine in place plus the
+-- hero when it's the previewed book. Returns true when handled in place; falls
+-- back to a full _rebuild (and returns false) when the in-place path can't reach
+-- the book (off the current page, expanded layout, cold tree).
+--
+-- Drops only this book's scaled bitmap + progress memo -- NOT a global
+-- image_source.invalidateCache(), which re-decodes EVERY visible cover
+-- (measured ~1.7-2s). The new cover is at a new path (or new mtime), so the
+-- path+mtime-keyed image cache misses for it anyway.
+function BookshelfWidget:_refreshSingleBookCover(filepath, reason)
+    Repo.invalidateBookCache(reason or "cover-change")
     if filepath then
         pcall(function() require("lib/bookshelf_scaled_cover_cache"):drop(filepath) end)
         pcall(function()
             if Repo.invalidateProgressCache then Repo.invalidateProgressCache(filepath) end
         end)
     end
-    -- Per-book cover / description toggles can't reorder the shelf or change
-    -- chip membership (cover_image_path and description aren't sort keys),
-    -- so the whole _rebuild -- fetch + sort + assemble, ~450ms on the All
-    -- chip -- is wasted on a one-book change. Refresh just the affected
-    -- spine in place, plus the hero when this is the previewed book, and
-    -- skip the rebuild. Falls through to _rebuild when the in-place path
-    -- can't reach the book (off the current page, expanded layout, cold
-    -- tree) or for any other reason (re-link / select-edition / metadata
-    -- refresh -- those DO change sort keys and membership).
-    local toggle_only = (reason == "hardcover-use-cover"
-                         or reason == "hardcover-use-description")
-    if toggle_only and filepath
-            and self._inner_vgroup and self._shelf_dims
+    if filepath and self._inner_vgroup and self._shelf_dims
             and (self._shelf_dims.n_shelves or 2) == self:_nShelves() then
         local spine_done = self:_refreshSpineInPlace(filepath)
         local preview_fp = self._preview_book and self._preview_book.filepath
         local hero_done = false
         if preview_fp == filepath and not self._expanded then
-            -- The toggled book is the one shown in the hero, so its cover /
-            -- description there needs refreshing too. _swapHeroInPlace
-            -- rebuilds from _preview_book (now reading fresh enrichment) and
-            -- scopes its own setDirty to the hero rect.
             self:_swapHeroInPlace()
             hero_done = true
         end
         if spine_done or hero_done then
-            return
+            return true
         end
+    end
+    if self._rebuild then
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+    end
+    return false
+end
+
+function BookshelfWidget:_refreshHardcoverEnrichmentView(reason, filepath)
+    -- Per-book cover / description toggles refresh a single spine in place; a
+    -- re-link / select-edition / metadata refresh DO change sort keys and
+    -- membership, so those fall through to a full rebuild below.
+    local toggle_only = (reason == "hardcover-use-cover"
+                         or reason == "hardcover-use-description")
+    if toggle_only then
+        self:_refreshSingleBookCover(filepath, reason)
+        return
+    end
+    Repo.invalidateBookCache(reason or "hardcover")
+    if filepath then
+        pcall(function() require("lib/bookshelf_scaled_cover_cache"):drop(filepath) end)
+        pcall(function()
+            if Repo.invalidateProgressCache then Repo.invalidateProgressCache(filepath) end
+        end)
     end
     if self._rebuild then
         self:_rebuild()
@@ -12888,6 +13665,12 @@ function BookshelfWidget:_openMicroModulesFullscreen(force)
 end
 
 function BookshelfWidget:onClose()
+    -- Hot parking: a reader is parked underneath, so plainly closing the
+    -- shelf would drop the user back INTO the book. Leaving the shelf
+    -- means going to the file manager - real-close the parked book out
+    -- to raw FM instead.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.closeShelfToFileManager(self) then return true end
     UIManager:close(self)
     return true
 end

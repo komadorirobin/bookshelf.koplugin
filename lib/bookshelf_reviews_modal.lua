@@ -84,6 +84,7 @@ local TAB_FONT_KEYS = {
     description = DESC_FONT_KEY,
     reviews     = "reviews_font_size",
     tags        = "tags_font_size",
+    cover       = "cover_font_size",
 }
 
 -- Percentage scale applied to the tab bar's own label text (issue: labels
@@ -457,14 +458,31 @@ function ReviewsModal:init()
         callback = function() self:_changeFontSize(DESC_FONT_STEP) end,
         hold_callback = resetFontSize,
     }
-    -- Open the book (closes the popup first). Only when a caller wired on_open.
+    -- Open the book. Only when a caller wired on_open. The popup stays ON
+    -- SCREEN through the document load - closing it first exposed the shelf
+    -- for the whole load gap (a visible flash). Feedback is painted straight
+    -- to the framebuffer (the load blocks the UI loop): the Open button
+    -- inverts and the header cover flexes open. onClose runs AFTER the open
+    -- kicks off; by then ShowingReader has armed the shelf's transition
+    -- paint suppression, so the close repaints nothing and the framebuffer
+    -- keeps showing the popup until the reader's first paint replaces it.
     if self.on_open then
         button_row[#button_row + 1] = {
             text = _("Open"),
+            id   = "open",
             callback = function()
                 local cb = self.on_open
+                if not cb then return end
+                pcall(function() self:_paintOpenFeedback() end)
+                -- The spine tap that opened this popup is still recorded as
+                -- SpineWidget.last_tapped for the SAME book - the shelf-side
+                -- opening effect would capture POPUP pixels at the covered
+                -- spine's rect and paint corruption. Clear the rendezvous.
+                pcall(function()
+                    require("lib/bookshelf_spine_widget").last_tapped = nil
+                end)
+                cb()
                 self:onClose()
-                if cb then cb() end
             end,
         }
     end
@@ -575,11 +593,15 @@ end
 -- Build a FRESH footer ButtonTable (zoom -/+, Close, optional Refresh) from the
 -- stored row spec. Fresh each assemble so its focus layout survives merging.
 function ReviewsModal:_buildButtons()
-    return ButtonTable:new{
+    local bt = ButtonTable:new{
         width       = self.width,
         buttons     = { self._button_row },
         show_parent = self,
     }
+    -- Keep a handle on the live table so the Open flow can find the Open
+    -- button's painted rect for its pressed-state fill.
+    self._footer_buttons = bt
+    return bt
 end
 
 -- Build a FRESH book-detail header (cover + metadata) inset by the header pads,
@@ -598,6 +620,9 @@ function ReviewsModal:_buildHeader()
     local inner = self.header_builder(self.width - 2 * pad)
     if not inner then return nil end
     self._owned_cover_bb = inner._owned_cover_bb
+    -- The header's cover frame (stamps its painted dimen): the Open button
+    -- flexes it open as feedback while the document loads.
+    self._header_cover = inner._cover_thumb
     local frame = FrameContainer:new{
         bordersize     = 0,
         margin         = 0,
@@ -1167,13 +1192,28 @@ end
 -- a right-edge brightness swipe) and then return false (the body scrollers
 -- keep whatever's left -- they're children, so they saw it first anyway).
 function ReviewsModal:onSwipe(_arg, ges)
-    if self._tabs and #self._tabs > 1 then
-        local dir = ges and ges.direction
-        local n = #self._tabs
-        if dir == "west" then
-            self:_switchTab(self._active_tab % n + 1); return true
-        elseif dir == "east" then
-            self:_switchTab((self._active_tab - 2) % n + 1); return true
+    local dir = ges and ges.direction
+    if dir == "west" or dir == "east" then
+        -- If the active body has its own horizontal pagination (the Cover
+        -- grid), page within it first; only spill over to tab-cycling once
+        -- you're already at that end. This makes swipe behave like every other
+        -- paginated surface in the app while keeping tab-swipe reachable.
+        local pager = self._tab_body and self._tab_body._pager
+        if pager and pager.goto_page then
+            if dir == "west" and pager.page < pager.total_pages then
+                pager.goto_page(pager.page + 1); return true
+            elseif dir == "east" and pager.page > 1 then
+                pager.goto_page(pager.page - 1); return true
+            end
+            -- at an end: fall through to tab cycling
+        end
+        if self._tabs and #self._tabs > 1 then
+            local n = #self._tabs
+            if dir == "west" then
+                self:_switchTab(self._active_tab % n + 1); return true
+            else
+                self:_switchTab((self._active_tab - 2) % n + 1); return true
+            end
         end
     end
     if self:_tryPassthrough(ges) then return true end
@@ -1186,6 +1226,35 @@ end
 -- Mirrors the old long-press menu's onShowingReader handler.
 function ReviewsModal:onShowingReader()
     self:onClose()
+end
+
+-- Pressed feedback for the Open flow, painted straight to the framebuffer:
+-- invert the Open button and flex the header cover open (shared painter
+-- from bookshelf_widget). Widget-level repaints would never land - the
+-- document load that follows blocks the UI loop.
+function ReviewsModal:_paintOpenFeedback()
+    local Screen = require("device").screen
+    local bb = Screen and Screen.bb
+    if not bb then return end
+    local btn = self._footer_buttons
+        and self._footer_buttons.getButtonById
+        and self._footer_buttons:getButtonById("open")
+    local d = btn and ((btn.dimen and btn.dimen.x and btn.dimen)
+        or (btn[1] and btn[1].dimen))
+    if d and d.w and d.w > 0 then
+        bb:invertRect(d.x, d.y, d.w, d.h)
+        pcall(function() Screen:refreshUI(d.x, d.y, d.w, d.h) end)
+    end
+    -- The cover flex is the same cosmetic "opening effect" the shelf uses;
+    -- honour its opt-out (default on). The Open-button invert above stays as
+    -- plain press feedback regardless.
+    local cover = self._header_cover
+    local r = cover and cover.dimen
+    if r and r.x and r.w and r.w > 8 and Store.nilOrTrue("open_cover_effect") then
+        pcall(function()
+            require("lib/bookshelf_widget").flexCoverOpen(r)
+        end)
+    end
 end
 
 function ReviewsModal:onClose()
