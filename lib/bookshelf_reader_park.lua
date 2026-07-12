@@ -272,11 +272,12 @@ function Park.park(plugin)
             if Repo.invalidateProgressCache then Repo.invalidateProgressCache(file) end
             if Repo.invalidateReadStateCache then Repo.invalidateReadStateCache() end
         end
-        -- Warm-path show: softRefresh (hero swap + spine refresh +
-        -- deferred shelf re-sort). The rotation restore inside show() is
-        -- gated on not-parked, so this cannot yank rotation under the
-        -- live reader.
-        plugin:show()
+        -- Do not call plugin:show() while ReaderUI is still alive underneath.
+        -- That enters BookshelfWidget:softRefresh while the reader owns the
+        -- document/screen state and has caused close-gesture crashes on real
+        -- devices. The shelf we just raised is already fully rendered (or was
+        -- explicitly prewarmed); _finishCore refreshes it after the parked
+        -- reader is really closed.
     end)
     -- Arm the idle probe: the finish runs at the first quiet moment.
     _cancelPendingProbe()
