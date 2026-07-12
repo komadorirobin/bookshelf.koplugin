@@ -189,6 +189,8 @@ local READER_PREWARM_IDLE_S = 15
 local READER_PREWARM_CHECK_S = 5
 local READER_PREWARM_INDICATOR_MIN_S = 2
 local _reader_prewarm_last_input = 0
+local _reader_prewarm_token = 0
+local _reader_prewarm_probe_token = 0
 
 -- Close a TouchMenu we received as the first callback argument. Used
 -- whenever a menu callback changes the visible UI layer (e.g. opens or
@@ -330,6 +332,7 @@ function Bookshelf:init()
         -- start menu.
         self:_setupReaderButtons()
         self:_scheduleReaderPrewarm()
+        self:_scheduleActiveReaderPrewarmProbe("reader-init")
     end
 
     -- Register Dispatcher actions so users can bind gestures / keys to
@@ -1394,17 +1397,19 @@ local function _installReaderPrewarmInputStamp()
     end
 end
 
-function Bookshelf:_showReaderPrewarmIndicator()
+function Bookshelf:_showReaderPrewarmIndicator(readerui)
     if not BookshelfSettings.nilOrTrue("reader_prewarm_indicator") then return end
-    if not (self.ui and self.ui.view) then return end
+    readerui = readerui or self.ui
+    if not (readerui and readerui.view) then return end
     if self._reader_prewarm_indicator then return end
     local ok, Indicator = pcall(require, "lib/bookshelf_reader_prewarm_indicator")
     if not ok or not Indicator then return end
     self._reader_prewarm_indicator = Indicator:new{}
+    self._reader_prewarm_indicator_ui = readerui
     self._reader_prewarm_indicator_shown_at = _gettime()
-    self.ui.view:registerViewModule("bookshelf_prewarm_indicator",
+    readerui.view:registerViewModule("bookshelf_prewarm_indicator",
         self._reader_prewarm_indicator)
-    UIManager:setDirty(self.ui.view, "ui")
+    UIManager:setDirty(readerui.view, "ui")
     UIManager:forceRePaint()
 end
 
@@ -1423,61 +1428,78 @@ function Bookshelf:_hideReaderPrewarmIndicator(keep_visible_briefly)
             return
         end
     end
-    if self.ui and self.ui.view and self.ui.view.view_modules then
-        self.ui.view.view_modules.bookshelf_prewarm_indicator = nil
-        UIManager:setDirty(self.ui.view, "ui")
+    local readerui = self._reader_prewarm_indicator_ui or self.ui
+    if readerui and readerui.view and readerui.view.view_modules then
+        readerui.view.view_modules.bookshelf_prewarm_indicator = nil
+        UIManager:setDirty(readerui.view, "ui")
     end
     self._reader_prewarm_indicator = nil
+    self._reader_prewarm_indicator_ui = nil
     self._reader_prewarm_indicator_shown_at = nil
     UIManager:forceRePaint()
 end
 
-function Bookshelf:_isReaderTopmost(readerui)
+function Bookshelf:_isReaderShown(readerui)
     local stack = UIManager._window_stack
-    local top = stack and stack[#stack] and stack[#stack].widget
-    return top == readerui
+    if not stack then return false end
+    for _, entry in ipairs(stack) do
+        if entry.widget == readerui then return true end
+    end
+    return false
 end
 
 function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     if not (profile_key and readerui and readerui.document) then return false end
-    if _live_widget and UIManager:isWidgetShown(_live_widget) then return true end
+    local t0 = _gettime()
+    local widget = _live_widget
+    local created = false
 
-    local ok_widget, BookshelfWidget = pcall(require, "lib/bookshelf_widget")
-    if not ok_widget or not BookshelfWidget then
-        logger.warn("[bookshelf] reader prewarm failed to load widget: "
-            .. tostring(BookshelfWidget))
-        return false
+    if not (widget and UIManager:isWidgetShown(widget)) then
+        local ok_widget, BookshelfWidget = pcall(require, "lib/bookshelf_widget")
+        if not ok_widget or not BookshelfWidget then
+            logger.warn("[bookshelf] reader prewarm failed to load widget: "
+                .. tostring(BookshelfWidget))
+            return false
+        end
+        require("lib/bookshelf_settings")._plugin = self
+        widget = BookshelfWidget:new{ profile_key = profile_key }
+        created = true
+    elseif profile_key and not (widget.profile and widget.profile.key == profile_key)
+            and type(widget.setProfile) == "function" then
+        widget:setProfile(profile_key)
     end
 
-    require("lib/bookshelf_settings")._plugin = self
-    local t0 = _gettime()
-    self._widget = BookshelfWidget:new{ profile_key = profile_key }
-    self._widget._suppress_transition_paint = true
-    self._widget._bookshelf_reader_prewarmed = true
-    self._widget._opened_book = true
+    self._widget = widget
+    widget._suppress_transition_paint = true
+    widget._bookshelf_reader_prewarmed = true
+    widget._opened_book = true
 
     local outer = self
-    local widget_instance = self._widget
-    self._widget._on_close_callback = function()
+    local widget_instance = widget
+    widget._on_close_callback = function()
         outer._widget = nil
         if _live_widget == widget_instance then _live_widget = nil end
     end
-    _live_widget = self._widget
+    _live_widget = widget
 
-    UIManager:show(self._widget, "ui")
+    if created then
+        UIManager:show(widget, "ui")
+    end
 
     local stack = UIManager._window_stack
     local function abort()
-        pcall(function() UIManager:close(self._widget, "ui") end)
-        if _live_widget == self._widget then _live_widget = nil end
-        self._widget = nil
+        if created then
+            pcall(function() UIManager:close(widget, "ui") end)
+            if _live_widget == widget then _live_widget = nil end
+            if self._widget == widget then self._widget = nil end
+        end
         return false
     end
     if not stack then return abort() end
     local reader_idx, shelf_idx
     for i, entry in ipairs(stack) do
         if entry.widget == readerui then reader_idx = i end
-        if entry.widget == self._widget then shelf_idx = i end
+        if entry.widget == widget then shelf_idx = i end
     end
     if not (reader_idx and shelf_idx) then
         logger.warn("[bookshelf] reader prewarm could not place widget under reader")
@@ -1490,13 +1512,14 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui)
     end
     UIManager:setDirty(readerui, "ui")
     logger.dbg(string.format(
-        "[bookshelf perf] reader prewarm: profile=%s elapsed=%.0fms",
-        tostring(profile_key), (_gettime() - t0) * 1000))
+        "[bookshelf perf] reader prewarm: profile=%s created=%s elapsed=%.0fms",
+        tostring(profile_key), tostring(created), (_gettime() - t0) * 1000))
     return true
 end
 
-function Bookshelf:_scheduleReaderPrewarm()
-    if not (self.ui and self.ui.document and self.ui.view) then
+function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override)
+    local readerui = readerui_override or self.ui
+    if not (readerui and readerui.document and readerui.view) then
         logger.dbg("[bookshelf] reader prewarm skipped: no reader context")
         return
     end
@@ -1509,34 +1532,29 @@ function Bookshelf:_scheduleReaderPrewarm()
         return
     end
 
-    local file = self:_currentDocumentFile()
+    local file = file_override
+        or (readerui.document and readerui.document.file)
+        or self:_currentDocumentFile()
     local profile_key = Profiles.matchFile(file)
     if not profile_key then
         logger.dbg("[bookshelf] reader prewarm skipped: no profile for "
             .. tostring(file))
         return
     end
-    if _live_widget and UIManager:isWidgetShown(_live_widget) then
-        logger.dbg("[bookshelf] reader prewarm skipped: shelf already live")
-        return
-    end
-
     _installReaderPrewarmInputStamp()
     _reader_prewarm_last_input = _gettime()
-    self._reader_prewarm_token = (self._reader_prewarm_token or 0) + 1
-    local token = self._reader_prewarm_token
-    local readerui = self.ui
+    _reader_prewarm_token = _reader_prewarm_token + 1
+    local token = _reader_prewarm_token
     logger.dbg("[bookshelf] reader prewarm scheduled for "
         .. tostring(file) .. " profile=" .. tostring(profile_key))
 
     local function step()
-        if self._reader_prewarm_token ~= token then return end
+        if _reader_prewarm_token ~= token then return end
         if not BookshelfSettings.nilOrTrue("reader_prewarm") then return end
         if not BookshelfSettings.nilOrTrue("hot_park") then return end
-        if self.ui ~= readerui or not (readerui.document and readerui.document.file == file) then return end
-        if _live_widget and UIManager:isWidgetShown(_live_widget) then return end
-        if not self:_isReaderTopmost(readerui) then
-            logger.dbg("[bookshelf] reader prewarm waiting: reader not topmost")
+        if not (readerui.document and readerui.document.file == file) then return end
+        if not self:_isReaderShown(readerui) then
+            logger.dbg("[bookshelf] reader prewarm waiting: reader not shown")
             UIManager:scheduleIn(READER_PREWARM_CHECK_S, step)
             return
         end
@@ -1547,7 +1565,7 @@ function Bookshelf:_scheduleReaderPrewarm()
             UIManager:scheduleIn(READER_PREWARM_CHECK_S, step)
             return
         end
-        self:_showReaderPrewarmIndicator()
+        self:_showReaderPrewarmIndicator(readerui)
         local ok, err = pcall(function()
             self:_prewarmShelfBehindReader(profile_key, readerui)
         end)
@@ -1558,6 +1576,43 @@ function Bookshelf:_scheduleReaderPrewarm()
     end
 
     UIManager:scheduleIn(READER_PREWARM_CHECK_S, step)
+end
+
+function Bookshelf:_scheduleActiveReaderPrewarmProbe(reason)
+    if not BookshelfSettings.nilOrTrue("reader_prewarm") then return end
+    if not BookshelfSettings.nilOrTrue("hot_park") then return end
+
+    _reader_prewarm_probe_token = _reader_prewarm_probe_token + 1
+    local token = _reader_prewarm_probe_token
+
+    local function probe(attempt)
+        if _reader_prewarm_probe_token ~= token then return end
+        if not BookshelfSettings.nilOrTrue("reader_prewarm") then return end
+        if not BookshelfSettings.nilOrTrue("hot_park") then return end
+
+        local ReaderUI = package.loaded["apps/reader/readerui"]
+        if not ReaderUI then
+            local ok_rui, mod = pcall(require, "apps/reader/readerui")
+            if ok_rui then ReaderUI = mod end
+        end
+        local readerui = ReaderUI and ReaderUI.instance or nil
+        local file = readerui and readerui.document and readerui.document.file
+        if readerui and readerui.view and file then
+            logger.dbg("[bookshelf] reader prewarm probe hit: "
+                .. tostring(reason) .. " file=" .. tostring(file))
+            self:_scheduleReaderPrewarm(readerui, file)
+            return
+        end
+
+        if attempt < 8 then
+            UIManager:scheduleIn(1, function() probe(attempt + 1) end)
+        else
+            logger.dbg("[bookshelf] reader prewarm probe gave up: "
+                .. tostring(reason))
+        end
+    end
+
+    UIManager:scheduleIn(1, function() probe(0) end)
 end
 
 -- Re-align the reader launcher after a screen-geometry change (device rotation
@@ -2241,6 +2296,7 @@ function Bookshelf:onShowingReader()
             if _live_widget then _live_widget._suppress_transition_paint = false end
         end)
     end
+    self:_scheduleActiveReaderPrewarmProbe("showing-reader")
 end
 
 -- New ReaderUI has finished loading after a Reader→Reader switch — the new
@@ -2264,6 +2320,7 @@ function Bookshelf:onReaderReady()
     -- once the reader is fully ready so idle prewarm is not missed.
     UIManager:scheduleIn(1, function()
         self:_scheduleReaderPrewarm()
+        self:_scheduleActiveReaderPrewarmProbe("reader-ready")
     end)
 end
 
