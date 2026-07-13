@@ -286,6 +286,37 @@ function CoverApply.isCustomized(filepath)
     return _choices()[filepath] ~= nil
 end
 
+-- Recursively empty the whole cover working dir (settings/bookshelf_covers).
+-- EVERYTHING under it is transient Cover-tab render/download material: the
+-- emb_*.png embedded-cover extractions, the online/ search downloads, and
+-- (from older builds) per-book download subdirs. An APPLIED cover is copied
+-- into the book's .sdr, and Hardcover enrichment covers live in a separate
+-- bookshelf_hardcover dir, so nothing persistent lives here. Never cleaned up
+-- before, so it grew unbounded (issue 267). Called on book-detail modal close.
+function CoverApply.resetWorkingCache()
+    local dir = _cacheDir()
+    if lfs.attributes(dir, "mode") ~= "directory" then return end
+    local function _rmrf(path)
+        local mode = lfs.attributes(path, "mode")
+        if mode == "directory" then
+            local ok_iter, iter, dobj = pcall(lfs.dir, path)
+            if ok_iter then
+                for f in iter, dobj do
+                    if f ~= "." and f ~= ".." then _rmrf(path .. "/" .. f) end
+                end
+            end
+            pcall(lfs.rmdir, path)
+        else
+            pcall(os.remove, path)
+        end
+    end
+    local ok_iter, iter, dobj = pcall(lfs.dir, dir)
+    if not ok_iter then return end
+    for f in iter, dobj do
+        if f ~= "." and f ~= ".." then _rmrf(dir .. "/" .. f) end
+    end
+end
+
 CoverApply.cacheDir = _cacheDir
 CoverApply.ensureDir = _ensureDir
 CoverApply.safeKey = _safeKey
