@@ -233,14 +233,12 @@ If you also use `hardcoverapp.koplugin`, Bookshelf can link books to Hardcover a
 
 When a book is linked, its popup gains a **Reviews** tab (and the hero rating row's "N reviews" opens the popup straight to it). Reviews are filtered to spoiler-free ones, and cached, so they reopen offline once fetched.
 
-**Linking the whole library at once.** **Hardcover enrichment -> Auto-link all books** links every unlinked book in one pass, fetching each match's details (description, cover, rating) as it goes. You pick how to match:
+**Linking the whole library at once.** **Hardcover enrichment -> Auto-link all books** first asks whether to process only unlinked books or include books that already have a link. Existing links are only replaced from exact embedded identifiers (edition ID, ISBN or Hardcover ID), and each book's Hardcover cover and description choices are preserved. For unlinked books, you then pick how to match:
 
 - **Exact match** -- uses an embedded ISBN or Hardcover id. Fast, and only links books that carry one.
 - **Best guess** -- searches by title and author and picks the most confident match. Slower, but catches books with no embedded id.
 
 It contacts Hardcover at about one book per second with cancellable progress, and shows a report at the end listing what was linked, what wasn't matched, and what had no identifier to try.
-
-If identifiers were corrected after books had already been linked, use **Manage Hardcover data -> Repair links from embedded IDs**. It repeats exact matching for the whole library, including existing links, while preserving each book's Hardcover cover and description choices.
 
 **Choosing covers and descriptions.** Each linked book has its own **Use Hardcover image** and **Use Hardcover description** toggles. When you link a book, Bookshelf sets sensible defaults once: it adopts the Hardcover description if the book has none of its own, and the Hardcover cover if the book has no embedded cover or its cover is lower resolution than Hardcover's. After that the per-book toggle is yours -- it's never changed again by a later refresh. Turning **Use Hardcover image** on saves the Hardcover cover into the book's sidecar (`.sdr`) folder as a custom cover, so KOReader's own file browser shows it too; turning it off restores whatever was there before -- a cover you'd set yourself is preserved, never overwritten.
 

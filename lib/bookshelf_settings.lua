@@ -1969,6 +1969,36 @@ function Settings:_hardcoverSubItems()
         UIManager:show(dialog)
     end
 
+    local function chooseAutoLinkScope(touchmenu_instance)
+        local ButtonDialog = require("ui/widget/buttondialog")
+        local dialog
+        dialog = ButtonDialog:new{
+            title = _("Which books should be auto-linked?"),
+            title_align = "center",
+            buttons = {
+                {{
+                    text = _("Only unlinked books"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        autoLinkAll(touchmenu_instance, false)
+                    end,
+                }},
+                {{
+                    text = _("Include already linked books"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        autoLinkAll(touchmenu_instance, true)
+                    end,
+                }},
+                {{
+                    text = _("Cancel"),
+                    callback = function() UIManager:close(dialog) end,
+                }},
+            },
+        }
+        UIManager:show(dialog)
+    end
+
     return {
         {
             text_func = function()
@@ -1988,13 +2018,13 @@ function Settings:_hardcoverSubItems()
             -- Primary action: the first thing a new Hardcover user wants is to
             -- link their library, so it sits at the top.
             text = _("Auto-link all books"),
-            help_text = _("Scan the library and link books to Hardcover, fetching each match's details (description, cover, rating) in the same pass. Choose Exact match (uses an embedded ISBN / Hardcover id, fast) or Best guess (searches by title and author and picks the most confident match, slower but catches books with no embedded id). A report at the end lists exactly what was linked. Contacts Hardcover (rate-limited) with cancellable progress."),
+            help_text = _("Scan the library and link books to Hardcover, fetching each match's details (description, cover, rating) in the same pass. First choose whether to process only unlinked books or include existing links. Existing links are replaced only from exact embedded identifiers (edition ID, ISBN or Hardcover ID); unlinked books can also use Best guess. A report at the end lists exactly what was linked. Contacts Hardcover (rate-limited) with cancellable progress."),
             enabled_func = function()
                 local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
                 return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
             end,
             callback = function(touchmenu_instance)
-                autoLinkAll(touchmenu_instance)
+                chooseAutoLinkScope(touchmenu_instance)
             end,
         },
         {
@@ -2089,17 +2119,6 @@ function Settings:_hardcoverSubItems()
             -- clearing it are occasional housekeeping, not everyday settings.
             text = _("Manage Hardcover data"),
             sub_item_table = {
-                {
-                    text = _("Repair links from embedded IDs"),
-                    help_text = _("Re-link every book that contains an embedded Hardcover edition ID or ISBN, including books already linked. Use this after correcting identifiers in BookOrbit or to repair links that point to the parent work instead of the exact edition. Existing per-book cover and description choices are preserved."),
-                    enabled_func = function()
-                        local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
-                        return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
-                    end,
-                    callback = function(touchmenu_instance)
-                        autoLinkAll(touchmenu_instance, true)
-                    end,
-                },
                 {
                     -- Auto-link all books now fetches details as it links, so
                     -- there's no separate "fetch missing data" step. This just
