@@ -190,6 +190,72 @@ test("embedded identifiers merge BIM ISBN with BookOrbit edition", function()
     assert(duplicate_count == 1, "duplicate work identifier in merge: " .. ids)
 end)
 
+test("BookOrbit edition id is resolved before the Hardcover work slug", function()
+    reset()
+    local generic_lookups = 0
+    local modules = {
+        Api = {
+            query = function(_self, query, variables)
+                assert(query:find("query ($id: Int!)", 1, true), "edition query has invalid signature")
+                assert(variables.id == 33075065, "wrong edition id")
+                return {
+                    editions = {
+                        {
+                            id = 33075065,
+                            book = { book_id = 9876, title = "Forbidden Notebook" },
+                            title = "Förbjuden skrivbok",
+                            edition_format = "E-Book",
+                            pages = 356,
+                            reading_format_id = 4,
+                        },
+                    },
+                }
+            end,
+            findBookByIdentifiers = function()
+                generic_lookups = generic_lookups + 1
+                return { book_id = 9876, title = "Forbidden Notebook" }
+            end,
+        },
+    }
+    local book = Hardcover._test.findBookByIdentifiers(modules,
+        "hardcover:forbidden-notebook-1952\n"
+        .. "hardcover-edition:33075065\n"
+        .. "isbn13:9789113131061", 42)
+    assert(book and book.edition_id == 33075065, "explicit edition was not preserved")
+    assert(book.title == "Förbjuden skrivbok", "wrong edition title: " .. tostring(book.title))
+    assert(generic_lookups == 0, "fell through to the parent work lookup")
+end)
+
+test("failed explicit edition lookup prefers ISBN over work slug", function()
+    reset()
+    local lookups = {}
+    local modules = {
+        Api = {
+            query = function() return nil end,
+            findBookByIdentifiers = function(_self, identifiers)
+                lookups[#lookups + 1] = identifiers
+                if identifiers.isbn_13 then
+                    return {
+                        book_id = 9876,
+                        edition_id = 33075065,
+                        title = "Förbjuden skrivbok",
+                    }
+                end
+                return { book_id = 9876, title = "Forbidden Notebook" }
+            end,
+        },
+    }
+    local book = Hardcover._test.findBookByIdentifiers(modules,
+        "hardcover:forbidden-notebook-1952\n"
+        .. "hardcover-edition:33075065\n"
+        .. "isbn13:9789113131061", 42)
+    assert(book and book.edition_id == 33075065, "ISBN fallback did not resolve the edition")
+    assert(#lookups == 2, "unexpected lookup count: " .. tostring(#lookups))
+    assert(lookups[1].edition_id and not lookups[1].book_slug,
+        "explicit edition lookup included the parent slug")
+    assert(lookups[2].isbn_13 == "9789113131061", "ISBN was not the next fallback")
+end)
+
 test("enrichBook shows Hardcover cover/description only on an explicit flag", function()
     reset()
     -- /books/a.epub is linked via reset() (book_id 123, edition 456). Mutate

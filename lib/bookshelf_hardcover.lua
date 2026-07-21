@@ -1171,13 +1171,85 @@ local function _lookupBookByIdentifiers(modules, parsed, user_id)
     return ok_lookup and book or nil
 end
 
+local function _editionMatches(book, edition_id)
+    if type(book) ~= "table" or book.edition_id == nil then return false end
+    return tostring(book.edition_id) == tostring(edition_id)
+end
+
+-- hardcoverapp.koplugin 0.3.1's hydrateBookFromEdition query is malformed
+-- (`$id Int!` instead of `$id: Int!`). Resolve an embedded edition directly so
+-- a failed edition lookup cannot silently fall through to the work slug.
+local function _queryExactEdition(modules, edition_id)
+    if not (modules and modules.Api and type(modules.Api.query) == "function") then return nil end
+    local query = [[
+        query ($id: Int!) {
+            editions(where: { id: { _eq: $id }}) {
+                id
+                book {
+                    book_id: id
+                    title
+                }
+                edition_format
+                pages
+                reading_format_id
+                title
+            }
+        }
+    ]]
+    local ok_query, result = pcall(function()
+        return modules.Api:query(query, { id = tonumber(edition_id) or edition_id })
+    end)
+    local edition = ok_query and type(result) == "table"
+        and type(result.editions) == "table" and result.editions[1] or nil
+    if not edition or tostring(edition.id) ~= tostring(edition_id) then return nil end
+
+    -- Prefer the plugin's normalizer when available, but keep this compatible
+    -- with older Hardcover releases that expose only query/findBookByIdentifiers.
+    if type(modules.Api.normalizedEdition) == "function" then
+        local ok_normalize, book = pcall(modules.Api.normalizedEdition, modules.Api, edition)
+        if ok_normalize and _editionMatches(book, edition_id) then return book end
+    end
+    local parent = type(edition.book) == "table" and edition.book or {}
+    local book_id = parent.book_id or parent.id or edition.book_id
+    if not book_id then return nil end
+    local edition_format = edition.edition_format
+    if modules.Book and type(modules.Book.editionFormatName) == "function" then
+        edition_format = modules.Book:editionFormatName(
+            edition.edition_format, edition.reading_format_id) or edition_format
+    end
+    return {
+        id = book_id,
+        book_id = book_id,
+        edition_id = edition.id,
+        edition_format = edition_format,
+        filetype = edition_format,
+        pages = edition.pages,
+        title = edition.title or parent.title,
+    }
+end
+
 local function _findBookByIdentifiers(modules, identifiers, user_id)
     local parsed = _parseHardcoverIdentifiers(modules, identifiers)
     if not parsed then return nil end
 
     if parsed.edition_id then
-        local book = _lookupBookByIdentifiers(modules, parsed, user_id)
+        local book = _queryExactEdition(modules, parsed.edition_id)
         if book then return book end
+
+        if type(modules.Api.hydrateBookFromEdition) == "function" then
+            local ok_hydrate, hydrated = pcall(
+                modules.Api.hydrateBookFromEdition, modules.Api,
+                tonumber(parsed.edition_id) or parsed.edition_id, user_id)
+            if ok_hydrate and _editionMatches(hydrated, parsed.edition_id) then
+                return hydrated
+            end
+        end
+
+        -- Pass the edition alone. Older clients may prioritise book_slug when
+        -- both are present; accepting that result links the parent work while
+        -- discarding BookOrbit's explicit edition choice.
+        book = _lookupBookByIdentifiers(modules, { edition_id = parsed.edition_id }, user_id)
+        if _editionMatches(book, parsed.edition_id) then return book end
     end
 
     -- ISBN usually resolves to the exact edition, while a Hardcover slug/id
@@ -2234,6 +2306,7 @@ end
 
 Hardcover._test = {
     extractIdentifiersFromOpf = _extractIdentifiersFromOpf,
+    findBookByIdentifiers = _findBookByIdentifiers,
     mergeIdentifierStrings = _mergeIdentifierStrings,
 }
 
