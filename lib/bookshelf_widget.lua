@@ -288,6 +288,12 @@ function BookshelfWidget:_getSimpleUIBarContext()
 
     local navpager_on = Config.isNavpagerEnabled and Config.isNavpagerEnabled() or false
     local active_action = plugin.active_action or tabs[1] or "home"
+    local profile_key = self.profile and self.profile.key
+    local ok_bridge, Bridge = pcall(require, "sui_bookshelf_bridge")
+    if ok_bridge and Bridge and type(Bridge.activateProfile) == "function" then
+        active_action = Bridge.activateProfile(profile_key, plugin, tabs)
+            or active_action
+    end
     local slot_count = navpager_on and (#tabs + 2)
         or ((Config.getNumTabs and Config.getNumTabs()) or #tabs)
     local Settings = _getSimpleUISettings()
