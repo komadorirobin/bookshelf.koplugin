@@ -1787,7 +1787,7 @@ function Settings:_hardcoverSubItems()
         UIManager:nextTick(step)
     end
 
-    local function autoLinkAll(touchmenu_instance)
+    local function autoLinkAll(touchmenu_instance, relink_exact)
         local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
         if not ok_hc or not Hardcover
                 or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
@@ -1796,17 +1796,19 @@ function Settings:_hardcoverSubItems()
         end
         local Repo = require("lib/bookshelf_book_repository")
         local filepaths = Repo.getAllFilepaths() or {}
-        -- Pre-filter: drop already-linked books (cheap -- reads the link cache,
-        -- no network), so only genuine candidates cost an API call.
+        -- Normal auto-link only considers unlinked books. Repair mode includes
+        -- every book, but its exact-only scan leaves files without embedded
+        -- identifiers untouched.
         local candidates = {}
         for _i, fp in ipairs(filepaths) do
-            if not Hardcover.getLink(fp) then
+            if relink_exact or not Hardcover.getLink(fp) then
                 candidates[#candidates + 1] = fp
             end
         end
         local total = #candidates
         if total == 0 then
-            notify(_("No unlinked books to auto-link."))
+            notify(relink_exact and _("No books to repair.")
+                or _("No unlinked books to auto-link."))
             return
         end
 
@@ -1851,7 +1853,7 @@ function Settings:_hardcoverSubItems()
                 step = function(fp, st)
                     st.linked_list  = st.linked_list  or {}
                     st.nomatch_list = st.nomatch_list or {}
-                    if best_guess then
+                    if best_guess and not relink_exact then
                         -- Needs title/author, so build the record first, then
                         -- search Hardcover and score the hits.
                         local meta = (Repo.buildBookMeta and Repo.buildBookMeta(fp))
@@ -1906,11 +1908,17 @@ function Settings:_hardcoverSubItems()
                     return true
                 end,
                 progress = function(st, n)
-                    return T(_("Auto-linking from Hardcover…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)"),
-                             tostring(st.i), tostring(n), tostring(st.linked or 0))
+                    local message = relink_exact
+                        and _("Repairing Hardcover links…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)")
+                        or _("Auto-linking from Hardcover…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)")
+                    return T(message, tostring(st.i), tostring(n),
+                             tostring(st.linked or 0))
                 end,
                 on_finish = function(st)
-                    if (st.linked or 0) > 0 then markDirty("hardcover-auto-link-all") end
+                    if (st.linked or 0) > 0 then
+                        markDirty(relink_exact and "hardcover-relink-exact"
+                            or "hardcover-auto-link-all")
+                    end
                     showReport(st, best_guess)
                 end,
             }
@@ -1920,10 +1928,24 @@ function Settings:_hardcoverSubItems()
         -- full-text search + fuzzy match, slower but catches books with no id).
         local ButtonDialog = require("ui/widget/buttondialog")
         local dialog
-        dialog = ButtonDialog:new{
-            title = T(_("Auto-link %1 unlinked book(s)?\n\nContacts Hardcover (rate-limited), up to ~%2 min. Cancellable, with a report at the end."),
-                      tostring(total), tostring(est_min)),
-            title_align = "center",
+        local title = relink_exact
+            and T(_("Repair Hardcover links for up to %1 book(s)?\n\nBooks with an embedded edition ID or ISBN are linked again. Existing links may be replaced. Contacts Hardcover (rate-limited), up to ~%2 min. Cancellable, with a report at the end."),
+                  tostring(total), tostring(est_min))
+            or T(_("Auto-link %1 unlinked book(s)?\n\nContacts Hardcover (rate-limited), up to ~%2 min. Cancellable, with a report at the end."),
+                 tostring(total), tostring(est_min))
+        local buttons
+        if relink_exact then
+            buttons = {
+                {{
+                    text = _("Repair exact links"),
+                    callback = function() UIManager:close(dialog); run(false) end,
+                }},
+                {{
+                    text = _("Cancel"),
+                    callback = function() UIManager:close(dialog) end,
+                }},
+            }
+        else
             buttons = {
                 {{
                     text = _("Exact match (ISBN / Hardcover id)"),
@@ -1937,7 +1959,12 @@ function Settings:_hardcoverSubItems()
                     text = _("Cancel"),
                     callback = function() UIManager:close(dialog) end,
                 }},
-            },
+            }
+        end
+        dialog = ButtonDialog:new{
+            title = title,
+            title_align = "center",
+            buttons = buttons,
         }
         UIManager:show(dialog)
     end
@@ -2062,6 +2089,17 @@ function Settings:_hardcoverSubItems()
             -- clearing it are occasional housekeeping, not everyday settings.
             text = _("Manage Hardcover data"),
             sub_item_table = {
+                {
+                    text = _("Repair links from embedded IDs"),
+                    help_text = _("Re-link every book that contains an embedded Hardcover edition ID or ISBN, including books already linked. Use this after correcting identifiers in BookOrbit or to repair links that point to the parent work instead of the exact edition. Existing per-book cover and description choices are preserved."),
+                    enabled_func = function()
+                        local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
+                        return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
+                    end,
+                    callback = function(touchmenu_instance)
+                        autoLinkAll(touchmenu_instance, true)
+                    end,
+                },
                 {
                     -- Auto-link all books now fetches details as it links, so
                     -- there's no separate "fetch missing data" step. This just

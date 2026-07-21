@@ -772,6 +772,15 @@ function Hardcover.linkBook(filepath, hc_book)
         return false, "Missing Hardcover book id"
     end
     local links = _readLinks()
+    local existing = links[filepath] or Hardcover.getLink(filepath)
+    -- Re-linking should repair the identity, not reset the user's choices for
+    -- which Hardcover assets Bookshelf is allowed to show.
+    if type(existing) == "table" then
+        if existing.use_cover ~= nil then payload.use_cover = existing.use_cover end
+        if existing.use_description ~= nil then
+            payload.use_description = existing.use_description
+        end
+    end
     links[filepath] = payload
     _saveLinks(links)
     pcall(_mirrorExternalLink, filepath, payload)

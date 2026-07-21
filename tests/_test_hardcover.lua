@@ -161,6 +161,22 @@ test("linkBook stores a Bookshelf-owned link", function()
     assert(link.title == "A Book", "missing title")
 end)
 
+test("re-linking preserves per-book enrichment choices", function()
+    reset()
+    assert(Hardcover.linkBook("/books/a.epub", { id = 123, title = "Old link" }))
+    assert(Hardcover.setUseDescription("/books/a.epub", false))
+    assert(Hardcover.markUseCover("/books/a.epub", true))
+    assert(Hardcover.linkBook("/books/a.epub", {
+        id = 9876,
+        edition_id = 33075065,
+        title = "Förbjuden skrivbok",
+    }))
+    local link = Hardcover.getLink("/books/a.epub")
+    assert(link.book_id == 9876 and link.edition_id == 33075065, "identity was not replaced")
+    assert(link.use_cover == true, "cover choice was reset")
+    assert(link.use_description == false, "description choice was reset")
+end)
+
 test("embedded parser reads BookOrbit HARDCOVER_EDITION identifier", function()
     reset()
     local ids = Hardcover._test.extractIdentifiersFromOpf([[

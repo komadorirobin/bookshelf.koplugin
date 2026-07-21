@@ -240,6 +240,8 @@ When a book is linked, its popup gains a **Reviews** tab (and the hero rating ro
 
 It contacts Hardcover at about one book per second with cancellable progress, and shows a report at the end listing what was linked, what wasn't matched, and what had no identifier to try.
 
+If identifiers were corrected after books had already been linked, use **Manage Hardcover data -> Repair links from embedded IDs**. It repeats exact matching for the whole library, including existing links, while preserving each book's Hardcover cover and description choices.
+
 **Choosing covers and descriptions.** Each linked book has its own **Use Hardcover image** and **Use Hardcover description** toggles. When you link a book, Bookshelf sets sensible defaults once: it adopts the Hardcover description if the book has none of its own, and the Hardcover cover if the book has no embedded cover or its cover is lower resolution than Hardcover's. After that the per-book toggle is yours -- it's never changed again by a later refresh. Turning **Use Hardcover image** on saves the Hardcover cover into the book's sidecar (`.sdr`) folder as a custom cover, so KOReader's own file browser shows it too; turning it off restores whatever was there before -- a cover you'd set yourself is preserved, never overwritten.
 
 **Ratings and metadata.** Two more options sit in the **Hardcover enrichment** menu:
