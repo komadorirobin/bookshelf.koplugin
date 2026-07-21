@@ -474,6 +474,42 @@ local function _readEmbeddedIdentifiersFromEpub(filepath)
     return _extractIdentifiersFromOpf(table.concat(chunks, "\n"))
 end
 
+local function _identifierStringFromBook(book)
+    if type(book) ~= "table" then return nil end
+    if type(book.identifiers) == "string" and book.identifiers ~= "" then
+        return book.identifiers
+    end
+    if type(book.identifiers) ~= "table" then return nil end
+
+    local parts = {}
+    for k, v in pairs(book.identifiers) do
+        if type(v) == "string" or type(v) == "number" then
+            parts[#parts + 1] = tostring(k) .. ":" .. tostring(v)
+        end
+    end
+    return #parts > 0 and table.concat(parts, "\n") or nil
+end
+
+local function _mergeIdentifierStrings(...)
+    local tokens, seen = {}, {}
+    for i = 1, select("#", ...) do
+        local identifiers = select(i, ...)
+        if type(identifiers) == "string" then
+            for line in identifiers:gmatch("[^\r\n]+") do
+                local cleaned = _xmlDecode(line)
+                if cleaned ~= "" then
+                    local key = cleaned:lower()
+                    if not seen[key] then
+                        seen[key] = true
+                        tokens[#tokens + 1] = cleaned
+                    end
+                end
+            end
+        end
+    end
+    return #tokens > 0 and table.concat(tokens, "\n") or nil
+end
+
 local function _loadPickerModules()
     local ok_api, Api = pcall(require, "hardcover/lib/hardcover_api")
     if not ok_api or not Api then
@@ -1046,26 +1082,25 @@ end
 
 function Hardcover.getEmbeddedIdentifiers(book)
     if type(book) ~= "table" then return nil end
-    if type(book.identifiers) == "string" and book.identifiers ~= "" then
-        return book.identifiers
+    local book_ids = _identifierStringFromBook(book)
+
+    -- BookInfoManager commonly exposes ISBN / Hardcover work identifiers but
+    -- omits BookOrbit's HARDCOVER_EDITION OPF identifier. Always merge the raw
+    -- OPF identifiers once instead of returning the cached subset early.
+    local epub_ids
+    if book._bookshelf_epub_identifiers_read then
+        epub_ids = book._bookshelf_epub_identifiers
+    else
+        local ok_epub_ids, ids = pcall(_readEmbeddedIdentifiersFromEpub, book.filepath)
+        if ok_epub_ids and ids and ids ~= "" then epub_ids = ids end
+        book._bookshelf_epub_identifiers_read = true
+        book._bookshelf_epub_identifiers = epub_ids
     end
-    if type(book.identifiers) == "table" then
-        local parts = {}
-        for k, v in pairs(book.identifiers) do
-            if type(v) == "string" or type(v) == "number" then
-                parts[#parts + 1] = tostring(k) .. ":" .. tostring(v)
-            end
-        end
-        if #parts > 0 then
-            book.identifiers = table.concat(parts, "\n")
-            return book.identifiers
-        end
-    end
-    local ok_epub_ids, ids = pcall(_readEmbeddedIdentifiersFromEpub, book.filepath)
-    if not ok_epub_ids then ids = nil end
-    if ids and ids ~= "" then
-        book.identifiers = ids
-        return ids
+
+    local merged = _mergeIdentifierStrings(book_ids, epub_ids)
+    if merged and merged ~= "" then
+        book.identifiers = merged
+        return merged
     end
     return nil
 end
@@ -2196,5 +2231,10 @@ function Hardcover.enrichBook(book)
     Hardcover.applyMetadata(book)
     return book
 end
+
+Hardcover._test = {
+    extractIdentifiersFromOpf = _extractIdentifiersFromOpf,
+    mergeIdentifierStrings = _mergeIdentifierStrings,
+}
 
 return Hardcover

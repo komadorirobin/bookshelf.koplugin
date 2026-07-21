@@ -161,6 +161,35 @@ test("linkBook stores a Bookshelf-owned link", function()
     assert(link.title == "A Book", "missing title")
 end)
 
+test("embedded parser reads BookOrbit HARDCOVER_EDITION identifier", function()
+    reset()
+    local ids = Hardcover._test.extractIdentifiersFromOpf([[
+        <package xmlns:opf="http://www.idpf.org/2007/opf">
+            <metadata>
+                <dc:identifier opf:scheme="HARDCOVER">margarita-ett-minne</dc:identifier>
+                <dc:identifier opf:scheme="HARDCOVER_EDITION">32928527</dc:identifier>
+            </metadata>
+        </package>
+    ]])
+    assert(ids and ids:find("hardcover:margarita-ett-minne", 1, true),
+        "missing Hardcover work identifier: " .. tostring(ids))
+    assert(ids and ids:find("hardcover-edition:32928527", 1, true),
+        "missing BookOrbit edition identifier: " .. tostring(ids))
+end)
+
+test("embedded identifiers merge BIM ISBN with BookOrbit edition", function()
+    reset()
+    local ids = Hardcover._test.mergeIdentifierStrings(
+        "isbn13:9789127169937\nhardcover:cached-work",
+        "hardcover:cached-work\nhardcover-edition:32928527")
+    assert(ids and ids:find("isbn13:9789127169937", 1, true),
+        "missing cached ISBN: " .. tostring(ids))
+    assert(ids and ids:find("hardcover-edition:32928527", 1, true),
+        "missing EPUB edition id: " .. tostring(ids))
+    local _, duplicate_count = ids:gsub("hardcover:cached%-work", "")
+    assert(duplicate_count == 1, "duplicate work identifier in merge: " .. ids)
+end)
+
 test("enrichBook shows Hardcover cover/description only on an explicit flag", function()
     reset()
     -- /books/a.epub is linked via reset() (book_id 123, edition 456). Mutate
