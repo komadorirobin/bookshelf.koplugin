@@ -193,6 +193,9 @@ local _reader_prewarm_token = 0
 local _reader_prewarm_probe_token = 0
 local _reader_prewarm_explicit_file = nil
 local _reader_prewarm_explicit_until = 0
+local _home_prewarm_token = 0
+local HOME_PREWARM_STEP_S = 0.15
+local HOME_PREWARM_RESUME_IDLE_S = 2
 
 -- Close a TouchMenu we received as the first callback argument. Used
 -- whenever a menu callback changes the visible UI layer (e.g. opens or
@@ -793,6 +796,12 @@ function Bookshelf:show(profile_key)
     -- splits paint + deferred shelf reload.
     local diag_t0 = _gettime()
     local diag_branch
+    -- Opening Bookshelf wins immediately over any remaining headless Home
+    -- cache jobs. Work already completed stays useful in the shared caches.
+    _home_prewarm_token = _home_prewarm_token + 1
+    if profile_key == "prose" or profile_key == "comics" then
+        BookshelfSettings.saveDeferred("home_prewarm_last_profile", profile_key)
+    end
     -- Backstop for issue #172: an intentional shelf show must always paint, so
     -- lift any leftover transition-paint suppression on the live widget.
     if _live_widget then _live_widget._suppress_transition_paint = false end
@@ -1748,6 +1757,113 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
     end
 
     UIManager:scheduleIn(0.5, function() probe(0) end)
+    return true
+end
+
+-- SimpleUI Home does not reveal which profile will be opened next. Warm both
+-- profiles' shared code/index/metadata caches after Home has gone idle, while
+-- keeping all work cancellable between individual cover/sidecar jobs.
+function Bookshelf:onPrepareBookshelfHome(payload)
+    if not BookshelfSettings.nilOrTrue("simpleui_home_prewarm") then return false end
+    if type(payload) ~= "table" then return false end
+
+    _home_prewarm_token = _home_prewarm_token + 1
+    local token = _home_prewarm_token
+    local last = BookshelfSettings.read("home_prewarm_last_profile")
+    local ok_warm, Warm = pcall(require, "lib/bookshelf_home_prewarm")
+    if not ok_warm or not Warm then
+        logger.warn("[bookshelf] SimpleUI Home preload module failed: "
+            .. tostring(Warm))
+        return false
+    end
+
+    local queue = { { kind = "load_widget" } }
+    for _, profile_key in ipairs(Warm.profileOrder(last)) do
+        queue[#queue + 1] = { kind = "profile", profile_key = profile_key }
+    end
+    local counters = { profiles = 0, jobs = 0, failed = 0 }
+    local started = _gettime()
+
+    local function releasePending(current)
+        Warm.releaseJob(current)
+        for _, pending in ipairs(queue) do Warm.releaseJob(pending) end
+        queue = {}
+    end
+
+    local function alive()
+        if _home_prewarm_token ~= token then return false end
+        if type(payload.is_alive) ~= "function" then return true end
+        local ok, yes = pcall(payload.is_alive)
+        return ok and yes == true
+    end
+
+    local function active()
+        if type(payload.is_active) ~= "function" then return true end
+        local ok, yes = pcall(payload.is_active)
+        return ok and yes == true
+    end
+
+    local function lastInput()
+        if type(payload.last_input_at) ~= "function" then return 0 end
+        local ok, value = pcall(payload.last_input_at)
+        return ok and tonumber(value) or 0
+    end
+
+    local step
+    step = function()
+        if not alive() then
+            releasePending()
+            return
+        end
+        if not BookshelfSettings.nilOrTrue("simpleui_home_prewarm") then
+            releasePending()
+            return
+        end
+        local idle = _gettime() - lastInput()
+        if not active() or idle < HOME_PREWARM_RESUME_IDLE_S then
+            UIManager:scheduleIn(0.5, step)
+            return
+        end
+
+        local job = table.remove(queue, 1)
+        if not job then
+            logger.dbg(string.format(
+                "[bookshelf perf] SimpleUI Home preload done: %.0fms profiles=%d jobs=%d failed=%d",
+                (_gettime() - started) * 1000, counters.profiles,
+                counters.jobs, counters.failed))
+            return
+        end
+
+        local ok, follow_or_err = pcall(function()
+            if job.kind == "load_widget" then
+                require("lib/bookshelf_widget")
+                return {}
+            end
+            if job.kind == "profile" then
+                local follow, chip = Warm.fetchProfile(job.profile_key)
+                counters.profiles = counters.profiles + 1
+                logger.dbg("[bookshelf perf] SimpleUI Home preload profile="
+                    .. tostring(job.profile_key) .. " chip=" .. tostring(chip)
+                    .. " jobs=" .. tostring(#follow))
+                return follow
+            end
+            counters.jobs = counters.jobs + 1
+            return Warm.runJob(job)
+        end)
+        if not ok then
+            Warm.releaseJob(job)
+            counters.failed = counters.failed + 1
+            logger.warn("[bookshelf] SimpleUI Home preload job failed: "
+                .. tostring(follow_or_err))
+        elseif type(follow_or_err) == "table" then
+            for _, follow in ipairs(follow_or_err) do
+                queue[#queue + 1] = follow
+            end
+        end
+        UIManager:scheduleIn(HOME_PREWARM_STEP_S, step)
+    end
+
+    UIManager:scheduleIn(HOME_PREWARM_STEP_S, step)
     return true
 end
 

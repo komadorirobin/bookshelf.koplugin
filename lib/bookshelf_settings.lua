@@ -2378,6 +2378,21 @@ function Settings:_performanceSubItems()
             end,
         },
         {
+            text = _("Preload Bookshelf on SimpleUI Home (beta)"),
+            help_text = _("After the SimpleUI Home screen has been idle, warm "
+                .. "Bookshelf's shared code, sorting and metadata caches for "
+                .. "both Books and Comics. No hidden Bookshelf screen is "
+                .. "created. Work pauses on input and stops when Home is left."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("simpleui_home_prewarm")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.nilOrTrue("simpleui_home_prewarm")
+                BookshelfSettings.save("simpleui_home_prewarm", not enabled)
+            end,
+        },
+        {
             text = _("Pre-warm chip cache"),
             help_text = _("Warms each chip's data in the background shortly"
                 .. " after launch so switching chips is instant. On a large"
@@ -3949,6 +3964,7 @@ function Settings:_updateSubItems()
         local b = currentBranch()
         if b == "" then return _("Stable release") end
         if b == "master" then return _("Master branch") end
+        if b == "beta" then return _("Beta branch") end
         if b == "test/simpleui-official-footer" then
             return _("Test branch") .. ": SimpleUI official footer"
         end
@@ -3958,6 +3974,7 @@ function Settings:_updateSubItems()
         local choices = {
             { label = _("Stable release"), branch = "" },
             { label = _("Master branch"), branch = "master" },
+            { label = _("Beta branch"), branch = "beta" },
             {
                 label = _("Test branch") .. ": SimpleUI official footer",
                 branch = "test/simpleui-official-footer",
