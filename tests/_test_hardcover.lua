@@ -193,6 +193,50 @@ test("embedded parser reads BookOrbit HARDCOVER_EDITION identifier", function()
         "missing BookOrbit edition identifier: " .. tostring(ids))
 end)
 
+test("bulk edition parser ignores non-edition identifiers", function()
+    reset()
+    local parse = Hardcover._test.embeddedEditionIdFromIdentifiers
+    assert(parse("isbn13:9789113131061\nhardcover:forbidden-notebook-1952") == nil,
+        "ISBN or work slug was accepted as an edition")
+    assert(parse("hardcover-edition-id:33075065") == 33075065,
+        "edition id was not parsed")
+end)
+
+test("bulk edition relink detects missing, wrong and correct links", function()
+    reset()
+    local original = Hardcover.getEmbeddedIdentifiers
+    Hardcover.getEmbeddedIdentifiers = function()
+        return "hardcover:forbidden-notebook-1952\nhardcover-edition:33075065"
+    end
+    local needs, edition = Hardcover.needsEmbeddedEditionRelink({}, nil)
+    assert(needs == true and edition == 33075065, "unlinked edition was skipped")
+    needs = Hardcover.needsEmbeddedEditionRelink({}, { edition_id = 123 })
+    assert(needs == true, "wrong existing edition was not selected for repair")
+    needs = Hardcover.needsEmbeddedEditionRelink({}, { edition_id = "33075065" })
+    assert(needs == false, "correct existing edition was selected for repair")
+    Hardcover.getEmbeddedIdentifiers = function() return "isbn13:9789113131061" end
+    assert(Hardcover.needsEmbeddedEditionRelink({}, nil) == nil,
+        "book without edition id was not skipped")
+    Hardcover.getEmbeddedIdentifiers = original
+end)
+
+test("strict edition resolver rejects a parent-work fallback", function()
+    reset()
+    local modules = {
+        Api = {
+            query = function() return nil end,
+            hydrateBookFromEdition = function()
+                return { book_id = 9876, edition_id = 123 }
+            end,
+            findBookByIdentifiers = function()
+                return { book_id = 9876, title = "Forbidden Notebook" }
+            end,
+        },
+    }
+    assert(Hardcover._test.findExactEdition(modules, 33075065, 42) == nil,
+        "strict resolver accepted a different or missing edition")
+end)
+
 test("embedded identifiers merge BIM ISBN with BookOrbit edition", function()
     reset()
     local ids = Hardcover._test.mergeIdentifierStrings(

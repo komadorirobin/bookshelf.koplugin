@@ -1787,7 +1787,7 @@ function Settings:_hardcoverSubItems()
         UIManager:nextTick(step)
     end
 
-    local function autoLinkAll(touchmenu_instance, relink_exact)
+    local function autoLinkAll(touchmenu_instance)
         local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
         if not ok_hc or not Hardcover
                 or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
@@ -1795,27 +1795,16 @@ function Settings:_hardcoverSubItems()
             return
         end
         local Repo = require("lib/bookshelf_book_repository")
-        local filepaths = Repo.getAllFilepaths() or {}
-        -- Normal auto-link only considers unlinked books. Repair mode includes
-        -- every book, but its exact-only scan leaves files without embedded
-        -- identifiers untouched.
-        local candidates = {}
-        for _i, fp in ipairs(filepaths) do
-            if relink_exact or not Hardcover.getLink(fp) then
-                candidates[#candidates + 1] = fp
-            end
-        end
+        local candidates = Repo.getAllFilepaths() or {}
         local total = #candidates
         if total == 0 then
-            notify(relink_exact and _("No books to repair.")
-                or _("No unlinked books to auto-link."))
+            notify(_("No books to scan."))
             return
         end
 
         -- ~2 Hardcover calls per processed book (resolve/search, then fetch
         -- details), so pace at ~2.5s/book to stay under the ~60/min API limit.
         local RATE = 2.5
-        local est_min = math.max(1, math.ceil(total * RATE / 60))
 
         -- Display name for the report: prefer the book's title, fall back to a
         -- de-extensioned filename.
@@ -1826,26 +1815,29 @@ function Settings:_hardcoverSubItems()
             return (fp:match("([^/]+)$") or fp):gsub("%.[^%.]+$", "")
         end
 
-        local function showReport(st, best_guess)
+        local function showReport(st)
             local ok_tok, Tokens = pcall(require, "lib/bookshelf_tokens")
             if not ok_tok or not Tokens or not Tokens.autoLinkReportHtml then return end
             local Screen = require("device").screen
             UIManager:show(require("lib/bookshelf_reviews_modal"):new{
                 title     = _("Auto-link report"),
                 html_body = Tokens.autoLinkReportHtml{
-                    best_guess = best_guess,
                     cancelled  = st.cancelled,
                     linked     = st.linked_list or {},
                     nomatch    = st.nomatch_list or {},
                     no_id      = st.no_id or 0,
                     errors     = st.errors or 0,
+                    new_links      = st.new_links or 0,
+                    corrected      = st.corrected or 0,
+                    already_correct = st.already_correct or 0,
+                    edition_only   = true,
                 },
                 width  = math.floor(Screen:getWidth() * 0.92),
                 height = math.floor(Screen:getHeight() * 0.86),
             })
         end
 
-        local function run(best_guess)
+        local function run()
             if touchmenu_instance then UIManager:close(touchmenu_instance) end
             runPacedScan{
                 items = candidates,
@@ -1853,45 +1845,30 @@ function Settings:_hardcoverSubItems()
                 step = function(fp, st)
                     st.linked_list  = st.linked_list  or {}
                     st.nomatch_list = st.nomatch_list or {}
-                    if best_guess and not relink_exact then
-                        -- Needs title/author, so build the record first, then
-                        -- search Hardcover and score the hits.
-                        local meta = (Repo.buildBookMeta and Repo.buildBookMeta(fp))
-                                     or { filepath = fp }
-                        local ok_call, linked_ok, details =
-                            pcall(Hardcover.bestGuessLink, meta)
-                        if ok_call and linked_ok then
-                            st.linked = (st.linked or 0) + 1
-                            pcall(Hardcover.refreshBook, meta, {})
-                            local d = type(details) == "table" and details or {}
-                            local score
-                            if tonumber(d.title_score) and tonumber(d.author_score) then
-                                score = math.floor((d.title_score + d.author_score) / 2 + 0.5)
-                            end
-                            st.linked_list[#st.linked_list + 1] = {
-                                name = nameFor(fp, meta), matched = d.title,
-                                author = d.author, score = score,
-                            }
-                        else
-                            st.no_match = (st.no_match or 0) + 1
-                            st.nomatch_list[#st.nomatch_list + 1] = { name = nameFor(fp, meta) }
-                        end
-                        return true
-                    end
-                    -- Exact: embedded ISBN / Hardcover id only.
                     local book = { filepath = fp }
-                    local ids = Hardcover.getEmbeddedIdentifiers
-                                and Hardcover.getEmbeddedIdentifiers(book)
-                    if not ids then
+                    local existing = Hardcover.getLink(fp)
+                    local needs_relink, edition_id =
+                        Hardcover.needsEmbeddedEditionRelink(book, existing)
+                    if needs_relink == nil then
                         st.no_id = (st.no_id or 0) + 1
                         return false  -- no network, next tick immediately
                     end
+                    if not needs_relink then
+                        st.already_correct = (st.already_correct or 0) + 1
+                        return false
+                    end
+
                     local ok_call, linked_ok, hc =
-                        pcall(Hardcover.linkFromEmbeddedIdentifiers, book)
+                        pcall(Hardcover.linkFromEmbeddedEditionId, book)
                     if not ok_call then
                         st.errors = (st.errors or 0) + 1
                     elseif linked_ok then
                         st.linked = (st.linked or 0) + 1
+                        if existing then
+                            st.corrected = (st.corrected or 0) + 1
+                        else
+                            st.new_links = (st.new_links or 0) + 1
+                        end
                         -- Fetch details + apply the cover/description decision
                         -- now, so the book is fully populated in one pass.
                         local meta = (Repo.buildBookMeta and Repo.buildBookMeta(fp))
@@ -1900,6 +1877,7 @@ function Settings:_hardcoverSubItems()
                         st.linked_list[#st.linked_list + 1] = {
                             name = nameFor(fp, meta),
                             matched = type(hc) == "table" and hc.title or nil,
+                            action = existing and "corrected" or "linked",
                         }
                     else
                         st.no_match = (st.no_match or 0) + 1
@@ -1908,87 +1886,29 @@ function Settings:_hardcoverSubItems()
                     return true
                 end,
                 progress = function(st, n)
-                    local message = relink_exact
-                        and _("Repairing Hardcover links…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)")
-                        or _("Auto-linking from Hardcover…\n\n%1 / %2 checked  ·  %3 linked\n\n(tap to cancel)")
+                    local message = _("Auto-linking Hardcover editions…\n\n%1 / %2 checked  ·  %3 updated\n\n(tap to cancel)")
                     return T(message, tostring(st.i), tostring(n),
                              tostring(st.linked or 0))
                 end,
                 on_finish = function(st)
                     if (st.linked or 0) > 0 then
-                        markDirty(relink_exact and "hardcover-relink-exact"
-                            or "hardcover-auto-link-all")
+                        markDirty("hardcover-auto-link-editions")
                     end
-                    showReport(st, best_guess)
+                    showReport(st)
                 end,
             }
         end
 
-        -- Mode picker: exact (embedded id, fast) vs best guess (title/author
-        -- full-text search + fuzzy match, slower but catches books with no id).
-        local ButtonDialog = require("ui/widget/buttondialog")
-        local dialog
-        local title = relink_exact
-            and T(_("Repair Hardcover links for up to %1 book(s)?\n\nBooks with an embedded edition ID or ISBN are linked again. Existing links may be replaced. Contacts Hardcover (rate-limited), up to ~%2 min. Cancellable, with a report at the end."),
-                  tostring(total), tostring(est_min))
-            or T(_("Auto-link %1 unlinked book(s)?\n\nContacts Hardcover (rate-limited), up to ~%2 min. Cancellable, with a report at the end."),
-                 tostring(total), tostring(est_min))
-        local buttons
-        if relink_exact then
-            buttons = {
-                {{
-                    text = _("Repair exact links"),
-                    callback = function() UIManager:close(dialog); run(false) end,
-                }},
-                {{
-                    text = _("Cancel"),
-                    callback = function() UIManager:close(dialog) end,
-                }},
-            }
-        else
-            buttons = {
-                {{
-                    text = _("Exact match (ISBN / Hardcover id)"),
-                    callback = function() UIManager:close(dialog); run(false) end,
-                }},
-                {{
-                    text = _("Best guess (title & author)"),
-                    callback = function() UIManager:close(dialog); run(true) end,
-                }},
-                {{
-                    text = _("Cancel"),
-                    callback = function() UIManager:close(dialog) end,
-                }},
-            }
-        end
-        dialog = ButtonDialog:new{
-            title = title,
-            title_align = "center",
-            buttons = buttons,
-        }
-        UIManager:show(dialog)
-    end
-
-    local function chooseAutoLinkScope(touchmenu_instance)
         local ButtonDialog = require("ui/widget/buttondialog")
         local dialog
         dialog = ButtonDialog:new{
-            title = _("Which books should be auto-linked?"),
+            title = T(_("Scan %1 book(s) for embedded Hardcover edition IDs?\n\nBooks without an edition ID are skipped. Unlinked books are linked, and existing links are corrected when they point to another edition. Hardcover is contacted only for books that need updating. Cancellable, with a report at the end."),
+                tostring(total)),
             title_align = "center",
             buttons = {
                 {{
-                    text = _("Only unlinked books"),
-                    callback = function()
-                        UIManager:close(dialog)
-                        autoLinkAll(touchmenu_instance, false)
-                    end,
-                }},
-                {{
-                    text = _("Include already linked books"),
-                    callback = function()
-                        UIManager:close(dialog)
-                        autoLinkAll(touchmenu_instance, true)
-                    end,
+                    text = _("Auto-link editions"),
+                    callback = function() UIManager:close(dialog); run() end,
                 }},
                 {{
                     text = _("Cancel"),
@@ -2017,14 +1937,14 @@ function Settings:_hardcoverSubItems()
         {
             -- Primary action: the first thing a new Hardcover user wants is to
             -- link their library, so it sits at the top.
-            text = _("Auto-link all books"),
-            help_text = _("Scan the library and link books to Hardcover, fetching each match's details (description, cover, rating) in the same pass. First choose whether to process only unlinked books or include existing links. Existing links are replaced only from exact embedded identifiers (edition ID, ISBN or Hardcover ID); unlinked books can also use Best guess. A report at the end lists exactly what was linked. Contacts Hardcover (rate-limited) with cancellable progress."),
+            text = _("Auto-link books with edition IDs"),
+            help_text = _("Scan the library for embedded Hardcover edition IDs. Books without one are skipped. Unlinked books are linked to that exact edition, while existing links are corrected if they point to a different edition. Correct links are left untouched. A report lists what changed. Contacts Hardcover only for books needing an update, with cancellable progress."),
             enabled_func = function()
                 local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
                 return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
             end,
             callback = function(touchmenu_instance)
-                chooseAutoLinkScope(touchmenu_instance)
+                autoLinkAll(touchmenu_instance)
             end,
         },
         {

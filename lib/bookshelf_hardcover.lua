@@ -1185,6 +1185,22 @@ local function _editionMatches(book, edition_id)
     return tostring(book.edition_id) == tostring(edition_id)
 end
 
+local function _embeddedEditionIdFromIdentifiers(identifiers)
+    if type(identifiers) ~= "string" or identifiers == "" then return nil end
+    for line in identifiers:lower():gmatch("[^\r\n]+") do
+        local key, value = line:match("^%s*([^:%s]+)%s*:%s*([^%s]+)")
+        if key and value then
+            key = key:gsub("_", "-")
+            if key == "hardcover-edition" or key == "hardcover-edition-id"
+                    or key == "hardcoveredition" or key == "hardcovereditionid" then
+                local digits = value:gsub("%D", "")
+                if digits ~= "" then return tonumber(digits) or digits end
+            end
+        end
+    end
+    return nil
+end
+
 -- hardcoverapp.koplugin 0.3.1's hydrateBookFromEdition query is malformed
 -- (`$id Int!` instead of `$id: Int!`). Resolve an embedded edition directly so
 -- a failed edition lookup cannot silently fall through to the work slug.
@@ -1237,28 +1253,32 @@ local function _queryExactEdition(modules, edition_id)
     }
 end
 
+local function _findExactEdition(modules, edition_id, user_id)
+    if not edition_id then return nil end
+    local book = _queryExactEdition(modules, edition_id)
+    if book then return book end
+
+    if type(modules.Api.hydrateBookFromEdition) == "function" then
+        local ok_hydrate, hydrated = pcall(
+            modules.Api.hydrateBookFromEdition, modules.Api,
+            tonumber(edition_id) or edition_id, user_id)
+        if ok_hydrate and _editionMatches(hydrated, edition_id) then
+            return hydrated
+        end
+    end
+
+    book = _lookupBookByIdentifiers(modules, { edition_id = edition_id }, user_id)
+    if _editionMatches(book, edition_id) then return book end
+    return nil
+end
+
 local function _findBookByIdentifiers(modules, identifiers, user_id)
     local parsed = _parseHardcoverIdentifiers(modules, identifiers)
     if not parsed then return nil end
 
     if parsed.edition_id then
-        local book = _queryExactEdition(modules, parsed.edition_id)
+        local book = _findExactEdition(modules, parsed.edition_id, user_id)
         if book then return book end
-
-        if type(modules.Api.hydrateBookFromEdition) == "function" then
-            local ok_hydrate, hydrated = pcall(
-                modules.Api.hydrateBookFromEdition, modules.Api,
-                tonumber(parsed.edition_id) or parsed.edition_id, user_id)
-            if ok_hydrate and _editionMatches(hydrated, parsed.edition_id) then
-                return hydrated
-            end
-        end
-
-        -- Pass the edition alone. Older clients may prioritise book_slug when
-        -- both are present; accepting that result links the parent work while
-        -- discarding BookOrbit's explicit edition choice.
-        book = _lookupBookByIdentifiers(modules, { edition_id = parsed.edition_id }, user_id)
-        if _editionMatches(book, parsed.edition_id) then return book end
     end
 
     -- ISBN usually resolves to the exact edition, while a Hardcover slug/id
@@ -1307,6 +1327,40 @@ function Hardcover.linkFromEmbeddedIdentifiers(book, opts)
     if not modules then return false, ctx_err end
     local hc_book = _findBookByIdentifiers(modules, identifiers, user_id)
     if not hc_book then return false, "No Hardcover match found for embedded identifier" end
+
+    local ok, link_err = Hardcover.linkBook(book.filepath, hc_book)
+    if not ok then return false, link_err end
+    if opts.on_linked then opts.on_linked(hc_book) end
+    return true, hc_book
+end
+
+function Hardcover.getEmbeddedEditionId(book)
+    return _embeddedEditionIdFromIdentifiers(Hardcover.getEmbeddedIdentifiers(book))
+end
+
+-- Returns nil when no explicit edition ID exists; otherwise returns whether
+-- the book needs linking/re-linking plus the embedded edition ID.
+function Hardcover.needsEmbeddedEditionRelink(book, link)
+    local edition_id = Hardcover.getEmbeddedEditionId(book)
+    if not edition_id then return nil end
+    local matches = type(link) == "table" and link.edition_id ~= nil
+        and tostring(link.edition_id) == tostring(edition_id)
+    return not matches, edition_id
+end
+
+-- Strict bulk-link path: only an explicit embedded Hardcover edition ID is
+-- accepted. Unlike linkFromEmbeddedIdentifiers, this never falls back to ISBN,
+-- work slug or title matching when the requested edition cannot be resolved.
+function Hardcover.linkFromEmbeddedEditionId(book, opts)
+    opts = opts or {}
+    if not (book and book.filepath) then return false, "Missing local book" end
+    local edition_id = Hardcover.getEmbeddedEditionId(book)
+    if not edition_id then return false, "No embedded Hardcover edition ID found" end
+
+    local modules, _settings, user_id, ctx_err = _openPickerContext()
+    if not modules then return false, ctx_err end
+    local hc_book = _findExactEdition(modules, edition_id, user_id)
+    if not hc_book then return false, "No Hardcover match found for embedded edition ID" end
 
     local ok, link_err = Hardcover.linkBook(book.filepath, hc_book)
     if not ok then return false, link_err end
@@ -2314,7 +2368,9 @@ function Hardcover.enrichBook(book)
 end
 
 Hardcover._test = {
+    embeddedEditionIdFromIdentifiers = _embeddedEditionIdFromIdentifiers,
     extractIdentifiersFromOpf = _extractIdentifiersFromOpf,
+    findExactEdition = _findExactEdition,
     findBookByIdentifiers = _findBookByIdentifiers,
     mergeIdentifierStrings = _mergeIdentifierStrings,
 }

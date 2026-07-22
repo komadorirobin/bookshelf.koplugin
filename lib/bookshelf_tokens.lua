@@ -554,10 +554,20 @@ function Tokens.autoLinkReportHtml(data)
         or "Auto-link report") .. "</h1>"
 
     -- Summary line.
-    local summary = { string.format("Linked %d", #linked) }
+    local summary
+    if data.edition_only then
+        summary = {
+            string.format("New links %d", tonumber(data.new_links) or 0),
+            string.format("Corrected %d", tonumber(data.corrected) or 0),
+            string.format("Already correct %d", tonumber(data.already_correct) or 0),
+        }
+    else
+        summary = { string.format("Linked %d", #linked) }
+    end
     summary[#summary + 1] = string.format("Not matched %d", #nomatch)
     if not data.best_guess and tonumber(data.no_id) and data.no_id > 0 then
-        summary[#summary + 1] = string.format("No identifier %d", data.no_id)
+        summary[#summary + 1] = string.format(data.edition_only
+            and "No edition ID %d" or "No identifier %d", data.no_id)
     end
     if tonumber(data.errors) and data.errors > 0 then
         summary[#summary + 1] = string.format("Errors %d", data.errors)
@@ -566,7 +576,8 @@ function Tokens.autoLinkReportHtml(data)
 
     -- Linked: one line per book, local name -> matched Hardcover title/author.
     out[#out + 1] = "<hr/>"
-    out[#out + 1] = string.format("<p><b>Linked (%d)</b></p>", #linked)
+    out[#out + 1] = string.format("<p><b>%s (%d)</b></p>",
+        data.edition_only and "Updated" or "Linked", #linked)
     if #linked == 0 then
         out[#out + 1] = "<p>Nothing linked.</p>"
     else
@@ -574,6 +585,9 @@ function Tokens.autoLinkReportHtml(data)
         for _, e in ipairs(linked) do
             local line = "<b>" .. _escHtml(e.name or "?") .. "</b>" .. ARROW
                 .. _escHtml(e.matched or "?")
+            if data.edition_only and e.action == "corrected" then
+                line = line .. DOT .. "corrected edition"
+            end
             if e.author and e.author ~= "" then
                 line = line .. " \xE2\x80\x94 " .. _escHtml(e.author)  -- em dash
             end
@@ -600,9 +614,15 @@ function Tokens.autoLinkReportHtml(data)
     -- No identifier: a single count line (exact mode only).
     if not data.best_guess and tonumber(data.no_id) and data.no_id > 0 then
         out[#out + 1] = "<hr/>"
-        out[#out + 1] = string.format(
-            "<p><b>No identifier (%d)</b><br/>Skipped -- no ISBN or Hardcover id embedded. Use Best guess or Manual link for these.</p>",
-            data.no_id)
+        if data.edition_only then
+            out[#out + 1] = string.format(
+                "<p><b>No edition ID (%d)</b><br/>Skipped -- no Hardcover edition ID is embedded.</p>",
+                data.no_id)
+        else
+            out[#out + 1] = string.format(
+                "<p><b>No identifier (%d)</b><br/>Skipped -- no ISBN or Hardcover id embedded. Use Best guess or Manual link for these.</p>",
+                data.no_id)
+        end
     end
 
     return table.concat(out, "\n")

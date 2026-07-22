@@ -484,6 +484,24 @@ test("autoLinkReportHtml: best-guess shows score and no no-id section", function
     assert(not html:find("No identifier"), "no-id section should be absent in best-guess mode")
 end)
 
+test("autoLinkReportHtml: edition-only report separates corrected links", function()
+    local html = Tokens.autoLinkReportHtml{
+        edition_only = true,
+        new_links = 2,
+        corrected = 1,
+        already_correct = 4,
+        no_id = 7,
+        linked = {
+            { name = "Wrong edition", matched = "Right edition", action = "corrected" },
+        },
+    }
+    assert(html:find("New links 2", 1, true), "new-link count missing")
+    assert(html:find("Corrected 1", 1, true), "corrected count missing")
+    assert(html:find("Already correct 4", 1, true), "correct-link count missing")
+    assert(html:find("No edition ID (7)", 1, true), "edition-id skip count missing")
+    assert(html:find("corrected edition", 1, true), "corrected entry marker missing")
+end)
+
 test("autoLinkReportHtml: escapes HTML in names/titles", function()
     local html = Tokens.autoLinkReportHtml{
         best_guess = false,
