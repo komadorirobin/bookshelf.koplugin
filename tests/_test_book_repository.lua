@@ -1328,6 +1328,29 @@ test("getReadingStatus: detects complete and in-progress books", function()
     assert(new == nil, "expected no status for unopened book")
 end)
 
+test("seedLiveProgress: replaces stale percent without sidecar I/O", function()
+    local fp = "/live.epub"
+    Repo.invalidateProgressCache(fp)
+    _G._test_docsettings_data = {
+        [fp] = {
+            percent_finished = 0.2,
+            summary = { status = "reading", rating = 4 },
+            stats = { pages = 321 },
+        },
+    }
+    local old_pct, _old_status, old_rating, old_pages = Repo.readProgress(fp)
+    assert(old_pct == 0.2 and old_rating == 4 and old_pages == 321)
+
+    -- Nil fields retain useful cached values; only the live percentage and
+    -- status change before ReaderUI eventually flushes the real sidecar.
+    Repo.seedLiveProgress(fp, 0.75, "complete", nil, nil)
+    local pct, status, rating, pages = Repo.readProgress(fp)
+    assert(pct == 0.75, "expected live percent, got " .. tostring(pct))
+    assert(status == "finished", "expected normalised status, got " .. tostring(status))
+    assert(rating == 4, "expected cached rating to survive")
+    assert(pages == 321, "expected cached page count to survive")
+end)
+
 test("getSortKey: returns saved setting when valid", function()
     _G._test_settings = { bookshelf_sort_authors = "book_count" }
     assert(Repo.getSortKey("authors") == "book_count")

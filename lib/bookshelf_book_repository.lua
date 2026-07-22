@@ -1714,6 +1714,41 @@ function Repo.invalidateProgressCache(filepath)
     end
 end
 
+-- Seed the short-lived progress cache from a live ReaderUI without flushing
+-- the document sidecar. Hot reader parking uses this immediately after the
+-- shelf is raised: ReaderUI:saveSettings() also writes the archive, document
+-- settings and global settings synchronously, which can leave an already
+-- visible shelf unable to accept input for several seconds.
+--
+-- Missing fields retain their previous cached values. The real ReaderUI close
+-- still persists everything later; this is only the in-memory bridge that
+-- keeps the visible shelf current until then.
+function Repo.seedLiveProgress(filepath, pct, status, rating, page_count)
+    if not filepath then return end
+    local previous = _progress_cache[filepath] or {}
+    pct        = tonumber(pct)        or previous.pct
+    rating     = tonumber(rating)     or previous.rating
+    page_count = tonumber(page_count) or previous.page_count
+    status     = status or previous.status
+    if     status == "complete"  then status = "finished"
+    elseif status == "abandoned" then status = "on_hold"
+    end
+    _progress_cache[filepath] = {
+        pct        = pct,
+        status     = status,
+        rating     = rating,
+        page_count = page_count,
+        expires_at = os.time() + PROGRESS_CACHE_TTL,
+    }
+    _sidecar_memo[filepath] = nil
+    for _key, entry in pairs(_light_meta_cache) do
+        if entry and entry.map then
+            local rec = entry.map[filepath]
+            if rec then _resetLightMetaProgress(rec) end
+        end
+    end
+end
+
 -- invalidateBookCache -- nil all per-chip result caches so the next chip
 -- rebuild fetches + sorts fresh data. Does NOT touch the walk cache (file
 -- system scan), the light-meta cache (SQLite batch), the BIM cover cache,

@@ -275,26 +275,40 @@ function Park.park(plugin, widget)
     local file = rui.document.file
     UIManager:nextTick(function()
         if _parked ~= rui then return end -- real-closed in the gap
-        -- Flush progress so a crash while parked loses nothing AND the
-        -- shelf refresh below reads fresh percent/status from the sidecar.
-        pcall(function() rui:saveSettings() end)
-        -- Parity with ReaderUI:onClose's cache write so KOReader's own
-        -- lists (History, CoverBrowser) do not show stale progress while
-        -- the book is parked. pcall'd: BookList differs across versions.
+        -- Snapshot the live progress in memory only. ReaderUI:saveSettings()
+        -- is deliberately NOT called here: it synchronously flushes every
+        -- reader module, the document archive, sidecar and global settings.
+        -- Running that after the shelf has painted made the visible UI reject
+        -- input for the same several seconds the old close path consumed.
+        local pct, status, rating, page_count
         pcall(function()
-            local BookList = require("ui/widget/booklist")
-            BookList.setBookInfoCacheProperty(file, "percent_finished",
-                rui.doc_settings:readSetting("percent_finished"))
+            pct = rui.view and rui.view.footer
+                and rui.view.footer.percent_finished
+                or rui.doc_settings:readSetting("percent_finished")
+            local summary = rui.doc_settings:readSetting("summary")
+            if type(summary) == "table" then
+                status = summary.status
+                rating = summary.rating
+            end
+            page_count = rui.doc_settings:readSetting("pagemap_doc_pages")
         end)
         -- The invalidations Bookshelf:onCloseDocument performs on a real
-        -- close: this file's stats/progress changed, and read-state
-        -- sorted chips (Recent) hold a stale cached order.
+        -- close, except progress is replaced by the live snapshot instead of
+        -- being re-read from the not-yet-flushed sidecar.
         local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
         if ok_repo and Repo then
             if Repo.invalidateStatsCache then Repo.invalidateStatsCache(file) end
-            if Repo.invalidateProgressCache then Repo.invalidateProgressCache(file) end
+            if Repo.seedLiveProgress then
+                Repo.seedLiveProgress(file, pct, status, rating, page_count)
+            end
             if Repo.invalidateReadStateCache then Repo.invalidateReadStateCache() end
         end
+        -- Parity with ReaderUI:onClose's cache write so KOReader's own lists
+        -- show the live percentage while the document remains parked.
+        pcall(function()
+            local BookList = require("ui/widget/booklist")
+            BookList.setBookInfoCacheProperty(file, "percent_finished", pct)
+        end)
         -- Do not call plugin:show() while ReaderUI is still alive underneath.
         -- That enters BookshelfWidget:softRefresh while the reader owns the
         -- document/screen state and has caused close-gesture crashes on real

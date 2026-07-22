@@ -69,6 +69,9 @@ package.loaded["ui/widget/infomessage"] = {
 package.loaded["lib/bookshelf_book_repository"] = {
     invalidateStatsCache     = function(fp) repo_calls[#repo_calls + 1] = "stats:" .. fp end,
     invalidateProgressCache  = function(fp) repo_calls[#repo_calls + 1] = "progress:" .. tostring(fp) end,
+    seedLiveProgress         = function(fp, pct)
+        repo_calls[#repo_calls + 1] = "seed:" .. fp .. ":" .. tostring(pct)
+    end,
     invalidateReadStateCache = function() repo_calls[#repo_calls + 1] = "readstate" end,
 }
 package.loaded["ui/widget/booklist"] = {
@@ -165,11 +168,15 @@ t.test("successful park: chrome closed, shelf raised, state set", function()
     -- Deferred work has not run yet
     assert(rui.saved == false and plugin.shown == false)
     drainTicks()
-    assert(rui.saved, "expected saveSettings flush on the tick")
+    assert(rui.saved == false,
+        "parking must not block the UI with ReaderUI:saveSettings")
     assert(plugin.shown == false,
         "park must not refresh Bookshelf while ReaderUI is still alive")
     local seen = table.concat(repo_calls, ",")
     assert(seen:find("stats:/books/a%.epub"), "stats invalidation: " .. seen)
+    assert(seen:find("seed:/books/a%.epub:0%.42"), "live progress seed: " .. seen)
+    assert(not seen:find("progress:/books/a%.epub"),
+        "must not re-read the stale sidecar: " .. seen)
     assert(seen:find("readstate"), "read-state invalidation: " .. seen)
 end)
 
@@ -269,7 +276,7 @@ local function parkFixture()
     plugin._widget = shelf_widget
     UIManager._window_stack = { { widget = rui }, { widget = shelf_widget } }
     assert(Park.park(plugin) == true)
-    drainTicks() -- park's settings/cache flush tick
+    drainTicks() -- park's lightweight in-memory cache snapshot
     plugin.raised, plugin.shown = false, false
     return rui, plugin, shelf_widget
 end
