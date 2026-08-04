@@ -57,6 +57,12 @@ local Park = {}
 -- IDLE_FINISH_S + PROBE_EVERY_S after the last input.
 local IDLE_FINISH_S = 30
 local PROBE_EVERY_S = 10
+-- Raising the shelf can complete before the gesture that requested the close
+-- has fully drained. On fast devices that trailing tap/repeated dispatcher
+-- event may land on the just-closed book and immediately unpark it again.
+-- Only suppress that exact same-book reopen; all shelf navigation and opens of
+-- other books remain live during the transition.
+local SAME_BOOK_REOPEN_GUARD_S = 1.25
 
 -- The ReaderUI instance currently parked beneath the shelf, and the
 -- reader-context plugin instance that parked it (needed by the finish for
@@ -75,6 +81,7 @@ local _finishing_close = false
 -- Wall-clock time of the last user input anywhere (stamped by the
 -- sendEvent wrap below).
 local _last_input = 0
+local _same_book_reopen_after = 0
 
 function Park.enabled()
     return BookshelfSettings.nilOrTrue("hot_park")
@@ -102,6 +109,16 @@ function Park.parkedFile()
     return _parked.document and _parked.document.file or nil
 end
 
+-- True only during the short transition immediately after parking, and only
+-- for the document that is still alive underneath the shelf. Callers use this
+-- before an unpark so an input echo cannot turn a close into an instant reopen.
+function Park.sameBookReopenBlocked(filepath)
+    if not Park.isParked() then return false end
+    local parked_file = _parked.document and _parked.document.file or nil
+    if filepath and filepath ~= parked_file then return false end
+    return _gettime() < (_same_book_reopen_after or 0)
+end
+
 local function _cancelPendingProbe()
     if _pending_probe then
         UIManager:unschedule(_pending_probe)
@@ -114,6 +131,7 @@ end
 function Park.noteRealClose()
     _parked = nil
     _parked_plugin = nil
+    _same_book_reopen_after = 0
     _cancelPendingProbe()
 end
 
@@ -272,6 +290,7 @@ function Park.park(plugin, widget)
     _installInputStamp()
     -- Parking itself is user input for idle purposes.
     _last_input = _gettime()
+    _same_book_reopen_after = _last_input + SAME_BOOK_REOPEN_GUARD_S
     local file = rui.document.file
     UIManager:nextTick(function()
         if _parked ~= rui then return end -- real-closed in the gap
@@ -334,6 +353,7 @@ function Park.unpark(live_widget, after_open_callback)
     local rui = _parked
     _parked = nil
     _parked_plugin = nil
+    _same_book_reopen_after = 0
     _cancelPendingProbe()
     local stack = UIManager._window_stack
     if not stack then return false end

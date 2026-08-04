@@ -165,6 +165,10 @@ t.test("successful park: chrome closed, shelf raised, state set", function()
     assert(rui.events[2] == "CloseConfigMenu")
     assert(Park.isParked() == true)
     assert(Park.parkedFile() == "/books/a.epub")
+    assert(Park.sameBookReopenBlocked("/books/a.epub") == true,
+        "the just-parked book must be guarded from an input echo")
+    assert(Park.sameBookReopenBlocked("/books/b.epub") == false,
+        "other books must remain immediately openable")
     -- Deferred work has not run yet
     assert(rui.saved == false and plugin.shown == false)
     drainTicks()
@@ -233,6 +237,16 @@ end)
 
 print("--- Park.unpark ---")
 
+t.test("same-book reopen guard expires without blocking other books", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    ReaderUI.instance = rui
+    assert(Park.park(makePlugin(rui)) == true)
+    assert(Park.sameBookReopenBlocked("/books/a.epub") == true)
+    fake_now = fake_now + 1.3
+    assert(Park.sameBookReopenBlocked("/books/a.epub") == false)
+end)
+
 t.test("unpark splices the reader to the top and clears state", function()
     reset()
     local rui = makeRui("/books/a.epub")
@@ -244,6 +258,7 @@ t.test("unpark splices the reader to the top and clears state", function()
     }
     UIManager._window_stack = { { widget = rui }, { widget = shelf } }
     assert(Park.park(makePlugin(rui)) == true)
+    fake_now = fake_now + 1.3
     local cb_rui = nil
     assert(Park.unpark(shelf, function(r) cb_rui = r end) == true)
     assert(UIManager._window_stack[2].widget == rui, "reader must be topmost")
@@ -327,6 +342,7 @@ end)
 t.test("unpark cancels the probe", function()
     reset()
     local rui, _plugin, shelf = parkFixture()
+    fake_now = fake_now + 1.3
     assert(Park.unpark(shelf) == true)
     assert(#scheduled == 0, "unpark must unschedule the probe")
     fake_now = fake_now + 60

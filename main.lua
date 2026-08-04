@@ -2068,6 +2068,10 @@ function Bookshelf:onToggleBookshelf()
     -- toggle is an instant flip back into the book.
     local Park = require("lib/bookshelf_reader_park")
     if Park.isParked() then
+        if Park.sameBookReopenBlocked() then
+            logger.dbg("[bookshelf] ignored toggle echo during park transition")
+            return true
+        end
         Park.unpark(_live_widget)
         return true
     end
@@ -2147,7 +2151,9 @@ function Bookshelf:onSetBookshelf(visible)
     -- reader. "on" is a no-op; "off" returns to the parked book.
     local Park = require("lib/bookshelf_reader_park")
     if Park.isParked() then
-        if not visible then Park.unpark(_live_widget) end
+        if not visible and not Park.sameBookReopenBlocked() then
+            Park.unpark(_live_widget)
+        end
         return true
     end
     -- Same stack-shown ≠ visually-shown caveat as onToggleBookshelf. From
