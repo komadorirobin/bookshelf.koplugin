@@ -1,11 +1,14 @@
 -- Fixed library profiles used by external launchers such as SimpleUI.
 
+local ok_i18n, i18n = pcall(require, "lib/bookshelf_i18n")
+local _ = ok_i18n and i18n.gettext or function(text) return text end
+
 local Profiles = {}
 
 local PROFILE_DEFS = {
     prose = {
         key = "prose",
-        label = "Books",
+        label = _("Books"),
         folder_sort = {
             { key = "author_surname", reverse = false },
             { key = "title", reverse = false },
@@ -34,13 +37,13 @@ local PROFILE_DEFS = {
                 kind = "folder",
                 path = "/storage/emulated/0/ePubs/Lyrik",
             },
-            { key = "authors", label = "Authors", kind = "authors" },
-            { key = "latest", label = "Latest", kind = "latest" },
+            { key = "authors", label = _("Authors"), kind = "authors" },
+            { key = "latest", label = _("Latest"), kind = "latest" },
         },
     },
     comics = {
         key = "comics",
-        label = "Comics",
+        label = _("Comics"),
         folder_sort = {
             { key = "series_name", reverse = false },
             { key = "series_index", reverse = false },
@@ -63,9 +66,9 @@ local PROFILE_DEFS = {
                 kind = "folder",
                 path = "/storage/emulated/0/ePubs/Serier",
             },
-            { key = "next", label = "Next", kind = "next" },
-            { key = "authors", label = "Authors", kind = "authors" },
-            { key = "latest", label = "Latest", kind = "latest" },
+            { key = "next", label = _("Next"), kind = "next" },
+            { key = "authors", label = _("Authors"), kind = "authors" },
+            { key = "latest", label = _("Latest"), kind = "latest" },
         },
     },
 }

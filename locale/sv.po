@@ -1,0 +1,905 @@
+# Swedish translations for Bookshelf.
+# Copyright (C) 2026 Bookshelf contributors
+# This file is distributed under the same license as Bookshelf.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Bookshelf\n"
+"PO-Revision-Date: 2026-08-04 00:00+0200\n"
+"Last-Translator: Robin Bolinsson\n"
+"Language-Team: Swedish\n"
+"Language: sv\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# Profiles and chip bar
+msgid "Books"
+msgstr "Böcker"
+
+msgid "Comics"
+msgstr "Manga och serier"
+
+msgid "Home"
+msgstr "Hem"
+
+msgid "Home (folders)"
+msgstr "Hem (mappar)"
+
+msgid "Home (flattened)"
+msgstr "Hem (utan mappar)"
+
+msgid "Recent"
+msgstr "Senaste"
+
+msgid "Recently read"
+msgstr "Senast lästa"
+
+msgid "Latest"
+msgstr "Senaste"
+
+msgid "Latest added"
+msgstr "Senast tillagda"
+
+msgid "Next"
+msgstr "Nästa"
+
+msgid "Authors"
+msgstr "Författare"
+
+msgid "Author"
+msgstr "Författare"
+
+msgid "Author(s)"
+msgstr "Författare"
+
+msgid "Series"
+msgstr "Serier"
+
+msgid "Genres"
+msgstr "Genrer"
+
+msgid "Genre"
+msgstr "Genre"
+
+msgid "Collections"
+msgstr "Samlingar"
+
+msgid "Collection"
+msgstr "Samling"
+
+msgid "Formats"
+msgstr "Format"
+
+msgid "Format"
+msgstr "Format"
+
+msgid "Languages"
+msgstr "Språk"
+
+msgid "Language"
+msgstr "Språk"
+
+msgid "Tags"
+msgstr "Taggar"
+
+msgid "Favourites"
+msgstr "Favoriter"
+
+msgid "Favourite"
+msgstr "Favorit"
+
+msgid "Folder"
+msgstr "Mapp"
+
+msgid "Folders"
+msgstr "Mappar"
+
+msgid "Folder (flattened)"
+msgstr "Mapp (utan undermappar)"
+
+msgid "Specific folder…"
+msgstr "Specifik mapp…"
+
+msgid "Flattened folder…"
+msgstr "Mapp utan undermappar…"
+
+msgid "Specific series…"
+msgstr "Specifik serie…"
+
+msgid "Specific author…"
+msgstr "Specifik författare…"
+
+msgid "Specific genre…"
+msgstr "Specifik genre…"
+
+msgid "Specific collection…"
+msgstr "Specifik samling…"
+
+msgid "Specific format…"
+msgstr "Specifikt format…"
+
+msgid "Specific rating…"
+msgstr "Specifikt betyg…"
+
+msgid "Specific language…"
+msgstr "Specifikt språk…"
+
+msgid "Chip source"
+msgstr "Chipkälla"
+
+msgid "New chip"
+msgstr "Nytt chip"
+
+msgid "Chip label"
+msgstr "Chiptext"
+
+msgid "Edit chip"
+msgstr "Redigera chip"
+
+msgid "Reset chip bar to defaults"
+msgstr "Återställ chipbaren"
+
+msgid "+ Add new chip"
+msgstr "+ Lägg till chip"
+
+msgid "Flexible chip widths"
+msgstr "Flexibla chipbredder"
+
+# Reading status and filters
+msgid "All"
+msgstr "Alla"
+
+msgid "Any"
+msgstr "Alla"
+
+msgid "Unopened"
+msgstr "Oöppnade"
+
+msgid "Unread"
+msgstr "Olästa"
+
+msgid "Reading"
+msgstr "Pågående"
+
+msgid "In progress"
+msgstr "Pågående"
+
+msgid "On hold"
+msgstr "Pausade"
+
+msgid "Finished"
+msgstr "Färdiglästa"
+
+msgid "Reading status"
+msgstr "Lässtatus"
+
+msgid "Reading status filter"
+msgstr "Filtrera efter lässtatus"
+
+msgid "Series filter"
+msgstr "Filtrera efter serie"
+
+msgid "Genre filter"
+msgstr "Filtrera efter genre"
+
+msgid "Language filter"
+msgstr "Filtrera efter språk"
+
+msgid "Format filter"
+msgstr "Filtrera efter format"
+
+msgid "Rating filter"
+msgstr "Filtrera efter betyg"
+
+msgid "Collection filter"
+msgstr "Filtrera efter samling"
+
+msgid "Folder filter"
+msgstr "Mappfilter"
+
+msgid "Filter"
+msgstr "Filter"
+
+msgid "Filters"
+msgstr "Filter"
+
+msgid "Clear all filters"
+msgstr "Rensa alla filter"
+
+msgid "Add folder to include"
+msgstr "Lägg till mapp som ska ingå"
+
+msgid "Add folder to exclude"
+msgstr "Lägg till mapp som ska undantas"
+
+# Sorting and grouping
+msgid "Sort by"
+msgstr "Sortera efter"
+
+msgid "Clear sort"
+msgstr "Rensa sortering"
+
+msgid "Sort groups by"
+msgstr "Sortera grupper efter"
+
+msgid "Within each group, then by"
+msgstr "Inom varje grupp, därefter efter"
+
+msgid "Then by"
+msgstr "Därefter efter"
+
+msgid "Name"
+msgstr "Namn"
+
+msgid "Surname"
+msgstr "Efternamn"
+
+msgid "Title"
+msgstr "Titel"
+
+msgid "Filename"
+msgstr "Filnamn"
+
+msgid "Author (given name)"
+msgstr "Författare (förnamn)"
+
+msgid "Author surname"
+msgstr "Författarens efternamn"
+
+msgid "Series name"
+msgstr "Serienamn"
+
+msgid "Series #"
+msgstr "Del i serie"
+
+msgid "Series index"
+msgstr "Serieindex"
+
+msgid "Last opened"
+msgstr "Senast öppnade"
+
+msgid "Most recently read"
+msgstr "Senast lästa"
+
+msgid "Most recently added"
+msgstr "Senast tillagda"
+
+msgid "Date added"
+msgstr "Datum tillagd"
+
+msgid "File size"
+msgstr "Filstorlek"
+
+msgid "Page count"
+msgstr "Sidantal"
+
+msgid "Book count"
+msgstr "Antal böcker"
+
+msgid "Percent read"
+msgstr "Läst procent"
+
+msgid "First Last"
+msgstr "Förnamn Efternamn"
+
+msgid "Last, First"
+msgstr "Efternamn, Förnamn"
+
+msgid "Author name formatting"
+msgstr "Visning av författarnamn"
+
+# Common actions and dialogs
+msgid "Settings"
+msgstr "Inställningar"
+
+msgid "Updates"
+msgstr "Uppdateringar"
+
+msgid "About"
+msgstr "Om"
+
+msgid "Search"
+msgstr "Sök"
+
+msgid "Search…"
+msgstr "Sök…"
+
+msgid "Search results"
+msgstr "Sökresultat"
+
+msgid "Search library"
+msgstr "Sök i biblioteket"
+
+msgid "Open"
+msgstr "Öppna"
+
+msgid "Close"
+msgstr "Stäng"
+
+msgid "Cancel"
+msgstr "Avbryt"
+
+msgid "Save"
+msgstr "Spara"
+
+msgid "Apply"
+msgstr "Tillämpa"
+
+msgid "Accept"
+msgstr "Godkänn"
+
+msgid "Done"
+msgstr "Klar"
+
+msgid "Back"
+msgstr "Tillbaka"
+
+msgid "Add"
+msgstr "Lägg till"
+
+msgid "Add…"
+msgstr "Lägg till…"
+
+msgid "Remove"
+msgstr "Ta bort"
+
+msgid "Remove all"
+msgstr "Ta bort alla"
+
+msgid "Delete"
+msgstr "Radera"
+
+msgid "Edit"
+msgstr "Redigera"
+
+msgid "Rename"
+msgstr "Byt namn"
+
+msgid "Create"
+msgstr "Skapa"
+
+msgid "Select"
+msgstr "Välj"
+
+msgid "Clear"
+msgstr "Rensa"
+
+msgid "Reset"
+msgstr "Återställ"
+
+msgid "Default"
+msgstr "Standard"
+
+msgid "Help"
+msgstr "Hjälp"
+
+msgid "Unknown"
+msgstr "Okänd"
+
+msgid "None"
+msgstr "Ingen"
+
+msgid "(none)"
+msgstr "(ingen)"
+
+msgid "(Default)"
+msgstr "(standard)"
+
+msgid "Yes"
+msgstr "Ja"
+
+msgid "No"
+msgstr "Nej"
+
+# Pagination and library messages
+msgid "Page %1 of %2"
+msgstr "Sida %1 av %2"
+
+msgid "Page %d of %d"
+msgstr "Sida %d av %d"
+
+msgid "Page must be between 1 and %d"
+msgstr "Sidan måste vara mellan 1 och %d"
+
+msgid "Go to page"
+msgstr "Gå till sida"
+
+msgid "Go to letter"
+msgstr "Gå till bokstav"
+
+msgid "No items start with %q"
+msgstr "Inga poster börjar med %q"
+
+msgid "Selection cleared"
+msgstr "Markeringen rensades"
+
+msgid "No matches for \"%s\""
+msgstr "Inga träffar för \"%s\""
+
+msgid "Refreshing library…"
+msgstr "Uppdaterar biblioteket…"
+
+msgid "Preparing this book…"
+msgstr "Förbereder boken…"
+
+msgid "This book is still being prepared. Please try again in a moment."
+msgstr "Boken förbereds fortfarande. Försök igen om en liten stund."
+
+msgid "File no longer exists. The bookshelf entry is stale."
+msgstr "Filen finns inte längre. Biblioteksposten är inaktuell."
+
+msgid "No favourites yet · Long-press a book and tap 'Add to favourites'"
+msgstr "Inga favoriter ännu · Långtryck på en bok och välj Lägg till i favoriter"
+
+msgid "No books found · Set your library folder in Settings then tap Latest"
+msgstr "Inga böcker hittades · Ange biblioteksmapp i Inställningar och tryck sedan på Senaste"
+
+msgid "No recent reads yet · Open a book and it will appear here"
+msgstr "Inga nyligen lästa böcker ännu · Öppna en bok så visas den här"
+
+msgid "No books in %s yet"
+msgstr "Inga böcker i %s ännu"
+
+# Book menu and metadata
+msgid "Book"
+msgstr "Bok"
+
+msgid "Book detail"
+msgstr "Bokinformation"
+
+msgid "Description"
+msgstr "Beskrivning"
+
+msgid "Metadata"
+msgstr "Metadata"
+
+msgid "File & metadata"
+msgstr "Fil och metadata"
+
+msgid "Refresh metadata"
+msgstr "Uppdatera metadata"
+
+msgid "Metadata refresh queued"
+msgstr "Metadatauppdatering köad"
+
+msgid "Reset book data…"
+msgstr "Återställ bokdata…"
+
+msgid "Show info"
+msgstr "Visa information"
+
+msgid "Read"
+msgstr "Läst"
+
+msgid "Last read"
+msgstr "Senast läst"
+
+msgid "Your rating"
+msgstr "Ditt betyg"
+
+msgid "Rating"
+msgstr "Betyg"
+
+msgid "Unrated"
+msgstr "Ej betygsatt"
+
+msgid "Set rating"
+msgstr "Ange betyg"
+
+msgid "Add to all"
+msgstr "Lägg till i alla"
+
+msgid "Remove from all"
+msgstr "Ta bort från alla"
+
+msgid "Edit collections"
+msgstr "Redigera samlingar"
+
+msgid "Manage collections"
+msgstr "Hantera samlingar"
+
+msgid "New collection"
+msgstr "Ny samling"
+
+msgid "Rename collection"
+msgstr "Byt namn på samling"
+
+msgid "New tag"
+msgstr "Ny tagg"
+
+msgid "Edit tags"
+msgstr "Redigera taggar"
+
+msgid "Rename tag"
+msgstr "Byt namn på tagg"
+
+msgid "Cover"
+msgstr "Omslag"
+
+msgid "Choose cover image"
+msgstr "Välj omslagsbild"
+
+msgid "Choose from device"
+msgstr "Välj från enheten"
+
+msgid "Search online…"
+msgstr "Sök på nätet…"
+
+msgid "Cover updated"
+msgstr "Omslaget uppdaterades"
+
+msgid "Reverted to embedded cover"
+msgstr "Återställde inbäddat omslag"
+
+msgid "Failed to delete file."
+msgstr "Det gick inte att radera filen."
+
+# Cover badges and display settings
+msgid "Progress"
+msgstr "Förlopp"
+
+msgid "Progress bar"
+msgstr "Förloppsindikator"
+
+msgid "Show progress bars"
+msgstr "Visa förloppsindikatorer"
+
+msgid "Show page count"
+msgstr "Visa sidantal"
+
+msgid "Show favourites icon"
+msgstr "Visa favoritsymbol"
+
+msgid "Completed book badge"
+msgstr "Märke för färdigläst bok"
+
+msgid "Fade finished books"
+msgstr "Tona färdiglästa böcker"
+
+msgid "Faded cover"
+msgstr "Tonat omslag"
+
+msgid "Show reading bookmarks"
+msgstr "Visa lässtatusmärken"
+
+msgid "Pause badge"
+msgstr "Pausmärke"
+
+msgid "Bookmark style"
+msgstr "Bokmärkesstil"
+
+msgid "Small tick box"
+msgstr "Liten kryssruta"
+
+msgid "Show series #"
+msgstr "Visa del i serie"
+
+msgid "Stack count badge"
+msgstr "Antalsmärke för grupper"
+
+msgid "Total"
+msgstr "Totalt"
+
+msgid "Finished / Total"
+msgstr "Lästa / totalt"
+
+msgid "Stack count format"
+msgstr "Format för gruppantal"
+
+msgid "Cover badge size"
+msgstr "Storlek på omslagsmärken"
+
+msgid "Cover badges"
+msgstr "Omslagsmärken"
+
+msgid "Cover display"
+msgstr "Omslagsvisning"
+
+msgid "True cover aspect ratio"
+msgstr "Omslagets verkliga bildförhållande"
+
+# UI and performance settings
+msgid "Font size"
+msgstr "Teckenstorlek"
+
+msgid "Text size"
+msgstr "Textstorlek"
+
+msgid "Size"
+msgstr "Storlek"
+
+msgid "Bold"
+msgstr "Fet"
+
+msgid "Pick font"
+msgstr "Välj typsnitt"
+
+msgid "Colors"
+msgstr "Färger"
+
+msgid "Follow KOReader"
+msgstr "Följ KOReader"
+
+msgid "Hero card"
+msgstr "Hero-kort"
+
+msgid "Hero micro-modules"
+msgstr "Hero-mikromoduler"
+
+msgid "Chip bar"
+msgstr "Chipbar"
+
+msgid "Stack & folder labels"
+msgstr "Grupp- och mapptexter"
+
+msgid "Expanded shelf labels"
+msgstr "Texter på utökad hylla"
+
+msgid "Start menu"
+msgstr "Startmeny"
+
+msgid "Modal tabs"
+msgstr "Popupflikar"
+
+msgid "Book detail font scale"
+msgstr "Textstorlek för bokinformation"
+
+msgid "Hero micro-modules font scale"
+msgstr "Textstorlek för hero-mikromoduler"
+
+msgid "Chip bar font scale"
+msgstr "Textstorlek för chipbar"
+
+msgid "Stack & folder label scale"
+msgstr "Textstorlek för grupper och mappar"
+
+msgid "Start menu font scale"
+msgstr "Textstorlek för startmeny"
+
+msgid "Performance tweaks"
+msgstr "Prestandajusteringar"
+
+msgid "Instant book close (beta)"
+msgstr "Stäng bok direkt (beta)"
+
+msgid "Pre-warm chip cache"
+msgstr "Förbered chipcache i bakgrunden"
+
+msgid "Cover cache"
+msgstr "Omslagscache"
+
+msgid "Clear cover cache"
+msgstr "Rensa omslagscache"
+
+msgid "Cover cache cleared"
+msgstr "Omslagscachen rensades"
+
+msgid "Scan all library metadata"
+msgstr "Skanna metadata för hela biblioteket"
+
+msgid "Show book detail in hero"
+msgstr "Visa bokinformation i hero-kortet"
+
+msgid "Open with a single tap"
+msgstr "Öppna med ett tryck"
+
+msgid "Open with a double tap"
+msgstr "Öppna med dubbeltryck"
+
+msgid "Show text below covers"
+msgstr "Visa text under omslagen"
+
+msgid "Set home folder"
+msgstr "Välj hemmapp"
+
+msgid "Current home folder:"
+msgstr "Nuvarande hemmapp:"
+
+# Bookshelf menu and start menu
+msgid "Bookshelf menu"
+msgstr "Bookshelf-meny"
+
+msgid "Close bookshelf"
+msgstr "Stäng Bookshelf"
+
+msgid "Open Bookshelf"
+msgstr "Öppna Bookshelf"
+
+msgid "Close Bookshelf"
+msgstr "Stäng Bookshelf"
+
+msgid "Exit bookshelf"
+msgstr "Lämna Bookshelf"
+
+msgid "Close book"
+msgstr "Stäng bok"
+
+msgid "Closing book…"
+msgstr "Stänger boken…"
+
+msgid "Bookshelf: open matching profile"
+msgstr "Bookshelf: öppna matchande profil"
+
+msgid "Bookshelf: open start menu"
+msgstr "Bookshelf: öppna startmenyn"
+
+msgid "Bookshelf: next chip"
+msgstr "Bookshelf: nästa chip"
+
+msgid "Bookshelf: previous chip"
+msgstr "Bookshelf: föregående chip"
+
+msgid "Bookshelf: next page of chips"
+msgstr "Bookshelf: nästa chipsida"
+
+msgid "Bookshelf: previous page of chips"
+msgstr "Bookshelf: föregående chipsida"
+
+msgid "Shelf size"
+msgstr "Biblioteksöversikt"
+
+msgid "Currently reading"
+msgstr "Läser just nu"
+
+msgid "Reading stats"
+msgstr "Lässtatistik"
+
+msgid "Reading goals"
+msgstr "Läsmål"
+
+# Hardcover integration
+msgid "Hardcover integration"
+msgstr "Hardcover-integration"
+
+msgid "Hardcover enrichment"
+msgstr "Hardcover-berikning"
+
+msgid "Show Hardcover ratings in hero"
+msgstr "Visa Hardcover-betyg i hero-kortet"
+
+msgid "Use Hardcover metadata"
+msgstr "Använd metadata från Hardcover"
+
+msgid "Download covers from Hardcover"
+msgstr "Hämta omslag från Hardcover"
+
+msgid "Manage Hardcover data"
+msgstr "Hantera Hardcover-data"
+
+msgid "Refresh ratings only"
+msgstr "Uppdatera endast betyg"
+
+msgid "Fetching Hardcover ratings..."
+msgstr "Hämtar Hardcover-betyg…"
+
+msgid "Hardcover ratings refresh failed"
+msgstr "Det gick inte att uppdatera Hardcover-betygen"
+
+msgid "Hardcover ratings refreshed: %1 rated of %2 linked books"
+msgstr "Hardcover-betyg uppdaterade: %1 betygsatta av %2 länkade böcker"
+
+msgid "Clear cache (keeps links)"
+msgstr "Rensa cache (behåll länkar)"
+
+msgid "Hardcover cache cleared"
+msgstr "Hardcover-cachen rensades"
+
+msgid "Auto-link all books"
+msgstr "Autolänka alla böcker"
+
+msgid "Auto link"
+msgstr "Autolänka"
+
+msgid "Auto link (best guess)"
+msgstr "Autolänka (bästa gissning)"
+
+msgid "Exact match (ISBN / Hardcover id)"
+msgstr "Exakt träff (ISBN/Hardcover-ID)"
+
+msgid "Best guess (title & author)"
+msgstr "Bästa gissning (titel och författare)"
+
+msgid "Not linked"
+msgstr "Inte länkad"
+
+msgid "Not linked to Hardcover"
+msgstr "Inte länkad till Hardcover"
+
+msgid "Linked: %1"
+msgstr "Länkad: %1"
+
+msgid "Link…"
+msgstr "Länka…"
+
+msgid "Manual link"
+msgstr "Länka manuellt"
+
+msgid "Clear link"
+msgstr "Ta bort länk"
+
+msgid "Select edition"
+msgstr "Välj utgåva"
+
+msgid "Hardcover book linked"
+msgstr "Hardcover-boken länkades"
+
+msgid "Hardcover edition linked"
+msgstr "Hardcover-utgåvan länkades"
+
+msgid "Hardcover link cleared"
+msgstr "Hardcover-länken togs bort"
+
+msgid "Hardcover search failed"
+msgstr "Hardcover-sökningen misslyckades"
+
+msgid "Use Hardcover image"
+msgstr "Använd bild från Hardcover"
+
+msgid "Use Hardcover description"
+msgstr "Använd beskrivning från Hardcover"
+
+msgid "Reviews"
+msgstr "Recensioner"
+
+msgid "Reviews couldn't be fetched."
+msgstr "Recensionerna kunde inte hämtas."
+
+msgid "Tap Refresh to load reviews."
+msgstr "Tryck på Uppdatera för att hämta recensioner."
+
+# Updater
+msgid "Check for updates"
+msgstr "Sök efter uppdateringar"
+
+msgid "Checking for updates..."
+msgstr "Söker efter uppdateringar…"
+
+msgid "Could not check for updates."
+msgstr "Det gick inte att söka efter uppdateringar."
+
+msgid "Bookshelf is up to date."
+msgstr "Bookshelf är uppdaterat."
+
+msgid "Update available"
+msgstr "Uppdatering tillgänglig"
+
+msgid "Update available!"
+msgstr "Uppdatering tillgänglig!"
+
+msgid "Installed version"
+msgstr "Installerad version"
+
+msgid "Developer updates"
+msgstr "Utvecklaruppdateringar"
+
+msgid "Development branch"
+msgstr "Utvecklingsbranch"
+
+msgid "Install branch"
+msgstr "Installera branch"
+
+msgid "Branch name (leave empty for stable)"
+msgstr "Branchnamn (lämna tomt för stabil version)"
+
+msgid "Reset to latest stable release"
+msgstr "Återställ till senaste stabila version"
+
+msgid "Downloading update..."
+msgstr "Hämtar uppdatering…"
+
+msgid "Download failed."
+msgstr "Nedladdningen misslyckades."
+
+msgid "Installation failed: "
+msgstr "Installationen misslyckades: "
+
+msgid "Update and restart"
+msgstr "Uppdatera och starta om"
+
+msgid "Restart KOReader now?"
+msgstr "Starta om KOReader nu?"
+
+msgid "Restart"
+msgstr "Starta om"
