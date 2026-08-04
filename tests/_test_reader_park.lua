@@ -212,6 +212,23 @@ t.test("park still parks when orientation is unchanged", function()
     assert(Park.isParked() == true)
 end)
 
+t.test("idle probe uses the canonical shelf passed by the reader host", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    rui.close_calls = 0
+    rui.onClose = function() rui.close_calls = rui.close_calls + 1 end
+    rui.showFileManager = function() end
+    ReaderUI.instance = rui
+    local plugin = makePlugin(rui) -- deliberately has no plugin._widget
+    local shelf = { _pre_read_rotation = 0 }
+    UIManager._window_stack = { { widget = rui }, { widget = shelf } }
+    assert(Park.park(plugin, shelf) == true)
+    fake_now = fake_now + 31
+    fireScheduled()
+    assert(rui.close_calls == 1,
+        "canonical shelf must make the idle finish reachable")
+end)
+
 t.test("deferred park work is skipped after a real close in the gap", function()
     reset()
     local rui = makeRui("/books/a.epub")
@@ -337,6 +354,20 @@ t.test("probe defers while something covers the shelf", function()
     table.remove(UIManager._window_stack) -- popup dismissed
     fireScheduled()
     assert(rui.close_calls == 1, "finish runs once the shelf is topmost again")
+end)
+
+t.test("probe restores the shelf if a stale callback exposes the parked reader", function()
+    reset()
+    local rui, _plugin, shelf = parkFixture()
+    -- Simulate a stale navigation callback lowering the shelf beneath ReaderUI.
+    UIManager._window_stack = { { widget = shelf }, { widget = rui } }
+    fake_now = fake_now + 5
+    fireScheduled()
+    assert(UIManager._window_stack[#UIManager._window_stack].widget == shelf,
+        "park invariant must put the shelf back above ReaderUI")
+    assert(rui.close_calls == 0, "repair should not close an active parked reader")
+    assert(#dirty_calls > 0 and dirty_calls[#dirty_calls].w == shelf,
+        "repaired shelf must repaint")
 end)
 
 t.test("unpark cancels the probe", function()

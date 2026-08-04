@@ -56,7 +56,7 @@ local Park = {}
 -- probe rechecks. Finish lands between IDLE_FINISH_S and
 -- IDLE_FINISH_S + PROBE_EVERY_S after the last input.
 local IDLE_FINISH_S = 30
-local PROBE_EVERY_S = 10
+local PROBE_EVERY_S = 1
 -- Raising the shelf can complete before the gesture that requested the close
 -- has fully drained. On fast devices that trailing tap/repeated dispatcher
 -- event may land on the just-closed book and immediately unpark it again.
@@ -69,6 +69,10 @@ local SAME_BOOK_REOPEN_GUARD_S = 1.25
 -- _raiseInPlace/show). Both nil when not parked.
 local _parked = nil
 local _parked_plugin = nil
+-- The canonical BookshelfWidget raised above ReaderUI. The reader-context
+-- plugin instance usually has no self._widget, so deriving this later from
+-- _parked_plugin silently fails for books opened from Bookshelf itself.
+local _parked_widget = nil
 -- One-shot: set while closeShelfToFileManager real-closes the parked
 -- reader. Bookshelf:onCloseDocument consumes it to skip its re-show (the
 -- destination is the raw FileManager, not the shelf).
@@ -99,6 +103,7 @@ function Park.isParked()
         -- The instance we parked is gone (a real close we didn't observe).
         _parked = nil
         _parked_plugin = nil
+        _parked_widget = nil
         return false
     end
     return true
@@ -131,6 +136,7 @@ end
 function Park.noteRealClose()
     _parked = nil
     _parked_plugin = nil
+    _parked_widget = nil
     _same_book_reopen_after = 0
     _cancelPendingProbe()
 end
@@ -190,7 +196,7 @@ end
 local function _finishCore(reason)
     if not Park.isParked() then return false end
     local rui, plugin = _parked, _parked_plugin
-    _parked, _parked_plugin = nil, nil
+    _parked, _parked_plugin, _parked_widget = nil, nil, nil
     _cancelPendingProbe()
     local file = rui.document and rui.document.file
     local t0 = _gettime()
@@ -228,12 +234,39 @@ local function _probe(rui)
     if _readerInstance() ~= rui then
         _parked = nil
         _parked_plugin = nil
+        _parked_widget = nil
         return
     end
     local idle = _gettime() - _last_input
     local stack = UIManager._window_stack
     local top = stack and stack[#stack] and stack[#stack].widget
-    local shelf_topmost = _parked_plugin and top == _parked_plugin._widget
+    -- A parked ReaderUI must never become the visible top layer unless
+    -- Park.unpark() explicitly cleared the parked state first. A stale close
+    -- or navigation callback used to remove/lower the shelf and expose the
+    -- still-live book several seconds later. Repair the stack immediately;
+    -- if the shelf was actually destroyed, finish the real close instead of
+    -- leaving KOReader in a half-parked state.
+    if top == rui then
+        local shelf_idx
+        for i, entry in ipairs(stack or {}) do
+            if entry.widget == _parked_widget then
+                shelf_idx = i
+                break
+            end
+        end
+        if shelf_idx then
+            local entry = table.remove(stack, shelf_idx)
+            table.insert(stack, entry)
+            top = _parked_widget
+            UIManager:setDirty(_parked_widget, "ui")
+            logger.warn("[bookshelf] repaired exposed parked reader")
+        else
+            logger.warn("[bookshelf] parked shelf disappeared; finishing reader close")
+            _finishCore("shelf-lost")
+            return
+        end
+    end
+    local shelf_topmost = _parked_widget and top == _parked_widget
     if idle >= IDLE_FINISH_S and shelf_topmost then
         _finishCore("idle")
         return
@@ -273,6 +306,13 @@ function Park.park(plugin, widget)
             return false
         end
     end
+    -- Repeated profile/show actions may reach the reader-host plugin while the
+    -- same ReaderUI is already parked. Keep the original park intact instead
+    -- of rearming callbacks and losing its canonical shelf reference.
+    if Park.isParked() and _parked == rui then
+        _parked_widget = shelf or _parked_widget
+        return true
+    end
     -- Close the reader chrome first - the same prelude KOReader's own
     -- switchDocument uses. A menu or config panel left open would sit
     -- orphaned above the shelf after the splice.
@@ -287,6 +327,7 @@ function Park.park(plugin, widget)
     if not plugin:_raiseInPlace() then return false end
     _parked = rui
     _parked_plugin = plugin
+    _parked_widget = shelf
     _installInputStamp()
     -- Parking itself is user input for idle purposes.
     _last_input = _gettime()
@@ -353,6 +394,7 @@ function Park.unpark(live_widget, after_open_callback)
     local rui = _parked
     _parked = nil
     _parked_plugin = nil
+    _parked_widget = nil
     _same_book_reopen_after = 0
     _cancelPendingProbe()
     local stack = UIManager._window_stack
@@ -451,6 +493,7 @@ function Park.closeShelfToFileManager(live_widget)
     local rui = _parked
     _parked = nil
     _parked_plugin = nil
+    _parked_widget = nil
     _cancelPendingProbe()
     local file = rui.document and rui.document.file
     -- Same feedback affordance (and opt-out setting) as the fallback

@@ -369,15 +369,49 @@ function BookshelfWidget:_dispatchSimpleUIBarAction(action_id)
         return true
     end
 
-    UIManager:close(self)
-    UIManager:nextTick(function()
+    local function dispatchAfterClose(fm_override)
         local ok_fm, FM = pcall(require, "apps/filemanager/filemanager")
-        local live_fm = (ok_fm and FM and FM.instance) or fm
+        local live_fm = (ok_fm and FM and FM.instance) or fm_override or fm
         local live_plugin = live_fm and live_fm._simpleui_plugin or plugin
         if live_plugin and live_plugin._onTabTap then
             live_plugin:_onTabTap(action_id, live_fm or fm)
         end
-    end)
+    end
+
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.isParked() then
+        -- Books/Manga tabs are profile switches inside the same visible shelf.
+        -- Dispatching them through the reader-hosted SimpleUI action would
+        -- re-enter the close gesture while the reader is parked.
+        local ok_bridge, Bridge = pcall(require, "sui_bookshelf_bridge")
+        if ok_bridge and Bridge and Bridge.resolveProfileTab then
+            for _, profile_key in ipairs({ "prose", "comics" }) do
+                if Bridge.resolveProfileTab(profile_key, ctx.tabs) == action_id then
+                    if Bridge.activateProfile then
+                        Bridge.activateProfile(profile_key, plugin, ctx.tabs)
+                    end
+                    if not (self.profile and self.profile.key == profile_key) then
+                        self:setProfile(profile_key)
+                    else
+                        UIManager:setDirty(self, "ui")
+                    end
+                    return true
+                end
+            end
+        end
+
+        -- Any destination outside Bookshelf needs a real FileManager beneath
+        -- it. Finish the parked reader while the opaque shelf still covers it,
+        -- then dismiss the shelf and let SimpleUI navigate with the fresh host.
+        Park.runInFileManager(function(live_fm)
+            UIManager:close(self)
+            UIManager:nextTick(function() dispatchAfterClose(live_fm) end)
+        end)
+        return true
+    end
+
+    UIManager:close(self)
+    UIManager:nextTick(dispatchAfterClose)
     return true
 end
 
