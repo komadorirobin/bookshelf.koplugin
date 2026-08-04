@@ -49,6 +49,8 @@ package.loaded["bookinfomanager"] = {
             self.db_conn = {
                 exec = function(_conn, _sql)
                     _G._test_bim_batch_sql = _sql
+                    _G._test_bim_batch_exec_count =
+                        (_G._test_bim_batch_exec_count or 0) + 1
                     return _G._test_bim_batch_rows
                 end,
             }
@@ -735,6 +737,50 @@ test("getAuthors: batch light metadata carries description for filename-author f
         "expected Karl Ove Knausgård got " .. tostring(authors[1].series_name))
     assert(_G._test_epub_author_call_count == 0,
         "batch fallback must not trigger OPF role lookup")
+end)
+
+test("light metadata batch is shared across library profile roots", function()
+    Repo.invalidateWalkCache()
+    _G._test_bim_batch_exec_count = 0
+    _G._test_bim_batch_rows = {
+        { "/prose/", "/comics/" },
+        { "novel.epub", "manga.epub" },
+        { "Novel", "Manga" },
+        { "Writer One", "Artist Two" },
+        { "Standalone", "Series" },
+        { 1, 1 },
+        { "fiction", "manga" },
+        { "Novel description", "Manga description" },
+        { "eng", "eng" },
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local listings = {
+            ["/prose"] = { ".", "..", "novel.epub" },
+            ["/comics"] = { ".", "..", "manga.epub" },
+        }
+        local files = listings[path] or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        local is_file = path == "/prose/novel.epub" or path == "/comics/manga.epub"
+        local is_dir = path == "/prose" or path == "/comics"
+        local attr = (is_file and { mode = "file", modification = 1, size = 1 })
+            or (is_dir and { mode = "directory", modification = 1, size = 0 })
+        if key then return attr and attr[key] end
+        return attr
+    end
+
+    _G._test_settings = { home_dir = "/prose", bookshelf_latest_walk_depth = 1 }
+    local prose = Repo.getAuthors(10, 0)
+    _G._test_settings = { home_dir = "/comics", bookshelf_latest_walk_depth = 1 }
+    local comics = Repo.getAuthors(10, 0)
+
+    assert(#prose == 1 and #comics == 1, "both profile roots should resolve")
+    assert(_G._test_bim_batch_exec_count == 1,
+        "expected one shared BIM batch, got " .. tostring(_G._test_bim_batch_exec_count))
+    _G._test_bim_batch_rows = nil
+    Repo.invalidateWalkCache()
 end)
 
 test("buildBook: keeps single BIM author when filename author is not confirmed", function()

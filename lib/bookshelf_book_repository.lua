@@ -1914,7 +1914,11 @@ local function cachedWalk(home, depth)
     local stale_reason
     if not entry then
         stale_reason = "miss"
-    elseif _dirsChanged(entry.dirs) then
+    -- A single shelf build can ask for the same walk through several chips
+    -- (and again through profile prewarming). Directory mtimes cannot add
+    -- useful information multiple times within the same second, while each
+    -- pass may cost hundreds of stats on a large library.
+    elseif entry.validated_at ~= now and _dirsChanged(entry.dirs) then
         stale_reason = "dir-mtime"
     end
     if stale_reason then
@@ -1951,7 +1955,12 @@ local function cachedWalk(home, depth)
                 end
             end
         end
-        entry = { list = fresh, dirs = dirs, expires_at = now + WALK_CACHE_TTL }
+        entry = {
+            list = fresh,
+            dirs = dirs,
+            expires_at = now + WALK_CACHE_TTL,
+            validated_at = now,
+        }
         _walk_cache[key] = entry
         if files_changed and stale_reason ~= "miss" then
             -- Downstream caches were built against the previous book set
@@ -1975,6 +1984,7 @@ local function cachedWalk(home, depth)
         logger.dbg(string.format("[bookshelf perf] cachedWalk: MISS(%s) walk=%.0fms files=%d dirs=%d depth=%s",
             stale_reason, _dt, #fresh, dir_count, tostring(depth)))
     else
+        entry.validated_at = now
         logger.dbg(string.format("[bookshelf perf] cachedWalk: HIT files=%d ttl_left=%ds",
             #entry.list, entry.expires_at - now))
     end
@@ -2061,12 +2071,19 @@ local function _bimDbFingerprint()
     local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     if not (ok and ok_lfs and DataStorage and lfs) then return nil end
     local db_path = DataStorage:getSettingsDir() .. "/bookinfo_cache.sqlite3"
-    local size = lfs.attributes(db_path, "size")
-    if type(size) == "table" then size = size.size end
+    local attr = lfs.attributes(db_path)
+    local size, mtime
+    if type(attr) == "table" then
+        size = attr.size
+        mtime = attr.modification
+    else
+        -- Compatibility fallback for minimal lfs wrappers/test doubles that
+        -- only implement keyed attribute reads.
+        size = lfs.attributes(db_path, "size")
+        mtime = lfs.attributes(db_path, "modification")
+    end
     if not size then return nil end
-    local mtime = lfs.attributes(db_path, "modification") or 0
-    if type(mtime) == "table" then mtime = mtime.modification or 0 end
-    return string.format("v%d:%d:%d", LIGHTMETA_SNAPSHOT_VERSION, size, mtime)
+    return string.format("v%d:%d:%d", LIGHTMETA_SNAPSHOT_VERSION, size, mtime or 0)
 end
 
 local function _lightMetaPersist()
@@ -2105,13 +2122,14 @@ local function _saveRowSnapshot(rows)
     pcall(p.save, p, { fingerprint = fingerprint, rows = rows })
 end
 
--- _getLightMetaCache(home, depth) — returns a fp → light-record map for every
--- candidate in the cached walk. Built once per (home, depth) using a single
--- batch BIM SELECT; subsequent walks for the same (home, depth) are O(1)
--- lookups per book. Falls back to per-book _buildBookMetaLight if the batch
--- query fails (rare; BIM unavailable or schema mismatch).
-local function _getLightMetaCache(home, depth)
-    local key = (home or "/") .. ":" .. tostring(depth or 0)
+-- _getLightMetaCache(home, depth) — returns the process-wide fp → light-record
+-- map loaded from BIM. The batch query is intentionally unfiltered and already
+-- contains every BIM row, so separate maps for home/profile roots were exact
+-- duplicates. Sharing one map avoids rebuilding and retaining the full library
+-- once for Home, once for prose and once for comics during profile prewarming.
+-- Callers still fall back to per-book _buildBookMetaLight on a lookup miss.
+local function _getLightMetaCache(_home, _depth)
+    local key = "__all_bim_rows__"
     local now = os.time()
     local entry = _light_meta_cache[key]
     if entry then
