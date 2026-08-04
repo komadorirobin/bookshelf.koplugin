@@ -18,5 +18,5 @@ return {
     name = "bookshelf",
     fullname = _("Bookshelf"),
     description = _([[A nice-looking home screen for KOReader: pick a book from your shelf and read it.]]),
-    version = "3.10.22-beta.1",
+    version = "3.10.23-beta.1",
 }
