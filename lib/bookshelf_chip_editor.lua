@@ -622,7 +622,7 @@ function Editor:editTab(tab_id, opts)
                     bordersize     = 0,
                     callback   = function()
                         UIManager:show(ConfirmBox:new{
-                            text       = _("Delete this chip?? This cannot be undone."),
+                            text       = _("Delete this chip? This cannot be undone."),
                             ok_text    = _("Delete"),
                             ok_callback = function()
                                 -- Deleting a tab changes the list of tabs,

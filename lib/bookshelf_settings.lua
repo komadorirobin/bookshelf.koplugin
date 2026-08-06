@@ -31,6 +31,12 @@ local function refreshReaderLauncher()
     for _i, m in ipairs(rd) do
         if type(m) == "table" and type(m._setupReaderButtons) == "function" then
             pcall(function() m:_setupReaderButtons() end)
+            -- Re-registering rebuilds the view module + touch zones but nothing
+            -- dirties the reader, so the glyph would only move on the next page
+            -- turn. Dirty it here so the launcher settings give live feedback
+            -- while their nudge dialog is open (#279). setDirty needs a real
+            -- widget -- a nil first arg only queues a flush.
+            pcall(function() UIManager:setDirty(rd, "ui") end)
             return
         end
     end
@@ -923,7 +929,7 @@ function Settings:_coverDisplaySubItems()
         -- a second opt-in (render gate uses nilOrTrue to match). Users who
         -- explicitly turn it off keep it off.
         toggleRow("show_fav_badge",
-                  _("Show favourites icon"), false, false),
+                  _("Show favorites icon"), false, false),
         -- Favourite icon glyph: heart (default; reads distinctly from the
         -- rating stars) or star. The chosen icon also selects which colour
         -- the Colors -> Favourite entry edits.
@@ -1033,7 +1039,27 @@ function Settings:_colorsSubItems()
     --             can stay stable even as new storage keys are introduced.
     -- default_pct: greyscale nudge dialog default (% black) for the
     --             pre-color-mode picker path on Kindle / older Kobo.
-    local function pickColor(raw_key, field, default_pct, title, touchmenu_instance)
+    -- Chip-bar colours change how ONE strip is painted, nothing else, so they
+    -- must not go through markDirty() -> _bw:_rebuild(): that re-reads the
+    -- library and re-renders every cover, per nudge step, which is why adjusting
+    -- them felt so slow. ChipBar:recolour() rebuilds the strip in place and hands
+    -- back its rect so the refresh is scoped to it. Falls back to markDirty when
+    -- there's no live strip to recolour (bar hidden, shelf not built yet).
+    local function refreshChipBar()
+        local bar = self._bw and self._bw._chip_bar
+        local rect = bar and bar.recolour and bar:recolour()
+        if not rect then markDirty(); return end
+        UIManager:setDirty(self._bw, function() return "ui", rect end)
+    end
+
+    -- Anchor the chip-bar colour dialogs under the strip (see _chipBarAnchor).
+    local chipBarAnchor = self:_chipBarAnchor()
+
+    -- refresh/anchor default to the whole-shelf rebuild and a centred dialog, so
+    -- every existing colour row is unaffected.
+    local function pickColor(raw_key, field, default_pct, title, touchmenu_instance,
+                             refresh, anchor)
+        refresh = refresh or markDirty
         -- Suffix routes day vs night-mode storage to separate keys so
         -- editing in night mode doesn't clobber the user's day colors
         -- and vice versa. Mirrors CoverProgress.resolvedColors().
@@ -1053,11 +1079,11 @@ function Settings:_colorsSubItems()
                 title, current_hex, Color.defaultHexFor(field),
                 function(new_hex)
                     BookshelfSettings.save(key, Color.toStorageShape(new_hex))
-                    markDirty()
+                    refresh()
                 end,
                 function()
                     BookshelfSettings.delete(key)
-                    markDirty()
+                    refresh()
                 end,
                 function()
                     if original == nil then
@@ -1065,7 +1091,7 @@ function Settings:_colorsSubItems()
                     else
                         BookshelfSettings.save(key, original)
                     end
-                    markDirty()
+                    refresh()
                 end,
                 touchmenu_instance)
             return
@@ -1082,14 +1108,14 @@ function Settings:_colorsSubItems()
         self:showNudgeDialog(title, current, 0, 100, default_pct, "%",
             function(val)
                 BookshelfSettings.save(key, { grey = _screenPctToByte(val) })
-                markDirty()
+                refresh()
             end,
             nil, nil, nil, touchmenu_instance,
             function()
                 BookshelfSettings.delete(key)
-                markDirty()
+                refresh()
             end,
-            _("Default"))
+            _("Default"), nil, anchor)
     end
 
     -- Helper for the hold-to-reset path so we don't repeat the suffix
@@ -1295,16 +1321,59 @@ function Settings:_colorsSubItems()
             end,
         },
         {
+            text_func = function()
+                return _("Selected chip fill") .. ": " .. valueLabel("chip_selected_bg")
+            end,
+            help_text = _("Fill behind the selected chip in the chip bar."
+                .. " Left unset, the selected chip is drawn by inverting the"
+                .. " chip -- the fastest path and identical on every device."
+                .. " Setting a color paints it instead. Long-press to clear."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("chip_selected_bg", "chip_selected_bg", 100,
+                    _("Selected chip fill (% black)"), touchmenu_instance,
+                    refreshChipBar, chipBarAnchor)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("chip_selected_bg")
+                refreshChipBar()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
+                return _("Selected chip text") .. ": " .. valueLabel("chip_selected_fg")
+            end,
+            help_text = _("Label color on the selected chip. Defaults to"
+                .. " paper white over the fill. Long-press to clear."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("chip_selected_fg", "chip_selected_fg", 0,
+                    _("Selected chip text (% black)"), touchmenu_instance,
+                    refreshChipBar, chipBarAnchor)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("chip_selected_fg")
+                refreshChipBar()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
             text = _("Reset to default colors"),
             separator = true,
             keep_menu_open = true,
             callback = function(touchmenu_instance)
+                -- MUST list every key a row in this menu can write, or Reset
+                -- silently leaves that colour set (the chip pair was missed when
+                -- it was added, #294). _test_settings_font_scale.lua compares this
+                -- list against the pickColor call sites to keep them in step.
                 local keys = {
                     "progress_fill", "progress_track",
                     "bookmark_color", "complete_bookmark_color",
                     "favorite_star_color", "favorite_heart_color",
                     "badge_fg", "badge_bg", "border_color",
                     "folder_overlay_bg", "folder_overlay_fg",
+                    "chip_selected_bg", "chip_selected_fg",
                 }
                 -- Clear both day AND night variants so "Reset" lives up
                 -- to its name regardless of which mode the menu is in.
@@ -1356,7 +1425,7 @@ function Settings:_pickCoverBadgeFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close() UIManager:close(dialog); restoreMenu() end
     local function revert() setValue(original); rebuild() end
@@ -1384,7 +1453,7 @@ function Settings:_pickCoverBadgeFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -1599,76 +1668,14 @@ function Settings:_settingsSubItems()
         callback = function(touchmenu_instance) self:_pickBookshelfUIFont(touchmenu_instance) end,
     }
     items[#items].separator = true  -- end appearance band
-
-    -- ── start menu & reader band ──
-    -- Start-menu position: three-state radio. "left" (default; an absent key
-    -- reads as left), "right" mirrors the whole stack (footer button, popup
-    -- anchor, leftward flyout), "off" removes the button and its d-pad slot.
-    items[#items + 1] = (function()
-        local function readPos()
-            local v = BookshelfSettings.read("start_menu_position", "left")
-            if v == "right" or v == "off" then return v end
-            return "left"
-        end
-        local labels = {
-            left  = _("Left"),
-            right = _("Right"),
-            off   = _("Off"),
-        }
-        local function optionRow(pos, label)
-            return {
-                text           = label,
-                checked_func   = function() return readPos() == pos end,
-                radio          = true,
-                keep_menu_open = true,
-                callback       = function(touchmenu_instance)
-                    BookshelfSettings.save("start_menu_position", pos)
-                    refreshReaderLauncher()
-                    if self._bw and self._bw._rebuild then
-                        self._bw:_rebuild()
-                        UIManager:setDirty(self._bw, "ui")
-                    end
-                    if touchmenu_instance and touchmenu_instance.updateItems then
-                        touchmenu_instance:updateItems()
-                    end
-                end,
-            }
-        end
-        return {
-            text_func = function()
-                return _("Start menu") .. ": " .. labels[readPos()]
-            end,
-            help_text = _("Where the start-menu button sits in the"
-                .. " footer. Right moves the button and its menu to"
-                .. " the bottom-right corner; Off hides the button"
-                .. " entirely."),
-            sub_item_table_func = function()
-                return {
-                    optionRow("left",  labels.left),
-                    optionRow("right", labels.right),
-                    optionRow("off",   labels.off),
-                }
-            end,
-        }
-    end)()
-    -- In-reader launcher (opt-in, off by default): a small persistent button
-    -- in the reader's bottom corner that opens the start menu. Registered at
-    -- reader init, so it takes effect the next time a book is opened.
     items[#items + 1] = {
-        text = _("Show launcher button while reading"),
-        help_text = _("Adds a small Bookshelf button to the bottom corner of"
-            .. " the reader that opens the start menu. Takes effect the next"
-            .. " time you open a book."),
-        checked_func = function()
-            return BookshelfSettings.read("reader_launcher_button", false) == true
+        text                = _("Start menu"),
+        sub_item_table_func = function()
+            return self:_startMenuSubItems()
         end,
-        callback = function()
-            local on = BookshelfSettings.read("reader_launcher_button", false) == true
-            BookshelfSettings.save("reader_launcher_button", not on)
-            refreshReaderLauncher()
-        end,
+        separator           = true,
     }
-    items[#items].separator = true  -- end start menu & reader band
+
 
     -- "Hardcover enrichment" was promoted to the top-level Bookshelf menu
     -- (below Manage collections) -- see main.lua addToMainMenu. It no longer
@@ -2291,7 +2298,7 @@ function Settings:_pickExpandedShelfFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close() UIManager:close(dialog); restoreMenu() end
     local function revert() setValue(original); rebuild() end
@@ -2311,7 +2318,7 @@ function Settings:_pickExpandedShelfFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -2456,11 +2463,11 @@ function Settings:_performanceSubItems()
     -- B&W panels, so the row is hidden there to avoid clutter.
     if Screen.isColorEnabled and Screen:isColorEnabled() then
         items[#items + 1] = {
-            text = _("Colour panel dithering"),
-            help_text = _("Applies the colour-dither waveform when redrawing "
-                .. "book covers so they keep their full saturation on colour "
+            text = _("Color panel dithering"),
+            help_text = _("Applies the color-dither waveform when redrawing "
+                .. "book covers so they keep their full saturation on color "
                 .. "e-ink panels. Turn it off to compare; with it off, covers "
-                .. "can look washed out until a full-screen refresh. Colour "
+                .. "can look washed out until a full-screen refresh. Color "
                 .. "panels only."),
             checked_func = function()
                 return BookshelfSettings.nilOrTrue("color_panel_dithering")
@@ -2759,7 +2766,7 @@ function Settings:_advancedSubItems()
         },
         {
             text = _("Closing book notification"),
-            help_text = _("Show a 'Closing book…' message in the centre "
+            help_text = _("Show a 'Closing book…' message in the center "
                 .. "of the screen while a book is being closed back to "
                 .. "Bookshelf. The book-close work takes a moment, so "
                 .. "the message confirms your gesture landed during the "
@@ -2888,12 +2895,41 @@ function Settings:_advancedSubItems()
     return items
 end
 
+-- Anchor for the pickers that adjust the chip bar ITSELF (its colours, its font
+-- size): hang the dialog off the strip rather than centring it over the very
+-- thing being judged -- you cannot pick a colour you cannot see.
+--
+-- Returns a FUNCTION so the rect is read at show time: each reinit re-runs it, so
+-- the dialog keeps up when a change moves the strip (a font-size nudge does).
+-- nil rect -> ButtonDialog falls back to centring, which is right when there's no
+-- strip on screen to avoid.
+function Settings:_chipBarAnchor()
+    return function()
+        local bar = self._bw and self._bw._chip_bar
+        local d = bar and bar.dimen
+        if not (d and d.x and d.w and d.w > 0) then return nil end
+        -- A copy: MovableContainer writes its defaults into the anchor it is
+        -- handed, and this one is a live widget's own dimen. The second return
+        -- (prefers_pop_down) overrides its preference for opening ABOVE the
+        -- anchor -- above the chip bar is exactly what we're getting off.
+        local Geom = require("ui/geometry")
+        return Geom:new{ x = d.x, y = d.y, w = d.w, h = d.h }, true
+    end
+end
+
 --- @param extra_button table|nil  Optional shortcut button rendered between
 ---   Default and Apply, shape `{ text = string, value = number }`. When tapped,
 ---   the dialog sets `value` to the supplied number, fires on_change, then
 ---   closes -- matching the one-tap-commit feel of the color picker's White
 ---   shortcut on the greyscale nudge for background_color.
-function Settings:showNudgeDialog(title, value, min_val, max_val, default_val, unit, on_change, on_close, small_step, large_step, touchmenu_instance, on_default, default_label, extra_button)
+--- @param anchor table|function|nil  Geom (or function returning `geom,
+---   prefers_pop_down`) to hang the dialog off, instead of centring it. Passed
+---   straight to ButtonDialog -> MovableContainer. Used by the pickers that
+---   adjust something the CENTRED dialog would sit on top of -- the chip bar's
+---   colours and font size -- since you cannot judge a colour you cannot see.
+---   MovableContainer prefers ABOVE the anchor when there's room, so return
+---   `prefers_pop_down = true` to keep the dialog clear of the thing itself.
+function Settings:showNudgeDialog(title, value, min_val, max_val, default_val, unit, on_change, on_close, small_step, large_step, touchmenu_instance, on_default, default_label, extra_button, anchor)
     local ButtonDialog = require("ui/widget/buttondialog")
     local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
     local orig_on_close = on_close
@@ -2906,10 +2942,34 @@ function Settings:showNudgeDialog(title, value, min_val, max_val, default_val, u
     small_step = small_step or 1
     if large_step == nil then large_step = 10 end
 
+    -- ButtonDialog:reinit() is free()+init(), and init() unconditionally rebuilds
+    -- self.movable as a FRESH MovableContainer with its default drag/hold/pan
+    -- gestures -- discarding the lockdown applied at creation (bottom of this
+    -- function). Left un-relocked, the FIRST nudge silently restores dragging;
+    -- subsequent taps on the closely-packed -/+ buttons get claimed by the
+    -- movable's hold/pan handling instead of the button, which wedges the touch
+    -- state machine (device log: repeated MovableContainer:onMovableTouch +
+    -- "set up hold timer", then all input going quiet -- looks like a crash).
+    -- Same failure _pickModalTabFontScale documents; every reinit here must go
+    -- through this helper.
+    local function reinitLocked()
+        Focus.reinitLocked(dialog)
+        -- Repaint the dialog OURSELVES rather than relying on the caller's
+        -- on_change to dirty something. Most pickers rebuild the shelf, which
+        -- repaints the whole stack including this dialog -- but callers whose
+        -- on_change dirties nothing (the launcher-position row outside reader
+        -- mode, where refreshReaderLauncher() early-returns; the chip editor's
+        -- colour row, which only writes a draft) left the value label frozen on
+        -- e-ink. The buttons were firing correctly, but with no repaint the
+        -- dialog read as completely dead. Desktop SDL repaints regardless,
+        -- which is why this only reproduced on device.
+        UIManager:setDirty(dialog, "ui")
+    end
+
     local function update(delta)
         value = math.max(min_val, math.min(max_val, value + delta))
         on_change(value)
-        Focus.reinit(dialog)
+        reinitLocked()
     end
 
     local nudge_buttons = {}
@@ -2925,6 +2985,9 @@ function Settings:showNudgeDialog(title, value, min_val, max_val, default_val, u
 
     dialog = ButtonDialog:new{
         dismissable = false,
+        -- nil keeps ButtonDialog's default centring; a Geom/function moves the
+        -- dialog off whatever it would otherwise obscure (see @param anchor).
+        anchor = anchor,
         title = title .. ": " .. value .. unit,
         tap_close_callback = function()
             if value ~= original_value then
@@ -2952,20 +3015,36 @@ function Settings:showNudgeDialog(title, value, min_val, max_val, default_val, u
                         UIManager:close(dialog)
                         if on_close then on_close() end
                     else
-                        value = default_val; on_change(value); Focus.reinit(dialog)
+                        value = default_val; on_change(value); reinitLocked()
                     end
                 end },
             }
             if extra_button then
-                table.insert(footer, {
-                    text = extra_button.text,
-                    callback = function()
-                        value = extra_button.value
-                        on_change(value)
-                        UIManager:close(dialog)
-                        if on_close then on_close() end
-                    end,
-                })
+                if extra_button.callback then
+                    -- Stateful variant: the button acts on something OTHER than
+                    -- the nudged value (e.g. flipping the reader launcher to the
+                    -- top edge) and stays open, relabelling itself, so the user
+                    -- keeps the live preview while they experiment.
+                    table.insert(footer, {
+                        text_func = extra_button.text_func
+                            or function() return extra_button.text end,
+                        callback = function()
+                            extra_button.callback()
+                            on_change(value)
+                            reinitLocked()
+                        end,
+                    })
+                else
+                    table.insert(footer, {
+                        text = extra_button.text,
+                        callback = function()
+                            value = extra_button.value
+                            on_change(value)
+                            UIManager:close(dialog)
+                            if on_close then on_close() end
+                        end,
+                    })
+                end
             end
             table.insert(footer, {
                 text = _("Apply"),
@@ -3027,13 +3106,13 @@ function Settings:_openLayoutEditor(touchmenu_instance)
         local v = math.max(COLS_MIN, math.min(COLS_MAX, curCols() + delta))
         BookshelfSettings.save("bookshelf_columns", v)
         draftRebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function nudgeRows(delta)
         local v = math.max(1, math.min(maxRows(), curRows() + delta))
         BookshelfSettings.save("bookshelf_rows", v)
         draftRebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function restore(key, val)
         if val == nil then
@@ -3131,7 +3210,7 @@ function Settings:_pickFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close()
         UIManager:close(dialog)
@@ -3157,7 +3236,7 @@ function Settings:_pickFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -3197,7 +3276,7 @@ function Settings:_pickHeroModuleFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close()
         UIManager:close(dialog)
@@ -3223,7 +3302,7 @@ function Settings:_pickHeroModuleFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -3263,7 +3342,7 @@ function Settings:_pickChipFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close() UIManager:close(dialog); restoreMenu() end
     local function revert()
@@ -3273,6 +3352,8 @@ function Settings:_pickChipFontScale(touchmenu_instance)
 
     dialog = ButtonDialog:new{
         dismissable = false,  -- nudge-dialog lockdown; see _pickCoverBadgeFontScale
+        -- Open below the chip bar, not over it: this dialog resizes the strip.
+        anchor = self:_chipBarAnchor(),
         title = _("Chip bar font scale"),
         buttons = {
             {
@@ -3286,7 +3367,7 @@ function Settings:_pickChipFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -3327,7 +3408,7 @@ function Settings:_pickStackLabelFontScale(touchmenu_instance)
     local function nudge(delta)
         setValue(getValue() + delta)
         rebuild()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
     end
     local function close() UIManager:close(dialog); restoreMenu() end
     local function revert()
@@ -3350,7 +3431,7 @@ function Settings:_pickStackLabelFontScale(touchmenu_instance)
             {
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
-                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -3370,10 +3451,22 @@ function Settings:_pickStartMenuFontScale(touchmenu_instance)
     -- Open the start menu as a live preview (same approach as the hero scale
     -- picker showing the bookshelf behind the dialog). Only open if one is
     -- not already visible; track whether we opened it so close() can shut it.
+    -- self._bw is always the LIBRARY widget -- buildMenuItems shares one _bw
+    -- global across both hosts, so reaching this setting from inside the
+    -- reader has to go through the reader's own opener instead, or no
+    -- preview appears at all and nudging looks like it does nothing (#297).
+    local in_reader = self._plugin and self._plugin.ui and self._plugin.ui.document
     local opened_preview = false
-    if self._bw and not StartMenu._live then
-        self._bw:_openStartMenu()
-        opened_preview = true
+    if not StartMenu._live then
+        if in_reader then
+            if self._plugin._openReaderStartMenu then
+                self._plugin:_openReaderStartMenu()
+                opened_preview = true
+            end
+        elseif self._bw then
+            self._bw:_openStartMenu()
+            opened_preview = true
+        end
     end
 
     local function getValue() return BookshelfSettings.read(key, 100) end
@@ -3387,7 +3480,7 @@ function Settings:_pickStartMenuFontScale(touchmenu_instance)
 
     local dialog
     local function applyReinit()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
         if dialog.movable then dialog.movable.ges_events = {} end
         UIManager:setDirty(dialog, "ui")
     end
@@ -3424,6 +3517,363 @@ function Settings:_pickStartMenuFontScale(touchmenu_instance)
                 { text = _("Cancel"), callback = function() revert(); close() end },
                 { text = _("Default"),
                   callback = function() setValue(100); refreshPreview(); applyReinit() end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+        tap_close_callback = revert,
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+end
+
+-- Start menu: the menu itself, then a fenced-off band for the reader-only
+-- launcher settings. Split out of the Settings root (where five loose rows made
+-- it unclear which applied where) and modelled on the Cover display submenu.
+function Settings:_startMenuSubItems()
+    local items = {}
+    -- Start-menu position: three-state radio. "left" (default; an absent key
+    -- reads as left), "right" mirrors the whole stack (footer button, popup
+    -- anchor, leftward flyout), "off" removes the button and its d-pad slot.
+    items[#items + 1] = (function()
+        local function readPos()
+            local v = BookshelfSettings.read("start_menu_position", "left")
+            if v == "right" or v == "off" then return v end
+            return "left"
+        end
+        local labels = {
+            left  = _("Left"),
+            right = _("Right"),
+            off   = _("Off"),
+        }
+        local function optionRow(pos, label)
+            return {
+                text           = label,
+                checked_func   = function() return readPos() == pos end,
+                radio          = true,
+                keep_menu_open = true,
+                callback       = function(touchmenu_instance)
+                    BookshelfSettings.save("start_menu_position", pos)
+                    refreshReaderLauncher()
+                    if self._bw and self._bw._rebuild then
+                        self._bw:_rebuild()
+                        UIManager:setDirty(self._bw, "ui")
+                    end
+                    if touchmenu_instance and touchmenu_instance.updateItems then
+                        touchmenu_instance:updateItems()
+                    end
+                end,
+            }
+        end
+        return {
+            text_func = function()
+                return _("Start menu") .. ": " .. labels[readPos()]
+            end,
+            help_text = _("Where the start-menu button sits in the"
+                .. " footer. Right moves the button and its menu to"
+                .. " the bottom-right corner; Off hides the button"
+                .. " entirely."),
+            sub_item_table_func = function()
+                return {
+                    optionRow("left",  labels.left),
+                    optionRow("right", labels.right),
+                    optionRow("off",   labels.off),
+                }
+            end,
+        }
+    end)()
+    -- Minimum panel width: the start menu otherwise sizes itself to its longest
+    -- row label, so short menu text also narrows the module cards.
+    items[#items + 1] = {
+        text_func = function()
+            local dp = BookshelfSettings.read("start_menu_min_width", 180) or 180
+            if dp == 180 then return _("Minimum start menu width: default") end
+            return T(_("Minimum start menu width: %1 dp"), dp)
+        end,
+        help_text = _("The start menu is normally only as wide as its longest"
+            .. " label, so short menu text also narrows the micro-module cards."
+            .. " Raise this to widen the panel without lengthening the text."),
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            self:_pickStartMenuMinWidth(touchmenu_instance)
+        end,
+    }
+    -- Lift the in-reader launcher off the screen bottom (#279): another
+    -- plugin's reader status bar can sit exactly where these buttons land.
+    -- Live: the nudge re-registers the launcher on each step, so the glyph and
+    -- its touch zone move together under the dialog.
+    items[#items].separator = true  -- end the menu band
+    -- ── While reading ──────────────────────────────────────────────────────
+    -- Non-tappable greyed heading: KOReader's TouchMenu renders a row whose
+    -- enabled_func() is false in COLOR_DARK_GRAY and ignores taps, so it reads
+    -- as a section label. This makes the reader-only scope of what follows
+    -- VISIBLE, instead of something the user has to infer from help text after
+    -- wondering why the settings appeared to do nothing.
+    items[#items + 1] = {
+        text         = _("While reading"),
+        enabled_func = function() return false end,
+        separator    = false,
+    }
+    -- In-reader launcher (opt-in, off by default): a small persistent button
+    -- in the reader's bottom corner that opens the start menu. Registered at
+    -- reader init, so it takes effect the next time a book is opened.
+    -- Two independent buttons. Each falls back to the old shared
+    -- reader_launcher_button until explicitly set, so existing installs are
+    -- unchanged; once set, the reader decides on its own (no veto from
+    -- start_menu_position = off or the micro-module placement).
+    local RB = require("lib/bookshelf_reader_buttons")
+    items[#items + 1] = {
+        text = _("Show menu button"),
+        help_text = _("Adds the Bookshelf menu button to the reader. Takes effect"
+            .. " the next time you open a book."),
+        checked_func = function() return RB.showMenu() end,
+        callback = function()
+            BookshelfSettings.save("reader_menu_button", not RB.showMenu())
+            refreshReaderLauncher()
+        end,
+    }
+    items[#items + 1] = {
+        text = _("Show micro-modules button"),
+        help_text = _("Adds the micro-modules button to the reader, in the corner"
+            .. " opposite the menu button. Takes effect the next time you open a"
+            .. " book."),
+        checked_func = function() return RB.showModules() end,
+        callback = function()
+            BookshelfSettings.save("reader_modules_button", not RB.showModules())
+            refreshReaderLauncher()
+        end,
+    }
+    items[#items + 1] = {
+        -- Names what it changes, not just what it is: the row sits inside the
+        -- "While reading" band, so the reader-only scope is already on screen.
+        text = _("Launcher button position and size") .. "\xE2\x80\xA6",
+        help_text = _("Position, size, side and which edge the in-reader launcher"
+            .. " buttons sit on. Opens a blank screen showing just the buttons,"
+            .. " so you can see them move as you adjust."),
+        enabled_func = function()
+            -- Only meaningful when at least one launcher is actually painted.
+            return RB.showMenu() or RB.showModules()
+        end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            self:_pickLauncherButtons(touchmenu_instance)
+        end,
+    }
+    return items
+end
+
+-- Launcher buttons: one canvas for position (both axes), size and edge.
+--
+-- Replaces the separate position/size rows, which only affected reader mode and
+-- so appeared to do nothing when adjusted from the library. This opens a BLANK
+-- full-screen canvas with the launcher glyphs drawn at their real geometry, and
+-- puts every control over it, so each nudge visibly moves something.
+function Settings:_pickLauncherButtons(touchmenu_instance)
+    local ButtonDialog  = require("ui/widget/buttondialog")
+    local ReaderButtons = require("lib/bookshelf_reader_buttons")
+    local restoreMenu   = self._plugin:hideMenu(touchmenu_instance)
+
+    local K_Y, K_X, K_S, K_TOP =
+        "reader_launcher_lift", "reader_launcher_offset_x",
+        "reader_launcher_scale", "reader_launcher_top"
+    local K_SIDE = "reader_launcher_side"
+    -- Snapshot for Cancel. An UNSET key must come back unset rather than being
+    -- coerced to a default, so Cancel walks this KEY LIST -- not pairs(orig).
+    -- `orig[k] = nil` stores nothing, so on an install that had never touched
+    -- these (the common case) the snapshot table was empty and pairs() iterated
+    -- nothing: Cancel silently kept whatever had just been nudged.
+    local KEYS = { K_Y, K_X, K_S, K_TOP, K_SIDE }
+    local orig = {}
+    for _, k in ipairs(KEYS) do orig[k] = BookshelfSettings.read(k) end
+
+    local canvas = ReaderButtons.previewWidget()
+    UIManager:show(canvas)
+
+    local function get(k, dflt) return BookshelfSettings.read(k, dflt) or dflt end
+    local function clampSet(k, v, lo, hi)
+        BookshelfSettings.save(k, math.max(lo, math.min(hi, v)))
+    end
+
+    local dialog
+    -- Both the dialog AND the canvas must be dirtied on every change: the dialog
+    -- so its value labels update, the canvas so the glyphs move. e-ink repaints
+    -- nothing without an explicit setDirty (desktop SDL does, which is how the
+    -- old rows shipped looking dead on device). reinitLocked also re-applies the
+    -- movable lockdown that ButtonDialog:reinit() would otherwise discard.
+    local function refresh()
+        Focus.reinitLocked(dialog)
+        UIManager:setDirty(canvas, "ui")
+        UIManager:setDirty(dialog, "ui")
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+    local function nudgeY(d) clampSet(K_Y, get(K_Y, 0) + d, -60, 200); refresh() end
+    local function nudgeX(d) clampSet(K_X, get(K_X, 0) + d, -60, 200); refresh() end
+    local function nudgeS(d) clampSet(K_S, get(K_S, 100) + d, 50, 150); refresh() end
+    local function toggleSide()
+        BookshelfSettings.save("reader_launcher_side",
+            ReaderButtons.side() == "right" and "left" or "right")
+        refresh()
+    end
+    local function toggleEdge()
+        BookshelfSettings.save(K_TOP, not (BookshelfSettings.read(K_TOP, false) == true))
+        refresh()
+    end
+    local function close()
+        UIManager:close(dialog)
+        -- The canvas is an opaque full-screen widget, so what it covered has to be
+        -- FLUSHED, not merely repainted. UIManager:close with no refreshtype ends
+        -- up in _refresh(nil), which current KOReader drops outright ("to avoid
+        -- enqueuing a useless full-screen refresh") -- so the shelf underneath was
+        -- painted back into the framebuffer and never reached the panel, and came
+        -- back stale on e-ink. Same trap MicroFullscreen.open documents for show().
+        local Geom   = require("ui/geometry")
+        local Screen = require("device").screen
+        UIManager:close(canvas, "ui", canvas.dimen or Geom:new{
+            x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() })
+        restoreMenu()
+        refreshReaderLauncher()
+    end
+
+    dialog = ButtonDialog:new{
+        dismissable = false, -- nudge-dialog lockdown; see _pickCoverBadgeFontScale
+        title = _("Launcher buttons"),
+        buttons = {
+            {
+                { text = "-10", callback = function() nudgeY(-10) end },
+                { text = "-2",  callback = function() nudgeY(-2)  end },
+                { text_func = function()
+                    return T(_("edge %1 dp"), tostring(get(K_Y, 0))) end,
+                  enabled = false },
+                { text = "+2",  callback = function() nudgeY(2)  end },
+                { text = "+10", callback = function() nudgeY(10) end },
+            },
+            {
+                { text = "-10", callback = function() nudgeX(-10) end },
+                { text = "-2",  callback = function() nudgeX(-2)  end },
+                { text_func = function()
+                    return T(_("side %1 dp"), tostring(get(K_X, 0))) end,
+                  enabled = false },
+                { text = "+2",  callback = function() nudgeX(2)  end },
+                { text = "+10", callback = function() nudgeX(10) end },
+            },
+            {
+                { text = "-10", callback = function() nudgeS(-10) end },
+                { text = "-5",  callback = function() nudgeS(-5)  end },
+                { text_func = function()
+                    return T(_("size %1%"), tostring(get(K_S, 100))) end,
+                  enabled = false },
+                { text = "+5",  callback = function() nudgeS(5)  end },
+                { text = "+10", callback = function() nudgeS(10) end },
+            },
+            {
+                { text_func = function()
+                    return ReaderButtons.side() == "right"
+                        and _("Side: right") or _("Side: left")
+                  end,
+                  callback = toggleSide },
+                { text_func = function()
+                    return BookshelfSettings.read(K_TOP, false) == true
+                        and _("Edge: top") or _("Edge: bottom")
+                  end,
+                  callback = toggleEdge },
+                { text = _("Cancel"), callback = function()
+                    for _, k in ipairs(KEYS) do
+                        local v = orig[k]
+                        if v == nil then BookshelfSettings.delete(k)
+                        else BookshelfSettings.save(k, v) end
+                    end
+                    close()
+                  end },
+                { text = _("Default"), callback = function()
+                    BookshelfSettings.delete(K_Y); BookshelfSettings.delete(K_X)
+                    BookshelfSettings.delete(K_S); BookshelfSettings.delete(K_TOP)
+                    BookshelfSettings.delete(K_SIDE)
+                    refresh()
+                  end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+    UIManager:setDirty(canvas, "ui")
+end
+
+-- Minimum start-menu panel width. The panel is otherwise sized by its longest
+-- row LABEL, so users who prefer short menu text end up with narrow module
+-- cards too; this decouples the two. Same live-preview shape (and the same
+-- reader-vs-library routing, #297) as _pickStartMenuFontScale.
+function Settings:_pickStartMenuMinWidth(touchmenu_instance)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local StartMenu    = require("lib/bookshelf_start_menu")
+    local key = "start_menu_min_width"
+    local original = BookshelfSettings.read(key, 180)
+    local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
+
+    local in_reader = self._plugin and self._plugin.ui and self._plugin.ui.document
+    local opened_preview = false
+    if not StartMenu._live then
+        if in_reader then
+            if self._plugin._openReaderStartMenu then
+                self._plugin:_openReaderStartMenu()
+                opened_preview = true
+            end
+        elseif self._bw then
+            self._bw:_openStartMenu()
+            opened_preview = true
+        end
+    end
+
+    local function getValue() return BookshelfSettings.read(key, 180) end
+    local function setValue(v)
+        -- Same bounds the panel itself clamps to (_panelWidthBounds).
+        v = math.max(120, math.min(600, v))
+        BookshelfSettings.save(key, v)
+    end
+    local function refreshPreview()
+        if StartMenu._live then StartMenu._live:_reload() end
+    end
+
+    local dialog
+    local function applyReinit()
+        Focus.reinitLocked(dialog)
+        if dialog.movable then dialog.movable.ges_events = {} end
+        UIManager:setDirty(dialog, "ui")
+    end
+    local function nudge(delta)
+        setValue(getValue() + delta)
+        refreshPreview()
+        applyReinit()
+    end
+    local function close()
+        if opened_preview and StartMenu._live then
+            StartMenu._live:_close()
+        end
+        UIManager:close(dialog)
+        restoreMenu()
+    end
+    local function revert()
+        setValue(original)
+        refreshPreview()
+    end
+
+    dialog = ButtonDialog:new{
+        dismissable = false,
+        title = _("Minimum start menu width"),
+        buttons = {
+            {
+                { text = "-20",  callback = function() nudge(-20) end },
+                { text = "-5",   callback = function() nudge(-5)  end },
+                { text_func = function() return tostring(getValue()) .. " dp" end,
+                  enabled = false },
+                { text = "+5",   callback = function() nudge(5)   end },
+                { text = "+20",  callback = function() nudge(20)  end },
+            },
+            {
+                { text = _("Cancel"), callback = function() revert(); close() end },
+                { text = _("Default"),
+                  callback = function() setValue(180); refreshPreview(); applyReinit() end },
                 { text = _("Apply"), is_enter_default = true, callback = close },
             },
         },
@@ -3543,7 +3993,7 @@ function Settings:_pickModalTabFontScale(touchmenu_instance)
     -- (confirmed on-device: a detected tap with no callback firing, then
     -- all further input going quiet).
     local function reinitLocked()
-        Focus.reinit(dialog)
+        Focus.reinitLocked(dialog)
         if dialog.movable then dialog.movable.ges_events = {} end
     end
     local function nudge(delta)

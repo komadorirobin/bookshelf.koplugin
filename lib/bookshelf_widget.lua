@@ -1407,6 +1407,17 @@ function BookshelfWidget:_rebuild()
     -- One-shot drill restore on the first rebuild after init. Deferred until
     -- here (rather than in init) so the chip-fallback / sort-priority lookups
     -- happen against a fully-loaded TabModel.
+    -- "Go to home screen" (#223) requested before this widget existed: skip the
+    -- saved-drilldown restore below so the first paint is the top level. Class-
+    -- level because the requesting code runs before the instance does (same
+    -- reason as BookshelfWidget.live); cleared on consumption so it can never
+    -- send a later, unrelated rebuild home.
+    if BookshelfWidget.go_home_pending then
+        BookshelfWidget.go_home_pending = nil
+        self._pending_restore_drill = nil
+        self._drilldown_path = {}
+        self._cursor = 1
+    end
     if self._pending_restore_drill then
         local saved = self._pending_restore_drill
         self._pending_restore_drill = nil
@@ -2194,7 +2205,7 @@ function BookshelfWidget:_rebuild()
         elseif _source_kind == "tags" then
             placeholder_text = _("No collections yet · Long-press a book and tap 'Collections…' to create one")
         elseif _source_kind == "favorites" then
-            placeholder_text = _("No favourites yet · Long-press a book and tap 'Add to favourites'")
+            placeholder_text = _("No favorites yet · Long-press a book and tap 'Add to favorites'")
         elseif _source_kind == "latest" then
             placeholder_text = _("No books found · Set your library folder in Settings then tap Latest")
         elseif _source_kind == "recent" then
@@ -7931,16 +7942,17 @@ function BookshelfWidget:_previewNeighbourBook(direction)
     if self._preview_book and self._preview_book.filepath == target.filepath then
         return  -- single-book chip; cycling would otherwise re-trigger open
     end
-    -- Update cursor so the new preview is on the visible shelf — otherwise
-    -- _previewBook's swap-shelves-in-place would highlight a book that
-    -- isn't currently rendered.
-    local all_idx = books_to_all[next_idx]
-    if all_idx then
-        local view = self:_viewSize()
-        self._cursor = math.max(1, math.floor((all_idx - 1) / view) * view + 1)
-        self:_clampCursor()
-        self:_syncPageFromCursor()
-    end
+    -- self._cursor is already correct here -- it's what _fetchChipItems used
+    -- (above) to decide which page's window to fetch, so `books`/`all_items`
+    -- only ever hold THIS page's items and `next_idx` can only ever land on
+    -- one of them. books_to_all[next_idx] is an index into that page-local
+    -- window (1..view size), NOT an absolute library position, so recomputing
+    -- the cursor from it as if it were absolute collapsed to page 1 on every
+    -- page but the first: floor((all_idx-1)/view) is always 0 when all_idx
+    -- can never exceed view. That's what made a swipe on page 2+ correctly
+    -- pick the target book but visibly snap the shelf back to page 1 (#303,
+    -- a regression the #226 fix's "re-anchor to the visible page" logic
+    -- didn't actually achieve past the first page). Leave the cursor alone.
     self:_previewBook(target)
 end
 

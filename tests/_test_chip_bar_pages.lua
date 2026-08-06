@@ -5,6 +5,10 @@
 -- chips are not rendered, paging moves the window). Run: lua tests/_test_chip_bar_pages.lua
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
+G_reader_settings = {
+    isTrue = function() return false end,
+}
+
 -- Minimal class with new()->init() and extend(), for the widget base classes.
 local function klass()
     local c = {}; c.__index = c

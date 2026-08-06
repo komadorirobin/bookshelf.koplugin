@@ -903,3 +903,105 @@ msgstr "Starta om KOReader nu?"
 
 msgid "Restart"
 msgstr "Starta om"
+
+msgid "Delete this chip? This cannot be undone."
+msgstr "Ta bort detta chip? Det går inte att ångra."
+
+msgid "Show favorites icon"
+msgstr "Visa favoritsymbol"
+
+msgid "Selected chip fill"
+msgstr "Bakgrund för valt chip"
+
+msgid "Fill behind the selected chip in the chip bar. Left unset, the selected chip is drawn by inverting the chip -- the fastest path and identical on every device. Setting a color paints it instead. Long-press to clear."
+msgstr "Bakgrundsfärg för det valda chipet i chipbaren. Om inget anges visas chipet inverterat, vilket är snabbast och ser likadant ut på alla enheter. Om du väljer en färg används den i stället. Långtryck för att rensa."
+
+msgid "Selected chip fill (% black)"
+msgstr "Bakgrund för valt chip (% svart)"
+
+msgid "Selected chip text"
+msgstr "Text för valt chip"
+
+msgid "Label color on the selected chip. Defaults to paper white over the fill. Long-press to clear."
+msgstr "Textfärg på det valda chipet. Standard är pappersvitt ovanpå bakgrunden. Långtryck för att rensa."
+
+msgid "Selected chip text (% black)"
+msgstr "Text för valt chip (% svart)"
+
+msgid "Color panel dithering"
+msgstr "Dithering för färgskärm"
+
+msgid "Applies the color-dither waveform when redrawing book covers so they keep their full saturation on color e-ink panels. Turn it off to compare; with it off, covers can look washed out until a full-screen refresh. Color panels only."
+msgstr "Använder färgskärmens dithering när bokomslag ritas om så att de behåller full färgmättnad på e-inkskärmar i färg. Stäng av för att jämföra; utan funktionen kan omslagen se urblekta ut tills hela skärmen uppdateras. Gäller endast färgskärmar."
+
+msgid "Show a 'Closing book…' message in the center of the screen while a book is being closed back to Bookshelf. The book-close work takes a moment, so the message confirms your gesture landed during the wait. Some users on color e-ink panels see a brief flash from the message appearing. Turn it off here if you prefer no message and no flash."
+msgstr "Visa meddelandet 'Stänger boken…' mitt på skärmen medan boken stängs och Bookshelf öppnas. Stängningen tar en liten stund, så meddelandet bekräftar att gesten registrerades. På vissa e-inkskärmar i färg kan meddelandet orsaka en kort blinkning. Stäng av detta om du föredrar varken meddelande eller blinkning."
+
+msgid "Where the start-menu button sits in the footer. Right moves the button and its menu to the bottom-right corner; Off hides the button entirely."
+msgstr "Placeringen av startmenyknappen i sidfoten. Höger flyttar knappen och menyn till det nedre högra hörnet; Av döljer knappen helt."
+
+msgid "Minimum start menu width: default"
+msgstr "Minsta bredd för startmenyn: standard"
+
+msgid "Minimum start menu width: %1 dp"
+msgstr "Minsta bredd för startmenyn: %1 dp"
+
+msgid "The start menu is normally only as wide as its longest label, so short menu text also narrows the micro-module cards. Raise this to widen the panel without lengthening the text."
+msgstr "Startmenyn är normalt bara lika bred som sin längsta text, vilket innebär att kort text även gör mikromodulkorten smalare. Höj värdet för att bredda panelen utan att förlänga texten."
+
+msgid "While reading"
+msgstr "Under läsning"
+
+msgid "Show menu button"
+msgstr "Visa menyknapp"
+
+msgid "Adds the Bookshelf menu button to the reader. Takes effect the next time you open a book."
+msgstr "Lägger till Bookshelfs menyknapp i läsaren. Börjar gälla nästa gång du öppnar en bok."
+
+msgid "Show micro-modules button"
+msgstr "Visa knapp för mikromoduler"
+
+msgid "Adds the micro-modules button to the reader, in the corner opposite the menu button. Takes effect the next time you open a book."
+msgstr "Lägger till knappen för mikromoduler i läsaren, i hörnet mittemot menyknappen. Börjar gälla nästa gång du öppnar en bok."
+
+msgid "Launcher button position and size"
+msgstr "Startknapparnas placering och storlek"
+
+msgid "Position, size, side and which edge the in-reader launcher buttons sit on. Opens a blank screen showing just the buttons, so you can see them move as you adjust."
+msgstr "Ställ in position, storlek, sida och skärmkant för startknapparna i läsaren. Öppnar en tom skärm som bara visar knapparna, så att du kan se hur de flyttas medan du justerar."
+
+msgid "Launcher buttons"
+msgstr "Startknappar"
+
+msgid "edge %1 dp"
+msgstr "kant %1 dp"
+
+msgid "side %1 dp"
+msgstr "sida %1 dp"
+
+msgid "size %1%"
+msgstr "storlek %1%"
+
+msgid "Side: left"
+msgstr "Sida: vänster"
+
+msgid "Side: right"
+msgstr "Sida: höger"
+
+msgid "Edge: bottom"
+msgstr "Kant: nederkant"
+
+msgid "Edge: top"
+msgstr "Kant: överkant"
+
+msgid "Minimum start menu width"
+msgstr "Minsta bredd för startmenyn"
+
+msgid "No favorites yet · Long-press a book and tap 'Add to favorites'"
+msgstr "Inga favoriter ännu · Långtryck på en bok och välj 'Lägg till i favoriter'"
+
+msgid "Bookshelf: go to home screen"
+msgstr "Bookshelf: gå till hemskärmen"
+
+msgid "Picking a book…"
+msgstr "Väljer en bok…"

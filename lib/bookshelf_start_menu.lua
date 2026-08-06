@@ -187,7 +187,7 @@ local StartMenu = InputContainer:extend{}
 -- provided the overlay paints an opaque close glyph over that region.
 -- context: "library" (home screen, default) | "reader" (in-reader launcher).
 -- Items whose scope is set to the other context are filtered out (#scope feat).
-function StartMenu.open(bw, bottom_inset, burger_dimen, context)
+function StartMenu.open(bw, bottom_inset, burger_dimen, context, burger_art, anchor_top, side_override)
     -- In reader context there's no bookshelf widget to repaint the area an
     -- in-place rebuild vacates (e.g. a closed folder flyout), so the flyout
     -- pixels would linger. Target ReaderUI instead, so the page beneath repaints
@@ -205,6 +205,15 @@ function StartMenu.open(bw, bottom_inset, burger_dimen, context)
         bottom_inset  = no_button and 0 or (bottom_inset + Screen:scaleBySize(6)),
         _balance_bottom_margin = no_button,
         burger_dimen  = burger_dimen,
+        burger_art    = burger_art,   -- actual launcher art size (#279 scaling)
+        -- anchor_top: grow the panel DOWN from the top edge instead of up from
+        -- the bottom. Set when the in-reader launcher has been moved to the top,
+        -- so the menu opens away from the button rather than across the screen
+        -- from it. bottom_inset is then the inset from the TOP edge.
+        anchor_top    = anchor_top and true or false,
+        -- side_override: "left"/"right" to hang the panel off that side
+        -- regardless of start_menu_position (reader mode has its own side).
+        side_override = side_override,
         context       = (context == "reader") and "reader" or "library",
         _repaint_under = under,
     }
@@ -221,17 +230,31 @@ function StartMenu.open(bw, bottom_inset, burger_dimen, context)
             local old_bb = Screen.bb:copy()
             menu:paintTo(Screen.bb, 0, 0)
             local new_bb = Screen.bb:copy()
+            -- Reveal from the edge the panel is anchored to, so it reads as
+            -- opening AWAY from the button: bottom-anchored grows upward,
+            -- top-anchored grows downward. Revealing bottom-up on a
+            -- top-anchored panel looked like it was closing.
+            local from_top = menu.anchor_top
             local STEPS, prev_dh = anim_steps, 0
             for i = 1, STEPS do
                 local dh = math.floor(rh * i / STEPS)
-                if rh - dh > 0 then
-                    Screen.bb:blitFrom(old_bb, rx, ry, rx, ry, rw, rh - dh)
+                if from_top then
+                    -- new content occupies [ry, ry+dh); old keeps the remainder
+                    if rh - dh > 0 then
+                        Screen.bb:blitFrom(old_bb, rx, ry + dh, rx, ry + dh, rw, rh - dh)
+                    end
+                    Screen.bb:blitFrom(new_bb, rx, ry, rx, ry, rw, dh)
+                else
+                    if rh - dh > 0 then
+                        Screen.bb:blitFrom(old_bb, rx, ry, rx, ry, rw, rh - dh)
+                    end
+                    Screen.bb:blitFrom(new_bb, rx, ry + rh - dh, rx, ry + rh - dh, rw, dh)
                 end
-                Screen.bb:blitFrom(new_bb, rx, ry + rh - dh, rx, ry + rh - dh, rw, dh)
                 if i < STEPS then
                     local strip_h = dh - prev_dh
                     if strip_h > 0 then
-                        Screen:refreshUI(rx, ry + rh - dh, rw, strip_h)
+                        local strip_y = from_top and (ry + prev_dh) or (ry + rh - dh)
+                        Screen:refreshUI(rx, strip_y, rw, strip_h)
                         UIManager:yieldToEPDC(20000)
                     end
                 else
@@ -411,7 +434,13 @@ function StartMenu:_panelWidthBounds()
     -- and flyout panels go through here, so both widen together. Clamp to the
     -- max so a very large font can't exceed the panel cap.
     local max_w = math.floor(sw * 0.6)
-    local min_w = math.min(max_w, math.floor(Screen:scaleBySize(180) * pct / 100))
+    -- User floor (dp): the panel is otherwise sized by the longest row LABEL, so
+    -- short menu text drags module cards narrow with it. Raising this widens the
+    -- panel without touching the text. Still font-scaled (same reason as the
+    -- 180 default) and still clamped to max_w, so it can't exceed the cap.
+    local base = tonumber(Store.read("start_menu_min_width", 180)) or 180
+    if base < 120 then base = 120 elseif base > 600 then base = 600 end
+    local min_w = math.min(max_w, math.floor(Screen:scaleBySize(base) * pct / 100))
     return min_w, max_w
 end
 
@@ -690,16 +719,37 @@ function StartMenu:_buildModuleRow(entry, w, focused, in_flyout)
     local blocked = self._safe_mode
     local inner, errored
     if def and not blocked then
+        -- Height ceiling for this row's content. Unlike the hero grid, the start
+        -- menu has no fit engine (_renderFitted) to shrink an oversized card --
+        -- it takes whatever height the module returns. A height-VARYING module
+        -- (the quote card, whose text length is user data) could therefore
+        -- report an unbounded natural height, and since the panel is
+        -- bottom-anchored the excess ran off the TOP of the screen, with
+        -- pagination unable to help because a single row can't be split.
+        -- Cap a single row at what the panel can actually show (minus its
+        -- chrome and one pager row, so pagination stays possible), and pass
+        -- clamp so a module that CAN truncate its expendable part does so
+        -- (quote_of_day ellipsises the quote, keeping the attribution).
+        -- Modules that ignore height/clamp are unaffected; so is any card
+        -- already shorter than the cap (fitText's height_adjust reports the
+        -- natural height when the text fits).
+        local avail_panel_h = Screen:getHeight() - (self.bottom_inset or 0)
+        local panel_chrome  = 2 * (self._panel_border + self._panel_pad)
+        local pager_stride  = self._row_h + 2 * focus_border
+        local content_cap   = math.max(1,
+            avail_panel_h - panel_chrome - pager_stride
+            - 2 * card_margin - 2 * card_pad - 2 * focus_border)
         -- Render under pcall so a Lua error degrades to an "(error)" row rather
         -- than taking down the build. Force getSize() inside the guard so any
         -- layout/shaping error is caught here too. No disk writes on this path.
         -- The render still gets the scoped refresh (5th arg) for async redraws.
         local ok, widget = Breaker.guard(function()
             local wgt = def.render({
-                width = inner_w, height = nil,
+                width = inner_w, height = content_cap,
                 scale = self._scale_pct or 100,
                 preview = false, refresh = refresh, shape = nil, entry = entry,
                 surface = "start_menu", bw = self.bw, menu = self,
+                clamp = true,
                 config = require("lib/bookshelf_module_kit").entryConfig(entry, nil),
             })
             if wgt then wgt:getSize() end
@@ -1051,8 +1101,45 @@ function StartMenu:_build()
     local _bt2 = _gettime()
     local root_frame, root_rows = self:_buildPanel(slice, root_w)
     local _bt3 = _gettime()
-    local need_rebuild = false
-    if max_rows > 1 and _overflows(root_frame, has_prev, has_next) then
+    -- Reduce max_rows from the MEASURED row heights until the page fits, then
+    -- rebuild. Iterated (bounded) rather than one-shot: a single pass isn't
+    -- always enough, because the rows have unequal heights and _pageSlice
+    -- declines to paginate at all while #items <= max_rows -- so a page whose
+    -- rows simply don't fit could never shrink, and (the panel being
+    -- bottom-anchored) the excess ran off the TOP of the screen with no pager
+    -- to reach it. Each pass re-measures the rows actually rendered, so a page
+    -- whose own rows are taller than the ones a previous pass measured (module
+    -- rows vary in height -- the quote card's text is user data) converges too.
+    local MAX_FIT_PASSES = 4
+    local function _pageCount()
+        return math.max(1, math.ceil(#self._items / math.max(1, max_rows - 1)))
+    end
+    local function _clampPage()
+        local pages = _pageCount()
+        if self._page > pages then self._page = pages; return true end
+        return false
+    end
+    local function _rebuildSlice()
+        root_frame:free()
+        slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
+        root_frame, root_rows = self:_buildPanel(slice, root_w)
+    end
+    -- init seeds _page PAST the end to mean "open on the last page". Note that
+    -- intent before any clamping: max_rows only shrinks below, which grows the
+    -- page count, so a clamp against the nominal max_rows would strand the menu
+    -- on page 1 instead of the last page.
+    local want_last_page = self._page > _pageCount()
+    if _clampPage() then _rebuildSlice() end
+    -- Reduce max_rows from the MEASURED row heights until the page fits.
+    -- Iterated rather than one-shot: the rows have unequal heights, and
+    -- _pageSlice declines to paginate at all while #items <= max_rows -- so a
+    -- page whose rows simply don't fit could never shrink, and (the panel being
+    -- bottom-anchored) the excess ran off the TOP of the screen with no pager
+    -- to reach it. Re-measuring each pass also converges when a page's own rows
+    -- are taller than the ones the previous pass measured (module rows vary in
+    -- height -- the quote card's text is user data).
+    for _pass = 1, MAX_FIT_PASSES do
+        if max_rows <= 2 or not _overflows(root_frame, has_prev, has_next) then break end
         -- Sum measured row heights from the bottom (the panel is bottom-
         -- anchored), reserving the pager slot, to find how many rows fit.
         local chrome = 2 * (self._panel_border + self._panel_pad)
@@ -1064,20 +1151,16 @@ function StartMenu:_build()
             fit = fit + 1
         end
         local new_max = math.max(2, fit + 1) -- +1: _pageSlice reserves a pager row
-        if new_max < max_rows then max_rows = new_max; need_rebuild = true end
-    end
-    -- Clamp the scroll offset to the final max_rows (bottom-seeded _page).
-    if max_rows > 1 then
-        local _per   = math.max(1, max_rows - 1)
-        local _pages = math.max(1, math.ceil(#self._items / _per))
-        if self._page > _pages then self._page = _pages; need_rebuild = true end
+        -- Force the split: while #items <= max_rows, _pageSlice returns every
+        -- entry with no pager, so the page can't shrink no matter what `fit`
+        -- says. Strict decrease also guarantees this terminates.
+        if new_max > #self._items then new_max = #self._items end
+        if new_max >= max_rows then new_max = max_rows - 1 end
+        max_rows = math.max(2, new_max)
+        if want_last_page then self._page = _pageCount() else _clampPage() end
+        _rebuildSlice()
     end
     local _bt4 = _gettime()
-    if need_rebuild then
-        root_frame:free()
-        slice, has_prev, has_next = self:_pageSlice(self._items, self._page, max_rows)
-        root_frame, root_rows = self:_buildPanel(slice, root_w)
-    end
     local _bt5 = _gettime()
     self._root_pager = nil
     if has_prev or has_next then
@@ -1094,10 +1177,18 @@ function StartMenu:_build()
     -- Position setting read straight from the store (single source; the
     -- footer reads the same key). "right" mirrors the whole layout:
     -- root panel bottom-right, flyout opening leftward.
-    local on_right = Store.read("start_menu_position", "left") == "right"
+    -- Which side the panel hangs off. In reader context the launcher has its own
+    -- side (it can be opposite the shelf's footer button), and the panel must
+    -- follow the BUTTON it opens from -- same as the file-manager menu does.
+    local on_right
+    if self.side_override == "right" then on_right = true
+    elseif self.side_override == "left" then on_right = false
+    else on_right = Store.read("start_menu_position", "left") == "right" end
     local root_sz = root_frame:getSize()
     local root_x  = on_right and (sw - self._margin - root_sz.w) or self._margin
-    local root_y  = sh - self.bottom_inset - root_sz.h
+    -- bottom_inset is the inset from whichever edge we are anchored to.
+    local root_y  = self.anchor_top and self.bottom_inset
+        or (sh - self.bottom_inset - root_sz.h)
     -- Store pager hit region for onTapDismiss routing (backup tap path).
     -- The pager row sits at the bottom of the panel content; its top is
     -- root_sz.h minus the panel chrome minus one row_h.
@@ -1223,19 +1314,38 @@ function StartMenu:_build()
         -- frame: bd spans the whole side strip, so an opaque box that wide
         -- blanks out everything beside the glyph (e.g. a reader progress bar).
         local FG  = require("lib/bookshelf_footer_geom")
-        local art = FG.barMetrics().art
+        -- burger_art: the launcher's ACTUAL art size. The in-reader launcher can
+        -- be scaled (#279), so the mask must shrink with it or an oversized
+        -- opaque box blanks the page around a small glyph.
+        local art = self.burger_art or FG.barMetrics().art
         local cx    = bd.x + math.floor(bd.w / 2)
         local box_x = cx - math.floor(art / 2)
         local box_y = bd.y + FG.focusBorder()
         local box_h = art
-        -- Clip to below the panel's bottom edge so the opaque box never erases
-        -- the panel's bottom-left border corner.
-        local panel_bottom = sh - self.bottom_inset
-        if box_y < panel_bottom then
-            box_h = box_h - (panel_bottom - box_y)
-            box_y = panel_bottom
+        -- The X morphs the VISIBLE hamburger, so it must only be painted where
+        -- the launcher is actually visible: never over the panel (which would
+        -- erase its border / rows). Test the panel rect directly rather than
+        -- assuming the launcher is bottom-anchored -- since #279 the user can
+        -- move it inward (behind the panel) or flip it to the top edge.
+        local panel = self._root_region
+        local covered = panel
+            and box_y < (panel.y + panel.h) and (box_y + box_h) > panel.y
+            and box_x < (panel.x + panel.w) and (box_x + art) > panel.x
+        if covered then
+            local panel_bottom = panel.y + panel.h
+            if box_y + box_h > panel_bottom then
+                -- Pokes out below the panel (the usual bottom-anchored case):
+                -- keep the visible sliver, as before.
+                box_h = box_h - (panel_bottom - box_y)
+                box_y = panel_bottom
+            else
+                -- Entirely behind the panel: there is no glyph on screen to
+                -- morph, so draw nothing at all.
+                box_h = 0
+            end
         end
         box_h = math.max(0, box_h) -- short dimens: never go negative
+        if box_h > 0 then
         -- Custom-painted X, NOT a glyph: the close X replaces the painted
         -- hamburger bars in the same slot, so the two must read at the SAME
         -- stroke weight — and glyph strokes can't be tuned (U+2715 was the
@@ -1279,6 +1389,7 @@ function StartMenu:_build()
         }
         self._burger_region = Geom:new{ x = box_x, y = box_y,
             w = art, h = box_h }
+        end
     end
 
     self[1] = group
@@ -1379,17 +1490,31 @@ function StartMenu:_close()
         wiped = pcall(function()
             local rx, ry, rw, rh = r.x, r.y, r.w, r.h
             local panel_bb = Screen.bb:copy()   -- current: background + panel
+            -- Retract towards the anchored edge, the exact reverse of the open
+            -- reveal: a bottom-anchored panel wipes DOWN out of view, a
+            -- top-anchored one wipes UP. Always wiping down made a top-anchored
+            -- panel look like it was sliding away from its own button.
+            local from_top = self.anchor_top
             local STEPS, prev_dh = anim_steps, 0
             for i = 1, STEPS do
-                local dh = math.floor(rh * i / STEPS)  -- background revealed top-down
-                Screen.bb:blitFrom(bg, rx, ry, rx, ry, rw, dh)
-                if rh - dh > 0 then
-                    Screen.bb:blitFrom(panel_bb, rx, ry + dh, rx, ry + dh, rw, rh - dh)
+                local dh = math.floor(rh * i / STEPS)  -- background revealed so far
+                if from_top then
+                    -- background comes back from the BOTTOM of the region upward
+                    Screen.bb:blitFrom(bg, rx, ry + rh - dh, rx, ry + rh - dh, rw, dh)
+                    if rh - dh > 0 then
+                        Screen.bb:blitFrom(panel_bb, rx, ry, rx, ry, rw, rh - dh)
+                    end
+                else
+                    Screen.bb:blitFrom(bg, rx, ry, rx, ry, rw, dh)
+                    if rh - dh > 0 then
+                        Screen.bb:blitFrom(panel_bb, rx, ry + dh, rx, ry + dh, rw, rh - dh)
+                    end
                 end
                 if i < STEPS then
                     local strip_h = dh - prev_dh
                     if strip_h > 0 then
-                        Screen:refreshUI(rx, ry + prev_dh, rw, strip_h)
+                        local strip_y = from_top and (ry + rh - dh) or (ry + prev_dh)
+                        Screen:refreshUI(rx, strip_y, rw, strip_h)
                         UIManager:yieldToEPDC(20000)
                     end
                 else
