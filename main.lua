@@ -816,14 +816,27 @@ function Bookshelf:show(profile_key)
     end
     -- If another home UI (notably SimpleUI's "always start on Home" path
     -- after wake) has been shown on top of Bookshelf, the widget is still in
-    -- UIManager's stack but is no longer the visible surface. Treat that as
-    -- stale so explicit navbar opens create a fresh topmost Bookshelf.
+    -- UIManager's stack but is no longer the visible surface. Promote the
+    -- existing widget instead of closing it and immediately trying to create
+    -- another one. UIManager:close completes through widget callbacks, so the
+    -- old close/recreate path briefly left _live_widget pointing at a closing
+    -- widget; an explicit dock tap during that window then adopted the stale
+    -- instance and appeared to do nothing.
     if _live_widget and UIManager:isWidgetShown(_live_widget)
             and not _isWidgetTopmost(_live_widget) then
-        local stale = _live_widget
-        logger.dbg("[bookshelf] closing covered live widget before show")
-        UIManager:close(stale, "ui")
-        if self._widget == stale then self._widget = nil end
+        local covered = _live_widget
+        logger.dbg("[bookshelf] raising covered live widget before show")
+        if self:_raiseInPlace() then
+            -- Re-adopt below so the active FM-side plugin instance owns the
+            -- close callback even if another host originally created it.
+            if self._widget == covered then self._widget = nil end
+        else
+            -- Defensive fallback for inconsistent stack state: make the
+            -- closing widget impossible to re-adopt during close teardown.
+            UIManager:close(covered, "ui")
+            if self._widget == covered then self._widget = nil end
+            if _live_widget == covered then _live_widget = nil end
+        end
     end
     -- Idempotency: if a bookshelf widget already exists on the UIManager
     -- stack (created by some other plugin instance — a fresh
@@ -848,6 +861,7 @@ function Bookshelf:show(profile_key)
     if self._widget then
         if profile_key and not (self._widget.profile and self._widget.profile.key == profile_key) then
             self._widget:setProfile(profile_key)
+            self:_evictHomescreenOverlay()
             return
         end
         -- Already on the stack (probably underneath the Reader). Refresh data
@@ -1214,7 +1228,8 @@ end
 -- _raiseInPlace — splice the live BookshelfWidget to the top of
 -- UIManager's window stack and mark it dirty for a partial repaint.
 --
--- Used by _safeShow's fast path. When the user is inside a book opened
+-- Used by _safeShow's fast path and by explicit reopens when another home UI
+-- has covered the still-live shelf. When the user is inside a book opened
 -- from bookshelf, the widget sits on the stack underneath the Reader.
 -- Painting it in place lets the user see bookshelf within one EPDC
 -- refresh (~700ms on Kindle) instead of waiting through the full
