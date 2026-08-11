@@ -28,6 +28,7 @@ local InputContainer  = require("ui/widget/container/inputcontainer")
 local Device          = require("device")
 local Screen          = Device.screen
 local CoverProgress   = require("lib/bookshelf_cover_progress")
+local TextFit         = require("lib/bookshelf_text_fit")
 local T               = require("ffi/util").template
 local _               = require("lib/bookshelf_i18n").gettext
 
@@ -767,7 +768,11 @@ function SpineWidget:init()
             and ((self.book.has_cover and (effective_bb or can_lazy)) or external_cover) then
         self[1] = self:_renderCover(effective_bb)
     else
+        -- Placeholder card (no cover). Flagged so callers can suppress a
+        -- redundant title/author label below it -- the fallback already shows
+        -- both, larger and centred, on the card itself.
         self[1] = self:_renderFallback()
+        self.is_fallback = true
     end
     self.ges_events = {
         Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
@@ -1197,6 +1202,83 @@ function SpineWidget:_renderShadowedCard(inner)
                     bar,
                 }
             end
+        end
+    end
+
+    -- 5a. Downloaded tick (bottom-RIGHT, fully inside the cover). Marks an
+    --     OPDS catalog record whose file the user already has on disk. The
+    --     flag is set by the book repository from a stat of the opds_downloads
+    --     mapping, so it is read-side truth: deleting (or moving) the book
+    --     retires the tick with no bookkeeping pass. It is never set on a
+    --     local record, so this branch costs one nil test per ordinary cell.
+    --
+    --     Same halo + drop-shadow treatment and the same builder call as the
+    --     favourite heart/star above, so it inherits the Cover badge size
+    --     setting and resolvedColors() for free -- no new badge system, no new
+    --     painter, and no new setting: one indicator, always on for remote
+    --     records.
+    --
+    --     Bottom-right is the page-count pill's slot, but the pill needs
+    --     self.book.page_count, which is always nil on an OPDS record -- the
+    --     two can't collide. Guarded anyway rather than argued: the cost is a
+    --     boolean and the failure mode would be two badges stacked on one
+    --     corner.
+    --
+    --     Gated on self.show_progress like every other cover badge here: that
+    --     flag marks the GRID cell, which is the only surface OPDS records
+    --     render on. The hero card, folder cards and series stacks reuse
+    --     SpineWidget with it off, and their card_w is the SLOT rather than the
+    --     painted cover, so a right-anchored badge would hang off the artwork.
+    local pill_owns_corner = indicators.page_count and self.book and self.book.page_count
+    if self.show_progress and self.book and self.book.downloaded
+            and not pill_owns_corner
+            and not self.is_bulk_selected then
+        -- 70% of the status-glyph size, matching the favourite glyph: the
+        -- circled check is intrinsically wider than the bookmark at the same
+        -- point size, so equal nominal sizes read as unequal weight.
+        local base_h  = math.floor(_glyphSize(card_w) * 0.70)
+        local glyph_h = _badgeSize(base_h)
+        local glyph_w = self:_glyphWidth(glyph_h)
+        if glyph_w <= card_w * 0.4 then
+            local colors   = CoverProgress.resolvedColors()
+            local halo_w   = 1
+            -- Shadow extent must exceed halo_w to peek out from behind the
+            -- outline (same derivation as the favourite glyph).
+            local shadow_d = math.max(halo_w + 2, math.floor(glyph_h * 0.10))
+            -- Centre fill is badge_bg, the shared badge-surface colour: white
+            -- in day mode, and black in night mode so KOReader's framebuffer
+            -- inversion still displays it white. Reused rather than given its
+            -- own setting -- the tick is not a read status and does not earn a
+            -- colour row of its own.
+            local outlined = CoverProgress.buildHaloShadowedGlyphWidget(
+                CoverProgress.GLYPH_DOWNLOADED,
+                glyph_h,
+                halo_w,
+                shadow_d, shadow_d,  -- down-right
+                colors.border,          -- halo (shared "Border color")
+                colors.badge_bg,        -- centre fill
+                colors.shadow,          -- shadow (always dark on screen)
+                "symbols")
+            -- True rendered height (memoized probe): the halo group's
+            -- synthetic dimen under-reports the paint footprint, and
+            -- Font:getFace at size N paints at ~N*1.35.
+            local widget_h = CoverProgress.glyphRenderedH(
+                CoverProgress.GLYPH_DOWNLOADED, glyph_h, "symbols")
+            -- Width comes from the glyph's nominal size plus the halo (the icon
+            -- is square in the face: 21x21 at 24px in the bundled symbols.ttf);
+            -- height from the MEASURED probe, because a symbols TextWidget is
+            -- ~1.35x its point size tall once ascent and descent are counted,
+            -- and anchoring the bottom on the nominal size would push the ink
+            -- past the cover's lower edge.
+            local tick_x, tick_y = SpineWidget.downloadedTickOffset(
+                card_w, card_h, glyph_w, widget_h, halo_w)
+            children[#children + 1] = FrameContainer:new{
+                bordersize   = 0,
+                padding      = 0,
+                padding_top  = tick_y,
+                padding_left = tick_x,
+                outlined,
+            }
         end
     end
 
@@ -1850,10 +1932,31 @@ function SpineWidget:_renderFallback()
     local title_text  = (self.book and self.book.title) or "?"
     local author_text = (self.book and self.book.author) or ""
 
+    -- Fonts grow to fill the slot rather than sitting at a fixed size that
+    -- looks tiny on a large or high-DPI cover (the whole point of this
+    -- placeholder is that there's no artwork to carry the card). fitFontSize
+    -- returns the largest size whose widest word still fits the width and
+    -- whose wrapped block still fits the height; at the floor it stops and
+    -- TextBoxWidget's ellipsis takes over, so text truncates before it shrinks
+    -- past legibility. Sizes are logical pt (BFont scales by DPI) so a title
+    -- fills the same FRACTION of the card at any DPI. The caps are kept fairly
+    -- tight on purpose: once a card is big enough to reach the cap the size
+    -- stops climbing, so the text stays a consistent, readable size across
+    -- screen sizes and grid settings instead of ballooning on large tiles (a
+    -- lone word filling the full tile width reads as too big). The floor sits
+    -- near the old fixed 13 so small covers keep their legibility.
     local title_max_h  = math.max(Screen:scaleBySize(20), math.floor(card_h * 0.40))
-    local title_face, title_bold = BFont:getFace("infofont", 13, { bold = true })
+    local title_size = TextFit.fitFontSize{
+        text = title_text, width = content_w, max_h = title_max_h,
+        lo = 12, hi = 22, bold = true,
+    }
+    local title_face, title_bold = BFont:getFace("infofont", title_size, { bold = true })
+    -- Balance a wrapping title so its last line isn't a lone word (same
+    -- treatment as the hero title). Line count is unchanged, so the fitted
+    -- height still holds. Skip when it stayed one line.
+    local title_render = TextFit.balanceLines(title_text, title_face, content_w, title_bold)
     local title = TextBoxWidget:new{
-        text                          = title_text,
+        text                          = title_render,
         face                          = title_face,
         bold                          = title_bold,
         fgcolor                       = Blitbuffer.COLOR_BLACK,
@@ -1864,7 +1967,12 @@ function SpineWidget:_renderFallback()
         bgcolor                       = inner_bg,
         width                         = content_w,
         alignment                     = "center",
+        -- height_adjust: report the fitted title's NATURAL height so the
+        -- centred stack stays compact (no dead gap above the rule on a big
+        -- card where the title doesn't need the full 40%); the height cap
+        -- still ellipsis-truncates at the floor when even 12pt overflows.
         height                        = title_max_h,
+        height_adjust                 = true,
         height_overflow_show_ellipsis = true,
     }
 
@@ -1881,19 +1989,88 @@ function SpineWidget:_renderFallback()
         }
     end
     local rule_gap = HorizontalSpan:new{ width = Size.padding.small }
-    local diamond_face, diamond_bold = BFont:getFace("infofont", 12)
+    -- Decorative glyph is a FIXED size so the divider motif reads the same on
+    -- every placeholder, rather than growing with the title (which made the
+    -- diamond jump between tiles of the same size as titles varied in length).
+    local diamond_face, diamond_bold = BFont:getFace("infofont", 13)
+    -- Divider motif: books keep the diamond; OPDS nav tiles show the feed's
+    -- own category icon when it sent one (Gutenberg's hearts and stars ride
+    -- the feed as tiny data: URIs), else a drill chevron; facet tiles a
+    -- filter triangle. The motif is the ONLY difference between the
+    -- placeholder kinds, so the shelf keeps one visual rhythm.
+    local band_h = math.max(Screen:scaleBySize(20), card_h * 0.10)
+    local motif
+    if self.book and self.book.opds_icon then
+        -- Feed artwork renders SMOOTHLY scaled to a fixed display height a
+        -- little above the glyph band. Two device rounds got here: at glyph
+        -- size the detail was illegible, and nearest-neighbour integer
+        -- upscaling to 2x the band was big and blocky. Smooth interpolation
+        -- to one fixed slot reads cleanly and gives every catalogue's icons
+        -- the same footprint. iconFor is asked for the NATIVE buffer (nil
+        -- target skips the integer upscale); ImageWidget does the scaling.
+        local icon_disp_h = math.floor(band_h * 1.4)
+        local ok_i, OpdsIcon = pcall(require, "lib/bookshelf_opds_icon")
+        local icon_bb = ok_i and OpdsIcon.iconFor(self.book.opds_icon, nil) or nil
+        if icon_bb then
+            local ok_w, ImageWidget = pcall(require, "ui/widget/imagewidget")
+            if ok_w then
+                local iw, ih = icon_bb:getWidth(), icon_bb:getHeight()
+                if iw > 0 and ih > 0 then
+                    motif = ImageWidget:new{
+                        image            = icon_bb,
+                        image_disposable = false,  -- cache-owned, never free
+                        alpha            = true,
+                        width            = math.max(1, math.floor(iw * icon_disp_h / ih)),
+                        height           = icon_disp_h,
+                    }
+                end
+            end
+        end
+    end
+    if not motif and self.book and self.book.is_facet then
+        -- Facet (filter) tiles: the nerd-font funnel, same face the icon
+        -- library renders glyph cells with. Falls through to the diamond
+        -- if the symbols face is unavailable.
+        -- 18, not the diamond's 13: nerd-font glyphs sit small in their
+        -- em-box, so matching point sizes rendered the funnel undersized.
+        local ok_f, Font = pcall(require, "ui/font")
+        local sym_face = ok_f and Font:getFace("symbols", 18) or nil
+        if sym_face then
+            motif = TextWidget:new{
+                text    = "\xEE\xA4\xB5",            -- U+E935 nf filter-variant
+                face    = sym_face,
+                fgcolor = Blitbuffer.COLOR_BLACK,
+            }
+        end
+    end
+    if not motif then
+        local motif_char = "\xE2\x9D\x96"           -- ❖ U+2756 book diamond
+        if self.book and (self.book.is_opds_nav or self.book.is_facet) then
+            motif_char = "\xE2\x9D\xAF"              -- ❯ U+276F drill chevron
+        end
+        motif = TextWidget:new{
+            text    = motif_char,
+            face    = diamond_face,
+            bold    = diamond_bold,
+            fgcolor = Blitbuffer.COLOR_BLACK,
+        }
+    end
+    -- The band stretches to whatever the motif actually is (a 2x feed icon
+    -- is taller than the glyph line); glyph motifs keep the original height.
+    local motif_band_h = band_h
+    do
+        local ok_sz, sz = pcall(function() return motif:getSize() end)
+        if ok_sz and sz and sz.h and sz.h > motif_band_h then
+            motif_band_h = sz.h
+        end
+    end
     local rule_centerer = CenterContainer:new{
-        dimen = Geom:new{ w = content_w, h = math.max(Screen:scaleBySize(20), card_h * 0.10) },
+        dimen = Geom:new{ w = content_w, h = motif_band_h },
         HorizontalGroup:new{
             align = "center",
             ruleLine(),
             rule_gap,
-            TextWidget:new{
-                text    = "\xE2\x9D\x96",  -- ❖ U+2756
-                face    = diamond_face,
-                bold    = diamond_bold,
-                fgcolor = Blitbuffer.COLOR_BLACK,
-            },
+            motif,
             HorizontalSpan:new{ width = Size.padding.small },
             ruleLine(),
         },
@@ -1904,7 +2081,13 @@ function SpineWidget:_renderFallback()
     local stack_children = { align = "center", title, rule_centerer }
     if author_text ~= "" then
         local author_max_h = math.max(Screen:scaleBySize(14), math.floor(card_h * 0.20))
-        local author_face, author_bold = BFont:getFace("infofont", 10)
+        -- Author fits its own band but never outgrows the title (kept
+        -- subordinate in the hierarchy), floored a little below the title floor.
+        local author_size = TextFit.fitFontSize{
+            text = author_text, width = content_w, max_h = author_max_h,
+            lo = 10, hi = math.max(10, math.min(title_size, 15)), bold = false,
+        }
+        local author_face, author_bold = BFont:getFace("infofont", author_size)
         local author = TextBoxWidget:new{
             text                          = author_text,
             face                          = author_face,
@@ -1914,6 +2097,7 @@ function SpineWidget:_renderFallback()
             width                         = content_w,
             alignment                     = "center",
             height                        = author_max_h,
+            height_adjust                 = true,
             height_overflow_show_ellipsis = true,
         }
         stack_children[#stack_children + 1] = author
@@ -2022,6 +2206,30 @@ SpineWidget.COVER_CHROME = SHADOW_OFFSET + 2 * CARD_BORDER
 -- True-aspect ceiling: 2:3 + ~10% overshoot. ~98% of real covers render
 -- untrimmed under it; taller freaks clamp here so they can't blow past the row.
 SpineWidget.COVER_ASPECT_CAP = 1.65
+
+-- SpineWidget.downloadedTickOffset(card_w, card_h, glyph_w, widget_h, halo_w)
+-- -> x, y
+--
+-- Where the OPDS downloaded tick's halo group is pinned inside the card.
+-- Bottom-right, inset from the card's inside-border by the same margins the
+-- progress bar and the page-count pill use, so all three sit in one optical
+-- gutter; the vertical anchor is literally the pill's
+-- (card_h - CARD_BORDER - bar_pad - own_height), so a cover carrying both
+-- reads as a matched pair rather than two badges at two heights.
+--
+-- Pulled out of _renderShadowedCard purely so it can be unit-tested. This is
+-- the one corner badge with no pill frame around it, so an overhang reads as a
+-- clipping bug rather than as deliberate chrome (the bookmark and favourite
+-- glyphs dangle ON PURPOSE and are pinned by their own lift maths) -- worth a
+-- test that says so. Offsets become FrameContainer padding, so both are clamped
+-- to CARD_BORDER: a negative padding paints outside the parent.
+function SpineWidget.downloadedTickOffset(card_w, card_h, glyph_w, widget_h, halo_w)
+    local x = card_w - CARD_BORDER - _barSideMargin() - (glyph_w + 2 * halo_w)
+    local y = card_h - CARD_BORDER - _barBottomPadding() - widget_h
+    if x < CARD_BORDER then x = CARD_BORDER end
+    if y < CARD_BORDER then y = CARD_BORDER end
+    return x, y
+end
 
 -- SpineWidget.bookAspect(book) -- height/width ratio from BIM's cover_sizetag
 -- ("WxH", the ORIGINAL cover pixel size present on every record at layout

@@ -94,6 +94,13 @@ _G.G_reader_settings = {
 -- row-count helpers under test never call into these, so the mock is inert.
 -- package.loaded (the explicit stubs) and on-disk lib/* files both resolve
 -- before this fallback, so it only catches unstubbed KOReader core deps.
+-- The widget's perf-log timer probes require("socket").gettime at load time
+-- (via lib/bookshelf_gettime). Installed BEFORE the catch-all mock searcher:
+-- the mock would answer with a function returning a mock TABLE, and any
+-- "[bookshelf perf]" line doing (_gettime() - t0) would crash on it (the
+-- same hazard _test_opds_nav_expand hit).
+package.loaded["socket"] = { gettime = function() return os.clock() end }
+
 local function mock()
     local m = {}
     return setmetatable(m, {
@@ -167,8 +174,8 @@ test("_nShelves: standard expanded = 3", function()
     eq(bw(750, 1024, true):_nShelves(), 3)
 end)
 
-test("_nShelves: SimpleUI normal keeps two visible rows", function()
-    eq(bw(750, 1024, false, 160):_nShelves(), 2)
+test("_nShelves: compact screen with SimpleUI reserves one normal row", function()
+    eq(bw(750, 1024, false, 160):_nShelves(), 1)
 end)
 
 test("_nShelves: SimpleUI expanded keeps three visible rows", function()
@@ -216,8 +223,8 @@ test("_pageSize: standard screen (750x1024) = 8 normal / 12 expanded", function(
     eq(bw(750, 1024, true):_pageSize(),  12)
 end)
 
-test("_pageSize: SimpleUI screen tracks restored visible rows", function()
-    eq(bw(750, 1024, false, 160):_pageSize(), 8)
+test("_pageSize: SimpleUI screen tracks the reserved bottom band", function()
+    eq(bw(750, 1024, false, 160):_pageSize(), 4)
     eq(bw(750, 1024, true, 160):_pageSize(),  12)
 end)
 

@@ -74,6 +74,14 @@ local FolderStack = InputContainer:extend{
     -- so the faded-folder overlay can remain independent of badge display.
     all_read         = nil,
     all_read_total   = nil,
+    -- plain_if_placeholder: when this tile has no cover and falls back to the
+    -- label-placeholder card, the placeholder already shows the label as its
+    -- title -- so the cardboard tab and the label band below just repeat it.
+    -- Set by callers whose tiles resolve on a tap (OPDS nav), where the folder
+    -- affordance is redundant: drop the overlay and render the bare card. When
+    -- the tile HAS a cover the overlay + label stay (the title isn't otherwise
+    -- shown).
+    plain_if_placeholder = false,
 }
 
 function FolderStack:init()
@@ -106,6 +114,9 @@ function FolderStack:init()
     -- the book card's right and bottom edges, that shadow doubles as
     -- the folder's drop shadow (no separate folder-shaped shadow layer).
     local book_widget
+    -- Set when we render the label-only placeholder (no cover, no first_book):
+    -- the card itself carries the label as its title.
+    local is_label_placeholder = false
     if custom_image_path then
         -- Synthetic book: no filepath so SpineWidget skips the
         -- ScaledCoverCache lookup (which is keyed on the BOOK file,
@@ -163,9 +174,22 @@ function FolderStack:init()
             }
         else
             -- Empty folder: SpineWidget's fallback path with the folder's
-            -- label as the title so the "?" placeholder reads correctly.
+            -- label as the title so the "?" placeholder reads correctly. A
+            -- remote nav tile may also carry an author (Gutenberg puts it in
+            -- the list entry), shown on the placeholder so the tile is
+            -- identifiable before it is opened.
+            is_label_placeholder = true
             book_widget = SpineWidget:new{
-                book             = { title = self.folder and self.folder.label or "" },
+                book             = { title  = self.folder and self.folder.label or "",
+                                     author = self.folder and self.folder.author or nil,
+                                     -- Divider motif on the placeholder card:
+                                     -- OPDS nav tiles show the feed's icon (or
+                                     -- a drill chevron), facet tiles a filter
+                                     -- glyph, books keep the diamond.
+                                     is_opds_nav = self.folder and self.folder.is_opds_nav or nil,
+                                     is_facet    = self.folder and self.folder.is_facet or nil,
+                                     opds_icon   = self.folder and self.folder.opds
+                                                   and self.folder.opds.icon or nil },
                 width            = self.width,
                 height           = self.height,
                 is_selected      = self.is_selected,
@@ -173,6 +197,20 @@ function FolderStack:init()
                 suppress_badges  = true,
             }
         end
+    end
+
+    -- Redundant-overlay case: a tap-resolving tile (OPDS nav) with no cover.
+    -- The placeholder card already shows the label as its title, so skip the
+    -- cardboard tab and the repeated label band and present the bare card.
+    if self.plain_if_placeholder and is_label_placeholder then
+        local children = { book_widget }
+        children.dimen = self.dimen
+        self[1] = OverlapGroup:new(children)
+        self.ges_events = {
+            Tap  = { GestureRange:new{ ges = "tap",  range = self.dimen } },
+            Hold = { GestureRange:new{ ges = "hold", range = self.dimen } },
+        }
+        return
     end
 
     -- Cardboard overlay stays on every render path (#70 follow-up).

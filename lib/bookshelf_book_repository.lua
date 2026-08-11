@@ -16,14 +16,9 @@ local _ok = pcall(require, "lib/bookshelf_i18n")  -- soft: tests stub-load witho
 local i18n = package.loaded["lib/bookshelf_i18n"]
 local function tr(s) if i18n and i18n.gettext then return i18n.gettext(s) end; return s end
 
--- Wall-clock timer. Falls back to os.clock() (CPU-only) if LuaSocket absent.
-local _gettime
-do
-    local ok, s = pcall(require, "socket")
-    _gettime = (ok and s and type(s.gettime) == "function")
-        and function() return s.gettime() end
-        or  os.clock
-end
+-- Shared wall-clock for [bookshelf perf] timestamps (and elapsed-time
+-- bookkeeping); see lib/bookshelf_gettime.lua for the fallback contract.
+local _gettime = require("lib/bookshelf_gettime")
 
 -- ─── Module-local helpers ────────────────────────────────────────────────────
 
@@ -361,6 +356,13 @@ local function _supportedExt(name)
         return (compound and SUPPORTED_EXT[compound]) and compound or nil
     end
     return SUPPORTED_EXT[last] and last or nil
+end
+
+-- Public wrapper so other modules (file-ops' unbounded folder walk) can ask
+-- "is this a shelf book?" without duplicating SUPPORTED_EXT and drifting
+-- from it.
+function Repo.isBookFile(name)
+    return _supportedExt(name) ~= nil
 end
 
 -- _formatLabel(fp): uppercase format label for display/grouping. Collapses a
@@ -803,8 +805,40 @@ end
 -- The returned record's cover_bb is nil when want_cover=false. SpineWidget
 -- handles a nil cover_bb by checking ScaledCoverCache first, then falling
 -- back to Repo.getCoverBB(filepath) for a synchronous lazy decode.
+-- Description the OPDS download flow persisted for an on-disk file (keyed by
+-- path). The key lives in the download module so widget-writer and
+-- repo-reader can't drift; resolved once. Returns a non-empty string or nil.
+local _opds_desc_key
+local function _opdsDownloadDescription(filepath)
+    if type(filepath) ~= "string" then return nil end
+    if _opds_desc_key == nil then
+        local ok, D = pcall(require, "lib/bookshelf_opds_download")
+        _opds_desc_key = (ok and D and D.DESC_STORE_KEY) or "opds_descriptions"
+    end
+    local map = BookshelfSettings.read(_opds_desc_key)
+    if type(map) ~= "table" then return nil end
+    local v = map[filepath]
+    return (type(v) == "string" and v ~= "") and v or nil
+end
+
 function Repo.buildBookMeta(filepath, opts)
     if not filepath then return nil end
+    -- OPDS://server/id is a pseudo-path for a remote catalog entry -- there
+    -- is no file behind it. BIM/Calibre/filename fallbacks below would
+    -- happily build a stripped stand-in for it anyway: no is_remote, no
+    -- opds, no cover_image_path, title falling back to the pseudo-path's
+    -- basename (the raw feed id, e.g. "urn:gutenberg:1727:2"). That
+    -- stand-in reaching the UI was a device-confirmed bug -- tapping an
+    -- OPDS book for preview lost its cover and showed the feed id as the
+    -- title. The feed record (built by the repo's OPDS branch, see
+    -- getBySource kind=="opds") is the only truthful source for a remote
+    -- entry, so bow out here instead of faking one up; callers fall back
+    -- to whatever record they already hold (see BookshelfWidget:_hydrateBook
+    -- and the "or <original record>" idiom at every buildBook/buildBookMeta
+    -- call site).
+    if type(filepath) == "string" and filepath:find("^OPDS://") then
+        return nil
+    end
     local want_cover = not opts or opts.want_cover ~= false
     local bim  = getBookInfoMgr()
     if not bim then return nil end  -- CoverBrowser disabled (#49)
@@ -943,8 +977,15 @@ function Repo.buildBookMeta(filepath, opts)
         lang        = (cb and type(cb.languages) == "table" and cb.languages[1])
                        or info.language,
         identifiers = (cb and cb.identifiers) or info.identifiers,
-        description = (cb and type(cb.comments) == "string" and cb.comments ~= "")
-                       and cb.comments
+        -- Keep OPDS blurbs for downloaded catalog books, while preserving the
+        -- fork's Calibre/embedded-description fallback and identifiers.
+        -- A description the OPDS download flow saved for this file wins: the
+        -- catalog's blurb is why the user can see one at all for a Gutenberg
+        -- book (its embedded EPUB description is usually empty). Falls through
+        -- to Calibre comments, then BIM's extracted description.
+        description = _opdsDownloadDescription(filepath)
+                        or ((cb and type(cb.comments) == "string" and cb.comments ~= "")
+                            and cb.comments)
                        or (info.description and info.description ~= ""
                            and info.description)
                        or nil,
@@ -988,6 +1029,16 @@ end
 -- crash path.
 function Repo.getCoverBB(filepath)
     if not filepath then return nil end
+    -- Remote catalog records have no local file and no BIM row: their cover is
+    -- a cached image file the OPDS branch attaches as cover_image_path, which
+    -- SpineWidget's external-cover branch renders before this lazy path is
+    -- reached. A COVERLESS remote cell does fall through to here, though
+    -- (bookshelf_spine_widget.lua's `bb = fp and _getRepo().getCoverBB(fp)`),
+    -- so without this guard every such cell costs a BIM/SQLite lookup per
+    -- rebuild for a row that cannot exist. Same guard buildBookMeta carries.
+    -- nil is the answer every caller already handles (_renderFallback / a
+    -- failed-count bump in the prewarm loop).
+    if type(filepath) == "string" and filepath:find("^OPDS://") then return nil end
     local bim = getBookInfoMgr()
     if not bim then return nil end
     local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, true)
@@ -4485,6 +4536,40 @@ function Repo.getFolderChoices()
     return out
 end
 
+-- getAllFolderChoices: every directory under home_dir within the walk
+-- depth, INCLUDING empty ones -- unlike getFolderChoices (book-bearing
+-- only, derived from the cached book walk). Move destinations
+-- legitimately include folders holding no books yet. Directory-only
+-- lfs walk, no per-file stats, so cheap even on large libraries.
+-- Depth arithmetic matches walkBooks: level-N dirs (N <= depth) can
+-- hold shelf-visible books.
+function Repo.getAllFolderChoices()
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local home_norm = home == "/" and "/" or home:gsub("/+$", "")
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not (ok_lfs and lfs and lfs.dir) then return {} end
+    local out = {}
+    local function walk(root, level)
+        if level > depth then return end
+        local ok, iter, dir_obj = pcall(lfs.dir, root)
+        if not ok or type(iter) ~= "function" then return end
+        for entry in iter, dir_obj do
+            if entry:sub(1, 1) ~= "." and not SYSTEM_DIR_NAMES[entry]
+                    and entry:sub(-4) ~= ".sdr" then
+                local fp = _joinPath(root, entry)
+                if lfs.attributes(fp, "mode") == "directory" then
+                    out[#out + 1] = { value = fp, label = entry, subtitle = fp }
+                    walk(fp, level + 1)
+                end
+            end
+        end
+    end
+    walk(home_norm, 1)
+    table.sort(out, function(a, b) return a.value:lower() < b.value:lower() end)
+    return out
+end
+
 -- Build a normalized format string from a filepath. UPPERCASE because that's
 -- how the rest of bookshelf (book detail, etc.) presents formats. Returns nil
 -- for files with no extension so _buildGroups skips them.
@@ -5115,6 +5200,236 @@ local function _bySourceCacheKey(source, filter, sort_priority, scope)
     return table.concat(parts, "|")
 end
 
+-- Nav-tile cover borrow (see the opds branch of getBySource below): how many
+-- of a not-yet-drilled subcatalog's cached child entries to STAT (via
+-- OpdsCovers.cachedPath) while scanning for the first one with an
+-- already-cached cover. This bounds disk-stat cost, not raw index: a child
+-- entry with no cover URL at all (OpdsCovers.cachePath returns nil for it --
+-- nav entries riding the same window, per bookshelf_opds_window's nav-first
+-- ordering) costs nothing to rule out and does not consume the budget, so a
+-- page of 12+ cover-less nav children can't starve the scan before it ever
+-- reaches an entry that actually has a cover. The borrow is purely cosmetic
+-- (a placeholder tile is a perfectly valid render), so this caps rather than
+-- pays for an exhaustive scan.
+local NAV_COVER_BORROW_SCAN = 12
+-- ...and a bound on the RAW iterations, since the stat budget above only
+-- counts entries actually statted: a child window may hold up to
+-- OpdsWindow.MAX_ENTRIES (1000) records and start with a long run of
+-- cover-less ones, which would then be walked in full per nav tile per
+-- rebuild. Microseconds each, but the shape scales with the window and the
+-- borrow is cosmetic -- if the first 200 entries have nothing cached, a
+-- placeholder is the right answer.
+local NAV_COVER_BORROW_ITER = 200
+
+-- "Folder of one" (see the opds branch of getBySource below): given a nav
+-- tile's CHILD window, return the single book record it holds, or nil when it
+-- is anything else. A catalog like Project Gutenberg's popular lists models
+-- every work as a subcatalog whose feed carries exactly one acquisition entry,
+-- so the shelf shows a page of folders that each hold one book and the user
+-- must drill in to reach it.
+--
+-- Deliberately strict: exactly one book record and ZERO nav records. A second
+-- book, or any subfolder, means the folder still has something of its own to
+-- show and is left alone. Naturally bounded regardless of window size -- the
+-- walk returns on the first nav record or the second book, so it reads at most
+-- two entries before deciding.
+--
+-- A window with next_url still set is refused outright. That is a PARTIALLY
+-- fetched feed -- a drill the user cancelled, or one whose second page failed --
+-- and page 1 of a subcatalog can perfectly well hold one book with more behind
+-- it. Flattening that would hide the rest permanently: nothing re-fetches a
+-- child feed except drilling into it, which the flattened tile no longer
+-- offers. appendPage clears next_url exactly when the feed is exhausted, so
+-- this is the available "is that all of it?" signal; a server that emits
+-- rel=next on every page simply keeps its folders, which is the pre-existing
+-- behaviour and no loss.
+--
+-- The lone entry must also have something to download. A record with no
+-- acquisitions is not a book the user can act on (a malformed entry, or one
+-- whose formats were all unsupported), and promoting it would swap a working
+-- folder for a dead tile.
+local function opdsLoneChildBook(win)
+    local entries = win and win.entries
+    if type(entries) ~= "table" then return nil end
+    if win.next_url then return nil end
+    local book
+    for _i = 1, #entries do
+        local e = entries[_i]
+        if type(e) == "table" then
+            if e.is_opds_nav then return nil end
+            if book then return nil end
+            book = e
+        end
+    end
+    if not (book and book.opds and type(book.opds.acquisitions) == "table"
+            and #book.opds.acquisitions > 0) then
+        return nil
+    end
+    return book
+end
+
+-- opdsDecorate(records, light_only) - the render-time decoration every OPDS
+-- record gets before it is handed out. Two callers: the page path (the opds
+-- branch of getBySource) and the single-record path (Repo.opdsLoneChildBook,
+-- which must hand the widget a record indistinguishable from the same book on
+-- the shelf, or the modal a nav tap opens would show no cover, no blurb and no
+-- "already downloaded" state).
+--
+-- Everything set here is RENDER state, re-derived on every call from disk and
+-- the download map, and must never reach a stored window entry -- the callers
+-- pass copies, and OpdsWindow's save-time scrub lists these fields as belt and
+-- braces.
+--
+-- The nav-tile cover BORROW is deliberately NOT here: it needs the caller's
+-- child-window memo and applies only to a page of nav tiles.
+--
+-- light_only ("Go to letter") wants sort keys, not tiles, and must not pay a
+-- disk stat per record; it skips the passes that cost one.
+local function opdsDecorate(records, light_only)
+    -- Feed summaries ARE the book's blurb. A remote record keeps its copy
+    -- under opds.summary (what the download modal's preview and its
+    -- Description row read), but every GENERIC consumer -- the hero's
+    -- %description token (lib/bookshelf_tokens.lua), the description viewer --
+    -- reads the `description` field a local book carries, so a previewed
+    -- remote book showed a blank blurb where a local one showed its own.
+    -- Mirror one into the other here.
+    --
+    -- At the DECORATION boundary, not at parse time: the persisted window
+    -- already stores the summary exactly once, and a second copy in the dump
+    -- would double every cached feed's footprint for a field nothing reads off
+    -- the stored entry.
+    --
+    -- Never overwrites: `rec.description or ...` means a record that already
+    -- has one keeps it.
+    --
+    -- No new sanitisation. A local EPUB's description is HTML-ish too, and
+    -- both consumers already clean it at render (Tokens.cleanDescription for
+    -- the hero, _descriptionArgs' sanitiser for the viewer) -- which is exactly
+    -- why _showRemoteBookInfo could already hand opds.summary straight to those
+    -- helpers.
+    --
+    -- Nav records are skipped: a subcatalog is not a book, and mapEntries gives
+    -- a nav record no summary in the first place.
+    if not light_only then
+        for _i = 1, #records do
+            local rec = records[_i]
+            if not rec.is_opds_nav then
+                rec.description = rec.description or (rec.opds and rec.opds.summary) or nil
+            end
+        end
+    end
+    -- Attach covers already on disk, via cover_image_path rather than a decoded
+    -- cover_bb. Missing ones stay placeholders; the widget fetches them async.
+    --
+    -- This must NEVER set cover_bb/has_cover here. A record's cover_bb is, by
+    -- BIM convention, a ONE-SHOT bb: whichever SpineWidget paints it frees it
+    -- (see lib/bookshelf_spine_widget.lua's ownership doc above
+    -- _renderCoverAlignTop, and feedback_image_disposable_shared_book). That
+    -- convention holds for a local file because exactly one widget ever paints
+    -- a given Book instance. It does NOT hold here: the same page record is
+    -- painted by the grid cell AND, unchanged, by the hero preview
+    -- (_hydrateBook passes remote records through untouched), and a later
+    -- network-driven repaint (a cover landing, a page rebuild) paints it again.
+    -- Two painters freeing the same bb is a use-after-free; on a real device
+    -- this corrupted the hero and made grid covers vanish. cover_image_path is
+    -- a plain string, not a handle to anything freeable -- every painter
+    -- independently resolves it through ImageSource's cache-owned bb
+    -- (image_disposable=false, never freed), the same mechanism Hardcover's
+    -- external covers use.
+    local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+    if ok_c and OpdsCovers and not light_only then
+        local ok_is, ImageSource = pcall(require, "lib/bookshelf_image_source")
+        for _i, rec in ipairs(records) do
+            local cp = OpdsCovers.cachedPath(rec)
+            rec.cover_image_path = cp
+            -- Remote records carry no BIM cover_sizetag, so the true-aspect
+            -- grid would size every OPDS cover to the 2:3 default. Read the
+            -- cached cover's real dimensions (cheap header parse, memoised) so
+            -- each cover's box takes its own shape. Only once a cover is on
+            -- disk; before that the record keeps the default and settles to
+            -- true aspect on the cover-landing rebuild, like the covers do.
+            if cp and not rec.cover_sizetag and ok_is and ImageSource.imageSizeTag then
+                rec.cover_sizetag = ImageSource.imageSizeTag(cp)
+            end
+        end
+    end
+    -- Downloaded decoration. The OPDS download flow (the book modal in
+    -- lib/bookshelf_widget.lua) records opds_downloads[<OPDS pseudo-path>]
+    -- = <on-disk path> in the main settings store; a record whose mapping
+    -- still resolves to a file is one the user already has.
+    --
+    -- Read-side truth, deliberately: the flag comes from a stat, not from
+    -- the mapping alone, so deleting the book in the file manager retires
+    -- it with no bookkeeping pass to keep in sync. Cost is nothing at all
+    -- for a user who has downloaded nothing (the key is absent), then one
+    -- stat per VISIBLE record that has a mapping -- not one per download.
+    --
+    -- MOVING the book has the same effect, and that is deliberate too.
+    -- FileOps.relocateFolder rekeys eight other stores on a move and this
+    -- one is pointedly not among them: the mapping is KEYED by the OPDS
+    -- pseudo-path (which never moves) and VALUED by the on-disk path (which
+    -- does), so a stale value degrades to a false NEGATIVE -- no tick, no
+    -- Open row, Download still offered -- and never to an Open row that
+    -- launches the wrong book. It self-heals on the action that exposes it
+    -- (the user taps Download and the mapping is rewritten), and rekeying
+    -- would mean a value-rewrite pass on the single-file move path, the
+    -- folder relocate path and bulk actions, all for a decoration.
+    --
+    -- Render state, never persisted: OpdsWindow.slice hands out copies and
+    -- its save-time scrub lists `downloaded` alongside the cover keys, so a
+    -- stale true can't survive into the cached window and outlive the file.
+    --
+    -- Store key from the download module rather than a literal: the widget
+    -- writes this table and reads it back, and two spellings are two things
+    -- to keep in step for no reason.
+    local ok_dlk, OpdsDownload = pcall(require, "lib/bookshelf_opds_download")
+    local dl_key = ok_dlk and OpdsDownload.STORE_KEY or "opds_downloads"
+    local dl_map = BookshelfSettings.read(dl_key)
+    if type(dl_map) == "table" and next(dl_map) ~= nil then
+        local ok_l, lfs = pcall(require, "libs/libkoreader-lfs")
+        if ok_l and lfs then
+            for _i, rec in ipairs(records) do
+                local dest = dl_map[rec.filepath]
+                if type(dest) == "string" and dest ~= "" then
+                    local ok_a, mode = pcall(lfs.attributes, dest, "mode")
+                    if ok_a and mode == "file" then rec.downloaded = true end
+                end
+            end
+        end
+    end
+    return records
+end
+
+-- Repo.opdsLoneChildBook(server_key, feed_url) -> record | nil
+-- The public face of the "folder of one" predicate above, for the widget's nav
+-- TAP: is this subcatalog's cached window just the one book? Returns a
+-- decorated copy of it -- the same cover / blurb / downloaded state the shelf's
+-- own records carry -- or nil for anything else: a window that was never
+-- fetched, one still holding a rel=next, more than one book, or any subfolder.
+--
+-- Single-sourced deliberately. The tile FLATTENING (the opds branch of
+-- getBySource) and the tap DECISION have to agree, or a tile rendered as a book
+-- would drill in like a folder. Both go through opdsLoneChildBook, so the two
+-- can only ever answer the same way.
+--
+-- Cache-only, like everything else in this branch: OpdsWindow.load reads the
+-- persisted window and never touches the network. The widget is what decides
+-- whether an uncached child is worth a fetch.
+function Repo.opdsLoneChildBook(server_key, feed_url)
+    if not (server_key and feed_url) then return nil end
+    local ok_w, OpdsWindow = pcall(require, "lib/bookshelf_opds_window")
+    if not (ok_w and OpdsWindow) then return nil end
+    local lone = opdsLoneChildBook(OpdsWindow.load(server_key, feed_url))
+    if not lone then return nil end
+    -- Copied for the reason OpdsWindow.slice copies: what comes back gets
+    -- decorated, and the stored window entry must stay clean or the decoration
+    -- is serialised into the OPDS cache on the next save.
+    local copy = {}
+    for k, v in pairs(lone) do copy[k] = v end
+    opdsDecorate({ copy }, false)
+    return copy
+end
+
 -- ─── getBySource ─────────────────────────────────────────────────────────────
 -- getBySource(source, filter, sort_priority, offset, limit)
 -- Generic resolver for the v1.4 custom-tab feature. `source` is a table
@@ -5144,6 +5459,16 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
     local scope, opts = _resolveScopeAndOpts(scope_or_opts, maybe_opts)
     if not source or not source.kind then return {}, 0 end
     local kind = source.kind
+    -- light_only (the "Go to letter" jump, #229) asks for records to SCAN, not
+    -- to paint: it passes limit = max(_total_items, 10000) and throws the list
+    -- away after reading sort keys off it. Both branches below attach covers
+    -- EAGERLY -- a freshly decoded BlitBuffer per record, freed by the grid
+    -- cell after paint -- so honouring such a call literally would decode one
+    -- bb per cached cover in the whole window and free none of them. That is
+    -- the out-of-memory shape MAX_HYDRATE / _hydrationStop exist to prevent,
+    -- and a SIGKILL Lua cannot catch. Nothing on the light_only path reads a
+    -- cover, so skip the attachment entirely.
+    local light_only = (opts and opts.light_only) or false
     -- Kobo virtual library (OGKevin/kobo.koplugin): records come from the plugin
     -- bridge, not the filesystem/BIM. Sort the full set with the SortEngine (the
     -- Kobo chip's sort_priority) and paginate. Empty + cheap when the plugin is
@@ -5167,12 +5492,144 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             -- plugin hands back a fresh (copied) blitbuffer the spine can free
             -- after paint. nil (no extracted sidecar cover yet) -> placeholder.
             -- Re-fetched each rebuild, so the freed bb is never reused.
-            local bb, cw, ch = KoboSource.coverBB(rec.filepath)
-            if bb then
-                rec.cover_bb, rec.cover_w, rec.cover_h = bb, cw, ch
-                rec.has_cover = true
+            if not light_only then
+                local bb, cw, ch = KoboSource.coverBB(rec.filepath)
+                if bb then
+                    rec.cover_bb, rec.cover_w, rec.cover_h = bb, cw, ch
+                    rec.has_cover = true
+                end
             end
             page[#page + 1] = rec
+        end
+        return page, total
+    end
+    -- OPDS chip (bookshelf_opds_source / _window): cache-only - network is the
+    -- widget layer's job (user-initiated), this must stay fast and offline-safe.
+    -- Feed order is preserved: NO SortEngine pass (server order is semantic:
+    -- "newest", search relevance). sort_priority is deliberately ignored.
+    if kind == "opds" then
+        local ok_w, OpdsWindow = pcall(require, "lib/bookshelf_opds_window")
+        if not ok_w then return {}, 0 end
+        local feed_url = source.feed_url
+        if not feed_url then
+            local ok_s, OpdsSource = pcall(require, "lib/bookshelf_opds_source")
+            local server = ok_s and OpdsSource.getServer(source.id) or nil
+            if not server then return {}, 0 end
+            feed_url = server.url
+        end
+        local win = OpdsWindow.load(source.id, feed_url)
+        local page, total, open_ended = OpdsWindow.slice(win, offset, limit)
+        page.opds_open_ended = open_ended
+        page.opds_needs_fetch = OpdsWindow.needsFetch(win, offset or 0, limit or 0)
+                                or (#win.entries == 0 and win.fetched_at == 0)
+        -- Child windows loaded while decorating this page, keyed by feed url.
+        -- The flattening pass and the cover borrow below both want a nav
+        -- record's child window and neither may pay for it twice, so the load
+        -- is memoised here (false memoises "load returned nothing", so a miss
+        -- is not retried either).
+        local child_windows = {}
+        local function childWindow(url)
+            local w = child_windows[url]
+            if w == nil then
+                w = OpdsWindow.load(source.id, url) or false
+                child_windows[url] = w
+            end
+            return w or nil
+        end
+        -- Folder of one: a nav tile whose child feed holds exactly one book and
+        -- no subfolders IS that book, so render it as the book rather than as a
+        -- folder the user has to open to find a single thing inside (Project
+        -- Gutenberg's popular lists are entirely this shape).
+        --
+        -- Cache-only, zero network -- the same discipline as the cover borrow
+        -- below: OpdsWindow.load reads the persisted window and never fetches.
+        -- A child that has never been drilled into has no cached window and so
+        -- stays a folder; drilling into it once caches the window and the tile
+        -- flattens on the next visit. That is the whole degradation: a folder,
+        -- exactly as before this pass existed.
+        --
+        -- Runs BEFORE the cover and downloaded passes below so the substituted
+        -- record is decorated like any other book on the page -- its own cached
+        -- cover, its own downloaded tick -- rather than needing a second copy
+        -- of that logic. Everything downstream then treats it as the ordinary
+        -- remote book it is: tap opens the book modal, download works, the
+        -- already-have tick shows.
+        --
+        -- Shallow copy for the same reason OpdsWindow.slice copies: page
+        -- records get decorated, and a decorated record that is still the
+        -- STORED window entry would be serialised into the OPDS cache on the
+        -- next save. slice() copied what it handed back; win.entries read here
+        -- is the stored table, so copy it before it enters the page.
+        if not light_only then
+            for _i = 1, #page do
+                local rec = page[_i]
+                if rec.is_opds_nav and rec.opds and rec.opds.feed_url then
+                    local lone = opdsLoneChildBook(childWindow(rec.opds.feed_url))
+                    if lone then
+                        local copy = {}
+                        for k, v in pairs(lone) do copy[k] = v end
+                        page[_i] = copy
+                    end
+                end
+            end
+        end
+        -- Render-time decoration: the description mirror, the record's own
+        -- cached cover, the downloaded tick. Factored out because
+        -- Repo.opdsLoneChildBook has to apply exactly the same set to the one
+        -- record it hands the widget for a nav tap -- see the helper.
+        opdsDecorate(page, light_only)
+        local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+        if ok_c and OpdsCovers and not light_only then
+            -- Fallback for a nav tile with no cover of its own: borrow the
+            -- first cached cover out of the CHILD feed's own window, if that
+            -- subcatalog has ever been drilled into and fetched. Purely a
+            -- disk/in-memory read -- OpdsWindow.load reads the persisted
+            -- window (no fetch), and OpdsCovers.cachedPath only stats the
+            -- cache dir -- so a never-drilled folder that has no cached
+            -- window simply stays a placeholder, exactly as before.
+            --
+            -- cover_borrowed marks the result as NOT the tile's own artwork.
+            -- _opdsEnsureCovers (lib/bookshelf_widget.lua) reads that flag to
+            -- keep fetching the tile's own cover even though cover_image_path
+            -- is already non-nil -- without it a borrowed cover looked
+            -- indistinguishable from a resolved one and permanently blocked
+            -- the tile's own download from ever being selected as missing.
+            -- The own-cover loop above always runs first and this loop's
+            -- `not rec.cover_image_path` guard means it never overwrites that
+            -- result: once the tile's own cover lands on disk, a later
+            -- rebuild's cachedPath call fills cover_image_path in before this
+            -- loop even looks, so the borrow (and the flag) are simply never
+            -- applied -- the tile's own cover wins for good, no unborrowing
+            -- step needed.
+            --
+            -- Stays HERE rather than moving into opdsDecorate with the rest:
+            -- it needs this page's child-window memo, and it only ever applies
+            -- to a page of nav tiles.
+            for _i, rec in ipairs(page) do
+                if rec.is_opds_nav and not rec.cover_image_path
+                        and rec.opds and rec.opds.feed_url then
+                    local child_win = childWindow(rec.opds.feed_url)
+                    local entries = (child_win and child_win.entries) or {}
+                    local scanned = 0
+                    for _j = 1, math.min(#entries, NAV_COVER_BORROW_ITER) do
+                        if scanned >= NAV_COVER_BORROW_SCAN then break end
+                        local child = entries[_j]
+                        -- cachePath alone doesn't stat -- it just says whether
+                        -- the child has a cover URL at all. A child with none
+                        -- (a nav entry riding the same window) is ruled out for
+                        -- free and must not spend the scan budget.
+                        if OpdsCovers.cachePath(child) then
+                            scanned = scanned + 1
+                            local borrowed = OpdsCovers.cachedPath(child)
+                            if borrowed then
+                                rec.cover_image_path = borrowed
+                                rec.cover_borrowed = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
         end
         return page, total
     end
