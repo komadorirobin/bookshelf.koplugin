@@ -37,15 +37,9 @@ local SpineWidget = require("lib/bookshelf_spine_widget")
 local logger      = require("logger")
 local T           = require("ffi/util").template
 
--- Wall-clock timer for perf instrumentation. LuaSocket's gettime() gives
--- fractional seconds including I/O waits; os.clock() is CPU-only (fallback).
-local _gettime
-do
-    local ok, s = pcall(require, "socket")
-    _gettime = (ok and s and type(s.gettime) == "function")
-        and function() return s.gettime() end
-        or  os.clock
-end
+-- Shared wall-clock for [bookshelf perf] timestamps (and elapsed-time
+-- bookkeeping); see lib/bookshelf_gettime.lua for the fallback contract.
+local _gettime = require("lib/bookshelf_gettime")
 
 local function _getSimpleUIBottombar()
     local ok, mod = pcall(require, "sui_bottombar")
@@ -267,7 +261,10 @@ end
 function BookshelfWidget:_getSimpleUIBarContext()
     local ok_fm, FM = pcall(require, "apps/filemanager/filemanager")
     local live_fm = ok_fm and FM and FM.instance or nil
-    local live_plugin = live_fm and live_fm._simpleui_plugin
+    -- KOReader exposes the live FileManager as a table. Treat any other shape
+    -- as absent so a lazy proxy or test stub cannot be indexed as an object.
+    local live_plugin = type(live_fm) == "table" and live_fm._simpleui_plugin or nil
+    if type(live_fm) ~= "table" then live_fm = nil end
     if live_fm and live_plugin and live_plugin._onTabTap then
         self._simpleui_bar_host = { fm = live_fm, plugin = live_plugin }
     end
@@ -1180,6 +1177,23 @@ function BookshelfWidget:_scrubFromDrilldown(filepath)
     end
 end
 
+-- Re-key a moved filepath inside any drilldown payload that captured it
+-- at descend-time. A move (unlike a delete) keeps the book's membership
+-- in series / author / genre / tag drilldowns - only the path changed -
+-- so the payload item is renamed in place rather than removed. Without
+-- this, moving a book from inside a collection view makes it vanish
+-- until the user backs out and re-enters. Folder drilldowns re-query
+-- the filesystem on render, so they need no payload mutation (and a
+-- book moved out of the drilled folder correctly disappears there).
+-- Logic lives in lib/bookshelf_drill_rekey so it can be unit-tested (this
+-- file can't load under the standalone test runner, and the re-key has
+-- regressed twice). See that module for why every parallel list matters.
+function BookshelfWidget:_rekeyDrilldown(old_fp, new_fp)
+    if not self._drilldown_path then return end
+    return require("lib/bookshelf_drill_rekey").apply(
+        self._drilldown_path, old_fp, new_fp)
+end
+
 -- _serializeDrillPath() -> identifiers-only table suitable for storage.
 -- Hydrated payloads carry cover_bbs that can't safely cross widget lifetimes
 -- (memory feedback_image_disposable_shared_book), so we save only what's
@@ -1200,6 +1214,11 @@ function BookshelfWidget:_serializeDrillPath()
             out[#out + 1] = { kind = e.kind, label = e.label }
         end
         -- Other kinds (transient overlays) are deliberately not persisted.
+        -- That includes "opds_nav": restoring a drilled subcatalog would put
+        -- the shelf in front of a feed whose window may well be empty, and the
+        -- only way to fill it is a network fetch at launch that the user never
+        -- asked for. Dropping the frame lands them on the chip's root feed
+        -- instead, which renders from cache and offline.
     end
     return out
 end
@@ -1347,12 +1366,49 @@ end
 -- itself changes -- the selected highlight moves, and a freshly-added chip
 -- needs to appear.
 function BookshelfWidget:_selectChip(key)
+    -- User picked this chip: arm the OPDS fetch gate (see _markOpdsNav).
+    self:_markOpdsNav()
     self:_clearDpadFocus()
     self._drilldown_path = {}
     self.chip    = key
     self._cursor = 1
     self:_syncPageFromCursor()
     BookshelfSettings.saveDeferred("active_chip", key)
+    self:_rebuild()
+    UIManager:setDirty(self, "ui")
+end
+
+-- The shelf side of a chip EDIT: the chip editor changed something and handed
+-- control back, so re-render the shelf under it. Passed in as the editor's
+-- on_change, and reached from every one of its exits that can change what the
+-- active chip shows (Save, a delete, the icon/label live previews, an X-close
+-- that has to undo one).
+--
+-- Arms the OPDS fetch gate, for the same reason the chip-tap leg does (see
+-- _markOpdsNav): pointing a chip at an OPDS catalog happens HERE, in the
+-- editor, and this rebuild is the FIRST render of that feed. Every OPDS
+-- network call is gated on the one-shot arm, and nothing else in the add-a-
+-- catalog-chip flow is left to set it:
+--
+--   * the add-chip button's own _selectChip DOES arm -- and spends it on the
+--     placeholder source every new chip is born with ({ kind = "all" }), long
+--     before the user has picked a catalog;
+--   * picking the source is a DATA change, which the editor deliberately does
+--     not live-preview (a data preview costs a full rebuild per tap), so no
+--     shelf render happens between the pick and Save;
+--   * Save closes the dialog and calls this. Without an arm here the shelf
+--     renders the feed's empty window and stops -- which is exactly the device
+--     report: a brand-new OPDS chip shows the empty state, and pulling down
+--     (_opdsRefresh calls the fetch directly) or switching away and back
+--     (_selectChip re-arms) fixes it.
+--
+-- Unconditional rather than "only when the new source is OPDS": the arm is
+-- one-shot and _opdsAfterPage consumes it on the very rebuild below, whether or
+-- not there is a feed to fetch. A chip edit that touched nothing about a
+-- catalog simply spends it on a render that had nothing to fetch, which is the
+-- same no-op every non-OPDS chip tap already performs.
+function BookshelfWidget:_afterChipEdit()
+    self:_markOpdsNav()
     self:_rebuild()
     UIManager:setDirty(self, "ui")
 end
@@ -1732,12 +1788,9 @@ function BookshelfWidget:_rebuild()
         -- = "none", the whole row is cover. Mirrors ShelfRow's bounds so
         -- inter-row slack is distributed cleanly below instead of leaking
         -- into oversized covers.
-        local label_mode = BookshelfSettings.read("expanded_shelf_label") or "none"
-        if label_mode ~= "title" and label_mode ~= "author" and label_mode ~= "series" then
-            label_mode = "none"
-        end
+        local label_mode = self:_shelfLabelMode()
         local title_block_h = 0
-        if label_mode ~= "none" then
+        if label_mode then
             local label_scale     = BookshelfSettings.read("expanded_shelf_font_scale") or 100
             local title_face_size = math.floor(14 * label_scale / 100 + 0.5)
             title_block_h = Size.padding.default + math.floor(title_face_size * 1.3)
@@ -1765,14 +1818,26 @@ function BookshelfWidget:_rebuild()
         -- takes whatever vertical slack remains above the floor — fewer rows
         -- = a bigger hero, more rows = a smaller one.
         local hero_target = math.floor(available * HERO_MIN_FRAC)
-        local lo = math.floor(slot_h_natural * SHELF_PACK_FLOOR)
+        -- Label strip under each cover (non-expanded grid). Reserved on top of
+        -- the natural cover so the cover keeps its 2:3 size and the strip
+        -- comes out of the hero's share (bigger rows -> smaller hero). Zero
+        -- when "Show text below covers" is None. ShelfRow does the
+        -- cover-vs-label split inside the row; here we just size the row to
+        -- hold both, mirroring the expanded-shelf branch above.
+        local grid_title_block_h = 0
+        if self:_shelfLabelMode() then
+            local lscale = BookshelfSettings.read("expanded_shelf_font_scale") or 100
+            local lsize  = math.floor(14 * lscale / 100 + 0.5)
+            grid_title_block_h = Size.padding.default + math.floor(lsize * 1.3)
+        end
+        local lo = math.floor(slot_h_natural * SHELF_PACK_FLOOR) + grid_title_block_h
         -- Cap shelf height at natural 2:3 (no vertical stretch). Spare
         -- vertical slack flows to the hero instead of inflating the shelf
         -- covers off-aspect -- the hero wins the leftover-space competition,
         -- and every cover (hero + shelves) renders at a matching 2:3 ratio.
         -- (Floor stays at SHELF_PACK_FLOOR=1.0: squashing below natural would
         -- shrink covers horizontally too, reopening the PW5 side-gap problem.)
-        local hi = math.floor(slot_h_natural * 1.0)
+        local hi = math.floor(slot_h_natural * 1.0) + grid_title_block_h
         local raw = math.floor((available - hero_target) / n_shelves)
         shelf_h = math.max(1, math.min(hi, math.max(lo, raw)))
         hero_h  = math.max(hero_target, available - n_shelves * shelf_h)
@@ -1911,6 +1976,15 @@ function BookshelfWidget:_rebuild()
         -- self.chip for the duration of the cross-kind drill.
         local tip = self._drilldown_path[#self._drilldown_path]
         if tip and tip.kind then
+            -- No "opds_nav" entry, deliberately. An OPDS chip's label IS the
+            -- catalog's title, and drilling into one of its navigation entries
+            -- stays inside that catalog -- so the pill should keep saying
+            -- "Standard Ebooks", giving "Standard Ebooks > Science Fiction"
+            -- rather than a generic "Catalog > Science Fiction" that throws the
+            -- catalog's identity away. Same call the folder case makes below
+            -- (plural_for_chip maps the Library chip to "folder" so a folder
+            -- drill keeps "Library" in the pill); absent from this map, the
+            -- override simply never fires and the chip label stands.
             local DRILL_LABEL = {
                 author = _("Authors"),
                 series = _("Series"),
@@ -1959,8 +2033,22 @@ function BookshelfWidget:_rebuild()
         on_change = function(key)
             -- Search "chip" is an action, not a navigable tab — open
             -- the search dialog and bail before switching self.chip.
+            --
+            -- WHICH search depends on what is on screen. On an OPDS view
+            -- (the catalog chip's root feed, or a subcatalog drilled from
+            -- it) the books listed are not on disk, so running the local
+            -- library search there would answer a question the user did
+            -- not ask -- they are looking at a catalog and expect to
+            -- search THAT. _opdsEffectiveTab is the same "is this view a
+            -- feed" test every other OPDS path uses, so the two searches
+            -- can never both apply. Every non-OPDS view is unchanged.
             if key == "search" then
-                self:_openSearchDialog()
+                local opds_tab = self:_opdsEffectiveTab()
+                if opds_tab then
+                    self:_opdsOpenSearchDialog(opds_tab)
+                else
+                    self:_openSearchDialog()
+                end
                 return
             end
             -- "Micro modules" chip: switch the hero to the module grid.
@@ -2039,6 +2127,11 @@ function BookshelfWidget:_rebuild()
             -- paints when the previewed book happens to be visible
             -- there; the hero still shows the previewed book in any
             -- case (it's bound to _preview_book, not the chip).
+            -- User TAPPED this chip: arm the OPDS fetch gate. The swipe path
+            -- (_setActiveChip) and _selectChip arm their own; this leg inlines
+            -- the same transition, so without this a tapped OPDS chip renders
+            -- its empty window and never fetches.
+            self:_markOpdsNav()
             self:_clearDpadFocus()
             self._drilldown_path = {}
             self.chip            = key
@@ -2091,10 +2184,7 @@ function BookshelfWidget:_rebuild()
             if key ~= self.chip then self:_selectChip(key) end
             local Editor = require("lib/bookshelf_chip_editor")
             Editor:editTab(key, {
-                on_change = function()
-                    self:_rebuild()
-                    UIManager:setDirty(self, "ui")
-                end,
+                on_change = function() self:_afterChipEdit() end,
                 bw        = self,
             })
         end,
@@ -2128,6 +2218,12 @@ function BookshelfWidget:_rebuild()
         all_items = all_items or {}
         self._draft_items_cache = { all_items = all_items, total_hint = _total_hint }
     end
+    -- Open-ended OPDS window: the repo's total is a lower bound (what the
+    -- cached window holds), not the size of the feed. Captured HERE, before
+    -- the cursor clamp and the footer build -- both read it. nil on every
+    -- other chip, since only the OPDS page table carries the field.
+    self._opds_open_ended = (type(all_items) == "table")
+                            and all_items.opds_open_ended or nil
     local _perf_t2 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: fetch=%.0fms items=%d chip=%s",
         (_perf_t2 - _perf_t1) * 1000, _total_hint or #all_items, _perf_chip))
@@ -2393,6 +2489,11 @@ function BookshelfWidget:_rebuild()
         self[1] = self:_wrapWithSimpleUIBottomBar(empty_overlap)
         logger.dbg(string.format("[bookshelf perf] _rebuild: EMPTY total=%.0fms chip=%s",
             (_gettime() - _perf_t0) * 1000, _perf_chip))
+        -- An OPDS chip lands HERE on its first tap -- the window starts empty,
+        -- so the repo returns nothing and flags the page for fetching. The
+        -- trigger has to run on this branch too, or a fresh catalog chip
+        -- dead-ends on "No books yet" and nothing ever fetches it.
+        self:_opdsAfterPage(self._page_items)
         return
     end
 
@@ -2637,6 +2738,10 @@ function BookshelfWidget:_rebuild()
     if (self._total_pages or 1) > (self.page or 1) then
         self:_schedulePreload(1)
     end
+    -- OPDS chips only: pull more feed pages if the repo flagged this page as
+    -- running past the cached window, and fill in missing thumbnails. No-op
+    -- (one tab lookup) on every other chip.
+    self:_opdsAfterPage(self._page_items)
     -- A full rebuild is followed by a full-screen refresh. On colour e-ink
     -- the very next page-turn wipe stalls badly while that refresh is still
     -- draining (issue #247); flag it so _swapShelvesInPlace can skip the
@@ -2707,6 +2812,12 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     }
     local function maybe_queue(fp, specs)
         if not fp or seen[fp] then return end
+        -- OPDS pseudo-paths have no file behind them. Queueing one sends the
+        -- BIM subprocess off to extract metadata from something that isn't on
+        -- this device, on every rebuild of the chip (spec 6.6). Filtered here
+        -- rather than at the two call sites so the hero-spec queue is covered
+        -- by the same guard.
+        if self:_isRemoteRecord(fp) then return end
         seen[fp] = true
         -- pcall-guarded: BIM can throw a SQLite error when its DB is being
         -- recreated mid-import (issue #71, same family as #63). Without this
@@ -3335,6 +3446,21 @@ function BookshelfWidget:_fetchChipItems(n)
         end
         return Repo.getAll(tip.payload.path, LIMIT, offset, within, nil, fetch_opts)
     end
+    if tip and tip.kind == "opds_nav" then
+        -- Drilled into a navigation entry: the same cache-only OPDS branch the
+        -- chip's root feed uses, pointed at the subcatalog's own feed_url.
+        -- OpdsWindow keys its persisted windows on server_key|feed_url, so each
+        -- subcatalog accumulates its own window and backing out then drilling
+        -- back in costs no re-fetch. The page table it returns carries
+        -- opds_needs_fetch / opds_open_ended exactly as the chip's does, which
+        -- is what makes the fetch-on-overshoot and the open-ended pagination
+        -- headroom work unchanged down here. filter / sort_priority are nil:
+        -- feed order is semantic and the repo's OPDS branch ignores them.
+        local pay = tip.payload or {}
+        return Repo.getBySource(
+            { kind = "opds", id = pay.server_key, feed_url = pay.feed_url },
+            nil, nil, offset, LIMIT, fetch_opts)
+    end
     local profile_chip = self:_profileChip(self.chip)
     if profile_chip and profile_chip.kind == "folder" then
         return Repo.getAll(profile_chip.path, LIMIT, offset, {
@@ -3549,6 +3675,16 @@ end
 -- browser's "View in book" uses to jump to a position after opening.
 function BookshelfWidget:_openBook(book, after_open_callback)
     if not book or not book.filepath then return end
+    -- OPDS records carry an "OPDS://server/id" pseudo-path, not a file: there
+    -- is nothing on disk to hand ReaderUI. Open the catalog book modal instead
+    -- (what the feed said about it, plus a download button per format, plus
+    -- Open when a previous download is still on disk). Guarded before every
+    -- file probe below, and matched on the path prefix so a hero-hydrated
+    -- record (flags stripped) is caught too.
+    if self:_isRemoteRecord(book) then
+        self:_showRemoteBookInfo(book)
+        return
+    end
     -- Stale records (Send-to-Kindle moved/removed the file after BIM cached
     -- the path) crash KOReader's filemanagerbookinfo:show via lfs.attributes
     -- on nil. ReaderUI:showReader nil-checks itself, but presenting a "file
@@ -3758,13 +3894,32 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
     local _perf_t0 = _gettime()
     local current
     if self._preview_book and self._preview_book.filepath then
-        current = Repo.buildBook(self._preview_book.filepath) or self._preview_book
+        -- _rebuild's expanded-mode probe stashed a freshly-built record
+        -- for this same filepath -- reuse it instead of paying
+        -- DocSettings:open() a second time. Cache is consumed
+        -- destructively so a subsequent _swapHeroInPlace / previewBook
+        -- rebuild gets fresh data.
+        local cached = self._hero_book_cache
+        if cached and cached.filepath == self._preview_book.filepath then
+            current = cached
+            self._hero_book_cache = nil
+        else
+            current = self:_hydrateBook(self._preview_book)
+            self._hero_book_cache = nil
+        end
         self._preview_book = current
     else
         current = self:_currentHeroBook()
     end
     local _perf_t1 = _gettime()
-    if current then Repo.enrichStats(current) end
+    -- Remote catalog records have no file behind them: enrichStats would
+    -- DocSettings:open() and then util.partialMD5 an OPDS:// pseudo-path
+    -- before giving up. Harmless (only flush() creates a sidecar) but wasted
+    -- on every hero render of a feed entry, and the feed record already
+    -- carries everything the hero can show for it.
+    if current and not self:_isRemoteRecord(current) then
+        Repo.enrichStats(current)
+    end
     local _perf_t2 = _gettime()
     local device_state = self:_buildDeviceState()
     local _perf_t3 = _gettime()
@@ -4089,6 +4244,26 @@ function BookshelfWidget:_buildExpandedStrip(content_w, strip_h, PAD)
     return strip
 end
 
+-- Effective label mode for the REGULAR (non-expanded) grid, or nil when the
+-- "Labels under grid covers" toggle is off. Reuses the expanded-shelf label
+-- controls (content mode + font scale, both already in the Text size menu),
+-- defaulting to Title when the shared mode is "none" so turning the toggle on
+-- always shows something. The expanded shelf keeps its own path (it reads the
+-- setting directly and treats "none" as no labels).
+-- Unified label mode for every shelf surface (regular grid AND expanded
+-- shelf): the "Show text below covers" mode in Cover display. Returns
+-- "title"/"author"/"series", or nil for None (no label strip; covers claim
+-- the full row). Defaults to Title when unset - a deliberate 4.0 default
+-- change; the stored key keeps its 3.x name so explicit choices carry over,
+-- and the old grid_shelf_labels checkbox is retired (its content already
+-- followed this mode, so the mode alone now decides).
+function BookshelfWidget:_shelfLabelMode()
+    local mode = BookshelfSettings.read("expanded_shelf_label")
+    if mode == "none" then return nil end
+    if mode ~= "author" and mode ~= "series" then mode = "title" end
+    return mode
+end
+
 -- _buildShelfRows — top + bottom shelf row from the page's items slice.
 -- Extracted so _swapShelvesInPlace can construct them without re-running
 -- the full _rebuild path (which would also rebuild hero + chips).
@@ -4130,6 +4305,9 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
     end
 
     local n_cols   = self:_nCols()
+    -- Labels under covers: one unified mode for both surfaces (Cover display's
+    -- "Show text below covers"); nil = None = no strip anywhere.
+    local label_mode = self:_shelfLabelMode()
     local row_opts = {
         width             = content_w,
         height            = shelf_h,
@@ -4137,13 +4315,25 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
         n_slots           = n_cols,
         selected_filepath = selected_filepath,
         selection         = bw._selection,
-        show_titles       = self._expanded,
+        show_titles       = (label_mode ~= nil),
+        label_mode        = label_mode,
         in_series         = in_series,
         -- Expanded mode is "browse to open" — single tap opens the book.
         -- Normal mode is "preview, then commit" — tap shelf cover stages it
         -- in the hero, tap hero opens.
         on_book_tap       = function(b, tap_t)
             if bw._selection:isActive() then
+                -- Remote (catalog) records can't join a bulk selection: the
+                -- bulk actions all operate on local files. Reachable when a
+                -- selection started on a local chip and the user swiped to an
+                -- OPDS chip - say why the tap did nothing rather than
+                -- silently ignoring it.
+                if bw:_isRemoteRecord(b) then
+                    UIManager:show(require("ui/widget/notification"):new{
+                        text = _("Catalog books can't be selected."),
+                    })
+                    return
+                end
                 bw._selection:toggle(b.filepath)
                 bw:_refreshCoverFrame(b.filepath)
                 bw:_refreshBucket()
@@ -4167,7 +4357,8 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
                     bw._tap_selected_fp = nil
                     bw:_clearDpadFocus()
                     bw._hero_mode    = "current"
-                    bw._preview_book = Repo.buildBook(b.filepath) or b
+                    bw._preview_book = bw:_hydrateBook(b)
+                    bw:_opdsEnsurePreviewCover(bw._preview_book)
                     pcall(function() require("lib/bookshelf_quotes").rerollBook() end)
                     bw:_setExpanded(false)
                     bw:_setCursorToShow(gidx)
@@ -4183,6 +4374,20 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
                 bw._tap_selected_fp = nil
                 bw:_openBook(b)
             else
+                -- A remote (OPDS) book that is ALREADY the previewed hero
+                -- book: the second tap is the commit gesture, and for a
+                -- catalogue book the commit is the download modal (mirrors
+                -- local books, where the second gesture - hero tap or double
+                -- tap - opens the book). Local books keep preview-only here.
+                -- In micro-module hero mode the tap swaps the hero back to the
+                -- book instead (the preview state is stale there), so the modal
+                -- needs a book hero actually showing.
+                if bw:_isRemoteRecord(b) and bw._hero_mode ~= "micro"
+                        and bw._preview_book
+                        and bw._preview_book.filepath == b.filepath then
+                    bw:_showRemoteBookInfo(b)
+                    return
+                end
                 bw:_previewBook(b, tap_t)
             end
         end,
@@ -4207,7 +4412,8 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
         on_language_tap   = function(g) bw:_expandLanguage(g) end,
         on_language_hold  = function(g) bw:_openGroupMenu(g, "language") end,
         on_folder_tap     = function(f) bw:_expandFolder(f) end,
-        on_folder_hold    = function(f) bw:_openFolderMenu(f) end,
+        on_folder_hold    = function(f) bw:_openGroupMenu(f, "folder") end,
+        on_opds_nav_tap   = function(n) bw:_expandOpdsNav(n) end,
     }
     local rows = {}
     for r = 1, n_rows do
@@ -4264,6 +4470,7 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     local hit_extension = self:_paginationFooterHitExtension()
     local function go(p)
         return function()
+            bw:_markOpdsNav()
             local view = bw:_viewSize()
             bw._cursor = math.max(1, (p - 1) * view + 1)
             bw:_clampCursor()
@@ -4271,10 +4478,22 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
             bw:_swapShelvesInPlace()
         end
     end
-    -- Long-press ±10: skip 10 pages instead of 1. Clamped via go() so we
-    -- can't land outside [1, total_pages] regardless of how many holds
-    -- the user fires. Returns nil rather than a no-op callback when the
-    -- button is disabled so Button hides the long-press affordance too.
+    local function step(direction)
+        -- Chevron callback. Advance cursor by view-size in the given
+        -- direction (+1 next, -1 prev). After a misaligned-cursor swipe-up,
+        -- this still steps cleanly by the current view's full size.
+        return function()
+            bw:_markOpdsNav()
+            bw:_advanceCursor(direction)
+            bw:_syncPageFromCursor()
+            bw:_swapShelvesInPlace()
+        end
+    end
+    -- Long-press ±10: skip 10 pages instead of 1. Clamped via go()
+    -- so we can't land outside [1, total_pages] regardless of how many
+    -- holds the user fires. Returns nil rather than a no-op callback
+    -- when the button is disabled so Button hides the long-press
+    -- affordance too.
     local function skip(direction)
         local target = self.page + direction * 10
         if target < 1            then target = 1 end
@@ -4289,23 +4508,50 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     local function bm(k) return (focused_btn == k) and 0           or focus_border end
     local function bs(k) return (focused_btn == k) and focus_border or 0           end
     local function br(k) return (focused_btn == k) and focus_radius or nil         end
+    -- Cursor-based enable conditions. The display page (self.page) can
+    -- show the same value for several cursor positions when the cursor
+    -- is misaligned after a swipe-up. Gating chevron-enabled on cursor
+    -- directly means books before/after the visible window are always
+    -- reachable regardless of what the page indicator shows.
+    local view_size_now    = self:_viewSize()
+    local max_cursor_now   = self:_maxCursor()
+    local can_step_back    = self._cursor > 1
+    -- Open-ended OPDS feed: total_pages counts only the cached window, so it's
+    -- a lower bound. The label gains its "+", "last" goes dark (there is no
+    -- known last page to jump to), and forward stepping stays live at the end
+    -- of the window, since that step is what fetches the next feed page.
+    local open_ended       = self._opds_open_ended == true
+    -- The "can I go forward" test must NOT reuse _maxCursor's answer here.
+    -- _maxCursor withholds the open-ended headroom unless a navigation is
+    -- already in flight (deliberately -- it is also the clamp, and a clamp
+    -- must never bless a cursor with no fetch behind it), but the footer is
+    -- rebuilt on plenty of passive paths too -- the cover-landing rebuild, the
+    -- fetch tail, the file poll, relaunch, _swapFooterInPlace from the d-pad
+    -- focus sites. On every one of those the flag is nil, so the chevron would
+    -- render dead on the last cached page and the only forward affordance for
+    -- tap and d-pad users would be gone. The tap itself is safe: step(1) arms
+    -- before _advanceCursor, so the headroom is there when it is acted on.
+    local can_step_forward = self._cursor < max_cursor_now or open_ended
     local first = Button:new{
         icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
         width      = slot(SLOT_EDGE),
         callback   = go(1),
         margin     = bm("first"), bordersize = bs("first"), radius = br("first"),
-        enabled    = self.page > 1, show_parent = self,
+        enabled    = can_step_back, show_parent = self,
     }
     local prev = Button:new{
         icon = "chevron.left",  icon_width = chev_size, icon_height = chev_size,
         width         = slot(SLOT_STEP),
-        callback      = go(self.page - 1),
+        callback      = step(-1),
         hold_callback = skip(-1),
         margin        = bm("prev"), bordersize = bs("prev"), radius = br("prev"),
-        enabled       = self.page > 1, show_parent = self,
+        enabled       = can_step_back, show_parent = self,
     }
     local page_text = Button:new{
-        text = string.format(_("Page %d of %d"), self.page, total_pages),
+        -- "Page %1 of %2+" is the SAME source string bookshelf_pagination.lua
+        -- uses for its open-ended nav, so the two share one POT entry.
+        text = open_ended and T(_("Page %1 of %2+"), self.page, total_pages)
+                           or string.format(_("Page %d of %d"), self.page, total_pages),
         -- Adopt the Bookshelf UI font (a FontList-resolvable face), like the
         -- rest of the chrome; falls back to cfont in follow mode. Button
         -- resolves text_font_face via Font:getFace, and the UI-font setting
@@ -4321,17 +4567,17 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     local next_btn = Button:new{
         icon = "chevron.right", icon_width = chev_size, icon_height = chev_size,
         width         = slot(SLOT_STEP),
-        callback      = go(self.page + 1),
+        callback      = step(1),
         hold_callback = skip(1),
         margin        = bm("next"), bordersize = bs("next"), radius = br("next"),
-        enabled       = self.page < total_pages, show_parent = self,
+        enabled       = can_step_forward, show_parent = self,
     }
     local last = Button:new{
         icon = "chevron.last", icon_width = chev_size, icon_height = chev_size,
         width      = slot(SLOT_EDGE),
         callback   = go(total_pages),
         margin     = bm("last"), bordersize = bs("last"), radius = br("last"),
-        enabled    = self.page < total_pages, show_parent = self,
+        enabled    = can_step_forward and not open_ended, show_parent = self,
     }
     -- Extend each button's hit zone downward by hit_extension. Two
     -- mutations are needed:
@@ -4988,6 +5234,29 @@ function BookshelfWidget:_openPageJump()
     local bw          = self
     local total       = bw:_totalPages()
     local dialog
+    local first_row = {
+        {
+            text     = _("Search\xE2\x80\xA6"),  -- Search…
+            callback = function()
+                local s = dialog:getInputText()
+                UIManager:close(dialog)
+                -- Route by view: an OPDS view's books aren't on disk, so the
+                -- local library search would answer the wrong question.
+                local t = bw:_opdsEffectiveTab()
+                if t then bw:_opdsOpenSearchDialog(t, s) else bw:_openSearchDialog(s) end
+            end,
+        },
+        {
+            text     = _("Go to letter"),
+            callback = function()
+                local s = dialog:getInputText()
+                if s == "" then return end
+                if tonumber(s) ~= nil then return end
+                UIManager:close(dialog)
+                bw:_jumpToLetterPrefix(s)
+            end,
+        },
+    }
     dialog = InputDialog:new{
         title       = _("Enter text, letter or page number"),
         -- Start empty: pre-filling the current page number just forced the
@@ -4997,34 +5266,7 @@ function BookshelfWidget:_openPageJump()
         input_hint  = tostring(bw.page),
         description = string.format(_("(a - z) or (1 - %d)"), total),
         buttons = {
-            {
-                {
-                    -- Hand off whatever the user typed to bookshelf's full
-                    -- library search (Repo.searchAll across title / author /
-                    -- series / genre). The page-jump dialog pre-fills the
-                    -- search dialog so the user doesn't have to retype.
-                    text     = _("Search\xE2\x80\xA6"),  -- Search…
-                    callback = function()
-                        local s = dialog:getInputText()
-                        UIManager:close(dialog)
-                        bw:_openSearchDialog(s)
-                    end,
-                },
-                {
-                    text     = _("Go to letter"),
-                    callback = function()
-                        local s = dialog:getInputText()
-                        if s == "" then return end
-                        -- Skip the letter path when the input is purely
-                        -- numeric -- the user almost certainly meant the
-                        -- page-number action; mistaking it for a "go to
-                        -- letter '5'" would be a frustrating no-op.
-                        if tonumber(s) ~= nil then return end
-                        UIManager:close(dialog)
-                        bw:_jumpToLetterPrefix(s)
-                    end,
-                },
-            },
+            first_row,
             {
                 {
                     text     = _("Cancel"),
@@ -5103,6 +5345,9 @@ function BookshelfWidget:_swapShelvesInPlace()
     local MAX_FETCH = 400
     local all_items, _total_hint = self:_fetchChipItems(MAX_FETCH)
     all_items = all_items or {}
+    -- Same open-ended capture as _rebuild: set before the clamp + footer.
+    self._opds_open_ended = (type(all_items) == "table")
+                            and all_items.opds_open_ended or nil
     local _perf_t1 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _swapShelves: fetch=%.0fms items=%d chip=%s",
         (_perf_t1 - _perf_t0) * 1000, _total_hint or #all_items, self.chip))
@@ -5288,6 +5533,9 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- repeat the save here so a forward/back swipe is enough to land back
     -- on the right page after a book read or KOReader restart.
     self:_persistNavState()
+    -- ...and bypasses _rebuild's OPDS hook too: a page turn INTO the tail of
+    -- an OPDS window is exactly the moment the next feed page is needed.
+    self:_opdsAfterPage(self._page_items)
 end
 
 -- _repaintSelectionHighlight(old_fp, new_fp) — preview-tap fast path.
@@ -6015,8 +6263,91 @@ end
 -- index 1, defer the old hero's free, and dirty the screen. This avoids
 -- 8 SpineWidget reconstructions plus the bb:scale work for any small
 -- covers — perceptible on every shelf-cover tap.
+-- A previewed OPDS book earns its cover: the tap is the user gesture that
+-- licenses this one fetch (nothing else prefetches). If the cover is
+-- already on disk - e.g. a long-press download modal cached it without
+-- rebuilding the shelf - attach it to the record right here, before the
+-- caller's rebuild reads it, rather than fetching it again. Otherwise fetch
+-- it: when it lands, patch the previewed record in place - _hydrateBook
+-- returns remote records unchanged and Repo.buildBook is nil for
+-- OPDS:// paths, so a rebuild reuses this same table and would otherwise
+-- keep the placeholder - then one _refreshCoverFrame repaints hero AND
+-- shelf cell (its rebuild re-slices, and opdsDecorate attaches the
+-- cached cover to the cell's record independently).
+-- Shared by _previewBook (normal-mode tap) and the expanded show_detail tap
+-- (on_book_tap), both of which stage `book` as self._preview_book just
+-- before calling this, so the pre/on_cached identity check below matches
+-- either caller.
+function BookshelfWidget:_opdsEnsurePreviewCover(book)
+    if not (book and book.filepath) then return end
+    if not self:_isRemoteRecord(book) then return end
+    local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+    if not ok_c then return end
+    local cp = OpdsCovers.cachedPath(book)
+    if cp then
+        -- Already on disk, but THIS record can predate the cache
+        -- entry (sliced before the cover landed, or the download
+        -- modal fetched it without rebuilding the shelf). Attach in
+        -- place now - this trigger runs before the preview rebuild
+        -- below, so the hero renders it with no extra refresh.
+        logger.dbg("[bookshelf perf] _opdsEnsurePreviewCover: cached attach",
+            tostring(book.title or book.filepath))
+        book.cover_image_path = book.cover_image_path or cp
+        if not book.cover_sizetag then
+            local ok_is, ImageSource =
+                pcall(require, "lib/bookshelf_image_source")
+            if ok_is and ImageSource.imageSizeTag then
+                book.cover_sizetag = ImageSource.imageSizeTag(cp)
+            end
+        end
+    else
+        self:_opdsFetchCover(book, {
+            -- The cover download blocks the main loop for up to 10s, and the
+            -- previewed hero alone (placeholder cover, feed description) can
+            -- read as "nothing happened" on a slow catalog - say what's going
+            -- on. Shown only when a fetch actually starts.
+            notice = _("Retrieving book information\xE2\x80\xA6"),
+            -- A later tap can supersede this preview before the fetch even
+            -- starts (checked here, before fetchMissing) or while it's mid
+            -- air (checked again below when it lands). Either way, a
+            -- superseded preview's fetch is simply skipped: the disk cache
+            -- still serves the cell on its next natural rebuild.
+            pre = function()
+                return self._preview_book ~= nil
+                   and self._preview_book.filepath == book.filepath
+            end,
+            on_cached = function()
+                local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+                if not ok_c then return end
+                local cp = OpdsCovers.cachedPath(book)
+                if cp and self._preview_book
+                        and self._preview_book.filepath == book.filepath then
+                    self._preview_book.cover_image_path = cp
+                    if not self._preview_book.cover_sizetag then
+                        local ok_is, ImageSource =
+                            pcall(require, "lib/bookshelf_image_source")
+                        if ok_is and ImageSource.imageSizeTag then
+                            self._preview_book.cover_sizetag =
+                                ImageSource.imageSizeTag(cp)
+                        end
+                    end
+                    -- Same freeze + geometry shift as the modal's re-show:
+                    -- fetchMissing held the loop, queued taps would land on
+                    -- covers that moved when the cell takes its true aspect.
+                    local Input = Device.input
+                    if Input and Input.inhibitInputUntil then
+                        Input:inhibitInputUntil(true)
+                    end
+                    self:_refreshCoverFrame(book.filepath)
+                end
+            end,
+        })
+    end
+end
+
 function BookshelfWidget:_previewBook(book, tap_t)
     if not book or not book.filepath then return end
+    self:_opdsEnsurePreviewCover(book)
     -- Tapping a shelf cover while the hero is showing the micro-module grid
     -- means "put this book in the hero" — leave micro mode for the book hero.
     -- The hero (grid -> book) and chip strip (the modules triangle clears)
@@ -6048,7 +6379,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
         self:_clearDpadFocus()
         self._hero_mode    = "current"
         self._expanded     = false
-        self._preview_book = Repo.buildBook(book.filepath) or book
+        self._preview_book = self:_hydrateBook(book)
         -- #174: re-roll the per-book %quote token so each selection shows a
         -- different random highlight from the newly-selected book.
         pcall(function() require("lib/bookshelf_quotes").rerollBook() end)
@@ -6099,7 +6430,7 @@ function BookshelfWidget:_previewBook(book, tap_t)
     -- The hero needs book_pct / page_num / last_xp to render the progress
     -- bar and token lines, so upgrade to the full Book record here. Single-
     -- book DocSettings read on each preview tap is fine.
-    self._preview_book = Repo.buildBook(book.filepath) or book
+    self._preview_book = self:_hydrateBook(book)
     -- #174: re-roll the per-book %quote token on each selection.
     pcall(function() require("lib/bookshelf_quotes").rerollBook() end)
     -- Stash the freshly-built record so the _swapHeroInPlace ->
@@ -6168,6 +6499,10 @@ end
 -- callback in show().
 function BookshelfWidget:onCloseWidget()
     self:_stopStatusTimer()
+    -- Invalidate any pending Kobo prepare-poll (_openKoboWhenReady). The poll
+    -- closure captures self and would otherwise call _launchReader on this
+    -- torn-down widget when the decrypted file readies after we're gone.
+    self._kobo_open_token = (self._kobo_open_token or 0) + 1
     -- Drop any pending draft-cover settle so it can't rebuild a torn-down widget.
     if self._cover_settle_cb then
         UIManager:unschedule(self._cover_settle_cb)
@@ -6604,7 +6939,9 @@ function BookshelfWidget:_moveCursor(delta)
 
     if new_idx < 1 then
         if self.page > 1 then
-            self.page        = self.page - 1
+            self:_markOpdsNav()
+            self:_advanceCursor(-1)
+            self:_syncPageFromCursor()
             self._cursor_idx = view_size
             self:_swapShelvesInPlace()
         end
@@ -6613,8 +6950,13 @@ function BookshelfWidget:_moveCursor(delta)
 
     if new_idx > view_size then
         local total = self._total_pages or 1
-        if self.page < total then
-            self.page        = self.page + 1
+        -- Open-ended OPDS window: same allowance _paginateNext gets, so a
+        -- keyboard-only user can also step past the cached window and pull
+        -- the next feed page in.
+        if self.page < total or self._opds_open_ended then
+            self:_markOpdsNav()
+            self:_advanceCursor(1)
+            self:_syncPageFromCursor()
             self._cursor_idx = 1
             self:_swapShelvesInPlace()
         end
@@ -7121,6 +7463,12 @@ function BookshelfWidget:onBSKbPress()
             self:_clearDpadFocus()
             if item.kind == "folder" then
                 self:_expandFolder(item)
+            elseif item.kind == "opds_nav" then
+                -- Remote navigation tile. It carries a filepath (the synthetic
+                -- OPDS:// one), so without an arm of its own it would fall
+                -- through every branch here and Enter would silently no-op --
+                -- the tile is only reachable by touch otherwise.
+                self:_expandOpdsNav(item)
             elseif item.kind == "author" then
                 self:_expandAuthor(item)
             elseif item.kind == "genre" then
@@ -7375,6 +7723,8 @@ function BookshelfWidget:_setActiveChip(key)
     -- breakdown; this outer log is the user-facing TOTAL.
     local _diag_t0   = _gettime()
     local _diag_from = self.chip
+    -- User swiped/tapped to this chip: arm the OPDS fetch gate.
+    self:_markOpdsNav()
     self:_clearDpadFocus()
     -- Pre-paint feedback on the destination chip: same affordance taps
     -- get, so a swipe-driven tab change feels just as responsive even
@@ -7782,13 +8132,35 @@ function BookshelfWidget:_syncPageFromCursor()
     end
 end
 
+-- _maxCursor(total) — last cursor position that shows non-empty content.
+-- Partial last view allowed: with total=25, view=12, max_cursor=25 (last
+-- view shows just book 25). Falls back to self._total_pages × view_size
+-- when total is missing, since handler call sites often don't have
+-- direct access to the unsliced item count.
+-- An open-ended OPDS window adds one page of headroom: the total is only
+-- what's cached, and the cursor MUST be allowed one view past it, because
+-- that overshooting read is exactly what sets opds_needs_fetch and pulls the
+-- next feed page in. Clamping to the cached total pins the user at the end
+-- of the window forever.
+--
+-- The headroom is granted ONLY while a user navigation is in flight
+-- (_opds_nav_pending, armed by the page-turn gestures and consumed by the
+-- render that follows). Otherwise it would also legitimise a cursor that has
+-- no fetch behind it: a persisted cursor restored at launch, or one left past
+-- the window by a fetch that failed. Passive clamps therefore pull the cursor
+-- back onto real books, which is what makes the out-of-range state
+-- self-healing rather than sticky.
 function BookshelfWidget:_maxCursor(total)
     local view = self:_viewSize()
+    local n_pages
     if total and total > 0 then
-        local n_pages = math.max(1, math.ceil(total / view))
-        return (n_pages - 1) * view + 1
+        n_pages = math.max(1, math.ceil(total / view))
+    else
+        n_pages = math.max(1, self._total_pages or 1)
     end
-    local n_pages = math.max(1, self._total_pages or 1)
+    if self._opds_open_ended and self._opds_nav_pending then
+        n_pages = n_pages + 1
+    end
     return (n_pages - 1) * view + 1
 end
 
@@ -8361,6 +8733,9 @@ end
 -- pair makes sure the poll doesn't fire while the device is meant to
 -- be idle.
 local FILE_POLL_INTERVAL_S = 5
+-- Slower cadence while another widget covers the shelf: the tick skips the
+-- disk snapshot entirely in that state, so a 5s re-arm is pure wakeup cost.
+local FILE_POLL_COVERED_INTERVAL_S = 30
 
 -- Maximum top-level subdirs to track. Defends against pathological cases
 -- (a flat library with thousands of immediate subdirs) where lfs probes
@@ -8403,6 +8778,19 @@ local function _snapshotHomeDirs()
         end
     end)
     if not ok_loop then return snap end
+    -- Also watch the stock effective download folder (OPDS / cloud storage /
+    -- news downloader target). It may sit deeper than the depth-1 watch set,
+    -- where a landing file changes only ITS mtime. One extra stat per tick.
+    local FilePoll = require("lib/bookshelf_file_poll")
+    local dl = FilePoll.effectiveDownloadDir(function(k)
+        return G_reader_settings:readSetting(k)
+    end)
+    if dl and snap[dl] == nil then
+        local ok_d, da = pcall(lfs.attributes, dl)
+        if ok_d and da and da.mode == "directory" then
+            snap[dl] = da.modification or 0
+        end
+    end
     return snap
 end
 
@@ -8440,7 +8828,32 @@ function BookshelfWidget:_filePollTick()
     -- hot-parked underneath a reader), so this specifically needs
     -- getTopmostVisibleWidget, the same check onResume already uses.
     if UIManager:getTopmostVisibleWidget() ~= self then
-        self:_cancelFilePoll()
+        -- Covered. Cancel only for the #304 battery case (an active reading
+        -- session) or when the shelf is gone from the stack; for a TRANSIENT
+        -- cover (stock OPDS browser, terminal, ...) idle instead: skip the
+        -- disk snapshot but keep the tick and, critically, the pre-cover
+        -- mtime baseline - re-arming via _startFilePoll re-baselines, which
+        -- silently swallows any file that arrived while covered.
+        local FilePoll = require("lib/bookshelf_file_poll")
+        local ok_rui, ReaderUI = pcall(require, "apps/reader/readerui")
+        local ok_park, Park = pcall(require, "lib/bookshelf_reader_park")
+        local decision = FilePoll.coveredDecision{
+            shelf_on_stack = UIManager:isWidgetShown(self) == true,
+            reader_active  = (ok_rui and ReaderUI and ReaderUI.instance ~= nil) or false,
+            reader_parked  = (ok_park and Park and Park.isParked()) or false,
+        }
+        if decision == "cancel" then
+            self:_cancelFilePoll()
+            return
+        end
+        if self._file_poll_fn then
+            -- Idle tick: the snapshot is skipped while covered, so the 5s
+            -- cadence buys nothing but wakeups (12/min behind any open menu
+            -- or dialog). Re-arm slower; the first uncovered tick after the
+            -- cover closes still compares against the pre-cover baseline, so
+            -- nothing is missed, just noticed within 30s instead of 5s.
+            UIManager:scheduleIn(FILE_POLL_COVERED_INTERVAL_S, self._file_poll_fn)
+        end
         return
     end
     local snap = _snapshotHomeDirs()
@@ -8525,7 +8938,18 @@ function BookshelfWidget:_paginateNext()
     local _diag_t0     = _gettime()
     local _diag_page0  = self.page
     local total = self._total_pages or 1
-    if self.page < total then
+    -- Open-ended OPDS window: total_pages counts the cached window only, so
+    -- "already on the last page" is wrong -- stepping past it is what fetches
+    -- the next feed page. Without this the swipe wraps to page 1 instead and
+    -- the feed can never grow (the chevron path has the same allowance via
+    -- _maxCursor's headroom).
+    if self.page < total or self._opds_open_ended then
+        -- Armed inside the branch, not at the top: the no-op legs below return
+        -- without rebuilding, and a flag armed there would sit waiting for the
+        -- next PASSIVE rebuild (file poll, resume) to spend it on a fetch the
+        -- user never asked for. Must precede _advanceCursor, which reads it
+        -- through _maxCursor for the open-ended headroom.
+        self:_markOpdsNav()
         self:_advanceCursor(1)
         self:_syncPageFromCursor()
         self._wipe_dir = 1   -- animate this pagination (next)
@@ -8539,6 +8963,7 @@ function BookshelfWidget:_paginateNext()
     -- no-op; back-navigation there happens via the breadcrumb or east-swipe.
     if #self._drilldown_path == 0 and not self._chip_bar_hidden
             and total > 1 and self._cursor > 1 then
+        self:_markOpdsNav()
         self._cursor = 1
         self:_syncPageFromCursor()
         self._wipe_dir = 1   -- animate this pagination (next)
@@ -8559,6 +8984,8 @@ function BookshelfWidget:_paginatePrev()
     local _diag_t0    = _gettime()
     local _diag_page0 = self.page
     if self.page > 1 then
+        -- See _paginateNext: armed per-branch, never at the top.
+        self:_markOpdsNav()
         self:_advanceCursor(-1)
         self:_syncPageFromCursor()
         self._wipe_dir = -1  -- animate this pagination (prev)
@@ -8578,8 +9005,13 @@ function BookshelfWidget:_paginatePrev()
     -- the last page instead of switching to the previous tab (issue #115).
     if not self._chip_bar_hidden then
         local total       = self._total_pages or 1
+        -- Evaluated BEFORE the flag is armed, deliberately: _maxCursor only
+        -- grants the open-ended headroom while a navigation is in flight, so
+        -- this wrap targets the last page with real books rather than the
+        -- blank fetch-me page one beyond it.
         local last_cursor = self:_maxCursor()
         if total > 1 and self._cursor < last_cursor then
+            self:_markOpdsNav()
             self._cursor = last_cursor
             self:_syncPageFromCursor()
             self._wipe_dir = -1  -- animate this pagination (prev, wrap)
@@ -8810,6 +9242,16 @@ function BookshelfWidget:onBookshelfToggleSelectionMode()
     if self._selection:isActive() then
         self._selection:exitMode()
     else
+        -- No bulk selection over a catalog view: the tiles are remote
+        -- records (OPDS pseudo-paths), and every bulk action - move, delete,
+        -- collections - operates on local files. Entering the mode here
+        -- would render a selection UI that can select nothing.
+        if self:_opdsEffectiveTab() then
+            UIManager:show(require("ui/widget/notification"):new{
+                text = _("Bulk selection isn't available in remote catalog views."),
+            })
+            return true
+        end
         self._selection:enterMode()
     end
     self:_rebuild()
@@ -9050,6 +9492,19 @@ end
 -- mechanism (e.g. pre-confirmation dialog) that doesn't share input
 -- focus with the gesture that triggered it.
 function BookshelfWidget:_refreshLibrary()
+    -- An OPDS feed has no walk cache to wipe -- its content is remote, not the
+    -- filesystem. Swipe-down there means "throw the cached window away and pull
+    -- the feed from the top again", which is _opdsRefresh's job. Whose feed is
+    -- _opdsEffectiveTab's call: inside a drilled navigation entry it is the
+    -- SUBCATALOG that gets re-pulled, not the chip's root feed, because the
+    -- subcatalog is what the user is looking at. Any other drilldown tip
+    -- (search results, a folder) is a library view and takes the normal
+    -- walk-cache path below.
+    local _opds_tab = self:_opdsEffectiveTab()
+    if _opds_tab then
+        self:_opdsRefresh(_opds_tab)
+        return
+    end
     local InfoMessage = require("ui/widget/infomessage")
     local Repo        = require("lib/bookshelf_book_repository")
     local msg = InfoMessage:new{
@@ -9064,6 +9519,1595 @@ function BookshelfWidget:_refreshLibrary()
         self:_rebuild()
         UIManager:close(msg)
         UIManager:setDirty(self, "ui")
+    end)
+end
+
+-- ─── OPDS chip data flow ─────────────────────────────────────────────────────
+--
+-- The repository's OPDS branch (bookshelf_book_repository, kind == "opds") is
+-- deliberately cache-only: it slices whatever the persisted window already
+-- holds and flags the returned page with opds_needs_fetch when the requested
+-- slice ran past it. The network half lives HERE, in the widget, because it
+-- must stay user-initiated -- a tap on a chip whose window is empty, a page
+-- turn past the end of the window, or a swipe-down refresh. Nothing below
+-- reaches the network on a timer or on a passive repaint.
+
+-- _isRemoteRecord(book_or_path) -> bool
+-- Is this an OPDS catalog entry rather than a real file? The is_remote /
+-- opds fields do NOT survive a Repo.buildBook round trip -- buildBookMeta
+-- rebuilds a record from BIM / Calibre / the filename and knows nothing
+-- about feeds, so a hero re-hydration hands back a stripped stand-in that
+-- still carries the OPDS:// pseudo-path. The prefix is therefore the
+-- authoritative test and every guard uses it; the flags are only a
+-- secondary check for records that never touched the repo.
+-- Accepts a record or a bare filepath (the BIM extraction queue only has
+-- the path).
+function BookshelfWidget:_isRemoteRecord(book)
+    if not book then return false end
+    local is_path = type(book) == "string"
+    local fp = is_path and book or book.filepath
+    if type(fp) == "string" and fp:find("^OPDS://") then return true end
+    if not is_path and book.is_remote and book.opds then return true end
+    return false
+end
+
+-- _hydrateBook(book) -> book
+-- Repo.buildBook upgrades a shelf record to a full Book (a DocSettings read
+-- for progress / page position). There is no file behind a remote record and
+-- the upgrade would strip it (see _isRemoteRecord), so pass those through
+-- untouched -- the feed record already holds everything the hero can show.
+function BookshelfWidget:_hydrateBook(book)
+    if not book or not book.filepath then return book end
+    if self:_isRemoteRecord(book) then return book end
+    return Repo.buildBook(book.filepath) or book
+end
+
+-- _markOpdsNav() - arm the one-shot "the user caused the rebuild that is
+-- about to happen" flag. EVERY OPDS network call is gated on it: the shelf
+-- rebuilds for plenty of reasons the user did not ask for (startup restore
+-- with a persisted chip + cursor, the 5s sideload file-poll, a cover
+-- landing, a settings change), and none of those may reach the network.
+-- Armed by the navigation gestures only -- chip select, page turn, page
+-- jump, swipe-down refresh -- and consumed by the next _opdsAfterPage.
+function BookshelfWidget:_markOpdsNav()
+    self._opds_nav_pending = true
+end
+
+-- _opdsEffectiveTab() -> tab-like | nil
+-- WHICH OPDS feed is the shelf actually showing right now? Every network
+-- helper below needs the same answer, and it is not simply "the active tab":
+-- drilling into a navigation entry puts a different feed on screen while the
+-- chip underneath is unchanged. Resolved in the precedence _fetchChipItems
+-- itself uses -- drill tip first, chip second:
+--
+--   * tip.kind == "opds_nav" -> a synthesised stand-in for the subcatalog the
+--     user drilled into. It carries exactly the three fields the helpers read
+--     off a tab (source.id, source.feed_url, label), so _opdsFetchMore /
+--     _opdsRefresh work against a drilled feed with no change of their own.
+--   * any OTHER tip kind (search, folder, a group) -> nil. That view is a
+--     library view reachable from any chip; the feed is not what is rendered,
+--     so no OPDS work applies. Same answer the old inline drill guards gave.
+--   * no tip at all -> the real tab, when its source is an OPDS one.
+--
+-- Factored into one function deliberately: three hand-rolled copies of this
+-- precedence is how the "the drilled page doesn't fetch / refresh / show
+-- covers" rounds happen.
+function BookshelfWidget:_opdsEffectiveTab()
+    local path = self._drilldown_path or {}
+    local tip  = path[#path]
+    if tip then
+        if tip.kind ~= "opds_nav" then return nil end
+        local pay = tip.payload or {}
+        if not (pay.server_key and pay.feed_url) then return nil end
+        return {
+            label  = tip.label,
+            source = { kind = "opds", id = pay.server_key,
+                       feed_url = pay.feed_url },
+        }
+    end
+    local TabModel = require("lib/bookshelf_tab_model")
+    local tab = TabModel.getById(self.chip)
+    if tab and tab.source and tab.source.kind == "opds" then return tab end
+    return nil
+end
+
+-- Fetch feed pages for an OPDS tab until the window covers want_count
+-- entries (or the feed runs out), then rebuild. User-initiated only: chip
+-- tap on an empty window, page-turn past the window, swipe-down refresh.
+-- Trapper gives a cancellable progress line; runWhenOnline gates Wi-Fi
+-- with a prompt, never silently.
+--
+-- replace = true (swipe-down refresh) fetches into a FRESH window instead of
+-- extending the cached one, and only overwrites the persisted window once
+-- the feed has actually given us entries. Resetting up front would empty the
+-- chip the moment the user declined the Wi-Fi prompt -- runWhenOnline's
+-- callback simply never fires -- leaving them worse off than before they
+-- asked. No user action may leave the chip emptier than it started unless
+-- the feed itself genuinely got smaller.
+--
+-- `tab` is a tab-LIKE, not necessarily a real one: only source.id,
+-- source.feed_url and label are read off it. Inside a drilled navigation entry
+-- the caller passes the stand-in _opdsEffectiveTab synthesises for the
+-- subcatalog, and every line below works against it unchanged -- which is the
+-- whole reason the drill needed no fetch machinery of its own.
+-- on_done (optional): a ONE-SHOT continuation run at the very end of the tail,
+-- after the rebuild and the cover pass, for a caller that has a decision to
+-- make once the feed has actually landed (today: _expandOpdsNav deciding
+-- between a book modal and a drill for a subcatalog nothing had fetched yet).
+-- It never fires when the fetch never ran -- an unknown server, or a Wi-Fi
+-- prompt the user declined, in which case runWhenOnline simply never calls
+-- back -- which is the correct "stay put" in both cases. Nothing about the
+-- marker discipline changes: the markers are already released above, and this
+-- runs inside the same single synchronous run of the coroutine.
+function BookshelfWidget:_opdsFetchMore(tab, want_count, replace, on_done)
+    local OpdsSource = require("lib/bookshelf_opds_source")
+    local OpdsFeed   = require("lib/bookshelf_opds_feed")
+    local OpdsWindow = require("lib/bookshelf_opds_window")
+    local CoverFetch = require("lib/bookshelf_cover_fetch")
+    local Notification = require("ui/widget/notification")
+    local Trapper    = require("ui/trapper")
+    local server = OpdsSource.getServer(tab.source.id)
+    if not server then return end
+    local feed_url = tab.source.feed_url or server.url
+    -- Is `t` (an _opdsEffectiveTab result) the same feed this fetch is for?
+    -- Compared on the RESOLVED url, not the raw field: a chip's own tab leaves
+    -- source.feed_url nil and means "the server's root url", which is exactly
+    -- what feed_url resolved to above, so a raw comparison would call the root
+    -- feed a different feed from itself. Server id checked first, so falling
+    -- back to the captured server's url is the right substitution.
+    local function sameFeed(t)
+        if not (t and t.source and t.source.id == tab.source.id) then return false end
+        return (t.source.feed_url or server.url) == feed_url
+    end
+    CoverFetch.runWhenOnline(function()
+        -- Liveness, same test the _opdsAfterPage / _opdsEnsureCovers deferrals
+        -- make: the Wi-Fi prompt is modal and the user can answer it long after
+        -- the shelf closed (or after a re-open replaced this widget). Every
+        -- line below fetches, moves this widget's cursor and rebuilds it, so
+        -- running it against a dead shelf is at best waste and at worst a
+        -- Trapper progress line over whatever is on screen now.
+        if BookshelfWidget.live ~= self then return end
+        Trapper:wrap(function()
+            -- Held for the whole fetch so any rebuild landing mid-fetch can't
+            -- queue a second FETCH. It does NOT block the user: an explicit
+            -- swipe-down refresh during a feed fetch is deliberately exempt
+            -- (see _opdsRefresh, which reads only the download marker), and a
+            -- navigation that lands here is queued rather than refused. A
+            -- timestamp rather than a boolean:
+            -- Trapper:info yields, so this body can't be pcall-wrapped (LuaJIT
+            -- can't yield across a C-call boundary) and an error inside the
+            -- coroutine would otherwise wedge the flag on for the rest of the
+            -- session. It expires instead.
+            --
+            -- ...and WHICH feed the fetch is for, as the sameFeed predicate
+            -- itself. _opdsAfterPage needs to tell "the feed on screen is
+            -- already being fetched" (refuse, nothing to do) from "some OTHER
+            -- feed is being fetched" (queue, see there) -- previously it could
+            -- not, so a drill landing mid-fetch was refused as busy and left
+            -- the user on an empty subcatalog, and an errored fetch blocked
+            -- every feed for the full 120s. A predicate rather than the url
+            -- string because the comparison is on the RESOLVED url: recomputing
+            -- "the chip's root feed" at the far end would mean an
+            -- OpdsSource.getServer -- a re-read and re-parse of the stock OPDS
+            -- plugin's opds.lua -- on every page render.
+            self._opds_fetch_started_at = os.time()
+            self._opds_fetch_feed = sameFeed
+            -- Shape matches OpdsWindow.load's miss exactly, field for field:
+            -- the two have to stay interchangeable since everything below
+            -- treats `win` the same either way.
+            local win = replace
+                and { entries = {}, total = nil,
+                      next_url = nil, fetched_at = 0 }
+                or OpdsWindow.load(tab.source.id, feed_url)
+            local url = (#win.entries == 0) and feed_url or win.next_url
+            -- Consecutive unusable pages seen (parsed fine, zero usable
+            -- records). Reset by any page that yields records; when it hits
+            -- OpdsWindow.UNUSABLE_PAGE_LIMIT the category is judged unusable
+            -- and the walk stops terminally.
+            local unusable_streak = 0
+            -- Did the walk end TERMINALLY (chain finished, or category judged
+            -- unusable) rather than by error, cancel or want_count? Terminal
+            -- ends mark the window complete, which clamps the promised page
+            -- count to what is cached (OpdsWindow.slice).
+            local terminal = false
+            -- Every url fetched by THIS walk. A feed whose rel=next loops back
+            -- on itself (Internet Archive's faceted feeds have returned a next
+            -- pointing at the very page it came from) can never make progress:
+            -- the refetched page dedupes to nothing, the window stops growing,
+            -- and without this guard the walk refetched the same page once a
+            -- second forever. Any url seen twice ends the chain terminally --
+            -- everything reachable was already fetched the first time round.
+            local seen_urls = {}
+            while url and #win.entries < want_count do
+                if seen_urls[url] then
+                    logger.dbg("[bookshelf perf] opds next-chain loop detected at", url)
+                    win.next_url = nil
+                    terminal = true
+                    break
+                end
+                seen_urls[url] = true
+                local go_on = Trapper:info(T(_("Fetching %1…"), tab.label or server.title))
+                if not go_on then break end
+                -- Gated per request, not just the entry feed_url: a
+                -- rel=next link came from the server's XML and could in
+                -- principle hop to a foreign host, and credentials must
+                -- only ever travel to the catalog's own origin.
+                local same_origin = OpdsFeed.sameOrigin(server.url, url)
+                local body, err = OpdsFeed.fetch(url,
+                    same_origin and server.username or nil,
+                    same_origin and server.password or nil)
+                if not body then
+                    Trapper:clear()
+                    -- The toast says "Couldn't reach <server>" for everything
+                    -- that isn't an auth rejection, which is the right thing to
+                    -- tell a reader and useless in a bug report: a gateway
+                    -- timeout from a catalog that is plainly up reads exactly
+                    -- like a DNS failure. OpdsFeed.fetch already hands back the
+                    -- HTTP status line as `err` (or "network unreachable" /
+                    -- "empty response"), so log the pair rather than widening
+                    -- the notification. dbg, not warn: an unreachable server is
+                    -- a normal thing to hit offline, and the log is for the
+                    -- session where someone is looking.
+                    logger.dbg("[bookshelf] opds fetch failed:", url, err)
+                    UIManager:show(Notification:new{
+                        text = err == "auth"
+                            and T(_("Authentication failed for %1"), server.title)
+                            or T(_("Couldn't reach %1"), server.title),
+                    })
+                    break
+                end
+                local catalog = OpdsFeed.parse(body)
+                local mapped = catalog and OpdsFeed.mapEntries(catalog, url, tab.source.id)
+                -- Did the page carry any raw items at all? Separates a genuinely
+                -- empty feed from one that HAS items this device just can't use.
+                local raw_count = catalog and (
+                    (catalog.publications and #catalog.publications or 0)
+                    + (catalog.navigation and #catalog.navigation or 0)
+                    + (catalog.entry and #catalog.entry or 0)) or 0
+                logger.dbg("[bookshelf perf] opds page", url,
+                    "records", mapped and #mapped.records or -1,
+                    "raw", raw_count,
+                    "next", tostring((mapped and mapped.next_url) ~= nil))
+                if not mapped then
+                    -- Parse failure (transient): an HTML error page from a
+                    -- throttling server (IA does this mid-chain) is the common
+                    -- cause. Leave next_url ALONE so the chain stays
+                    -- retryable - a later page turn resumes from the last
+                    -- good checkpoint and reaches this page again. Nilling it
+                    -- here and then saving the window (which the tail below
+                    -- does) permanently amputated every page behind the
+                    -- failure: the reported "nothing loads after page 10 of
+                    -- 15".
+                    if #win.entries == 0 then
+                        Trapper:clear()
+                        UIManager:show(Notification:new{
+                            text = T(_("No books found in %1"), server.title),
+                        })
+                    end
+                    break
+                end
+                if #mapped.records == 0 then
+                    -- Parsed fine, but nothing on this page is usable. Do not
+                    -- give up on the first one: a single mid-chain page of
+                    -- unsupported entries (borrow-only, formats we can't
+                    -- read) says nothing about the pages behind it, and
+                    -- stopping here used to amputate them permanently. Skip
+                    -- forward instead - up to UNUSABLE_PAGE_LIMIT consecutive
+                    -- unusable pages, after which the category is judged
+                    -- genuinely unusable (IA's all-borrow loan categories
+                    -- advertise ~10000 items and every page maps to zero;
+                    -- three in a row is enough to know the rest match).
+                    unusable_streak = unusable_streak + 1
+                    if mapped.next_url
+                            and unusable_streak < OpdsWindow.UNUSABLE_PAGE_LIMIT then
+                        url = mapped.next_url
+                        -- No appendPage (nothing usable to add); loop again.
+                    else
+                        win.fetched_at = os.time()
+                        win.next_url = nil
+                        terminal = true
+                        if #win.entries == 0 then
+                            Trapper:clear()
+                            UIManager:show(Notification:new{
+                                text = raw_count > 0
+                                    and _("No downloadable titles in this category.")
+                                    or T(_("No books found in %1"), server.title),
+                            })
+                        end
+                        break
+                    end
+                else
+                    unusable_streak = 0
+                    win.fetched_at = os.time()
+                    OpdsWindow.appendPage(win, mapped)
+                    url = win.next_url
+                end
+            end
+            -- The chain ended by running out of next links (url == nil after a
+            -- successful append), or a terminal stop above. NOT on error,
+            -- cancel, or simply having covered want_count (url still set).
+            if url == nil then terminal = true end
+            if terminal then win.complete = true end
+            Trapper:clear()
+            -- A refresh that came back with nothing (server down, feed
+            -- unreachable, user cancelled at the first page) keeps the
+            -- window it already had.
+            if not replace or #win.entries > 0 then
+                OpdsWindow.save(tab.source.id, feed_url, win)
+            end
+            -- No Repo.invalidateBookCache here: the OPDS branch of getBySource
+            -- reads OpdsWindow (the settings store) on every call and never
+            -- touches the walk / group / _bySource caches, so there is nothing
+            -- stale to clear. Invalidating would only make the next tap on a
+            -- LOCAL chip re-derive the whole library for free.
+
+            -- Paging forward left the cursor one page PAST the window (that
+            -- overshoot is what asked for this fetch). If the fetch did not
+            -- actually reach it -- server down, auth rejected, user cancelled,
+            -- or the feed simply ended -- pull the cursor back onto the last
+            -- page with books BEFORE rebuilding. Otherwise the user is stranded
+            -- on a blank page in front of a perfectly good cached window, and
+            -- _persistNavState saves that cursor for next launch. Skipped when
+            -- a refresh declined to save (win is the discarded fresh one, not
+            -- what will be rendered).
+            -- A DECLINED Wi-Fi prompt never gets here (runWhenOnline simply
+            -- never calls back); that case is caught by _maxCursor withholding
+            -- the headroom from the next passive clamp instead.
+            --
+            -- Gated on the shelf STILL showing this feed, re-resolved rather
+            -- than assumed. runWhenOnline can sit on a Wi-Fi prompt for many
+            -- seconds with the shelf fully interactive underneath it, so the
+            -- user can back out of the drill (or drill somewhere else) before
+            -- this tail runs. The fetch and the save above are keyed off the
+            -- CAPTURED feed and stay correct either way -- but the cursor
+            -- belongs to whatever is on screen NOW, and measuring it against
+            -- THIS window's entry count would yank the user to page 1 of a view
+            -- that was never short. The overshoot this pull-back exists to
+            -- repair went away with the navigation that abandoned it.
+            local still_here  = sameFeed(self:_opdsEffectiveTab())
+            local entry_count = #win.entries
+            if still_here and (not replace or entry_count > 0)
+                    and self._cursor > entry_count then
+                local view = self:_viewSize()
+                local pages = math.max(1, math.ceil(entry_count / view))
+                self._cursor = (pages - 1) * view + 1
+                self:_syncPageFromCursor()
+            end
+            -- Released BEFORE the rebuild, not after. A navigation that landed
+            -- while this fetch held the marker left the nav arm SET rather
+            -- than spending it (see _opdsAfterPage), specifically so this
+            -- rebuild can start the fetch it was refused; with the marker
+            -- still held it would be refused again and the user would sit on
+            -- an empty subcatalog until they touched something. Nothing can
+            -- interleave between these lines and the rebuild -- one
+            -- synchronous run of the coroutine -- so the "no second fetch
+            -- mid-fetch" guarantee the marker exists for is unaffected: a
+            -- rebuild with no arm set returns at the top of _opdsAfterPage.
+            self._opds_fetch_started_at = nil
+            self._opds_fetch_feed = nil
+            self:_rebuild()
+            UIManager:setDirty(self, "ui")
+            -- The cover pass for this page. This rebuild is passive in the
+            -- ordinary case (nothing re-armed the nav flag), so it renders
+            -- from cache and runs no cover pass of its own -- this is the
+            -- single pass, and its token stays current through to the repaint.
+            -- In the queued case above it has just scheduled the next fetch
+            -- instead, and that fetch runs its own pass against the fuller
+            -- page; this one still fills whatever is on screen right now, and
+            -- a superseded batch only loses its repaint, never its downloads.
+            self:_opdsEnsureCovers()
+            -- Last, so the continuation decides against the window this fetch
+            -- just saved and a view it has already rebuilt. Gated on liveness
+            -- only. NOT on still_here: the whole point of this continuation is
+            -- to act on the feed THIS fetch just loaded, which is a DIFFERENT
+            -- feed from the one on screen when the tap fired (tapping an
+            -- uncached category fetches the child feed while the parent is
+            -- still shown, then drills in). still_here compares the on-screen
+            -- feed to the fetched one, so it is always false here and
+            -- suppressed the drill entirely -- the reported "have to tap the
+            -- category twice" (first tap fetched, second drilled). The narrow
+            -- case it guarded (user navigates away during a Wi-Fi prompt, then
+            -- gets drilled) is rare and Back-recoverable; correctness of the
+            -- common one-tap drill wins.
+            if on_done and BookshelfWidget.live == self then
+                on_done()
+            end
+        end)
+    end)
+end
+
+-- Swipe-down on an OPDS view: re-fetch the feed from the start, replacing
+-- the cached window only if the fetch succeeds (see _opdsFetchMore's
+-- replace mode -- the old window survives a declined Wi-Fi prompt or a
+-- dead server untouched).
+--
+-- `tab` is the tab-LIKE _opdsEffectiveTab hands back, so a swipe-down inside a
+-- drilled navigation entry re-pulls THAT subcatalog, not the chip's root feed.
+-- No liveness guard of its own: this runs synchronously off the gesture and
+-- everything deferred past a Wi-Fi prompt happens inside _opdsFetchMore, which
+-- carries the guard.
+function BookshelfWidget:_opdsRefresh(tab)
+    local OpdsSource = require("lib/bookshelf_opds_source")
+    local server = OpdsSource.getServer(tab.source.id)
+    if not server then return end
+    -- The one path that reaches _opdsFetchMore without passing _opdsAfterPage's
+    -- busy branch, so it needs its own check against a modal download holding
+    -- Trapper. Reachable: the download's Trapper:info yields, and a swipe
+    -- queued behind the blocking transfer is delivered in that window (the
+    -- progress InfoMessage catches taps, not swipes), landing here while the
+    -- download's coroutine is very much alive.
+    --
+    -- Deliberately narrower than _opdsFetchBusy: a swipe-down during a FEED
+    -- fetch stays allowed exactly as it always has been -- that exemption is
+    -- the whole point of the explicit refresh -- and _opdsFetchMore's own
+    -- marker handling covers it. Narrower in WHICH marker it reads, not in how
+    -- it reads it: _opdsDownloadBusy applies the same 120s expiry every other
+    -- reader gets, so a wedged marker can't leave refresh permanently dead.
+    if self:_opdsDownloadBusy() then
+        UIManager:show(require("ui/widget/notification"):new{
+            text = _("The catalog is busy. Try again in a moment."),
+        })
+        return
+    end
+    -- Deliberately does NOT arm the nav flag: this calls _opdsFetchMore
+    -- directly, so the gate has nothing to gate, and leaving it disarmed keeps
+    -- the fetch's own tail rebuild passive (one cover pass, no second fetch).
+    self:_opdsFetchMore(tab, self:_viewSize() or 24, true)
+end
+
+-- Cover fill for an OPDS page is deliberately a no-op: the shelf does NOT
+-- bulk-download remote cover images. A full page of them is a serial blocking
+-- download that made paging feel stuck, and remote covers are unfamiliar and
+-- often heavy -- so the shelf shows the title+author placeholder card and a
+-- cover is fetched only when a book is TAPPED (_opdsFetchDetailCover, for the
+-- detail modal), which then also lands it on that shelf cell on the next
+-- rebuild. Kept as a named no-op so its render / page-turn call sites stay
+-- self-documenting and re-enabling auto-fill is a one-place change.
+function BookshelfWidget:_opdsEnsureCovers()
+    return
+end
+
+-- _opdsAfterPage(items) - the one post-render hook for an OPDS chip, called
+-- from both render paths (_rebuild and the _swapShelvesInPlace page-turn
+-- fast path) with the page the repo just handed back. Two jobs:
+--
+--   * items.opds_needs_fetch: the requested slice ran past the cached window,
+--     so pull more feed pages. This covers BOTH "first tap, empty cache"
+--     (fetch page 1) and "paged past the window" (fetch the next feed page) --
+--     the repo sets the flag for both.
+--   * thumbnails for the visible page, off the paint path.
+--
+-- Both are gated on the one-shot _markOpdsNav flag, which this consumes: a
+-- rebuild the user did not ask for renders from the cached window and makes
+-- no network call of any kind. That gate doubles as the re-entry guard --
+-- a fetch that fails leaves the window short, so opds_needs_fetch is STILL
+-- set on the rebuild _opdsFetchMore ends with, and without the gate the hook
+-- would spin forever against an unreachable server, one toast per turn. The
+-- user re-arms it by turning the page, re-tapping the chip, or swiping down.
+--
+-- Exactly one path puts the flag back instead of spending it: a fetch for
+-- another feed is in flight, so this one is queued rather than run (see the
+-- busy branch below). That is a deferral of the user's own navigation, not a
+-- flag surviving into an unrelated passive rebuild -- the in-flight fetch's
+-- tail rebuild is what picks it up, moments later.
+function BookshelfWidget:_opdsAfterPage(items)
+    -- One-shot: consumed here whether or not it gets used, so it can never
+    -- leak into a later passive rebuild (bar the one queue case above, which
+    -- re-arms deliberately and is picked up by the very next rebuild).
+    local user_nav = self._opds_nav_pending
+    self._opds_nav_pending = nil
+    if not user_nav then return end
+    -- Which feed the page belongs to, resolved the same way _fetchChipItems
+    -- picked what to render: a drilled navigation entry's subcatalog wins over
+    -- the chip's own source, and any other drilldown tip (search results, a
+    -- folder) means the page on screen isn't a feed's at all -- nil, nothing to
+    -- do. Resolved AFTER the one-shot flag is consumed, never before: the
+    -- consume must happen on every path through this function or a flag armed
+    -- for a rebuild that turned out not to be a feed's would leak into the next
+    -- passive one and spend itself on a fetch the user never asked for.
+    local tab = self:_opdsEffectiveTab()
+    if not tab then return end
+    -- 120s (see _opdsFetchBusy): comfortably longer than a slow feed page over
+    -- 2G-ish Wi-Fi, short enough that a fetch killed by an error (which never
+    -- reaches the tail that clears this) unblocks itself well before the user
+    -- gives up and swipes down. Overlap protection only -- the explicit
+    -- swipe-down refresh calls _opdsFetchMore directly and is never blocked.
+    -- A modal download holds the same marker with _opds_fetch_feed left nil,
+    -- so it reads here as "another feed is busy" -> the queue branch below.
+    local busy = self:_opdsFetchBusy()
+    -- ...and busy for WHICH feed. _opds_fetch_feed is the in-flight fetch's own
+    -- sameFeed predicate (see _opdsFetchMore), so this compares on the resolved
+    -- feed url without re-reading the stock plugin's server list here.
+    local busy_this = busy and self._opds_fetch_feed ~= nil
+                      and self._opds_fetch_feed(tab)
+    if type(items) == "table" and items.opds_needs_fetch then
+        if busy_this then
+            -- A fetch for THIS feed is already running and its tail rebuilds
+            -- this page. Spending the arm is right here: re-arming would let
+            -- that tail fire a second fetch for a feed that just finished one,
+            -- which against an unreachable server is exactly the per-turn
+            -- retry spin the arm exists to prevent.
+            self:_opdsEnsureCovers()
+            return
+        end
+        if busy then
+            -- A fetch for a DIFFERENT feed holds the marker. Queue rather than
+            -- race, so the automatic paths only ever have one feed fetch in
+            -- flight (the explicit swipe-down refresh stays exempt, as it
+            -- always has been): Trapper's progress widget is module-level
+            -- singleton state (Trapper.current_widget, frontend/ui/trapper.lua).
+            -- A second wrapped coroutine's info() closes the first's
+            -- InfoMessage and installs its own -- whose dismiss_callback
+            -- resumes the WRONG coroutine -- and either one's clear() then
+            -- closes the other's widget. A coroutine left suspended that way
+            -- never returns from Trapper:wrap's pcalled_func, so its
+            -- UIManager:preventStandby() is never balanced by allowStandby():
+            -- a device that will not sleep again this session. Not worth two
+            -- progress lines.
+            --
+            -- Queueing means putting the one-shot arm BACK rather than
+            -- spending it. The in-flight fetch releases the marker before its
+            -- tail rebuild, so that rebuild reaches this function with the arm
+            -- still set and no marker held, and starts the fetch there. Before
+            -- this, the arm was consumed here and nothing rebuilt afterwards:
+            -- a nav-tile tap that landed mid-fetch dead-ended on an empty
+            -- subcatalog until the user paged or swiped.
+            self._opds_nav_pending = user_nav
+            self:_opdsEnsureCovers()
+            return
+        end
+        -- Same offset/limit _fetchChipItems asked the repo for, so want_count
+        -- is exactly "enough entries to fill the page being rendered".
+        local want = math.max(0, (self._cursor or 1) - 1) + self:_viewSize()
+        UIManager:nextTick(function()
+            -- Teardown guard, as in _opdsEnsureCovers: don't open a Wi-Fi
+            -- prompt / Trapper progress line for a shelf that has gone away.
+            if BookshelfWidget.live ~= self then return end
+            self:_opdsFetchMore(tab, want)
+        end)
+        -- No cover pass here: the page is about to change under us and
+        -- _opdsFetchMore runs one against the fuller page. Two passes would
+        -- fight over _opds_cover_token -- the first batch's downloads land,
+        -- then find their token superseded and skip the repaint.
+        return
+    end
+    self:_opdsEnsureCovers()
+end
+
+-- ─── OPDS catalog search ─────────────────────────────────────────────────────
+--
+-- _opdsOpenSearchDialog(tab, prefill) - the shelf's search entry, pointed at
+-- a catalog instead of the local library (see the chip strip's search leg
+-- for the routing rule). `tab` is the tab-LIKE _opdsEffectiveTab hands
+-- back, so this works from a drilled subcatalog exactly as it does from the
+-- chip's root. `prefill` carries text the user already typed elsewhere
+-- (the page-jump dialog's Search… button) so it isn't thrown away --
+-- parity with `_openSearchDialog`, which already prefills.
+--
+-- Discovery happens HERE, before the keyboard opens, not on submit: a catalog
+-- that cannot be searched should say so while the user's question is still
+-- "can I search this?", rather than after they have typed one. Two places to
+-- look, in order:
+--
+--   * the CURRENT feed's window (win.search, captured by mapEntries and
+--     persisted by appendPage). A feed that advertises its own search link
+--     wins -- on a Calibre-style templated href that link is the feed's own.
+--   * the server ROOT window's, when the current feed carries none. Most
+--     catalogs advertise the search link on their root document only, so a
+--     drilled subcatalog would otherwise have nothing to search with even
+--     though the catalog plainly supports it. Both windows are cache reads
+--     (OpdsWindow never touches the network), so the fallback costs one
+--     settings lookup, not a fetch.
+--
+-- Neither: say which of the two honest reasons applies. An unseen root window
+-- (never fetched, or evicted by OpdsWindow's LRU) means we genuinely do not
+-- know whether this catalog offers search, and the fix is to load it; a root
+-- we HAVE seen that carries no link is a catalog that really does not offer
+-- search, and no amount of waiting will change that.
+function BookshelfWidget:_opdsOpenSearchDialog(tab, prefill)
+    local OpdsSource   = require("lib/bookshelf_opds_source")
+    local OpdsWindow   = require("lib/bookshelf_opds_window")
+    local Notification = require("ui/widget/notification")
+    local server = OpdsSource.getServer(tab.source.id)
+    -- A chip pointing at a server the user deleted from the stock OPDS plugin.
+    -- Silent, exactly as _opdsFetchMore / _opdsRefresh are: the view itself is
+    -- already empty and a search-specific complaint would name the wrong
+    -- problem.
+    if not server then return end
+    local feed_url = tab.source.feed_url or server.url
+    local win  = OpdsWindow.load(tab.source.id, feed_url)
+    local src  = win.search
+    -- The root IS this window when the view is the chip's own feed; only a
+    -- drilled subcatalog pays for the second load.
+    local root = win
+    if not src and feed_url ~= server.url then
+        root = OpdsWindow.load(tab.source.id, server.url)
+        src  = root.search
+    end
+    if not src then
+        -- "Known" = we have actually seen this catalog's root document, so its
+        -- links are a fact rather than an absence. Both signals, not just
+        -- fetched_at: a window persisted before fetched_at was written would
+        -- otherwise be misread as never fetched and the user told to load a
+        -- catalog they are already looking at.
+        local root_known = (root.fetched_at or 0) > 0
+                           or #(root.entries or {}) > 0
+        UIManager:show(Notification:new{
+            text = root_known
+                and _("This catalog does not offer search.")
+                or  _("Load the catalog first, then search it."),
+        })
+        return
+    end
+    -- Named for the CATALOG, not the drilled feed: the search runs against the
+    -- whole catalog whenever the link came from its root, and telling the user
+    -- they are searching "Science Fiction" when the results span everything
+    -- would be the wrong promise. server.title is what the chip itself is
+    -- labelled with, so the two agree.
+    local who = server.title or tab.label or ""
+    local InputDialog = require("ui/widget/inputdialog")
+    local dlg
+    dlg = InputDialog:new{
+        title = T(_("Search %1"), who),
+        input = prefill or "",
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id   = "close",
+                    callback = function() UIManager:close(dlg) end,
+                },
+                {
+                    text             = _("Search"),
+                    is_enter_default = true,
+                    callback = function()
+                        local query = dlg:getInputText() or ""
+                        UIManager:close(dlg)
+                        -- Trimmed before it becomes a url: a trailing space
+                        -- percent-encodes to %20 and several catalogs answer
+                        -- that with zero results.
+                        query = query:match("^%s*(.-)%s*$")
+                        if query ~= "" then
+                            self:_opdsSearch(tab, server, src, query)
+                        end
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dlg)
+    dlg:onShowKeyboard()
+end
+
+-- _opdsSearch(tab, server, src, query) - turn the discovered search source
+-- into a feed url and drill into it. The RESULTS are an ordinary opds_nav
+-- frame: back-out, pagination, covers and downloads all already work against
+-- one, so this function ends where every other OPDS navigation does and adds
+-- no machinery of its own.
+--
+-- Two source shapes, one exit. type "osd" needs the network (the link points
+-- at an OpenSearch description document that holds the actual template);
+-- type "template" is a Calibre-style href that already carries
+-- {searchTerms} and only needs the substitution. Both run inside ONE Trapper
+-- wrap so there is a single marker discipline to read rather than two paths
+-- to keep in step -- the template branch simply never calls Trapper:info, so
+-- it costs a coroutine and nothing else.
+--
+-- The wrap holds the FEED marker pair for its whole life so nothing else can
+-- start a wrapped coroutine underneath it (the Trapper singleton hazard the
+-- long note in _opdsAfterPage describes), and clears BOTH on every exit that
+-- set them. It does NOT fetch the results: it clears the markers and drills,
+-- and the drill's rebuild schedules _opdsFetchMore on the next tick -- after
+-- this coroutine has finished, so the two wraps never nest. That ordering is
+-- the same one _opdsFetchMore's tail uses and for the same reason: with the
+-- markers still held, the rebuild's fetch would be refused as busy and the
+-- user would land on an empty results page.
+function BookshelfWidget:_opdsSearch(tab, server, src, query)
+    local OpdsFeed     = require("lib/bookshelf_opds_feed")
+    local CoverFetch   = require("lib/bookshelf_cover_fetch")
+    local Notification = require("ui/widget/notification")
+    local Trapper      = require("ui/trapper")
+    local feed_url = tab.source.feed_url or server.url
+    -- The identity the marker publishes, built exactly as _opdsFetchMore
+    -- builds its own (resolved url, server id first) so _opdsAfterPage can
+    -- read it with no special case: while this runs, the feed the search was
+    -- launched from is the one that counts as busy.
+    local function sameFeed(t)
+        if not (t and t.source and t.source.id == tab.source.id) then return false end
+        return (t.source.feed_url or server.url) == feed_url
+    end
+    local busy_text = _("The catalog is busy. Try again in a moment.")
+    if self:_opdsFetchBusy() then
+        UIManager:show(Notification:new{ text = busy_text })
+        return
+    end
+    local function resolve()
+        Trapper:wrap(function()
+            -- Re-tested FIRST, inside the wrap, for the reason
+            -- _opdsRunDownload re-tests: the check above is a snapshot taken
+            -- before the Wi-Fi prompt, which the user can leave open for as
+            -- long as they like, and a feed fetch sitting in runWhenOnline
+            -- holds no marker yet so that snapshot could not have seen it.
+            -- Bails BEFORE setting anything: the markers belong to whoever is
+            -- busy right now, and clearing them here would advertise a live
+            -- coroutine as idle.
+            if self:_opdsFetchBusy() then
+                UIManager:show(Notification:new{ text = busy_text })
+                return
+            end
+            self._opds_fetch_started_at = os.time()
+            self._opds_fetch_feed = sameFeed
+            local target
+            if src.type == "osd" then
+                Trapper:info(T(_("Searching %1…"), server.title or tab.label or ""))
+                -- Credentials only ever travel to the catalog's own origin:
+                -- the osd href came out of the server's XML and could name any
+                -- host, same gate the feed fetch and the download apply.
+                local same_origin = OpdsFeed.sameOrigin(server.url, src.href)
+                local body, err = OpdsFeed.fetch(src.href,
+                    same_origin and server.username or nil,
+                    same_origin and server.password or nil)
+                local template = body and OpdsFeed.parseOsd(body) or nil
+                Trapper:clear()
+                if not template then
+                    self._opds_fetch_started_at = nil
+                    self._opds_fetch_feed = nil
+                    -- Same reason as the feed fetch's line: the toast collapses
+                    -- every cause into one sentence. The third argument tells
+                    -- the two halves of this branch apart -- a transport
+                    -- failure carries its status from OpdsFeed.fetch, while a
+                    -- document that arrived and did not parse has no err at all
+                    -- and is a very different thing to chase.
+                    logger.dbg("[bookshelf] opds fetch failed:", src.href,
+                               err or "no search template in the response")
+                    -- A document that came back but did not parse reports as
+                    -- unreachable too: from here the two are the same failure
+                    -- (no template, nothing to search with) and the user's
+                    -- move is identical, so this reuses the messages the feed
+                    -- fetch already speaks rather than minting a third.
+                    UIManager:show(Notification:new{
+                        text = err == "auth"
+                            and T(_("Authentication failed for %1"), server.title)
+                            or  T(_("Couldn't reach %1"), server.title),
+                    })
+                    return
+                end
+                target = OpdsFeed.substituteQuery(template, query)
+            else
+                target = OpdsFeed.substituteQuery(src.href, query)
+            end
+            -- Released BEFORE the drill, never after: see the header.
+            self._opds_fetch_started_at = nil
+            self._opds_fetch_feed = nil
+            -- The drill IS the user navigation that licenses the results
+            -- fetch, armed like every other nav gesture.
+            self:_markOpdsNav()
+            self:_drillInto{
+                kind    = "opds_nav",
+                label   = T(_("Search: \"%1\""), query),
+                payload = { server_key = tab.source.id, feed_url = target },
+            }
+        end)
+    end
+    if src.type == "osd" then
+        -- Only the osd branch talks to the network here, so only it needs the
+        -- Wi-Fi gate. The template branch drills straight in and the results
+        -- fetch raises the prompt itself (_opdsFetchMore's own runWhenOnline),
+        -- which keeps it to one prompt either way.
+        CoverFetch.runWhenOnline(function()
+            -- The Wi-Fi prompt is modal and can be answered long after the
+            -- shelf closed or was replaced. Same liveness test every other
+            -- deferred OPDS path makes.
+            if BookshelfWidget.live ~= self then return end
+            -- ...and the shelf can still be showing something else entirely:
+            -- Wi-Fi off is the resting state on an e-reader, so the FIRST
+            -- search of a session routinely waits on that prompt, with the
+            -- shelf fully interactive underneath it. The user can back out of
+            -- the drill, switch chips, even land on a local one before this
+            -- runs, and a search drill pushed under THAT context is a results
+            -- frame the user never asked for in a place it does not belong.
+            -- Re-resolved rather than assumed, exactly as _opdsFetchMore's
+            -- tail re-resolves before touching the cursor. Silent: the user
+            -- navigated away, which is answer enough -- a toast about a search
+            -- they abandoned would be noise.
+            if not sameFeed(self:_opdsEffectiveTab()) then return end
+            resolve()
+        end)
+    else
+        resolve()
+    end
+end
+
+-- ─── OPDS book detail modal ──────────────────────────────────────────────────
+--
+-- What "open" means for a remote catalog record. Reached from the tap path
+-- (_openBook) and the long-press path (_showBookDetail): both bounce here
+-- because there is no file behind an OPDS:// pseudo-path, so the tabbed
+-- book-detail popup would be inert at best and destructive at worst (its Edit
+-- tab offers Delete).
+--
+-- The chrome is a plain ButtonDialog: cover + title / author + the first few
+-- lines of the feed's blurb as one added header widget, then a full-width row
+-- per downloadable format. NOT the ReviewsModal engine the local book detail
+-- uses -- its footer is a fixed row (Close / zoom / Open) with nowhere to put a
+-- variable number of download buttons, so they would have had to live inside a
+-- native tab: an extra tap to reach the only action the screen exists for, and
+-- a composition this file has learned to be careful with (widgets that behave
+-- standalone can misbehave inside a cropped modal -- see the text_chevrons
+-- note). The blurb still gets the full ReviewsModal treatment (scrollable,
+-- sanitised HTML, A-/A+ zoom) one tap away behind Description, built from the
+-- same header builder so the two read as one surface.
+
+-- Store key: OPDS pseudo-path -> the on-disk path a completed download landed
+-- at. Small and flat (two short strings per downloaded book), so it stays in
+-- the MAIN settings store rather than earning a subStoreFor route of its own:
+-- it is READ on every OPDS page render (bookshelf_book_repository's opds
+-- branch, for the downloaded decoration), where an already-open in-memory
+-- table is exactly what's wanted, and WRITTEN only when a download completes --
+-- so the main file's re-serialise is paid once per download, never per render.
+-- The sub-stores exist for values that are large (opds_cache) or rewritten
+-- constantly (hardcover_links); this is neither.
+--
+-- The key itself lives in bookshelf_opds_download (its other reader is the book
+-- repository, which is nowhere near this file) -- one spelling, two callers.
+local OPDS_DOWNLOADS_KEY = require("lib/bookshelf_opds_download").STORE_KEY
+-- Sibling map (path -> catalog description); written here on download, read by
+-- Repo.buildBookMeta so the downloaded book keeps the catalog's blurb.
+local OPDS_DESC_KEY = require("lib/bookshelf_opds_download").DESC_STORE_KEY
+
+-- Is ANY OPDS network job holding Trapper right now? Trapper's progress widget
+-- is module-level singleton state, so a second wrapped coroutine started under
+-- a live one closes the first's InfoMessage and leaves its coroutine suspended
+-- forever -- preventStandby never balanced, a device that won't sleep again
+-- this session (the long note in _opdsAfterPage's busy branch has the full
+-- shape). Downloads are modal-driven and never touch the _markOpdsNav gate,
+-- but they DO wrap Trapper, so they answer to the same rule.
+--
+-- TWO markers, not one. A feed fetch owns _opds_fetch_started_at (paired with
+-- _opds_fetch_feed, its identity); a modal download owns
+-- _opds_download_started_at. Each side clears only its own, because they can
+-- legitimately be set in either order and a shared field means whichever
+-- finishes first clears the other's claim -- leaving a live coroutine
+-- advertising itself as idle, which is exactly the state this test exists to
+-- prevent. A download deliberately publishes NO feed identity, so
+-- _opdsAfterPage reads it as "someone else is busy" and queues the user's
+-- navigation rather than spending it.
+--
+-- 120s, and timestamps rather than booleans, for the reason the feed marker is
+-- set that way in the first place: a wrapped body can't be pcall'd (Trapper
+-- yields, and LuaJIT can't yield across a C-call boundary), so an error inside
+-- it must expire rather than wedge the flag on for the session.
+local OPDS_BUSY_WINDOW = 120
+
+function BookshelfWidget:_opdsFetchBusy()
+    local now = os.time()
+    local feed = self._opds_fetch_started_at
+    if feed and (now - feed) < OPDS_BUSY_WINDOW then return true end
+    return self:_opdsDownloadBusy()
+end
+
+-- Just the DOWNLOAD half of the test above, for the one caller that has to be
+-- narrower (_opdsRefresh: a swipe-down during a FEED fetch stays allowed). It
+-- exists so that caller cannot read the marker as a bare boolean: with a plain
+-- truthiness test the two readers disagree the moment the marker wedges, and
+-- swipe-down refresh would stay dead for the life of the widget -- "the catalog
+-- is busy" with nothing actually busy -- while everything else recovered after
+-- the window. Same expiry, one constant, one rule.
+function BookshelfWidget:_opdsDownloadBusy()
+    local dl = self._opds_download_started_at
+    return (dl ~= nil) and (os.time() - dl) < OPDS_BUSY_WINDOW
+end
+
+-- _opdsDownloadedPath(book) -> path | nil
+-- The file a previous download of this record left on disk, when it is still
+-- there. Statted rather than trusted: the user can delete the book in the file
+-- manager and the mapping has no way to hear about it, so the mapping alone is
+-- a claim and the stat is the answer. Same rule the repo's `downloaded`
+-- decoration follows -- one source of truth, two readers.
+function BookshelfWidget:_opdsDownloadedPath(book)
+    if not (book and type(book.filepath) == "string") then return nil end
+    local map = BookshelfSettings.read(OPDS_DOWNLOADS_KEY)
+    local dest = (type(map) == "table") and map[book.filepath] or nil
+    if type(dest) ~= "string" or dest == "" then return nil end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_lfs then return nil end
+    local ok_a, mode = pcall(lfs.attributes, dest, "mode")
+    if ok_a and mode == "file" then return dest end
+    return nil
+end
+
+-- Button label for one acquisition link. The feed's own link title wins when it
+-- gave one ("EPUB (no images)" on Gutenberg) -- it is the only thing that tells
+-- two same-format editions apart after the edition collapse merged them. With
+-- no title, fall back to the extension the file will actually be saved with,
+-- uppercased, taken from OpdsDownload.filenameFor rather than a second MIME
+-- table here so the label can never disagree with the filename produced.
+local function opdsAcquisitionLabel(book, acq)
+    if type(acq.title) == "string" and acq.title ~= "" then return acq.title end
+    local ok_d, D = pcall(require, "lib/bookshelf_opds_download")
+    local name = ok_d and D.filenameFor(book, acq) or nil
+    local ext = type(name) == "string" and name:match("%.([^.]+)$") or nil
+    return ext and ext:upper() or nil
+end
+
+-- _buildRemoteBookHeader(book, header_w, opts) -> widget | nil
+-- Cover + title + author for a remote record, optionally followed by the first
+-- `opts.summary_lines` lines of the blurb. Shared by the ButtonDialog (as its
+-- added widget) and the Description modal (as its header_builder), so the two
+-- screens show the same book the same way.
+--
+-- The cover comes from the OPDS cover cache through ImageSource, whose bb is
+-- CACHE-OWNED: image_disposable stays false and the widget never hands the bb
+-- back as _owned_cover_bb (which ReviewsModal frees at close) -- freeing a
+-- shared cache bb is the corruption the OPDS cover path was rebuilt to avoid.
+function BookshelfWidget:_buildRemoteBookHeader(book, header_w, opts)
+    opts = opts or {}
+    if not book or type(header_w) ~= "number" or header_w <= 0 then return nil end
+    local ImageWidget    = require("ui/widget/imagewidget")
+    local HorizontalSpan = require("ui/widget/horizontalspan")
+    local VerticalSpan   = require("ui/widget/verticalspan")
+
+    -- Cover box, capped so it can't crowd the text column on a narrow screen.
+    local thumb_w = math.min(Screen:scaleBySize(110), math.floor(header_w * 0.35))
+    local thumb_h = math.floor(thumb_w * 1.5)
+    local gap_w   = self:_bookGap(math.min(
+        math.floor(Size.padding.fullscreen * 2 * 0.8),
+        math.floor(Screen:getWidth() * 0.03)))
+
+    -- Whatever is on disk right now: the repo attaches cover_image_path to the
+    -- page record, but a re-show after the on-open fetch (below) is handed the
+    -- same record the repo built BEFORE the file landed, so ask the cache too.
+    local cover_path = book.cover_image_path
+    if not cover_path then
+        local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+        if ok_c then
+            local ok_p, p = pcall(OpdsCovers.cachedPath, book)
+            cover_path = ok_p and p or nil
+        end
+    end
+    local cover_bb
+    if cover_path then
+        local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
+        cover_bb = ok_img and ImageSource.loadImageNative(cover_path) or nil
+    end
+
+    local thumb
+    if cover_bb then
+        -- True aspect from the bb itself, so a non-2:3 cover isn't letterboxed
+        -- or stretched (same derivation as the book menu header).
+        local bw = cover_bb.w or (cover_bb.getWidth and cover_bb:getWidth())
+        local bh = cover_bb.h or (cover_bb.getHeight and cover_bb:getHeight())
+        if bw and bh and bw > 0 then thumb_h = math.floor(thumb_w * (bh / bw)) end
+        thumb = FrameContainer:new{
+            bordersize = Size.border.thin, padding = 0, margin = 0,
+            ImageWidget:new{
+                image            = cover_bb,
+                image_disposable = false,   -- ImageSource's cache owns it
+                width            = thumb_w,
+                height           = thumb_h,
+                scale_factor     = 0,
+            },
+        }
+    else
+        -- Placeholder: an empty bordered box with a centred book glyph, so the
+        -- header keeps its shape while the cover is still on its way (or the
+        -- feed never offered one). A Private-Use-Area codepoint from the
+        -- bundled Nerd Font -- the only range that renders safely here.
+        thumb = FrameContainer:new{
+            bordersize = Size.border.thin, padding = 0, margin = 0,
+            CenterContainer:new{
+                dimen = Geom:new{ w = thumb_w, h = thumb_h },
+                TextWidget:new{
+                    text = "\xEF\x80\xAD",   -- U+F02D, nf-fa-book
+                    face = BFont:getFace("symbols", 28),
+                },
+            },
+        }
+    end
+
+    -- Text column. max_width/width must stay positive (a zero-width TextWidget
+    -- is a crash, not a clip), so floor it rather than trusting the arithmetic.
+    local text_w = math.max(Screen:scaleBySize(60),
+        header_w - thumb_w - 2 * Size.border.thin - gap_w)
+    local stack = VerticalGroup:new{ align = "left" }
+    local t_face, t_bold = BFont:getFace("smalltfont", 22, { bold = true })
+    stack[#stack + 1] = TextBoxWidget:new{
+        text  = book.display_title or book.title or _("(no title)"),
+        face  = t_face,
+        bold  = t_bold,
+        width = text_w,
+    }
+    if type(book.author) == "string" and book.author ~= "" then
+        local a_face, a_bold = BFont:getFace("cfont", 18)
+        stack[#stack + 1] = VerticalSpan:new{ width = Size.padding.small }
+        stack[#stack + 1] = TextBoxWidget:new{
+            text = book.author, face = a_face, bold = a_bold, width = text_w,
+        }
+    end
+
+    local group = VerticalGroup:new{ align = "left",
+        HorizontalGroup:new{ align = "top",
+            thumb, HorizontalSpan:new{ width = gap_w }, stack },
+    }
+
+    -- Blurb preview. Plain text via the shared cleanDescription (feed summaries
+    -- are usually HTML), capped to a fixed line count: the dialog's added
+    -- widget sits OUTSIDE its scrollable button area, so an uncapped blurb
+    -- would push the buttons off screen. height + height_adjust +
+    -- height_overflow_show_ellipsis gives "at most N lines, shrink to fit,
+    -- ellipsis when there's more" in one widget; the rest is behind
+    -- Description.
+    local max_lines = tonumber(opts.summary_lines) or 0
+    local raw = book.opds and book.opds.summary
+    if max_lines > 0 and type(raw) == "string" and raw ~= "" then
+        local ok_tok, Tokens = pcall(require, "lib/bookshelf_tokens")
+        local text = ok_tok and Tokens.cleanDescription(raw) or nil
+        if type(text) == "string" and text ~= "" then
+            local s_face, s_bold = BFont:getFace("cfont", 16)
+            -- Throwaway probe purely to read the face's line height. Freed
+            -- straight after: it shapes a real text run, and a book modal gets
+            -- opened many times over a browsing session.
+            local probe = TextBoxWidget:new{ text = "Ag", face = s_face, width = header_w }
+            local line_h = probe.line_height_px or Screen:scaleBySize(20)
+            probe:free()
+            group[#group + 1] = VerticalSpan:new{ width = Screen:scaleBySize(10) }
+            group[#group + 1] = TextBoxWidget:new{
+                text   = text,
+                face   = s_face,
+                bold   = s_bold,
+                width  = header_w,
+                height = line_h * max_lines,
+                height_adjust                 = true,
+                height_overflow_show_ellipsis = true,
+            }
+        end
+    end
+    -- Nothing in here is interactive, and ButtonDialog puts every added widget
+    -- into its dpad focus layout unless told otherwise -- without this, arrow
+    -- navigation gets a dead row above the buttons that swallows a press.
+    group.not_focusable = true
+    return group
+end
+
+-- ReviewsModal args for a remote record's blurb, or nil when it has none.
+-- _descriptionArgs is written against a Book's own description fields; a feed
+-- record keeps its blurb under opds.summary instead, so hand the helper a
+-- shallow stand-in rather than duplicating what it does -- sanitised markup for
+-- an HTML blurb, paragraph-preserving escaping for a plain-text one, which is
+-- exactly the pair of shapes OPDS summaries arrive in.
+function BookshelfWidget:_remoteDescriptionArgs(book)
+    local raw = book and book.opds and book.opds.summary
+    if type(raw) ~= "string" or raw == "" then return nil end
+    return self:_descriptionArgs{
+        title = book.title, author = book.author, description = raw,
+    }
+end
+
+-- opts.no_cover_fetch: set on the ONE re-show the on-open cover fetch triggers,
+-- so the reopened dialog can't start another (and can't loop against a server
+-- that answers with something undecodable).
+function BookshelfWidget:_showRemoteBookInfo(book, opts)
+    opts = opts or {}
+    if not book then return end
+    local _perf_t0 = _gettime()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local acquisitions = (book.opds and type(book.opds.acquisitions) == "table")
+        and book.opds.acquisitions or {}
+
+    -- Runtime format filter. bookshelf_opds_feed's SUPPORTED_TYPE stays the
+    -- parse-time filter it already is (what's worth keeping in the window);
+    -- this is the narrower "can THIS build actually open it" question, which
+    -- only DocumentRegistry can answer -- djvu, for instance, is in the feed
+    -- map but needs a provider that not every build ships.
+    local usable = {}
+    local ok_reg, DocumentRegistry = pcall(require, "document/documentregistry")
+    for _i, acq in ipairs(acquisitions) do
+        if type(acq) == "table" and type(acq.href) == "string" and acq.href ~= "" then
+            local ok_p, has = pcall(function()
+                return ok_reg and DocumentRegistry:hasProvider(nil, acq.type)
+            end)
+            if ok_p and has then usable[#usable + 1] = acq end
+        end
+    end
+
+    local dialog
+    local buttons = {}
+
+    -- Already downloaded (and still on disk): read it instead of fetching it
+    -- again. The download rows stay below -- a re-download is how the user
+    -- replaces a truncated or wrong-format copy.
+    local have = self:_opdsDownloadedPath(book)
+    if have then
+        buttons[#buttons + 1] = { {
+            text = _("Open"),
+            callback = function()
+                UIManager:close(dialog)
+                self:_launchReader(have)
+            end,
+        } }
+    end
+
+    -- Ranked order, with the best-for-KOReader format called out. The ranking
+    -- is pure and lives in OpdsDownload so it can be tested without a UI; here
+    -- it only decides button order and, when the pick is unambiguous, splits
+    -- the rows under "Recommended" / "Alternatives" headings (the download
+    -- equivalent of the library edit tab's sections) rather than tagging one
+    -- label.
+    local ok_rank, OpdsDownload = pcall(require, "lib/bookshelf_opds_download")
+    local ordered, rec_idx = usable, nil
+    if ok_rank and OpdsDownload.rankAcquisitions then
+        ordered, rec_idx = OpdsDownload.rankAcquisitions(usable)
+    end
+    -- A disabled, centred, bold row reads as a section heading in a
+    -- ButtonDialog (it can't take focus or a tap).
+    local function headingRow(label)
+        return { { text = label, enabled = false,
+                   align = "center", text_font_bold = true } }
+    end
+    local function downloadRow(acq)
+        local label = opdsAcquisitionLabel(book, acq)
+        local text = label and T(_("Download %1"), label) or _("Download")
+        return { { text = text,
+                   callback = function() self:_opdsStartDownload(book, acq, dialog) end } }
+    end
+    if rec_idx and ordered[rec_idx] and #ordered >= 2 then
+        -- Confident pick with at least one other format: headed sections.
+        buttons[#buttons + 1] = headingRow(_("Recommended"))
+        buttons[#buttons + 1] = downloadRow(ordered[rec_idx])
+        buttons[#buttons + 1] = headingRow(_("Alternatives"))
+        for _i, acq in ipairs(ordered) do
+            if _i ~= rec_idx then buttons[#buttons + 1] = downloadRow(acq) end
+        end
+    else
+        -- One format, or no confident pick: a plain list, no headings.
+        for _i, acq in ipairs(ordered) do
+            buttons[#buttons + 1] = downloadRow(acq)
+        end
+    end
+    if #usable == 0 then
+        -- Note row in the established disabled-button style: the record is real
+        -- and its blurb is worth reading, there is just nothing here this
+        -- device can open.
+        buttons[#buttons + 1] = { {
+            text = _("No formats this device can open"), enabled = false,
+        } }
+    end
+
+    local desc_args = self:_remoteDescriptionArgs(book)
+    local last_row = {}
+    if desc_args then
+        last_row[#last_row + 1] = {
+            text = _("Description"),
+            callback = function()
+                UIManager:close(dialog)
+                desc_args.bw = self
+                desc_args.header_builder = function(avail_w)
+                    return self:_buildRemoteBookHeader(book, avail_w, { summary_lines = 0 })
+                end
+                UIManager:show(require("lib/bookshelf_reviews_modal"):new(desc_args))
+            end,
+        }
+    end
+    last_row[#last_row + 1] = {
+        text = _("Close"),
+        callback = function() UIManager:close(dialog) end,
+    }
+    buttons[#buttons + 1] = last_row
+
+    dialog = ButtonDialog:new{ buttons = buttons }
+    -- addWidget BEFORE show: it reinits the dialog, and reinit on a dialog that
+    -- is already up rebuilds self.movable with its default drag/hold gestures
+    -- (which then eat taps and wedge the touch state machine, with no
+    -- traceback). Built-then-shown, that hazard doesn't exist.
+    local header = self:_buildRemoteBookHeader(
+        book, dialog:getAddedWidgetAvailableWidth(), { summary_lines = 5 })
+    if header then dialog:addWidget(header) end
+    logger.dbg(string.format(
+        "[bookshelf perf] _showRemoteBookInfo: build=%.0fms %s",
+        (_gettime() - _perf_t0) * 1000, tostring(book.title or book.filepath)))
+    UIManager:show(dialog)
+
+    if not opts.no_cover_fetch then
+        self:_opdsFetchDetailCover(book, dialog)
+    end
+end
+
+-- Fetch one remote book's cover into the disk cache, off the tap path.
+-- Shared by the download modal (re-shows itself with the cover) and the hero
+-- preview (repaints hero + shelf cell). opts.pre: extra liveness the caller
+-- needs (e.g. "the dialog is still shown"), checked after the defer and again
+-- when the fetch lands. opts.on_cached: runs when the cover file is on disk -
+-- whether THIS fetch downloaded it or a concurrent pass cached it first.
+function BookshelfWidget:_opdsFetchCover(book, opts)
+    opts = opts or {}
+    if not (book and book.opds) then return end
+    local ok_c, OpdsCovers = pcall(require, "lib/bookshelf_opds_covers")
+    if not ok_c then return end
+    -- Match the SHELF's own cover pass exactly: it fetches via image_url OR
+    -- thumbnail_url (OpdsCovers.cachePath / fetchMissing both key on
+    -- coverUrl = image_url or thumbnail_url). Gating this modal fetch on
+    -- image_url alone left a folder-of-one whose child carries only a
+    -- thumbnail with a loaded cover on the shelf cell but a permanent
+    -- book-glyph placeholder in the modal: a normal book tap hides the gap
+    -- because the grid pass had already fetched and attached its cover before
+    -- the tap, but the lone-child modal opens straight off the feed fetch,
+    -- before any grid pass has run for that record, so it depends entirely on
+    -- this fetch -- which then silently bailed. cachePath is non-nil exactly
+    -- when there is a cover URL to fetch, and nil when there is none.
+    -- One decision line per call: which guard ended it, or that a fetch is
+    -- being scheduled. This is the "why did no toast appear" diagnostic.
+    local function _bail(reason)
+        logger.dbg("[bookshelf perf] _opdsFetchCover: skip (" .. reason .. ")",
+            tostring(book.title or book.filepath))
+    end
+    if not OpdsCovers.cachePath(book) then _bail("no cover url") return end
+    if OpdsCovers.cachedPath(book) then _bail("already cached") return end
+    -- A feed fetch in flight is suspended at a Trapper yield with the main loop
+    -- free, so a blocking image download scheduled underneath it would stall
+    -- that fetch for as long as the image takes. Skip; the grid's own cover
+    -- pass picks this record up on the next render anyway.
+    if self:_opdsFetchBusy() then _bail("feed fetch busy") return end
+    -- Never prompts: a passive-looking cover fill must not raise a Wi-Fi
+    -- dialog (isConnected answers true on platforms with no Wi-Fi toggle, so
+    -- desktop builds still fill).
+    local ok_net, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_net and NetworkMgr and NetworkMgr.isConnected
+            and not NetworkMgr:isConnected() then
+        _bail("offline")
+        return
+    end
+    local _perf_t_sched = _gettime()
+    logger.dbg("[bookshelf perf] _opdsFetchCover: scheduling fetch"
+        .. (opts.notice and " (with toast)" or ""),
+        tostring(book.title or book.filepath))
+    -- Feedback while the (blocking) download runs. Shown only once every
+    -- synchronous guard has passed -- i.e. a fetch really is about to start --
+    -- so a tap on an already-cached cover never flashes it. The 0.1s defer
+    -- below is what lets it paint before fetchMissing freezes the loop. The
+    -- timeout is a backstop; every exit below dismisses it explicitly.
+    local notice
+    if opts.notice then
+        notice = require("ui/widget/notification"):new{
+            text = opts.notice, timeout = 30,
+        }
+        UIManager:show(notice)
+    end
+    local function dismiss_notice()
+        if notice then
+            if UIManager:isWidgetShown(notice) then UIManager:close(notice) end
+            notice = nil
+        end
+    end
+    UIManager:scheduleIn(0.1, function()
+        if BookshelfWidget.live ~= self then dismiss_notice() return end
+        if opts.pre and not opts.pre() then dismiss_notice() return end
+        -- fetchMissing blocks the main loop (10s worst case); one at a time.
+        -- Queued schedule callbacks that fire while another fetch is mid-air
+        -- bail here and rely on their next preview/modal open to retry.
+        if self._opds_cover_fetch_busy then dismiss_notice() return end
+        self._opds_cover_fetch_busy = true
+        -- Paint BEFORE blocking. This callback is usually overdue by the time
+        -- the tap handler's (heavy) rebuild returns, and UIManager runs due
+        -- tasks before it repaints -- so without this the toast, the new hero
+        -- and the selection ring all sat dirty-but-unpainted behind the old
+        -- frame for the whole download (8s+ against a slow cover server, and
+        -- the toast was then dismissed on completion without ever being
+        -- seen). Same primitive Trapper:info uses for exactly this reason.
+        UIManager:forceRePaint()
+        local _perf_t_fetch = _gettime()
+        logger.dbg(string.format(
+            "[bookshelf perf] _opdsFetchCover: fetch start, sched_gap=%.0fms",
+            (_perf_t_fetch - _perf_t_sched) * 1000))
+        OpdsCovers.fetchMissing({ book }, function(fetched)
+            self._opds_cover_fetch_busy = nil
+            -- The fetch is over either way; the toast must not outlive it.
+            dismiss_notice()
+            logger.dbg(string.format(
+                "[bookshelf perf] _opdsFetchCover: fetch done in %.0fms"
+                .. " fetched=%s cached_now=%s",
+                (_gettime() - _perf_t_fetch) * 1000,
+                tostring(fetched),
+                tostring(OpdsCovers.cachedPath(book) ~= nil)))
+            if BookshelfWidget.live ~= self then return end
+            if opts.pre and not opts.pre() then return end
+            -- Cached NOW is the question, not whether THIS fetch downloaded
+            -- it: a concurrent pass often lands the same cover first.
+            if not OpdsCovers.cachedPath(book) then return end
+            if opts.on_cached then opts.on_cached() end
+        end)
+    end)
+end
+
+-- The download modal's cover fetch: re-show the dialog once the cover is on
+-- disk.
+function BookshelfWidget:_opdsFetchDetailCover(book, dialog)
+    self:_opdsFetchCover(book, {
+        pre = function() return UIManager:isWidgetShown(dialog) end,
+        on_cached = function()
+            -- Discard the tap backlog before the geometry moves under it.
+            -- fetchMissing is fully blocking (a synchronous download loop with
+            -- a 10s total budget), so the main loop can be frozen with the
+            -- modal on screen for seconds, and every tap the user made in that
+            -- window is still queued. The re-shown dialog is a DIFFERENT
+            -- height -- thumb_h switches from the 1.5 placeholder ratio to the
+            -- cover's true aspect -- so those taps land on rows that have
+            -- moved, and the rows they can land on include "Download <format>":
+            -- an unrequested network transfer, not just a stray dismissal.
+            -- Same primitive, and the same reason, as the Read-now ConfirmBox's
+            -- flush_events_on_show (which is literally this one call).
+            local Input = Device.input
+            if Input and Input.inhibitInputUntil then
+                Input:inhibitInputUntil(true)
+            end
+            -- Rebuild rather than patch: the cover is baked into the added
+            -- header widget, and reinit on a shown ButtonDialog is the movable
+            -- hazard noted above. Close and re-show with the fetch disarmed.
+            UIManager:close(dialog)
+            self:_showRemoteBookInfo(book, { no_cover_fetch = true })
+        end,
+    })
+end
+
+-- Pre-flight for one download: refuse politely when we can't do it, confirm an
+-- overwrite, then hand off. Everything here is local (a settings read and one
+-- stat); the network half is _opdsRunDownload.
+function BookshelfWidget:_opdsStartDownload(book, acq, dialog)
+    local Notification = require("ui/widget/notification")
+    local D = require("lib/bookshelf_opds_download")
+    if self:_opdsFetchBusy() then
+        UIManager:show(Notification:new{
+            text = _("The catalog is busy. Try again in a moment."),
+        })
+        return
+    end
+    -- nil means home_dir is unset: there is no folder the shelf actually scans,
+    -- so a download would land somewhere the user would never see it. Name the
+    -- problem rather than inventing a destination.
+    local dir = D.destinationDir(function(key)
+        return G_reader_settings:readSetting(key)
+    end)
+    if not dir then
+        UIManager:show(Notification:new{
+            text = _("Set a home folder in KOReader before downloading books."),
+        })
+        return
+    end
+    local util = require("util")
+    local name = util.getSafeFilename(D.filenameFor(book, acq), dir)
+    local dest = (dir ~= "/" and dir or "") .. "/" .. name
+    -- Don't offer to overwrite a file that belongs to a DIFFERENT catalog
+    -- record: filenameFor is title + format and getSafeFilename doesn't
+    -- uniquify, so two records carrying the same book land on one path, and
+    -- overwriting would leave both opds_downloads keys pointing at it -- one
+    -- record's Open row then launches the other's book. claimDest hands back a
+    -- suffixed sibling in that case and the original path in every other,
+    -- including this record re-downloading its own file (which is what the
+    -- overwrite prompt below is actually for).
+    dest = D.claimDest(dest, BookshelfSettings.read(OPDS_DOWNLOADS_KEY),
+                       book.filepath, acq)
+    name = dest:match("([^/]+)$") or name
+    local function go() self:_opdsRunDownload(book, acq, dest, dialog) end
+
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    local ok_a, mode = false, nil
+    if ok_lfs then ok_a, mode = pcall(lfs.attributes, dest, "mode") end
+    if ok_a and mode == "file" then
+        UIManager:show(require("ui/widget/confirmbox"):new{
+            text = T(_("%1 already exists. Download it again?"), name),
+            ok_text = _("Overwrite"),
+            ok_callback = go,
+        })
+        return
+    end
+    go()
+end
+
+-- The network half. Wi-Fi is gated by runWhenOnline (a prompt, never a silent
+-- connect); the transfer itself runs inside Trapper so the progress line is a
+-- real widget rather than a frozen screen.
+--
+-- Credentials only ever travel to the catalog's own origin. The acquisition
+-- href came out of the server's own XML and could name any host, so the
+-- same-origin test is this layer's job -- OpdsDownload.download sends whatever
+-- it is handed, by design (see its header), exactly as the cover fetcher's
+-- credential gate works.
+function BookshelfWidget:_opdsRunDownload(book, acq, dest, dialog)
+    local D            = require("lib/bookshelf_opds_download")
+    local OpdsSource   = require("lib/bookshelf_opds_source")
+    local OpdsFeed     = require("lib/bookshelf_opds_feed")
+    local CoverFetch   = require("lib/bookshelf_cover_fetch")
+    local Notification = require("ui/widget/notification")
+    local Trapper      = require("ui/trapper")
+
+    local key = type(book.filepath) == "string"
+        and book.filepath:match("^OPDS://([^/]+)/") or nil
+    local server = key and OpdsSource.getServer(key) or nil
+    local same_origin = (server and OpdsFeed.sameOrigin(server.url, acq.href)) or false
+    local user     = same_origin and server.username or nil
+    local password = same_origin and server.password or nil
+    local title    = book.display_title or book.title or ""
+    local who      = (server and server.title) or title
+
+    CoverFetch.runWhenOnline(function()
+        -- The Wi-Fi prompt is modal and can be answered long after the shelf
+        -- closed (or was replaced by a re-open). Same liveness test every other
+        -- deferred OPDS path makes.
+        if BookshelfWidget.live ~= self then return end
+        Trapper:wrap(function()
+            -- Re-test, FIRST, inside the wrap. The tap-time check in
+            -- _opdsStartDownload is a snapshot taken before two waits that can
+            -- run for as long as the user likes: the overwrite ConfirmBox, and
+            -- runWhenOnline's Wi-Fi prompt. A feed fetch can be armed or can
+            -- reach its own Trapper:wrap during either -- and while a feed
+            -- fetch is itself sitting in runWhenOnline it holds NO marker yet,
+            -- so the earlier check could not have seen it. Bail with the same
+            -- message the tap-time refusal uses; the user retries in a moment.
+            if self:_opdsFetchBusy() then
+                UIManager:show(Notification:new{
+                    text = _("The catalog is busy. Try again in a moment."),
+                })
+                return
+            end
+            -- Our OWN marker for the transfer (never the feed's -- see
+            -- _opdsFetchBusy): it is what stops a feed fetch (page turn, chip
+            -- tap) starting a second wrapped coroutine underneath this one,
+            -- and it carries no feed identity, so _opdsAfterPage reads it as
+            -- "someone else is busy" and QUEUES the user's navigation rather
+            -- than spending it.
+            self._opds_download_started_at = os.time()
+            local go_on = Trapper:info(T(_("Downloading %1…"), title))
+            local path, err, extra
+            if go_on then
+                path, err, extra = D.download(acq.href, dest, user, password)
+            end
+            Trapper:clear()
+            self._opds_download_started_at = nil
+            if not go_on then return end   -- dismissed before the transfer began
+
+            if not path then
+                -- Once, before the branching, so every failure shape is
+                -- represented: the three toasts below name the server but not
+                -- the cause, and a download that dies on a 504 halfway through
+                -- a catalog looks identical to one that never resolved. `extra`
+                -- carries the redirect target on the downgrade branch and is
+                -- nil elsewhere, so it rides along only when it says something.
+                logger.dbg("[bookshelf] opds fetch failed:", acq.href, err, extra)
+                if err == "downgrade" then
+                    -- Warning-style (an InfoMessage with the notice icon, not a
+                    -- toast): this is the one failure the user should be able
+                    -- to act on, by telling the catalog's administrator.
+                    UIManager:show(require("ui/widget/infomessage"):new{
+                        text = T(_("Insecure redirect refused.\n\nThe server tried to send this download to a non-HTTPS address:\n\n%1\n\nMany apps refuse this because it could be a downgrade attack."),
+                            tostring(extra or "")),
+                        icon = "notice-warning",
+                    })
+                elseif err == "auth" then
+                    UIManager:show(Notification:new{
+                        text = T(_("Authentication failed for %1"), who),
+                    })
+                else
+                    UIManager:show(Notification:new{
+                        text = T(_("Couldn't reach %1"), who),
+                    })
+                end
+                return
+            end
+
+            -- Landed. Record it before anything else can fail: the mapping is
+            -- what the repo's downloaded decoration reads, and a file on disk
+            -- the shelf doesn't know about is the worse of the two failures.
+            local map = BookshelfSettings.read(OPDS_DOWNLOADS_KEY)
+            if type(map) ~= "table" then map = {} end
+            -- Retire entries whose file is gone, at the one moment we are
+            -- already paying for a write. Nothing else ever removes one: the
+            -- mapping deliberately gets no bookkeeping pass on move or delete
+            -- (see the repo's downloaded comment), so without this it grows for
+            -- the life of the install, and a dead value still counts as "taken"
+            -- in claimDest's scan -- giving an unrelated record a spurious
+            -- "(a1b2c3d4)" in its filename. One stat per entry, at an action
+            -- boundary, and BEFORE the new entry goes in so this download's own
+            -- destination is never a candidate.
+            local ok_lfs2, lfs2 = pcall(require, "libs/libkoreader-lfs")
+            if ok_lfs2 and lfs2 then
+                D.pruneMap(map, function(p)
+                    local ok_s, m = pcall(lfs2.attributes, p, "mode")
+                    return ok_s and m == "file"
+                end)
+            end
+            map[book.filepath] = path
+            -- No explicit flush: Store.save already flushes (it ends in
+            -- s:flush()), and a second call here bought a full re-serialise of
+            -- the settings file per download for nothing. The action boundary
+            -- is honoured -- just not twice.
+            BookshelfSettings.save(OPDS_DOWNLOADS_KEY, map)
+
+            -- Carry the catalog's description onto the downloaded file so the
+            -- local library shows it too. Gutenberg's embedded EPUB
+            -- description is routinely empty, so without this the book loses
+            -- the blurb the moment it lands. Keyed by the on-disk path (read
+            -- back in Repo.buildBookMeta); pruned with the same file-exists
+            -- predicate as the downloads map so a deleted/replaced file leaves
+            -- no dangling text. book.opds.summary is already just the Summary
+            -- section (OpdsFeed.summaryText strips Gutenberg's other headings).
+            local desc = book.description
+                         or (book.opds and book.opds.summary) or nil
+            if type(desc) == "string" and desc ~= "" then
+                local dmap = BookshelfSettings.read(OPDS_DESC_KEY)
+                if type(dmap) ~= "table" then dmap = {} end
+                if ok_lfs2 and lfs2 then
+                    D.pruneMap(dmap, function(p)
+                        local ok_s, m = pcall(lfs2.attributes, p, "mode")
+                        return ok_s and m == "file"
+                    end)
+                end
+                dmap[path] = desc
+                BookshelfSettings.save(OPDS_DESC_KEY, dmap)
+            end
+            -- A new file inside the library the shelf walks -- the local chips
+            -- have to re-derive or the book simply isn't there.
+            Repo.invalidateWalkCache()
+
+            -- Shown-check first: the user can dismiss the dialog while the
+            -- transfer runs, and closing an already-closed widget re-sends it
+            -- CloseWidget (a second repaint of a rect nothing occupies).
+            if dialog and UIManager:isWidgetShown(dialog) then
+                UIManager:close(dialog)
+            end
+
+            -- Re-render the shelf HERE, on the transfer landing, rather than
+            -- from one of the two answers below.
+            --
+            -- The page records under this prompt were built by the repo BEFORE
+            -- the download, so the catalog cell still carries no `downloaded`
+            -- flag (no tick), and the local chips have never seen the new file.
+            -- Only a re-fetch fixes that, and it has to happen on EVERY way out
+            -- of this prompt, not one of them:
+            --
+            --   * "Not now" used to own the refresh, and looked fine.
+            --   * "Read" parks the shelf and hands the screen to ReaderUI. The
+            --     way back is main.lua's _raiseInPlace, which reorders the
+            --     window stack and repaints the widget it finds there -- it
+            --     never re-fetches. So the shelf the user returns to is the one
+            --     rendered before the download: the book they just read shows
+            --     no downloaded tick, for the rest of the visit. It reappears
+            --     later only by accident, on the next unrelated rebuild (the
+            --     sideload file poll noticing the new file, a page turn, a chip
+            --     tap), which reads as a tick that comes and goes.
+            --
+            -- Hoisting it also means one rebuild per download instead of one
+            -- per download plus one per dismissal.
+            --
+            -- Same liveness guard the ok_callback below makes: with the shelf
+            -- closed (or replaced by a re-open) mid-transfer, this would be
+            -- rebuilding a dead widget.
+            if BookshelfWidget.live == self then
+                self:_rebuild()
+                UIManager:setDirty(self, "ui")
+            end
+
+            UIManager:show(require("ui/widget/confirmbox"):new{
+                text        = T(_("%1 downloaded. Read it now?"), title),
+                ok_text     = _("Read"),
+                -- Liveness guard: with the shelf gone (closed, or replaced by a
+                -- re-open), _launchReader would be stamping pre-read state onto
+                -- a dead widget.
+                ok_callback = function()
+                    if BookshelfWidget.live ~= self then return end
+                    self:_launchReader(path)
+                end,
+                cancel_text = _("Not now"),
+                -- The transfer blocked the main loop, so every tap the user
+                -- made while waiting is still queued and would land on this box
+                -- the moment it appears -- answering a question they have not
+                -- read yet. confirmbox.lua documents this exact case as what
+                -- the flag is for (Input:inhibitInputUntil on show).
+                flush_events_on_show = true,
+                -- No cancel_callback: the refresh it used to carry now runs
+                -- above, before this box is shown, so every dismissal (Cancel,
+                -- Read, or a tap outside the box) already has a current shelf
+                -- underneath it.
+            })
+        end)
     end)
 end
 
@@ -10312,6 +12356,10 @@ end
 -- storage: summary.rating in the .sdr/metadata.X.lua sidecar.
 function BookshelfWidget:_setBookRating(book, new_rating, opts)
     if not book or not book.filepath then return end
+    -- The hero's star row is reachable while a remote record is previewed.
+    -- DocSettings:open + flush on an OPDS:// pseudo-path would CREATE a
+    -- sidecar directory for a book that doesn't exist on this device.
+    if self:_isRemoteRecord(book) then return end
     local DocSettings = require("docsettings")
     local ok_ds, ds = pcall(function() return DocSettings:open(book.filepath) end)
     if not ok_ds or not ds then return end
@@ -10801,6 +12849,23 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
         bw:_rebuild(); UIManager:setDirty(bw, "ui")
     end }
 
+    -- Move: disabled while this book is the open/parked document
+    -- (moving the file under a live reader risks the close-time
+    -- sidecar flush recreating data at the old path).
+    local FileOpsMod = require("lib/bookshelf_file_ops")
+    local move_in_use = FileOpsMod.inUsePaths()[book.filepath] and true or false
+    local move_btn = {
+        text    = _("Move\xE2\x80\xA6"),
+        enabled = not move_in_use,
+        callback = function()
+            closeModal()
+            require("lib/bookshelf_move_flow").moveBooks{
+                bw    = bw,
+                paths = { book.filepath },
+            }
+        end,
+    }
+
     -- Third-party file-dialog buttons (e.g. Incognito). Run their specs RAW --
     -- exactly as the old long-press menu did -- rather than wrapping them to
     -- close the popup first; a plugin callback that opens the reader triggers our
@@ -10819,7 +12884,7 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
     }
     local file_rows = {
         { show_info, refresh_btn, select_btn },
-        { reset_btn, delete_btn },
+        { move_btn, reset_btn, delete_btn },
     }
 
     -- This is our own widget tree (not a ButtonDialog), so the body is a
@@ -11865,6 +13930,15 @@ end
 function BookshelfWidget:_showBookDetail(book, opts)
     opts = opts or {}
     if not book or not book.filepath then return end
+    -- Remote (OPDS) records have no sidecar, no collections and no file to act
+    -- on, so every tab here would be inert at best and a file op on a
+    -- pseudo-path at worst (the Edit tab offers Delete). Long-press gets the
+    -- same read-only viewer the tap path shows. Path-prefix match, so a
+    -- hero-hydrated record with its flags stripped is caught too.
+    if self:_isRemoteRecord(book) then
+        self:_showRemoteBookInfo(book)
+        return
+    end
     local ReadCollection = require("readcollection")
     local in_collections = ReadCollection.getCollectionsWithFile
         and ReadCollection:getCollectionsWithFile(book.filepath) or {}
@@ -13368,7 +15442,7 @@ function BookshelfWidget:_openGroupMenu(group, kind)
             this_kind, remaining_count, in_sel_count)
     else  -- "none"
         prompt = string.format(
-            _("Pin %s to the chip bar for quick access,\nor add its %d books to a selection for bulk edits."),
+            _("Pin %s to the chip bar for quick access,\nor select its %d books for bulk edits."),
             this_kind, n_for_prompt)
     end
 
@@ -13452,16 +15526,19 @@ function BookshelfWidget:_openGroupMenu(group, kind)
         },
     }
     -- Append action buttons to the same row, state-aware:
-    --   "none" → Add N
-    --   "some" → Add N more | Remove M  (the Venn-diagram middle)
+    --   "none" → Select N        (nothing to add to yet: this STARTS a
+    --                             selection, matching the book detail
+    --                             tab's own "Select" button)
+    --   "some" → Add N more | Remove M  (the Venn-diagram middle, where
+    --                             "add" is right: a selection exists)
     --   "all"  → Remove N
     -- Each action applies directly with no extra confirmation.
     if n_for_prompt > 0 then
         if sel_state ~= "all" and remaining_count > 0 then
             table.insert(buttons[1], {
                 text = (sel_state == "some")
-                    and string.format(_("Add %d"), remaining_count)
-                    or  string.format(_("Add %d"), n_for_prompt),
+                    and string.format(_("Add %d more"), remaining_count)
+                    or  string.format(_("Select %d"), n_for_prompt),
                 callback = function()
                     close_dialog()
                     bw_ref:_applyStackSelection(group, "add")
@@ -13477,6 +15554,30 @@ function BookshelfWidget:_openGroupMenu(group, kind)
                 end,
             })
         end
+    end
+
+    -- Fork extension: keep folder completion as a first-class action alongside
+    -- 4.0's image, move and rename controls. Marking every contained book read
+    -- also drives the existing finished-folder fade state.
+    if kind == "folder" and group.path then
+        table.insert(buttons, {
+            { text = _("Mark folder as read"), callback = function()
+                close_dialog()
+                local InfoMessage = require("ui/widget/infomessage")
+                UIManager:show(InfoMessage:new{
+                    text = _("Marking folder as read..."), timeout = 1,
+                })
+                UIManager:nextTick(function()
+                    local count = Repo.markFolderRead(group.path, 3)
+                    bw_ref:_rebuild()
+                    UIManager:setDirty(bw_ref, "ui")
+                    UIManager:show(InfoMessage:new{
+                        text = string.format(_("Marked %d books as read"), count),
+                        timeout = 2,
+                    })
+                end)
+            end },
+        })
     end
 
     -- Custom-image row (#70). Folders take a filesystem path and may
@@ -13508,6 +15609,23 @@ function BookshelfWidget:_openGroupMenu(group, kind)
             }
         end
         table.insert(buttons, folder_row)
+
+        -- File management row (feature/file-move): relocate or rename
+        -- the real directory behind this folder card.
+        table.insert(buttons, {
+            { text = _("Move folder\xE2\x80\xA6"), callback = function()
+                close_dialog()
+                require("lib/bookshelf_move_flow").moveFolder{
+                    bw = bw_ref, folder_path = group.path,
+                }
+            end },
+            { text = _("Rename folder\xE2\x80\xA6"), callback = function()
+                close_dialog()
+                require("lib/bookshelf_move_flow").renameFolder{
+                    bw = bw_ref, folder_path = group.path,
+                }
+            end },
+        })
     elseif (kind == "author" or kind == "series" or kind == "genre" or kind == "tag")
            and type(source_id) == "string" and source_id ~= "" then
         -- Per-kind button label so a user holding an author stack sees
@@ -13718,6 +15836,19 @@ function BookshelfWidget:_drillBackTo(depth)
     -- last-tapped book in the hero, regardless of which level they pop to.
     self._cursor = restore_cursor
     self:_syncPageFromCursor()
+    -- Backing out is user navigation, so it licenses a fetch the same way
+    -- drilling in and turning a page do. It matters because the level being
+    -- POPPED TO can legitimately have no cached window any more: OpdsWindow's
+    -- LRU evicts on fetched_at (a read never refreshes it) and a deep browse
+    -- can mint a window per subcatalog visited, so a catalog's own root feed
+    -- can be evicted by the drilling that happened underneath it. Without the
+    -- arm, that pop lands on the empty placeholder and _opdsAfterPage is not
+    -- allowed to refill it -- the user is stranded until they think to swipe
+    -- down. Costs nothing anywhere else: the hook still requires the page to
+    -- come back flagged opds_needs_fetch, which only an OPDS page ever is, so
+    -- every non-OPDS pop and every pop onto a still-cached window consumes the
+    -- flag and does nothing.
+    self:_markOpdsNav()
     self:_rebuild()
     UIManager:setDirty(self, "ui")
 end
@@ -14032,6 +16163,135 @@ function BookshelfWidget:_expandFolder(folder)
         kind    = "folder",
         label   = label,
         payload = { path = folder.path, first_book = folder.first_book },
+    }
+end
+
+-- _expandOpdsNav(rec, no_fetch) - tap handler for an OPDS navigation tile (a
+-- subcatalog link within a remote feed), and the D-pad Enter on the same tile.
+-- Ordinarily it drills in exactly as a folder does: push a path frame naming
+-- the feed and let _fetchChipItems scope the shelf to it. The breadcrumb, the
+-- east-swipe back-out and the page-1 "go up a level" all come for free from the
+-- shared drill machinery.
+--
+-- ...but a "folder" holding exactly one book is not worth a shelf. Catalogs
+-- like Project Gutenberg model every WORK as a subcatalog whose feed carries a
+-- single acquisition entry, so drilling in landed the user on a one-tile shelf
+-- they had to tap again and then back out of twice. The repo already flattens
+-- those tiles once their child feed is cached (see the opds branch of
+-- getBySource); this is the tap side of the SAME predicate --
+-- Repo.opdsLoneChildBook, single-sourced deliberately, because a tile rendered
+-- as a book that then drilled in like a folder would be worse than either.
+--
+-- So the tap is a decision over the child window, in three states:
+--
+--   * cached and it IS a folder of one -> open that book's own modal, and
+--     nothing else. No _markOpdsNav: the arm is a one-shot licence for the NEXT
+--     rebuild to reach the network, this path does not rebuild at all, and an
+--     unspent arm would be picked up by whatever passive rebuild came next (a
+--     cover landing, the 5s file poll) and spent on a fetch nobody asked for.
+--   * cached and it is anything else (several books, subfolders, a feed with
+--     more pages behind it) -> drill, armed, exactly as before.
+--   * UNCACHED -> neither answer is knowable without asking the server, and the
+--     tap is precisely the user action that licenses asking. Fetch the child
+--     feed first, then re-run this decision against what landed.
+--
+-- The pre-fetch calls _opdsFetchMore DIRECTLY and arms nothing, the same shape
+-- (and for the same reason) as _opdsRefresh: with no rebuild of ours to gate,
+-- the arm would have nothing to gate and its tail rebuild stays passive. The
+-- busy test is _opdsRefresh's rule widened to both markers -- a second Trapper
+-- coroutine over a live one is the standby-leak hazard documented at
+-- _opdsAfterPage's queue branch -- and applies ONLY to this branch: a cached
+-- tile is pure local work, and refusing to open it during a download would be a
+-- folder that cannot be opened for no reason.
+--
+-- no_fetch marks the re-entry from that fetch's completion callback, and is
+-- what stops it looping. "The window is cached now" is NOT enough on its own:
+-- a fetch that failed (server down, feed empty, user cancelled, Wi-Fi declined)
+-- leaves the window exactly as uncached as it found it, having already shown
+-- its own notification, and an unguarded re-entry would fetch again on every
+-- round. One fetch per tap, then stay put.
+--
+-- The server key rides the synthetic filepath ("OPDS://<server_key>/nav/...")
+-- rather than a field of its own, because that path is the one part of a
+-- remote record guaranteed to survive a repo round trip (see
+-- _isRemoteRecord). Both it and the feed_url are required: a frame missing
+-- either would render an empty shelf with no way to fetch into it.
+--
+-- The frame is deliberately NOT persisted (_serializeDrillPath drops it), so
+-- a relaunch lands the user back on the chip's root feed. Restoring it would
+-- mean a network fetch at startup that nobody asked for.
+function BookshelfWidget:_expandOpdsNav(rec, no_fetch)
+    if not (rec and rec.opds and rec.opds.feed_url) then return end
+    local server_key = type(rec.filepath) == "string"
+                       and rec.filepath:match("^OPDS://([^/]+)/") or nil
+    if not server_key then return end
+    local _perf_t0 = _gettime()
+    local feed_url = rec.opds.feed_url
+    local label = rec.label or rec.display_title or rec.title
+    -- fetched_at is the cache question, not #entries: a feed that legitimately
+    -- came back empty has a stamp and no entries, and re-fetching that on every
+    -- tap would be a round trip per tap against a server that already answered.
+    -- OpdsWindow.load's miss shape stamps 0, so the two are never confusable.
+    local OpdsWindow = require("lib/bookshelf_opds_window")
+    local win = OpdsWindow.load(server_key, feed_url)
+    logger.dbg(string.format(
+        "[bookshelf perf] _expandOpdsNav: load=%.0fms cached=%s entries=%d %s",
+        (_gettime() - _perf_t0) * 1000,
+        tostring((win.fetched_at or 0) > 0), #win.entries,
+        tostring(feed_url)))
+    if (win.fetched_at or 0) <= 0 then
+        if no_fetch then return end
+        if self:_opdsFetchBusy() then
+            UIManager:show(require("ui/widget/notification"):new{
+                text = _("The catalog is busy. Try again in a moment."),
+            })
+            return
+        end
+        -- want_count is a page's worth, not the one entry the decision needs:
+        -- the likely outcome is a drill, and fetching less would land the user
+        -- on a part-filled shelf that immediately fetched again.
+        logger.dbg("[bookshelf perf] _expandOpdsNav: cache miss, dispatching feed fetch")
+        self:_opdsFetchMore(
+            { label = label,
+              source = { kind = "opds", id = server_key, feed_url = feed_url } },
+            self:_viewSize() or 24, false,
+            function() self:_expandOpdsNav(rec, true) end)
+        return
+    end
+    local lone = Repo.opdsLoneChildBook(server_key, feed_url)
+    if lone then
+        -- Same journey as a plain book tap: the first tap stages the
+        -- flattened book in the hero (cover and description fetch included),
+        -- and a second tap on the same tile opens the download modal. The
+        -- lone child is a DIFFERENT record from the nav tile, so the
+        -- "already previewed" test compares against the child's filepath.
+        -- Micro-hero mode is excluded for the same reason as the book
+        -- re-tap branch: the preview state is stale there, and the tap
+        -- should swap the hero back to the book instead.
+        if self._hero_mode ~= "micro" and self._preview_book
+                and self._preview_book.filepath == lone.filepath then
+            logger.dbg(string.format(
+                "[bookshelf perf] _expandOpdsNav: lone re-tap -> modal, pre_modal=%.0fms",
+                (_gettime() - _perf_t0) * 1000))
+            self:_showRemoteBookInfo(lone)
+            return
+        end
+        logger.dbg(string.format(
+            "[bookshelf perf] _expandOpdsNav: lone flatten -> hero preview, pre_preview=%.0fms",
+            (_gettime() - _perf_t0) * 1000))
+        self:_previewBook(lone)
+        return
+    end
+    -- The tap IS the user navigation that licenses a fetch: a subcatalog whose
+    -- window is cached but short (a feed with more pages behind it) comes back
+    -- flagged opds_needs_fetch from the rebuild _drillInto ends with, and
+    -- _opdsAfterPage has to be allowed to act on it. Armed before the rebuild,
+    -- like every other nav gesture (chip select, page turn, swipe-down).
+    self:_markOpdsNav()
+    self:_drillInto{
+        kind    = "opds_nav",
+        label   = label,
+        payload = { server_key = server_key, feed_url = feed_url },
     }
 end
 

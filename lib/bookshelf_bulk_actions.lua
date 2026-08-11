@@ -374,6 +374,50 @@ function BulkActions.show(opts)
         end,
     }
 
+    -- Move: immediate action like Delete (NOT staged into the draft --
+    -- a path-changing op doesn't compose with staged actions keyed on
+    -- the old paths). scrubMissing first, same as Apply; exits
+    -- selection mode after a successful move since the selection's
+    -- keys are the old paths.
+    local move_button = {
+        text     = _("Move to folder\xE2\x80\xA6"),
+        callback = function()
+            local discard_toast = isDirty()
+            UIManager:close(dialog)
+            local lfs = require("libs/libkoreader-lfs")
+            selection:scrubMissing(function(p)
+                return lfs.attributes(p, "mode") == "file"
+            end)
+            local paths = selection:paths()
+            if #paths == 0 then
+                if on_done then on_done() end
+                return
+            end
+            require("lib/bookshelf_move_flow").moveBooks{
+                bw      = bw,
+                paths   = paths,
+                -- Leave selection mode BEFORE the shelf re-renders, so the
+                -- move flow's own rebuild is the only one. Rebuilding again
+                -- from on_done meant every bulk move built the widget tree
+                -- twice, which is what made the tail drag on a big library.
+                before_refresh = function(summary)
+                    if summary and #summary.moved > 0 then
+                        selection:exitMode()
+                    end
+                end,
+                on_done = function(summary)
+                    if discard_toast then
+                        UIManager:show(require("ui/widget/notification"):new{
+                            text    = _("Pending changes discarded"),
+                            timeout = 1,
+                        })
+                    end
+                    if on_done then on_done() end
+                end,
+            }
+        end,
+    }
+
     -- Cancel: draft is closure-local, so close() is enough -- on
     -- next-tick the draft goes out of scope and is GC'd.
     local cancel_button = {
@@ -604,7 +648,7 @@ function BulkActions.show(opts)
         { collections_button, rating_button },
         status_row,
         { favorite_button, refresh_button },
-        { remove_history_button },
+        { remove_history_button, move_button },
         { reset_button, delete_button },
         { cancel_button, apply_button },
     }

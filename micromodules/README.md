@@ -112,13 +112,21 @@ fields `render` reads:
   raises/lowers it to fit your card; size every font with it via `Kit.sc`/`Kit.face`.
 - `ctx.preview` — `true` only in the Add picker; render a compact thumbnail and
   (see below) do NOT start any network fetch.
-- `ctx.height` — the cell height (px) the host wants filled, or `nil` (start menu
-  / no height constraint). Only the advanced path needs it.
-- `ctx.clamp` — `true` only on the fit engine's last-resort re-render: the card
-  still overflowed `ctx.height` at the smallest legible font, so anything past
-  the cell bottom WILL be clipped. If part of your card is expendable, truncate
-  it to fit `ctx.height` (quote_of_day ellipsises the quote so the attribution
-  survives). Ignoring it keeps the plain clipped behaviour.
+- `ctx.height` - the cell height (px) the host wants filled, or `nil` (start
+  menu: cards take their natural height). Only the advanced path needs it.
+  Absence is also what tells `Kit.shape` there is no fixed cell, so never treat
+  a ceiling as a height (that's `ctx.max_height`, below).
+- `ctx.max_height` - a ceiling (px) on the card's natural height, without
+  implying a cell shape. The start menu sets it (one row can never be taller
+  than the panel can show); the grids don't, they pass `ctx.height` instead.
+  Pass it to `fitText` as `max_h` and the card shrinks-to-fit under the cap
+  while still reporting natural height when it already fits.
+- `ctx.clamp` - anything past the allowed height WILL be clipped, so if part of
+  your card is expendable, truncate it to fit (quote_of_day ellipsises the
+  quote so the attribution survives). Sent by the grids' fit engine on its
+  last-resort re-render (the card still overflowed `ctx.height` at the smallest
+  legible font), and by the start menu on every render alongside
+  `ctx.max_height`. Ignoring it keeps the plain clipped behaviour.
 - `ctx.refresh` — see **Refreshing after async work**.
 - `ctx.shape` — `"wide"` / `"tall"` / `"square"`; see **Aspect** above.
 - `ctx.entry` — the hero/menu entry table for THIS card (or `nil` in the picker
@@ -282,6 +290,63 @@ On physical-button (D-pad) devices the host draws the focus ring and handles
 grid navigation; the same `on_tap` fires when the focused card is activated with
 the centre key, and `show_settings` via the hold key. A module needs no d-pad
 code of its own.
+
+### Per-region taps - `ctx.set_tap_regions` (optional)
+
+A module that shows several discrete things (a row of covers, a list of items)
+can make them individually tappable by declaring hit regions during `render`:
+
+```lua
+ctx.set_tap_regions({
+    { id = "book1", x = 0,   y = 0, w = 90, h = 135 },
+    { id = "book2", x = 100, y = 0, w = 90, h = 135 },
+})
+```
+
+Rects are in the coordinate space of the widget you RETURN from `render`
+(its top-left is 0,0) - never screen coordinates. The host owns all geometry:
+the cell's painted position, card chrome and the clip container's centring are
+translated for you, on every surface (start menu, flyouts, hero,
+full-screen), so the same declaration works everywhere. Never register your
+own gesture zones or reconstruct screen positions inside a module - render
+output is painted into an offscreen buffer, so render-time coordinates are
+wrong by construction (see lib/bookshelf_clip_container.lua's gesture note).
+
+At tap time `on_tap(ctx)` gets `ctx.tapped_region` - the `id` of the first
+declared region containing the tap, or `nil`. **Always handle `nil`**: D-pad
+centre-key activation, taps outside every region, and modules that declare no
+regions all produce it, so treat it as the ordinary whole-card tap. Regions
+reset on every render - declare them each time (with rects matching that
+render's layout, which may change with `ctx.width`/`ctx.scale`).
+
+"But my size varies with the cell" - it does, and that's fine: your render
+COMPUTES its layout from `ctx.width`/`ctx.scale`, so the same arithmetic that
+positions a child positions its region. When the fit engine re-renders you at
+another scale, you recompute both, and they stay in lockstep:
+
+```lua
+render = function(ctx)
+    local sc = Kit.sc(ctx.scale)
+    local card_w, card_h, gap = sc(90), sc(135), sc(10)
+    local group, regions = HorizontalGroup:new{}, {}
+    for i, book in ipairs(books) do
+        group[#group + 1] = coverCard(book, card_w, card_h)
+        regions[#regions + 1] = { id = book.filepath,
+            x = (i - 1) * (card_w + gap), y = 0, w = card_w, h = card_h }
+    end
+    ctx.set_tap_regions(regions)
+    return group
+end
+```
+
+Rather than tracking arithmetic, you can also measure: build the sub-widgets,
+ask them `getSize()`, and derive the rects from the measured dimensions before
+returning. This mechanism suits GEOMETRIC layouts (a row of covers, a list of
+items, a left/right split); it is not for tappable words inside a wrapped
+TextBoxWidget, whose internal line geometry you can't cheaply query.
+Miscalibration degrades safely: a rect that's slightly off means the tap lands
+outside the region, `tapped_region` arrives as `nil`, and your whole-card
+fallback runs - a miss, never a wrong-target action.
 
 ## Colours
 

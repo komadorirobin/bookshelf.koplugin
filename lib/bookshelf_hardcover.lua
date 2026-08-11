@@ -36,15 +36,9 @@ local function _cacheDir()
     return DataStorage:getSettingsDir() .. "/bookshelf_hardcover"
 end
 
+-- Shared recursive, pcall-hardened helper (lib/bookshelf_fs).
 local function _ensureDir(path)
-    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok_lfs or not lfs or type(lfs.attributes) ~= "function" then return false end
-    if lfs.attributes(path, "mode") == "directory" then return true end
-    if type(lfs.mkdir) == "function" then
-        local ok = pcall(lfs.mkdir, path)
-        return ok and lfs.attributes(path, "mode") == "directory"
-    end
-    return false
+    return require("lib/bookshelf_fs").ensureDir(path)
 end
 
 local function _openExternalSettings()
@@ -796,6 +790,58 @@ function Hardcover.clearLink(filepath)
     pcall(_mirrorExternalLink, filepath, {
         _delete = { "book_id", "edition_id", "edition_format", "pages", "title" },
     })
+    Hardcover.invalidate()
+    return true
+end
+
+-- Batch form of relinkPath: one read and one save for the whole list
+-- instead of a full settings write per book (which is what made a bulk
+-- move pay a file write per link). `pairs_list` is { {old, new}, ... }.
+-- Returns how many links moved.
+function Hardcover.relinkPaths(pairs_list)
+    if type(pairs_list) ~= "table" or #pairs_list == 0 then return 0 end
+    local links = _readLinks()
+    local moved, mirror = 0, {}
+    for _i, pair in ipairs(pairs_list) do
+        local old_fp, new_fp = pair[1], pair[2]
+        local payload = old_fp and new_fp and old_fp ~= new_fp and links[old_fp] or nil
+        if type(payload) == "table" then
+            links[old_fp] = nil
+            links[new_fp] = payload
+            moved = moved + 1
+            mirror[#mirror + 1] = { old_fp, new_fp, payload }
+        end
+    end
+    if moved == 0 then return 0 end
+    _saveLinks(links)
+    -- The external-app mirror is per book by nature (it writes into each
+    -- book's own store), and best effort for the same reason as below.
+    for _i, m in ipairs(mirror) do
+        pcall(_mirrorExternalLink, m[1], {
+            _delete = { "book_id", "edition_id", "edition_format", "pages", "title" },
+        })
+        pcall(_mirrorExternalLink, m[2], m[3])
+    end
+    Hardcover.invalidate()
+    return moved
+end
+
+-- Re-key a link when its book file moves. Preserves the payload
+-- untouched. The external-app mirror calls are best effort: the old
+-- sidecar may already have moved (DocSettings.updateLocation runs
+-- first in the move sequence), so both are pcall'd.
+function Hardcover.relinkPath(old_fp, new_fp)
+    if not (old_fp and new_fp) or old_fp == new_fp then return false end
+    local links = _readLinks()
+    local payload = links[old_fp]
+    if type(payload) ~= "table" then return false end
+    links[old_fp] = nil
+    links[new_fp] = payload
+    _saveLinks(links)
+    pcall(_mirrorExternalLink, old_fp, {
+        _delete = { "book_id", "edition_id", "edition_format", "pages", "title" },
+    })
+    pcall(_mirrorExternalLink, new_fp, payload)
     Hardcover.invalidate()
     return true
 end

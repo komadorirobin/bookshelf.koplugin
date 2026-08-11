@@ -36,13 +36,9 @@ local _               = require("lib/bookshelf_i18n").gettext
 local T               = require("ffi/util").template
 local Profiles        = require("lib/bookshelf_profiles")
 
-local _gettime
-do
-    local ok, s = pcall(require, "socket")
-    _gettime = (ok and s and type(s.gettime) == "function")
-        and function() return s.gettime() end
-        or  os.time
-end
+-- Shared wall-clock for [bookshelf perf] timestamps (and elapsed-time
+-- bookkeeping); see lib/bookshelf_gettime.lua for the fallback contract.
+local _gettime = require("lib/bookshelf_gettime")
 
 local Bookshelf = WidgetContainer:extend{
     name        = "bookshelf",
@@ -53,14 +49,15 @@ local Bookshelf = WidgetContainer:extend{
 -- KOMenu order hook below AND by the start menu's "Bookshelf menu"
 -- action, which probes addToMainMenu and hosts these in this order.
 -- Display order, banded with separators (set on the last item of each band in
--- addToMainMenu): actions (Open, Selection) | customise (Edit, Chips,
--- Collections) | configure (Hardcover, Settings) | meta (Updates, About).
+-- addToMainMenu): actions (Open) | customise (Shelf size, Chips) | configure
+-- (Hardcover, Settings) | meta (Updates, About). The detail-view editor and
+-- collection manager moved under Settings in 4.0, and the selection-mode
+-- toggle left the menu entirely - it stays reachable from a book's Edit tab
+-- ("Select"), the stack menus ("Select N") and the assignable gesture action.
 Bookshelf.MENU_ORDER = {
     "bookshelf_toggle",
-    "bookshelf_selection_mode",
-    "bookshelf_hero_card",
+    "bookshelf_shelf_size",
     "bookshelf_shelf_tabs",
-    "bookshelf_collections",
     "bookshelf_hardcover",
     "bookshelf_settings",
     "bookshelf_updates",
@@ -681,14 +678,26 @@ function Bookshelf:buildMenuItems(menu_items)
             -- Always close the menu so the user lands on the new state.
             _closeTouchMenu(touchmenu_instance)
         end,
+        -- End the actions band before the customise entries. (Selection mode
+        -- left the top-level menu in 4.0; this row carries the band line now.)
+        separator = true,
     }
 
-    menu_items.bookshelf_hero_card = {
-        text                = _("Edit book detail view"),
-        enabled_func        = function() return outer:_isShowing() end,
-        sub_item_table_func = function()
+    -- Shelf size, promoted from Settings (4.0): the layout knob users reach
+    -- for most. Live editor, so it needs the shelf on screen - same gating
+    -- the detail-view editor had here before it moved under Settings.
+    menu_items.bookshelf_shelf_size = {
+        text     = _("Edit shelf size") .. "\xE2\x80\xA6",
+        help_text = _("Open a small overlay that lets you set the number of"
+            .. " columns and rows of books on the shelf, with the bookshelf"
+            .. " visible behind it. Cover size follows the column count and"
+            .. " the hero area fills the space left over. Changes preview in"
+            .. " realtime; Accept keeps them, Cancel reverts."),
+        enabled_func   = function() return outer:_isShowing() end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
             S._bw = _live_widget
-            return S:_heroSubItems()
+            S:_openLayoutEditor(touchmenu_instance)
         end,
     }
 
@@ -698,26 +707,10 @@ function Bookshelf:buildMenuItems(menu_items)
             S._bw = _live_widget
             return S:_tabsMenuItems()
         end,
-    }
-
-    menu_items.bookshelf_collections = {
-        text     = _("Manage collections\xE2\x80\xA6"),
-        callback = function()
-            S._bw = _live_widget
-            local CollectionManager = require("lib/bookshelf_collection_manager")
-            CollectionManager.show{
-                bw = _live_widget,
-                on_close = function()
-                    if _live_widget and _live_widget._rebuild then
-                        _live_widget:_rebuild()
-                        UIManager:setDirty(_live_widget, "ui")
-                    end
-                end,
-            }
-        end,
-        -- Visually separate the customisation entries above (chip
-        -- editor, collection manager) from the broader Settings /
-        -- Updates / About cluster below.
+        -- Visually separate the customisation entries above (shelf size,
+        -- chip editor) from the broader Settings / Updates / About cluster
+        -- below. (Manage collections moved to Settings > Library & search
+        -- in 4.0 - it stays reachable from its other routes.)
         separator = true,
     }
 
@@ -749,29 +742,18 @@ function Bookshelf:buildMenuItems(menu_items)
         separator = true,
     }
 
-    menu_items.bookshelf_selection_mode = {
-        text_func = function()
-            local bw = _live_widget
-            if bw and bw._selection and bw._selection:isActive() then
-                return _("Selection mode") .. "  \xE2\x9C\x93"
-            else
-                return _("Selection mode")
-            end
-        end,
-        callback = function()
-            if not outer:_isShowing() then
-                outer:show()
-            end
-            if _live_widget then
-                _live_widget:onBookshelfToggleSelectionMode()
-            end
-        end,
-        -- End the actions band (Open, Selection) before the customise entries.
-        separator = true,
-    }
-
     menu_items.bookshelf_updates = {
-        text                = _("Updates"),
+        -- Light the top-level title up when the background check (or a
+        -- manual one) has found a newer release - "Updates" alone made a
+        -- known-available update invisible until the submenu was opened.
+        text_func = function()
+            local ok_u, Updater = pcall(require, "lib/bookshelf_updater")
+            local available = ok_u and Updater.getAvailableUpdate()
+            if available then
+                return _("Update available") .. ": v" .. available
+            end
+            return _("Updates")
+        end,
         sub_item_table_func = function() return S:_updateSubItems() end,
     }
 
@@ -1127,7 +1109,7 @@ function Bookshelf:onDispatcherRegisterActions()
     Dispatcher:registerAction("bookshelf_toggle_selection_mode", {
         category  = "none",
         event     = "BookshelfToggleSelectionMode",
-        title     = _("Bookshelf: toggle selection mode"),
+        title     = _("Bookshelf: toggle bulk selection mode"),
         general   = true,
         separator = true,
     })
@@ -3200,14 +3182,37 @@ end
 -- PR #15240, expected in the next stable release.) Anything outside the
 -- install directory we need to clean up:
 --   - <settings_dir>/bookshelf.lua (the LuaSettings file the store writes)
+--     plus the routed sub-store files (micromodules / hardcover links /
+--     opds cache) and the Hardcover module's settings + sqlite cache
+--   - the cover / cache directories the plugin grows under settings_dir
 --   - any legacy bookshelf_* keys in G_reader_settings that the migration
 --     never moved (e.g. user deleted the plugin before ever opening it
 --     post-upgrade)
 function Bookshelf:deletePluginSettings()
     local DataStorage = require("datastorage")
     local settings_dir = DataStorage:getSettingsDir()
-    os.remove(settings_dir .. "/bookshelf.lua")
-    os.remove(settings_dir .. "/bookshelf.lua.old")
+    for _i, f in ipairs({
+        "bookshelf.lua",
+        "bookshelf_micromodules.lua",       -- bookshelf_settings_store sub-stores
+        "bookshelf_hardcover_links.lua",
+        "bookshelf_opds.lua",
+        "bookshelf_changelog.lua",          -- cached release notes
+        "hardcoversync_settings.lua",       -- bookshelf_hardcover settings
+    }) do
+        os.remove(settings_dir .. "/" .. f)
+        os.remove(settings_dir .. "/" .. f .. ".old")
+    end
+    os.remove(settings_dir .. "/bookshelf_hardcover.sqlite3")
+    -- Cover working dir (incl. the OPDS cover cache), the updater's download
+    -- scratch dir, and the Hardcover enrichment cover dir. purgeDir is
+    -- recursive; pcall so a missing dir (or an older KOReader without the
+    -- helper) can't abort the remaining cleanup.
+    local ok_ffi, ffiutil = pcall(require, "ffi/util")
+    if ok_ffi and ffiutil and type(ffiutil.purgeDir) == "function" then
+        for _i, d in ipairs({ "bookshelf_covers", "bookshelf_cache", "bookshelf_hardcover" }) do
+            pcall(ffiutil.purgeDir, settings_dir .. "/" .. d)
+        end
+    end
     -- Clear any legacy global keys that never migrated. The migration
     -- normally drains them on first plugin init, but a "install plugin,
     -- never open it, uninstall" sequence would leave them behind.

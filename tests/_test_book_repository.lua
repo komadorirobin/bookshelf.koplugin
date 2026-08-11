@@ -923,6 +923,25 @@ test("buildBook: nil authors → nil array (not crash)", function()
     assert(book.author == nil)
 end)
 
+-- Device bug: tapping an OPDS catalog entry rebuilt the preview/cell record
+-- from its "OPDS://server/id" pseudo-path via buildBook/buildBookMeta. There
+-- is no file behind a remote entry, so BIM/Calibre/filename fallbacks built a
+-- stripped stand-in -- no cover, no series, title = the raw feed id (e.g.
+-- "urn:gutenberg:1727:2") -- which then replaced the good feed record in the
+-- hero and the tapped shelf cell. buildBook/buildBookMeta must return nil for
+-- an OPDS pseudo-path so every "or <original record>" fallback wins instead.
+test("buildBookMeta: returns nil for an OPDS pseudo-path, no stripped stand-in", function()
+    _G._test_bim_data = nil
+    local meta = Repo.buildBookMeta("OPDS://abc/urn:x")
+    assert(meta == nil, "expected nil, got " .. tostring(meta))
+end)
+
+test("buildBook: returns nil for an OPDS pseudo-path, no stripped stand-in", function()
+    _G._test_bim_data = nil
+    local book = Repo.buildBook("OPDS://abc/urn:x")
+    assert(book == nil, "expected nil, got " .. tostring(book))
+end)
+
 test("getLatest: unreadable directory does not crash the walk", function()
     Repo.invalidateWalkCache()
     -- Stub lfs.dir so it raises on '/home/badperms' but works on '/home'.
@@ -3166,6 +3185,1057 @@ test("getFolderBookPaths: finds books nested deeper than the home walk depth (#2
     -- reveals one more level per drill.
     local sub = Repo.getFolderBookPaths("/home/Novels/Genre")
     assert(#sub == 1, "expected the deep book from the Genre level too, got " .. #sub)
+end)
+
+-- ============================================================================
+-- Task 5: getAllFolderChoices - move destinations including empty folders
+-- ============================================================================
+
+test("getAllFolderChoices: lists every dir within walk depth, empty ones too", function()
+    -- getFolderChoices only surfaces folders that hold a book (derived from
+    -- the book-walk cache); a move destination can legitimately be an empty
+    -- folder, so this is a directory-only lfs walk instead.
+    Repo.invalidateWalkCache()
+    local tree = {
+        ["/h"]                       = { ".", "..", "a", ".hidden", "book.sdr", "one.epub" },
+        ["/h/a"]                      = { ".", "..", "empty", "deep1" },
+        ["/h/a/empty"]                = { ".", ".." },
+        ["/h/a/deep1"]                = { ".", "..", "deep2" },
+        ["/h/a/deep1/deep2"]          = { ".", "..", "deep3" },
+        ["/h/a/deep1/deep2/deep3"]    = { ".", ".." },
+        ["/h/.hidden"]                = { ".", ".." },
+        ["/h/book.sdr"]               = { ".", ".." },
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = tree[path] or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        if key == "mode" then return tree[fp] and "directory" or "file" end
+    end
+    _G._test_settings = { home_dir = "/h", bookshelf_latest_walk_depth = 3 }
+
+    local choices = Repo.getAllFolderChoices()
+
+    -- deep3 sits at level 4 (home=1, a=2, deep1=3, deep2=4... walk recursion
+    -- adds a child at the level it's discovered then recurses at level+1, so
+    -- deep2 is added while walking at level 3 and its own children are
+    -- refused because the recursive call is at level 4 > depth 3).
+    assert(#choices == 4, "expected 4 folders, got " .. #choices)
+
+    local by_value = {}
+    for _i, c in ipairs(choices) do by_value[c.value] = c end
+
+    assert(by_value["/h/a"], "expected a")
+    assert(by_value["/h/a"].label == "a")
+    assert(by_value["/h/a"].subtitle == "/h/a")
+
+    assert(by_value["/h/a/empty"], "expected a/empty")
+    assert(by_value["/h/a/empty"].label == "empty")
+    assert(by_value["/h/a/empty"].subtitle == "/h/a/empty")
+
+    assert(by_value["/h/a/deep1"], "expected a/deep1")
+    assert(by_value["/h/a/deep1"].label == "deep1")
+
+    assert(by_value["/h/a/deep1/deep2"], "expected a/deep1/deep2")
+    assert(by_value["/h/a/deep1/deep2"].label == "deep2")
+
+    assert(not by_value["/h/a/deep1/deep2/deep3"], "deep3 is past the walk depth, must be excluded")
+    assert(not by_value["/h/.hidden"], "hidden dirs must be excluded")
+    assert(not by_value["/h/book.sdr"], "sidecar .sdr dirs must be excluded")
+    assert(not by_value["/h/one.epub"], "files must never appear as folder choices")
+
+    -- Sorted by lowercased full path, same convention as getFolderChoices.
+    local values = {}
+    for _i, c in ipairs(choices) do values[#values + 1] = c.value end
+    assert(values[1] == "/h/a", "got " .. tostring(values[1]))
+    assert(values[2] == "/h/a/deep1", "got " .. tostring(values[2]))
+    assert(values[3] == "/h/a/deep1/deep2", "got " .. tostring(values[3]))
+    assert(values[4] == "/h/a/empty", "got " .. tostring(values[4]))
+end)
+
+-- ============================================================================
+-- getBySource: opds kind attaches cover_image_path, never cover_bb/has_cover
+-- (device corruption fix - see lib/bookshelf_opds_covers.lua's cachedPath doc
+-- and the comment above the cover-attach loop in the opds branch above)
+-- ============================================================================
+
+test("getBySource: opds kind attaches cover_image_path via OpdsCovers.cachedPath, never cover_bb/has_cover", function()
+    local rec_cached  = { filepath = "OPDS://srv/1", title = "Cached",
+                          opds = { thumbnail_url = "http://srv/1.jpg" } }
+    local rec_missing = { filepath = "OPDS://srv/2", title = "Missing",
+                          opds = { thumbnail_url = "http://srv/2.jpg" } }
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, _feed_url) return { entries = {}, fetched_at = 1, total = 2 } end,
+        slice = function(_win, _offset, _limit)
+            -- Fresh copies, same contract as the real slice().
+            local page = {}
+            for _i, r in ipairs({ rec_cached, rec_missing }) do
+                local copy = {}
+                for k, v in pairs(r) do copy[k] = v end
+                page[#page + 1] = copy
+            end
+            return page, 2, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://srv/1" then return "/cache/OPDS://srv/1.img" end
+            return nil
+        end,
+    }
+
+    local list, total = Repo.getBySource(
+        { kind = "opds", id = "srv", feed_url = "http://srv/feed" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(total == 2, "total passed through from slice")
+    assert(#list == 2, "both records returned")
+    assert(list[1].cover_image_path == "/cache/OPDS://srv/1.img",
+        "the cached record gets cover_image_path from OpdsCovers.cachedPath")
+    assert(list[1].cover_bb == nil, "opds branch never sets cover_bb")
+    assert(list[1].has_cover == nil, "opds branch never sets has_cover")
+    assert(list[2].cover_image_path == nil, "a record with nothing cached yet stays nil, not a placeholder value")
+    assert(list[2].cover_bb == nil, "opds branch never sets cover_bb (record 2)")
+    assert(list[2].has_cover == nil, "opds branch never sets has_cover (record 2)")
+end)
+
+-- ============================================================================
+-- getBySource: opds nav-tile cover borrow (mechanism 2) -- a nav record with
+-- no cover of its own borrows the first cached cover out of its child feed's
+-- own (already fetched) window; never-drilled or nothing-cached stays nil.
+-- ============================================================================
+
+test("getBySource: opds nav tile borrows first cached child cover when it has none of its own", function()
+    local nav = { filepath = "OPDS://srv2/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv2/fiction" } }
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://srv2/fiction" then
+                return { entries = {
+                    { filepath = "OPDS://srv2/c1", opds = { thumbnail_url = "http://srv2/c1.jpg" } },
+                    { filepath = "OPDS://srv2/c2", opds = { thumbnail_url = "http://srv2/c2.jpg" } },
+                } }
+            end
+            return { entries = {} }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(rec)
+            -- The nav tile has no cover of its own; only the SECOND child
+            -- entry has a cached cover, so the borrow must skip the first.
+            if rec.filepath == "OPDS://srv2/c2" then return "/cache/c2.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv2", feed_url = "http://srv2/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(list[1].cover_image_path == "/cache/c2.img",
+        "nav tile borrows the first cached cover found among its child entries")
+    assert(list[1].cover_borrowed == true,
+        "a borrowed cover is flagged so it doesn't permanently suppress the tile's own cover fetch")
+end)
+
+test("getBySource: opds nav tile stays nil when the child feed has no cached window", function()
+    local nav = { filepath = "OPDS://srv3/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv3/fiction" } }
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        -- Never drilled into: no persisted window for the child feed.
+        load = function(_id, _feed_url) return { entries = {} } end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(_rec) return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv3", feed_url = "http://srv3/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(list[1].cover_image_path == nil,
+        "no cached child window -> nav tile stays a placeholder")
+    assert(list[1].cover_borrowed == nil,
+        "nothing borrowed -> the flag is never set")
+end)
+
+test("getBySource: opds nav tile cover borrow is capped at the first 12 child entries", function()
+    local nav = { filepath = "OPDS://srv4/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv4/fiction" } }
+    local entries = {}
+    for i = 1, 13 do
+        entries[i] = { filepath = "OPDS://srv4/c" .. i,
+                       opds = { thumbnail_url = "http://srv4/c" .. i .. ".jpg" } }
+    end
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://srv4/fiction" then return { entries = entries } end
+            return { entries = {} }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(rec)
+            -- Only the 13th entry (past the 12-entry scan cap) has a cache hit.
+            if rec.filepath == "OPDS://srv4/c13" then return "/cache/c13.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv4", feed_url = "http://srv4/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(list[1].cover_image_path == nil,
+        "the only cache hit is past the scan cap, so the nav tile stays nil")
+end)
+
+test("getBySource: opds nav tile cover borrow skips coverless entries without spending the scan budget", function()
+    -- Nav-first ordering (bookshelf_opds_window's mapEntries puts nav entries
+    -- before books) means a subcatalog's own window can start with a long run
+    -- of nav children that have no cover URL at all. Those must be ruled out
+    -- for free -- the scan cap only counts entries actually STATTED
+    -- (OpdsCovers.cachedPath called), not raw index -- or a page with 12+ of
+    -- them defeats the borrow before it ever reaches a real cached cover.
+    local nav = { filepath = "OPDS://srv5/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv5/fiction" } }
+    local entries = {}
+    for i = 1, 20 do
+        entries[i] = { filepath = "OPDS://srv5/subnav" .. i, is_opds_nav = true, opds = {} }
+    end
+    entries[21] = { filepath = "OPDS://srv5/book1", opds = { thumbnail_url = "http://srv5/book1.jpg" } }
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://srv5/fiction" then return { entries = entries } end
+            return { entries = {} }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        -- Mirrors the real module: nil when the record has no cover URL at
+        -- all, so the 20 coverless subnav entries cost nothing to rule out.
+        cachePath = function(rec)
+            if not (rec.opds and (rec.opds.thumbnail_url or rec.opds.image_url)) then return nil end
+            return "/cache/" .. rec.filepath .. ".img"
+        end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://srv5/book1" then return "/cache/book1.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv5", feed_url = "http://srv5/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(list[1].cover_image_path == "/cache/book1.img",
+        "the 20 coverless entries didn't spend the budget, so entry 21 is still reached")
+    assert(list[1].cover_borrowed == true, "borrowed cover is flagged")
+end)
+
+test("getBySource: opds nav tile's own cover wins over a previously borrowed one once it lands on disk", function()
+    -- Verifies the self-heal ordering the fix depends on: the own-cover loop
+    -- runs BEFORE the borrow loop and the borrow only fills a nil
+    -- cover_image_path, so once the tile's own artwork is cached, a later
+    -- rebuild resolves it via cachedPath(rec) directly and the borrow (and
+    -- its cover_borrowed flag) is never applied at all.
+    local nav = { filepath = "OPDS://srv6/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv6/fiction", thumbnail_url = "http://srv6/fic.jpg" } }
+    local child = { filepath = "OPDS://srv6/c1", opds = { thumbnail_url = "http://srv6/c1.jpg" } }
+    -- Two children deliberately: one would make this a "folder of one" and the
+    -- tile would be replaced by the book itself before the cover passes run
+    -- (see the flattening tests below), which is a different question from the
+    -- own-cover-vs-borrow precedence this test is about.
+    local child2 = { filepath = "OPDS://srv6/c2", opds = { thumbnail_url = "http://srv6/c2.jpg" } }
+
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://srv6/fiction" then return { entries = { child, child2 } } end
+            return { entries = {} }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        -- The nav tile's OWN cover has now landed on disk, same as the
+        -- child's -- if precedence were wrong, the borrow would still win.
+        cachedPath = function(rec)
+            if rec.filepath == nav.filepath then return "/cache/own.img" end
+            if rec.filepath == child.filepath then return "/cache/c1.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv6", feed_url = "http://srv6/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    assert(list[1].cover_image_path == "/cache/own.img",
+        "the tile's own cover takes precedence over the child-borrowed one")
+    assert(list[1].cover_borrowed == nil,
+        "not flagged as borrowed once its own cover is in use")
+end)
+
+-- ============================================================================
+-- getCoverBB: remote (OPDS) pseudo-paths never reach the local metadata layer
+-- ============================================================================
+--
+-- A remote catalog record has no local file and no BIM row. Its cover is a
+-- cached image file the repo attaches as cover_image_path, and SpineWidget's
+-- external-cover branch renders that before this lazy path is reached -- but a
+-- COVERLESS remote cell still falls through to getCoverBB, which would run a
+-- BIM/SQLite lookup per cell per rebuild for a row that cannot exist.
+
+test("getCoverBB: an OPDS pseudo-path returns nil without consulting BIM", function()
+    -- Seeded deliberately: without the guard the stub would hand back a bb for
+    -- the pseudo-path, so this fails loudly if the early return is removed.
+    _G._test_bim_data = { ["OPDS://srv/1"] = { cover_bb = "REMOTE_BB" } }
+    assert(Repo.getCoverBB("OPDS://srv/1") == nil,
+        "remote pseudo-path must short-circuit to nil")
+end)
+
+test("getCoverBB: a local filepath still returns BIM's cover bb", function()
+    _G._test_bim_data = { ["/lib/a.epub"] = { cover_bb = "LOCAL_BB" } }
+    assert(Repo.getCoverBB("/lib/a.epub") == "LOCAL_BB",
+        "the guard must not touch the local path")
+    _G._test_bim_data = nil
+end)
+
+-- ============================================================================
+-- getBySource: the nav-tile cover borrow bounds its RAW iterations too
+-- ============================================================================
+--
+-- The stat budget (NAV_COVER_BORROW_SCAN) only counts entries actually
+-- statted, so a child window that starts with a long run of coverless entries
+-- is walked in full -- per nav tile, per rebuild. Cheap per iteration, but a
+-- 1000-entry window makes it a shape worth removing.
+
+test("getBySource: opds nav tile cover borrow stops after 200 raw child entries", function()
+    local nav = { filepath = "OPDS://srv7/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://srv7/fiction" } }
+    local entries = {}
+    for i = 1, 250 do
+        entries[i] = { filepath = "OPDS://srv7/subnav" .. i, is_opds_nav = true, opds = {} }
+    end
+    entries[260] = { filepath = "OPDS://srv7/book1", opds = { thumbnail_url = "http://srv7/b1.jpg" } }
+    for i = 251, 259 do
+        entries[i] = { filepath = "OPDS://srv7/subnav" .. i, is_opds_nav = true, opds = {} }
+    end
+
+    local cachepath_calls = 0
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://srv7/fiction" then return { entries = entries } end
+            return { entries = {} }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec)
+            cachepath_calls = cachepath_calls + 1
+            if not (rec.opds and (rec.opds.thumbnail_url or rec.opds.image_url)) then return nil end
+            return "/cache/" .. rec.filepath .. ".img"
+        end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://srv7/book1" then return "/cache/book1.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "srv7", feed_url = "http://srv7/root" }, nil, nil, 0, 10)
+
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+
+    -- One call for the nav tile's OWN cover (the loop above the borrow), then
+    -- at most 200 for the child scan.
+    assert(cachepath_calls <= 201,
+        "borrow walked past the raw-iteration cap: " .. cachepath_calls .. " cachePath calls")
+    assert(list[1].cover_image_path == nil,
+        "the only cache hit sits past the raw cap, so the tile stays a placeholder")
+end)
+
+-- ============================================================================
+-- getBySource: opds "downloaded" decoration
+-- ============================================================================
+--
+-- The download flow (the OPDS book modal in bookshelf_widget) records
+-- opds_downloads[<OPDS pseudo-path>] = <on-disk path>. The opds branch marks a
+-- visible-slice record `downloaded` only when that mapping still resolves to a
+-- file, so deleting the book in the file manager retires the flag with no
+-- bookkeeping pass of its own.
+
+-- Earlier tests in this file replace the shared lfs stub's `attributes` and
+-- leave it replaced (one of them answers "file" for every path it doesn't know,
+-- which would flag every mapping as present). Install a purpose-built one here
+-- and hand the previous back in the cleanup so nothing downstream shifts.
+local _saved_lfs_attributes
+local function _opdsDownloadStubs(recs)
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    _saved_lfs_attributes = lfs_stub.attributes
+    lfs_stub.attributes = function(fp, key)
+        if key == "mode" then
+            return _G._test_file_modes and _G._test_file_modes[fp] or nil
+        end
+        if key == "modification" then
+            return _G._test_mtime and _G._test_mtime[fp] or 0
+        end
+    end
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function() return { entries = {}, fetched_at = 1, total = #recs } end,
+        slice = function()
+            local page = {}
+            for _i, r in ipairs(recs) do
+                local copy = {}
+                for k, v in pairs(r) do copy[k] = v end
+                page[#page + 1] = copy
+            end
+            return page, #recs, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath  = function() return nil end,
+        cachedPath = function() return nil end,
+    }
+end
+
+local function _opdsDownloadCleanup()
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+    package.loaded["libs/libkoreader-lfs"].attributes = _saved_lfs_attributes
+    _G._test_file_modes = nil
+    if _G._test_settings then _G._test_settings["bookshelf_opds_downloads"] = nil end
+end
+
+test("getBySource: opds marks a record downloaded when its mapping resolves to a file", function()
+    _opdsDownloadStubs({
+        { filepath = "OPDS://dl/1", title = "Have it" },
+        { filepath = "OPDS://dl/2", title = "Not mapped" },
+    })
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = { ["OPDS://dl/1"] = "/books/have-it.epub" }
+    _G._test_file_modes = { ["/books/have-it.epub"] = "file" }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "dl", feed_url = "http://dl/feed" }, nil, nil, 0, 10)
+    _opdsDownloadCleanup()
+
+    assert(list[1].downloaded == true, "mapped record with the file present is flagged")
+    assert(list[2].downloaded == nil, "a record with no mapping is left alone")
+end)
+
+test("getBySource: opds leaves downloaded unset when the mapped file is gone", function()
+    _opdsDownloadStubs({ { filepath = "OPDS://dl2/1", title = "Deleted since" } })
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = { ["OPDS://dl2/1"] = "/books/gone.epub" }
+    _G._test_file_modes = nil   -- nothing on disk
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "dl2", feed_url = "http://dl2/feed" }, nil, nil, 0, 10)
+    _opdsDownloadCleanup()
+
+    assert(list[1].downloaded == nil,
+        "a mapping pointing at a deleted file must not flag the record")
+end)
+
+test("getBySource: opds ignores a mapping that points at a directory", function()
+    _opdsDownloadStubs({ { filepath = "OPDS://dl3/1", title = "Dir" } })
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = { ["OPDS://dl3/1"] = "/books" }
+    _G._test_file_modes = { ["/books"] = "directory" }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "dl3", feed_url = "http://dl3/feed" }, nil, nil, 0, 10)
+    _opdsDownloadCleanup()
+
+    assert(list[1].downloaded == nil, "only a real file counts as downloaded")
+end)
+
+test("getBySource: opds skips the download pass entirely when nothing is mapped", function()
+    _opdsDownloadStubs({ { filepath = "OPDS://dl4/1", title = "Fresh" } })
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = nil
+    -- Seeded so a pass that ran regardless of the (absent) mapping would still
+    -- find nothing to flag -- the assertion is about the flag, the stat count
+    -- is covered by the empty-map short-circuit in the branch itself.
+    _G._test_file_modes = { ["/books/anything.epub"] = "file" }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "dl4", feed_url = "http://dl4/feed" }, nil, nil, 0, 10)
+    _opdsDownloadCleanup()
+
+    assert(list[1].downloaded == nil, "no mapping means no decoration")
+end)
+
+-- ============================================================================
+-- getBySource: opds "folder of one" flattening
+-- ============================================================================
+--
+-- Gutenberg's popular lists make every work a nav folder whose child feed holds
+-- exactly one book. When that child window is already CACHED (drilled into at
+-- least once), the nav record is replaced in the page by the child book itself,
+-- so the user reads the book's own tile instead of a folder that holds one
+-- thing. Cache-only: an unfetched child stays a folder.
+
+local _saved_flat_lfs_attributes
+local function _opdsFlattenLfsStub()
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    _saved_flat_lfs_attributes = lfs_stub.attributes
+    lfs_stub.attributes = function(fp, key)
+        if key == "mode" then
+            return _G._test_file_modes and _G._test_file_modes[fp] or nil
+        end
+        if key == "modification" then
+            return _G._test_mtime and _G._test_mtime[fp] or 0
+        end
+    end
+end
+
+local function _opdsFlattenCleanup()
+    package.loaded["lib/bookshelf_opds_window"] = nil
+    package.loaded["lib/bookshelf_opds_covers"] = nil
+    if _saved_flat_lfs_attributes then
+        package.loaded["libs/libkoreader-lfs"].attributes = _saved_flat_lfs_attributes
+        _saved_flat_lfs_attributes = nil
+    end
+    _G._test_file_modes = nil
+    if _G._test_settings then _G._test_settings["bookshelf_opds_downloads"] = nil end
+end
+
+test("getBySource: opds nav folder holding exactly one cached book renders as that book", function()
+    local nav = { filepath = "OPDS://f1/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Moby Dick", display_title = "Moby Dick",
+                  opds = { feed_url = "http://f1/work" } }
+    local child = { filepath = "OPDS://f1/book1", title = "Moby Dick", display_title = "Moby Dick",
+                    is_remote = true,
+                    opds = { feed_url = "http://f1/work", thumbnail_url = "http://f1/b1.jpg",
+                             acquisitions = { { type = "application/epub+zip", href = "http://f1/b1.epub" } } } }
+
+    _opdsFlattenLfsStub()
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f1/work" then
+                return { entries = { child }, fetched_at = 1 }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec)
+            if not (rec.opds and (rec.opds.thumbnail_url or rec.opds.image_url)) then return nil end
+            return "/cache/" .. rec.filepath .. ".img"
+        end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://f1/book1" then return "/cache/b1.img" end
+            return nil
+        end,
+    }
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = { ["OPDS://f1/book1"] = "/books/moby.epub" }
+    _G._test_file_modes = { ["/books/moby.epub"] = "file" }
+
+    local list, total = Repo.getBySource(
+        { kind = "opds", id = "f1", feed_url = "http://f1/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(total == 1, "the page still holds one record")
+    assert(list[1].filepath == "OPDS://f1/book1", "the nav record is replaced by the child book")
+    assert(list[1].is_opds_nav == nil, "the substituted record is an ordinary remote book")
+    assert(list[1].kind == nil, "no leftover opds_nav kind")
+    assert(list[1].opds.acquisitions ~= nil, "the book's acquisitions come through, so download works")
+    -- Decoration ordering: the substitution happens BEFORE the cover and
+    -- downloaded passes, so the book is decorated like any other page record.
+    assert(list[1].cover_image_path == "/cache/b1.img", "the substituted book gets its OWN cached cover")
+    assert(list[1].cover_borrowed == nil, "its own cover is not a borrow")
+    assert(list[1].downloaded == true, "the downloaded tick lands on the substituted book")
+    -- Shallow copy, same discipline as OpdsWindow.slice: the stored child entry
+    -- must not pick up render state that would then be persisted.
+    assert(child.cover_image_path == nil, "the stored child entry is never decorated")
+    assert(child.downloaded == nil, "the stored child entry is never flagged downloaded")
+end)
+
+test("getBySource: opds nav folder with two cached books stays a folder (and loads the child window once)", function()
+    local nav = { filepath = "OPDS://f2/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://f2/fiction" } }
+    local loads = 0
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f2/fiction" then
+                loads = loads + 1
+                return { entries = {
+                    { filepath = "OPDS://f2/b1", opds = { thumbnail_url = "http://f2/b1.jpg" } },
+                    { filepath = "OPDS://f2/b2", opds = { thumbnail_url = "http://f2/b2.jpg" } },
+                }, fetched_at = 1 }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(rec)
+            if not (rec.opds and (rec.opds.thumbnail_url or rec.opds.image_url)) then return nil end
+            return "/cache/" .. rec.filepath .. ".img"
+        end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://f2/b1" then return "/cache/b1.img" end
+            return nil
+        end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f2", feed_url = "http://f2/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true, "two books is a folder, not a book")
+    assert(list[1].filepath == "OPDS://f2/nav/fic", "the nav record is left in place")
+    assert(list[1].cover_image_path == "/cache/b1.img", "the cover borrow still runs for a real folder")
+    assert(list[1].cover_borrowed == true, "and is still flagged as borrowed")
+    assert(loads == 1, "the flatten check and the cover borrow share ONE child-window load, got " .. loads)
+end)
+
+test("getBySource: opds nav folder holding one book plus a subfolder stays a folder", function()
+    local nav = { filepath = "OPDS://f3/nav/fic", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Fiction",
+                  opds = { feed_url = "http://f3/fiction" } }
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f3/fiction" then
+                return { entries = {
+                    { filepath = "OPDS://f3/b1", title = "Lone", opds = {} },
+                    { filepath = "OPDS://f3/nav/sub", is_opds_nav = true, opds = { feed_url = "http://f3/sub" } },
+                }, fetched_at = 1 }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function() return nil end,
+        cachedPath = function() return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f3", feed_url = "http://f3/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true,
+        "a child feed with a subfolder still has somewhere to drill, so it stays a folder")
+    assert(list[1].filepath == "OPDS://f3/nav/fic", "the nav record is left in place")
+end)
+
+test("getBySource: opds nav folder with no cached child window stays a folder", function()
+    local nav = { filepath = "OPDS://f4/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Never drilled",
+                  opds = { feed_url = "http://f4/work" } }
+    package.loaded["lib/bookshelf_opds_window"] = {
+        -- Never fetched: OpdsWindow.load hands back the empty default.
+        load = function(_id, _feed_url) return { entries = {}, fetched_at = 0 } end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function() return nil end,
+        cachedPath = function() return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f4", feed_url = "http://f4/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true,
+        "nothing cached to flatten with: the folder is unchanged until it is drilled once")
+    assert(list[1].filepath == "OPDS://f4/nav/work", "the nav record is left in place")
+end)
+
+test("getBySource: opds nav folder whose child window is only partly fetched stays a folder", function()
+    -- A drill that was cancelled (or failed) part-way persists a window holding
+    -- page 1 with next_url still set -- and page 1 of a Gutenberg-collapsed feed
+    -- is exactly one book. Flattening that would hide the REST of the
+    -- subcatalogue for good: nothing re-fetches a child feed except drilling
+    -- into it, which the flattened tile no longer offers. appendPage leaves
+    -- next_url nil exactly when the feed is exhausted, so "more to come" is the
+    -- test, and a server that always emits rel=next degrades to a folder.
+    local nav = { filepath = "OPDS://f6/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Partly fetched",
+                  opds = { feed_url = "http://f6/work" } }
+    local child = { filepath = "OPDS://f6/book1", title = "Page one of many",
+                    opds = { feed_url = "http://f6/work",
+                             acquisitions = { { type = "application/epub+zip", href = "http://f6/b1.epub" } } } }
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f6/work" then
+                return { entries = { child }, fetched_at = 1, next_url = "http://f6/work?page=2" }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function() return nil end,
+        cachedPath = function() return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f6", feed_url = "http://f6/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true,
+        "an unexhausted child feed may hold more books, so the folder stays drillable")
+    assert(list[1].filepath == "OPDS://f6/nav/work", "the nav record is left in place")
+end)
+
+test("getBySource: opds nav folder whose lone child has no acquisitions stays a folder", function()
+    -- A record with nothing to download is not a book the user can do anything
+    -- with; promoting it would swap a working folder for a dead tile.
+    local nav = { filepath = "OPDS://f7/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Work",
+                  opds = { feed_url = "http://f7/work" } }
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f7/work" then
+                return { entries = {
+                    { filepath = "OPDS://f7/x", title = "Nothing to download",
+                      opds = { feed_url = "http://f7/work" } },
+                }, fetched_at = 1 }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function() return nil end,
+        cachedPath = function() return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f7", feed_url = "http://f7/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true,
+        "a lone child with no acquisitions is not a downloadable book, so the folder stays")
+    assert(list[1].filepath == "OPDS://f7/nav/work", "the nav record is left in place")
+end)
+
+test("getBySource: opds folder-of-one flattening is skipped on the light_only scan path", function()
+    -- light_only ("Go to letter") asks for records to READ SORT KEYS off, with
+    -- a limit of the whole window. Nothing on that path renders a tile, so the
+    -- per-record disk work (child-window loads, cover stats) must not happen.
+    local nav = { filepath = "OPDS://f5/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Work",
+                  opds = { feed_url = "http://f5/work" } }
+    local child = { filepath = "OPDS://f5/book1", title = "Lone Book",
+                    opds = { feed_url = "http://f5/work", thumbnail_url = "http://f5/b1.jpg" } }
+    local child_loads, cached_calls = 0, 0
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://f5/work" then
+                child_loads = child_loads + 1
+                return { entries = { child }, fetched_at = 1 }
+            end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath  = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(_rec) cached_calls = cached_calls + 1; return "/cache/x.img" end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "f5", feed_url = "http://f5/root" }, nil, nil, 0, 10,
+        { light_only = true })
+    _opdsFlattenCleanup()
+
+    assert(list[1].is_opds_nav == true, "light_only leaves the nav record alone")
+    assert(list[1].cover_image_path == nil, "light_only attaches no cover at all")
+    assert(cached_calls == 0, "no cover stats on the light_only path, got " .. cached_calls)
+    assert(child_loads == 0, "no child-window loads on the light_only path, got " .. child_loads)
+end)
+
+-- ============================================================================
+-- getBySource: opds feed summaries fill the standard `description` field
+-- ============================================================================
+--
+-- A feed record keeps its blurb under opds.summary (what the download modal
+-- reads). Every GENERIC consumer -- the hero's %description token, the
+-- description viewer -- reads the `description` field a local book carries, so
+-- the decoration mirrors one into the other on the page records only. The
+-- persisted window keeps storing the summary exactly once (see the scrub list
+-- in lib/bookshelf_opds_window.lua).
+
+test("getBySource: opds book records mirror opds.summary into description", function()
+    local with_summary = { filepath = "OPDS://d1/1", title = "With", is_remote = true,
+                           opds = { summary = "<p>A blurb.</p>",
+                                    acquisitions = { { type = "application/epub+zip",
+                                                       href = "http://d1/1.epub" } } } }
+    local no_summary   = { filepath = "OPDS://d1/2", title = "Without", is_remote = true,
+                           opds = { acquisitions = { { type = "application/epub+zip",
+                                                       href = "http://d1/2.epub" } } } }
+    -- A record that somehow already carries its own description keeps it: the
+    -- mirror fills a gap, it never overwrites.
+    local own_desc     = { filepath = "OPDS://d1/3", title = "Own", is_remote = true,
+                           description = "already mine",
+                           opds = { summary = "feed blurb",
+                                    acquisitions = { { type = "application/epub+zip",
+                                                       href = "http://d1/3.epub" } } } }
+    local nav          = { filepath = "OPDS://d1/nav/x", kind = "opds_nav", is_opds_nav = true,
+                           is_remote = true, title = "Folder",
+                           opds = { feed_url = "http://d1/sub" } }
+
+    _opdsFlattenLfsStub()
+    package.loaded["lib/bookshelf_opds_window"] = {
+        -- The child feed is uncached, so the nav tile stays a folder and this
+        -- test is only about the description mirror.
+        load = function(_id, _feed_url) return { entries = {}, fetched_at = 0 } end,
+        slice = function(_win, _offset, _limit)
+            local page = {}
+            for _i, r in ipairs({ with_summary, no_summary, own_desc, nav }) do
+                local copy = {}
+                for k, v in pairs(r) do copy[k] = v end
+                page[#page + 1] = copy
+            end
+            return page, 4, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath  = function(_rec) return nil end,
+        cachedPath = function(_rec) return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "d1", feed_url = "http://d1/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].description == "<p>A blurb.</p>",
+        "a book with a feed summary gets it as description, got " .. tostring(list[1].description))
+    assert(list[1].opds.summary == "<p>A blurb.</p>",
+        "the original opds.summary is left alone")
+    assert(list[2].description == nil,
+        "a book with no summary keeps a nil description, got " .. tostring(list[2].description))
+    assert(list[3].description == "already mine",
+        "an existing description is never overwritten, got " .. tostring(list[3].description))
+    assert(list[4].description == nil, "a nav folder is not a book and gets no description")
+end)
+
+test("getBySource: the flattened folder-of-one book carries its summary as description", function()
+    -- Decoration ordering again: the substituted child must be decorated like
+    -- any other page record, description included.
+    local nav = { filepath = "OPDS://d2/nav/work", kind = "opds_nav", is_opds_nav = true,
+                  is_remote = true, title = "Moby Dick",
+                  opds = { feed_url = "http://d2/work" } }
+    local child = { filepath = "OPDS://d2/book1", title = "Moby Dick", is_remote = true,
+                    opds = { feed_url = "http://d2/work", summary = "Call me Ishmael.",
+                             acquisitions = { { type = "application/epub+zip",
+                                                href = "http://d2/b1.epub" } } } }
+
+    _opdsFlattenLfsStub()
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://d2/work" then return { entries = { child }, fetched_at = 1 } end
+            return { entries = {}, fetched_at = 1 }
+        end,
+        slice = function(_win, _offset, _limit)
+            local copy = {}
+            for k, v in pairs(nav) do copy[k] = v end
+            return { copy }, 1, false
+        end,
+        needsFetch = function() return false end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath  = function(_rec) return nil end,
+        cachedPath = function(_rec) return nil end,
+    }
+
+    local list = Repo.getBySource(
+        { kind = "opds", id = "d2", feed_url = "http://d2/root" }, nil, nil, 0, 10)
+    _opdsFlattenCleanup()
+
+    assert(list[1].filepath == "OPDS://d2/book1", "the folder still flattens to the child book")
+    assert(list[1].description == "Call me Ishmael.",
+        "and the substituted book carries the description, got " .. tostring(list[1].description))
+    assert(child.description == nil,
+        "the STORED child entry is never decorated (it would be persisted)")
+end)
+
+-- ============================================================================
+-- Repo.opdsLoneChildBook -- the tap-side face of the "folder of one" predicate
+-- ============================================================================
+--
+-- The widget asks this before drilling into a nav tile: a subcatalog holding
+-- exactly one book is opened AS that book (its detail modal) rather than drilled
+-- into and backed out of. Same predicate the tile flattening uses, so the two
+-- can never disagree; the record comes back decorated like any shelf record.
+
+test("Repo.opdsLoneChildBook returns a decorated copy for a cached folder of one", function()
+    local child = { filepath = "OPDS://L1/book1", title = "Lone", is_remote = true,
+                    opds = { summary = "The only book here.",
+                             thumbnail_url = "http://L1/b1.jpg",
+                             acquisitions = { { type = "application/epub+zip",
+                                                href = "http://L1/b1.epub" } } } }
+    _opdsFlattenLfsStub()
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://L1/work" then return { entries = { child }, fetched_at = 1 } end
+            return { entries = {}, fetched_at = 0 }
+        end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath  = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
+        cachedPath = function(rec)
+            if rec.filepath == "OPDS://L1/book1" then return "/cache/b1.img" end
+            return nil
+        end,
+    }
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_opds_downloads"] = { ["OPDS://L1/book1"] = "/books/lone.epub" }
+    _G._test_file_modes = { ["/books/lone.epub"] = "file" }
+
+    local rec = Repo.opdsLoneChildBook("L1", "http://L1/work")
+    _opdsFlattenCleanup()
+
+    assert(rec ~= nil, "a cached folder of one resolves to its book")
+    assert(rec.filepath == "OPDS://L1/book1", "it is the child book, got " .. tostring(rec.filepath))
+    assert(rec ~= child, "a COPY, so the stored window entry can't be decorated")
+    assert(rec.description == "The only book here.", "decorated with the feed summary as description")
+    assert(rec.cover_image_path == "/cache/b1.img", "decorated with its own cached cover")
+    assert(rec.downloaded == true, "decorated with the downloaded tick")
+    assert(child.description == nil, "the stored entry stays clean")
+    assert(child.cover_image_path == nil, "the stored entry stays clean (cover)")
+    assert(child.downloaded == nil, "the stored entry stays clean (downloaded)")
+end)
+
+test("Repo.opdsLoneChildBook says nil for an uncached, multi-book or unexhausted child", function()
+    local one = { filepath = "OPDS://L2/b1", title = "One", is_remote = true,
+                  opds = { acquisitions = { { type = "application/epub+zip", href = "http://L2/1.epub" } } } }
+    local two = { filepath = "OPDS://L2/b2", title = "Two", is_remote = true,
+                  opds = { acquisitions = { { type = "application/epub+zip", href = "http://L2/2.epub" } } } }
+    _opdsFlattenLfsStub()
+    package.loaded["lib/bookshelf_opds_window"] = {
+        load = function(_id, feed_url)
+            if feed_url == "http://L2/multi" then return { entries = { one, two }, fetched_at = 1 } end
+            if feed_url == "http://L2/partial" then
+                -- One book, but the feed still has a rel=next: page 2 could hold
+                -- more, and nothing would ever re-fetch a flattened tile.
+                return { entries = { one }, fetched_at = 1, next_url = "http://L2/partial?p=2" }
+            end
+            return { entries = {}, fetched_at = 0 }
+        end,
+    }
+    package.loaded["lib/bookshelf_opds_covers"] = {
+        cachePath = function(_rec) return nil end, cachedPath = function(_rec) return nil end,
+    }
+
+    local uncached = Repo.opdsLoneChildBook("L2", "http://L2/never")
+    local multi    = Repo.opdsLoneChildBook("L2", "http://L2/multi")
+    local partial  = Repo.opdsLoneChildBook("L2", "http://L2/partial")
+    local no_key   = Repo.opdsLoneChildBook(nil, "http://L2/multi")
+    _opdsFlattenCleanup()
+
+    assert(uncached == nil, "a child that has never been fetched is not a lone book")
+    assert(multi == nil, "two books is a real folder")
+    assert(partial == nil, "a feed with more pages behind it keeps its folder")
+    assert(no_key == nil, "a missing server key answers nil rather than erroring")
 end)
 
 -- ============================================================================

@@ -31,15 +31,9 @@ local BookshelfSettings = require("lib/bookshelf_settings_store")
 local _               = require("lib/bookshelf_i18n").gettext
 local logger          = require("logger")
 
--- Monotonic wall-clock for perf instrumentation. Matches the helper used
--- in bookshelf_widget.lua so the [bookshelf perf] timestamps share a clock.
-local _gettime
-do
-    local ok, s = pcall(require, "socket")
-    _gettime = (ok and s and type(s.gettime) == "function")
-        and s.gettime
-        or function() return os.time() end
-end
+-- Shared wall-clock for [bookshelf perf] timestamps (and elapsed-time
+-- bookkeeping); see lib/bookshelf_gettime.lua for the fallback contract.
+local _gettime = require("lib/bookshelf_gettime")
 
 local ShelfRow = {}
 
@@ -179,7 +173,11 @@ function ShelfRow.new(opts)
     -- claim the full slot height. "title" / "author" / "series" reserve
     -- a strip below each cover for the corresponding metadata; missing
     -- data falls back to title (or the literal "None" for series).
-    local label_mode = BookshelfSettings.read("expanded_shelf_label") or "none"
+    -- The caller may pass an explicit label_mode (the widget resolves the
+    -- regular grid's Title-default vs the expanded shelf's raw setting); fall
+    -- back to the shared setting for any caller that doesn't.
+    local label_mode = opts.label_mode
+                       or BookshelfSettings.read("expanded_shelf_label") or "none"
     if label_mode ~= "title" and label_mode ~= "author" and label_mode ~= "series" then
         label_mode = "none"
     end
@@ -441,6 +439,47 @@ function ShelfRow.new(opts)
                 all_read         = folder_all_read,
                 all_read_total   = folder_book_count,
             })
+        elseif item and item.kind == "opds_nav" then
+            -- OPDS navigation entry (a subcatalog link, e.g. "Next page" or
+            -- a browsable category): rendered as a folder-style tile via
+            -- FolderStack, the same widget a real filesystem folder uses.
+            -- The record carries no .path (nothing on disk to auto-detect a
+            -- folder.jpg from) -- already nil-safe in FolderStack, so no
+            -- widget-level change was needed there. No book-count concept
+            -- for a remote nav link, so the badge fields are all left nil
+            -- (suppresses the badge). on_tap hands the whole record back so
+            -- the drill-in (Task 4) can read item.opds.
+            --
+            -- Cover: the repo (getBySource's opds branch) may have attached
+            -- item.cover_image_path -- either the nav entry's own feed image
+            -- or, failing that, a cover borrowed from the first cached child
+            -- entry. FolderStack reads its book stand-in off folder.first_book
+            -- (not a separate constructor field), and folder IS item here, so
+            -- the nav record doubles as its own first_book: SpineWidget
+            -- renders any record with cover_image_path via its external-cover
+            -- path regardless of filepath, and that path never touches
+            -- book_widget/has_cover and never reads .author or .series_num,
+            -- so a nav record's sparse shape is safe there. The self-
+            -- reference is render-only -- item is a fresh per-slice copy
+            -- from OpdsWindow.slice(), never written back to the persisted
+            -- window. No cover -> first_book stays nil and FolderStack's own
+            -- empty-folder fallback renders the label-only placeholder
+            -- exactly as before.
+            item.first_book = item.cover_image_path and item or nil
+            local nav_cur = opts.selected_filepath and item.filepath
+                            and item.filepath == opts.selected_filepath or false
+            row[#row + 1] = wrap_for_title_alignment(FolderStack:new{
+                folder      = item,
+                width       = slot_w,
+                height      = non_book_h,
+                on_tap      = opts.on_opds_nav_tap,
+                on_hold     = function() return true end,
+                is_selected = nav_cur,
+                -- Coverless OPDS nav tiles resolve on a tap, so the folder tab
+                -- + repeated label are redundant over the label-placeholder;
+                -- render the bare card instead.
+                plain_if_placeholder = true,
+            })
         elseif item and item.kind == "author" then
             -- Author group (SeriesStack visual, author name on the band)
             local author_fp = item.books and item.books[1] and item.books[1].filepath
@@ -609,7 +648,12 @@ function ShelfRow.new(opts)
                     stack[#stack + 1] = VerticalSpan:new{ width = cover_h - spine_h }
                 end
                 stack[#stack + 1] = spine
-                if draw_label then
+                -- Never a label under a PLACEHOLDER cover: the fallback card
+                -- already shows the title (and author) larger and centred, so a
+                -- line below would just repeat it. Reserve the strip height
+                -- anyway (the else branch) so cover bottoms stay aligned with
+                -- the labelled covers in the same row.
+                if draw_label and not spine.is_fallback then
                     local title_text = _labelFor(item)
                     -- TextWidget (single-line) auto-truncates with ellipsis at
                     -- max_width — exactly what we want here. TextBoxWidget would
