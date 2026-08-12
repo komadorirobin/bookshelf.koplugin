@@ -32,25 +32,13 @@ D.STORE_KEY = "opds_downloads"
 -- OPDS Summary is the better source). Same key-drift reasoning as STORE_KEY.
 D.DESC_STORE_KEY = "opds_descriptions"
 
--- Acquisition MIME type -> file extension (no leading dot). Covers every
--- format bookshelf_opds_feed.SUPPORTED_TYPE advertises as downloadable. The
--- set has to stay in step with that one: a type the feed keeps but this map
--- misses falls through to the URL-suffix guess and then to ".bin", which
--- KOReader has no provider for -- so the book downloads and then cannot be
--- opened. (djvu was the one that got away: it passes
--- DocumentRegistry:hasProvider on builds that ship the djvu provider, so the
--- modal offered it, and it landed as "Title.bin".)
-local EXT_BY_TYPE = {
-    ["application/epub+zip"]           = "epub",
-    ["application/pdf"]                = "pdf",
-    ["application/x-mobipocket-ebook"] = "mobi",
-    ["application/fb2"]                = "fb2",
-    ["application/x-fictionbook+xml"]  = "fb2",
-    ["application/x-cbz"]              = "cbz",
-    ["image/vnd.djvu"]                 = "djvu",
-    ["text/plain"]                     = "txt",
-    ["text/html"]                      = "html",
-}
+-- Acquisition MIME type -> file extension, shared with the feed module so the
+-- two can never disagree: bookshelf_opds_feed.TYPE_EXT is the single source of
+-- truth (its key set is the "is this downloadable" filter, its values are the
+-- extensions used here). A type kept by the filter but missing an extension
+-- would land as ".bin", which no KOReader provider opens; one table makes that
+-- impossible rather than merely tested-for.
+local EXT_BY_TYPE = require("lib/bookshelf_opds_feed").TYPE_EXT
 
 -- destinationDir(read_setting) -> dir|nil
 --
@@ -67,21 +55,42 @@ local EXT_BY_TYPE = {
 -- unset there is nothing safe to fall back to -- return nil and let the
 -- caller refuse the download with a message; this function never invents a
 -- destination.
-function D.destinationDir(read_setting)
+-- preferred: an explicit folder the user chose for catalog downloads
+-- (Bookshelf's own opds_download_dir setting, read by the caller since this
+-- function only knows how to read G_reader_settings keys). It wins over the
+-- stock download dir when it passes the SAME inside-home_dir test - an
+-- explicit choice is still not worth honouring once it points outside the
+-- folder the shelf scans, because the book would download successfully and
+-- then be invisible; falling back keeps the download useful and visible.
+-- A folder that has since been deleted or renamed also fails that test, so a
+-- stale setting degrades instead of failing the download.
+function D.destinationDir(read_setting, preferred)
     if type(read_setting) ~= "function" then return nil end
     local home = read_setting("home_dir")
     if type(home) ~= "string" or home == "" then return nil end
     if home ~= "/" then home = home:gsub("/+$", "") end
 
-    local FilePoll = require("lib/bookshelf_file_poll")
-    local eff = FilePoll.effectiveDownloadDir(read_setting)
-    if type(eff) == "string" and eff ~= "" then
-        local e = (eff ~= "/") and eff:gsub("/+$", "") or eff
-        if e == home or e:sub(1, #home + 1) == (home .. "/") then
-            return e
+    -- Shared by the preferred folder and the stock download dir: normalise,
+    -- then require it to be home_dir or below.
+    local function inside_home(dir)
+        if type(dir) ~= "string" or dir == "" then return nil end
+        local d = (dir ~= "/") and dir:gsub("/+$", "") or dir
+        if d == home or d:sub(1, #home + 1) == (home .. "/") then return d end
+        return nil
+    end
+
+    local chosen = inside_home(preferred)
+    if chosen then
+        -- Only if it still exists: a picked folder can be moved or deleted
+        -- later, and downloading into a vanished path fails at the rename.
+        local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+        if not ok_lfs or lfs.attributes(chosen, "mode") == "directory" then
+            return chosen
         end
     end
-    return home
+
+    local FilePoll = require("lib/bookshelf_file_poll")
+    return inside_home(FilePoll.effectiveDownloadDir(read_setting)) or home
 end
 
 -- filenameFor(rec, acq) -> name

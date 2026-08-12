@@ -3276,13 +3276,26 @@ end
 
 -- ─── Data helpers ─────────────────────────────────────────────────────────────
 
+-- Ceiling on a single "Select all in this shelf" (issue #320). Far above a
+-- realistic shelf and well below "every book on the device", so a bulk action
+-- stays a bounded operation; the caller says so out loud when it bites rather
+-- than quietly selecting a prefix.
+local SELECT_ALL_LIMIT = 5000
+
 -- _fetchChipItems(n)
 -- Returns up to n items for the current chip (or the expanded-series flat
 -- list). Sets opts.lazy_cover=true on the Repo call so the HIT hydration
 -- path probes ScaledCoverCache per filepath and skips the BIM zstd decode
 -- for books already cached. SpineWidget reads from the cache directly when
 -- book.cover_bb arrives nil.
-function BookshelfWidget:_fetchChipItems(n)
+-- want_all: fetch the WHOLE view rather than the visible page. Several sources
+-- (Home / folder drills / OPDS / search) are window-fetched - they return one
+-- page plus a total, and the caller paginates on that - so their "all_items" is
+-- a single page. "Select all in this shelf" needs the real set, and reading the
+-- page cache silently selected only what was on screen (issue #320 follow-up:
+-- Home reported 59 of 246 books). Everything else already returns the full
+-- list, so this only widens the window.
+function BookshelfWidget:_fetchChipItems(n, want_all)
     local fetch_opts = { lazy_cover = true }
     -- Drill-down: when the path tip is a series, show that series' books
     -- as flat spine widgets. Rebuild from filepaths so each render gets
@@ -3322,7 +3335,8 @@ function BookshelfWidget:_fetchChipItems(n)
         local book_fps = pay.book_fps or {}
         local total    = #folders + #authors + #series + #genres + #book_fps
         local offset   = math.max(0, (self._cursor or 1) - 1)
-        local stop     = math.min(offset + self:_viewSize(), total)
+        local stop     = math.min(offset + (want_all and SELECT_ALL_LIMIT
+                                              or self:_viewSize()), total)
         local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
         local function lazyMeta(fp)
             if not fp then return nil end
@@ -3412,15 +3426,17 @@ function BookshelfWidget:_fetchChipItems(n)
         end
         return fresh, total
     end
-    -- For the all-chip and folder drill-down, fetch only the current page
-    -- slice and return the total count as a second value. Callers use the
-    -- count to compute total_pages without hydrating the full item list.
-    local offset    = (self._cursor or 1) - 1
-    local LIMIT     = self:_viewSize()
+    -- For the all-chip and folder drill-down, fetch only the current
+    -- visible window and return the total count as a second value.
+    -- Cursor model: offset = cursor - 1 (cursor is 1-based, offset is
+    -- 0-based). Limit = view size for the current mode (8 standard
+    -- collapsed, 12 expanded, etc) so a single fetch covers the page.
+    local offset    = want_all and 0 or math.max(0, (self._cursor or 1) - 1)
+    local LIMIT     = want_all and SELECT_ALL_LIMIT or self:_viewSize()
     local profile_scope = self:_profileScope()
     local folder_read_summary = self.profile ~= nil
-    local TabModel = require("lib/bookshelf_tab_model")
-    local tab      = TabModel.getById(self.chip)
+    local TabModel  = require("lib/bookshelf_tab_model")
+    local tab       = TabModel.getById(self.chip)
     if tip and tip.kind == "folder" then
         if self.profile then
             return Repo.getAll(tip.payload.path, LIMIT, offset, {
@@ -9292,6 +9308,12 @@ function BookshelfWidget:_focusedStack()
     return nil
 end
 
+-- Dispatcher entry point for "select all books in this shelf" (issue #320).
+function BookshelfWidget:onBookshelfSelectAllInView()
+    self:_selectAllInView()
+    return true
+end
+
 function BookshelfWidget:onBookshelfSelectFocusedBook()
     local fp = self:_focusedBookFilepath()
     if not fp then return true end
@@ -10276,8 +10298,21 @@ function BookshelfWidget:_opdsSearch(tab, server, src, query)
                     })
                     return
                 end
-                target = OpdsFeed.substituteQuery(template, query)
+                -- Resolved against the OSD DOCUMENT's own url before the
+                -- query goes in, because that is what the template is
+                -- relative to. Catalogs are free to advertise a relative one
+                -- and some do: bookorbit's is "/api/v1/opds/catalog?q=
+                -- {searchTerms}", which substitutes into something that is
+                -- not a url at all, so the drill failed without a single
+                -- request reaching the server and reported as unreachable
+                -- (#322). An already-absolute template resolves to itself, so
+                -- catalogs that were working are untouched.
+                target = OpdsFeed.substituteQuery(
+                    OpdsFeed.absolute(src.href, template), query)
             else
+                -- No resolve here: a templated search link is captured by
+                -- mapEntries, which already made it absolute against the feed
+                -- it was found in.
                 target = OpdsFeed.substituteQuery(src.href, query)
             end
             -- Released BEFORE the drill, never after: see the header.
@@ -10867,9 +10902,22 @@ function BookshelfWidget:_opdsStartDownload(book, acq, dialog)
     -- nil means home_dir is unset: there is no folder the shelf actually scans,
     -- so a download would land somewhere the user would never see it. Name the
     -- problem rather than inventing a destination.
+    -- Per-chip download folder (issue #319): read from the chip this book came
+    -- from, NOT from _opdsEffectiveTab - that synthesises a bare tab while
+    -- drilled into a nav feed, which carries no user settings. The originating
+    -- chip is self.chip either way, so resolve the stored record by id and use
+    -- its folder when it is an OPDS chip.
+    local chip_dir
+    do
+        local ok_tm, TabModel = pcall(require, "lib/bookshelf_tab_model")
+        local tab = ok_tm and TabModel.getById and TabModel.getById(self.chip)
+        if tab and tab.source and tab.source.kind == "opds" then
+            chip_dir = tab.download_dir
+        end
+    end
     local dir = D.destinationDir(function(key)
         return G_reader_settings:readSetting(key)
-    end)
+    end, chip_dir)
     if not dir then
         UIManager:show(Notification:new{
             text = _("Set a home folder in KOReader before downloading books."),
@@ -15366,6 +15414,94 @@ function BookshelfWidget:_applyStackSelection(group, action)
     end
     self:_rebuild()
     UIManager:setDirty(self, "ui")
+end
+
+-- _currentViewBookPaths() -> { filepath, ... }
+--
+-- Every BOOK the current view holds, across all its pages - not just the page
+-- on screen. A chip built from filters is flat, so there is no folder or stack
+-- to long-press for a group selection (issue #320): this is what "Select all"
+-- resolves instead, and it means the chip's own filters and sort decide the
+-- set, exactly as the shelf shows it.
+--
+-- Stacks (series / author / folder tiles) contribute their MEMBER books, so
+-- "select all" on a grouped chip selects the books rather than the tiles - the
+-- same paths _applyStackSelection would add for each tile in turn.
+--
+-- Remote (OPDS) records are skipped: every bulk action operates on local
+-- files, which is why bulk selection is refused on catalog views outright.
+function BookshelfWidget:_currentViewBookPaths()
+    local out, seen = {}, {}
+    local function add(fp)
+        if type(fp) == "string" and fp ~= "" and not seen[fp]
+                and not self:_isRemoteRecord(fp) then
+            seen[fp] = true
+            out[#out + 1] = fp
+        end
+    end
+    -- Fetch the whole view, NOT the page cache: Home / folder drills / search
+    -- are window-fetched, so their cached item list is one page and reading it
+    -- selected only what was on screen (Home reported 59 of 246 books).
+    local ok_fetch, items = pcall(function()
+        return (self:_fetchChipItems(SELECT_ALL_LIMIT, true))
+    end)
+    if not (ok_fetch and type(items) == "table") then
+        items = self._page_items or {}
+    end
+    for _i = 1, #items do
+        local it = items[_i]
+        if type(it) == "table" then
+            if it.books or it.kind then
+                -- A stack tile: take its members via the same resolver the
+                -- group menu uses, so the two paths cannot disagree.
+                local ok, paths = pcall(function() return self:_resolveStackPaths(it) end)
+                if ok and type(paths) == "table" then
+                    for _j = 1, #paths do add(paths[_j]) end
+                end
+            else
+                add(it.filepath)
+            end
+        end
+    end
+    return out
+end
+
+-- Select every book in the current view. Enters selection mode if needed, so
+-- this works as the FIRST action (a flat filtered chip has no tile to
+-- long-press) as well as from inside an existing selection.
+function BookshelfWidget:_selectAllInView()
+    -- Required locally: bookshelf_widget has no file-level Notification, and
+    -- the bare global crashed the reader the first time this ran on an OPDS
+    -- shelf (the guard below was the first line to reach for it).
+    local Notification = require("ui/widget/notification")
+    if self:_opdsEffectiveTab() then
+        UIManager:show(Notification:new{
+            text = _("Bulk selection isn't available in remote catalog views."),
+        })
+        return
+    end
+    local paths = self:_currentViewBookPaths()
+    if #paths == 0 then
+        UIManager:show(Notification:new{ text = _("No books to select here.") })
+        return
+    end
+    if not self._selection:isActive() then self._selection:enterMode() end
+    self._selection:addMany(paths)
+    self:_rebuild()
+    UIManager:setDirty(self, "ui")
+    -- Say the count out loud, and say so when the ceiling bit: a bulk action
+    -- that silently selected a prefix of a big library would be acted on in
+    -- good faith.
+    if #paths >= SELECT_ALL_LIMIT then
+        UIManager:show(Notification:new{
+            text = T(_("Selected the first %1 books (the most one selection holds)."),
+                     #paths),
+        })
+    else
+        UIManager:show(Notification:new{
+            text = T(_("Selected %1 books."), #paths),
+        })
+    end
 end
 
 -- Back-compat alias: callers that used to invoke the confirm-then-apply
