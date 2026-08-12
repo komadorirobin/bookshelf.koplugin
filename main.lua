@@ -1110,6 +1110,15 @@ function Bookshelf:onDispatcherRegisterActions()
         title    = _("Bookshelf: toggle selection on focused book"),
         general  = true,
     })
+    -- Select every book in the current shelf view (issue #320). Assignable so
+    -- a flat, filter-built chip - which has no tile to long-press - can be
+    -- selected wholesale in one gesture, as well as from the bulk menu.
+    Dispatcher:registerAction("bookshelf_select_all_in_view", {
+        category = "none",
+        event    = "BookshelfSelectAllInView",
+        title    = _("Bookshelf: select all books in this shelf"),
+        general  = true,
+    })
     Dispatcher:registerAction("bookshelf_add_focused_stack_to_selection", {
         category = "none",
         event    = "BookshelfAddFocusedStackToSelection",
@@ -2599,42 +2608,37 @@ function Bookshelf:_saveInstallSource(source, commit)
     G_reader_settings:flush()
 end
 
--- Branch-aware update entry. Selecting a channel only changes the selection;
--- this method first compares the installed source/commit and asks before any
--- download. Stable releases retain their normal semantic-version check.
+-- The primary update action always checks stable releases. Branch installs
+-- remain explicit actions so a branch selected for testing cannot silently
+-- hijack later stable update checks.
 function Bookshelf:checkForUpdates()
-    local Updater = _updater()
-    if self.dev_branch and self.dev_branch ~= "" then
-        local branch = self.dev_branch
-        Updater.checkBranch(branch, self.last_install_source,
-            self.last_install_commit, {
-                on_baseline = function(head_sha)
-                    self:_saveInstallSource("branch:" .. branch, head_sha)
-                end,
-                on_success = function(head_sha)
-                    self:_saveInstallSource("branch:" .. branch, head_sha)
-                end,
-            })
-        return
-    end
+    _updater().check(function()
+        self.last_install_source = "release"
+        self.last_install_commit = ""
+        BookshelfSettings.save("last_install_source", "release")
+        BookshelfSettings.save("last_install_commit", "")
+        if self.dev_branch and self.dev_branch ~= "" then
+            self.dev_branch = ""
+            BookshelfSettings.save("dev_branch", "")
+        end
+        G_reader_settings:flush()
+    end)
+end
 
-    if self.last_install_source ~= "release" then
-        local ConfirmBox = require("ui/widget/confirmbox")
-        UIManager:show(ConfirmBox:new{
-            text = _("The selected update channel is Stable release, but a branch is currently installed.")
-                .. "\n\n" .. _("Switch to the latest stable release?"),
-            ok_text = _("Switch"),
-            ok_callback = function()
-                Updater.installLatestStable(function()
-                    self:_saveInstallSource("release", "")
-                end)
-            end,
-        })
-        return
+-- Install the selected development branch only from an explicit branch action.
+function Bookshelf:installDevBranch()
+    local branch = self.dev_branch
+    if not branch or branch == "" then
+        -- The row that calls this shows "Check for updates" when no branch is
+        -- set, so fall back to the release check rather than doing nothing.
+        return self:checkForUpdates()
     end
-
-    Updater.check(function()
-        self:_saveInstallSource("release", "")
+    _updater().installBranch(branch, function(head_sha)
+        self.last_install_source = "branch:" .. branch
+        self.last_install_commit = head_sha or ""
+        BookshelfSettings.save("last_install_source", self.last_install_source)
+        BookshelfSettings.save("last_install_commit", self.last_install_commit)
+        G_reader_settings:flush()
     end)
 end
 

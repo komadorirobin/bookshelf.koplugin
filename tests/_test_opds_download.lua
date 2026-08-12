@@ -119,6 +119,49 @@ t.test("destinationDir: falls back to home_dir when nothing else is set", functi
     eq(D.destinationDir(settings({ home_dir = "/home/user" })), "/home/user")
 end)
 
+-- preferred (Bookshelf's own opds_download_dir, issue #319): an explicitly
+-- chosen folder wins over the stock download dir, but only while it passes
+-- the same inside-home_dir test AND still exists - a stale or outside choice
+-- degrades to the normal rules rather than downloading somewhere invisible.
+t.test("destinationDir: an explicit folder beats the stock download dir", function()
+    _G._test_dirs["/home/user/Catalog"] = true
+    eq(D.destinationDir(settings({
+        home_dir = "/home/user",
+        download_dir = "/home/user/books",
+    }), "/home/user/Catalog"), "/home/user/Catalog")
+end)
+
+t.test("destinationDir: an explicit folder outside home_dir is refused", function()
+    _G._test_dirs["/mnt/sd/Catalog"] = true
+    eq(D.destinationDir(settings({
+        home_dir = "/home/user",
+        download_dir = "/home/user/books",
+    }), "/mnt/sd/Catalog"), "/home/user/books", "falls back to the stock dir")
+    eq(D.destinationDir(settings({ home_dir = "/home/user" }), "/mnt/sd/Catalog"),
+       "/home/user", "and to home_dir when there is no stock dir")
+end)
+
+t.test("destinationDir: a vanished explicit folder degrades instead of failing", function()
+    eq(D.destinationDir(settings({
+        home_dir = "/home/user",
+        download_dir = "/home/user/books",
+    }), "/home/user/DeletedFolder"), "/home/user/books")
+end)
+
+t.test("destinationDir: trailing slashes and home itself are accepted", function()
+    _G._test_dirs["/home/user/Catalog"] = true
+    eq(D.destinationDir(settings({ home_dir = "/home/user/" }), "/home/user/Catalog/"),
+       "/home/user/Catalog")
+    _G._test_dirs["/home/user"] = true
+    eq(D.destinationDir(settings({ home_dir = "/home/user" }), "/home/user"), "/home/user")
+end)
+
+t.test("destinationDir: empty or non-string preferred is ignored", function()
+    eq(D.destinationDir(settings({ home_dir = "/home/user" }), ""), "/home/user")
+    eq(D.destinationDir(settings({ home_dir = "/home/user" }), 42), "/home/user")
+    eq(D.destinationDir(settings({ home_dir = "/home/user" }), nil), "/home/user")
+end)
+
 t.test("destinationDir: uses the effective download dir when it resolves inside home_dir", function()
     eq(D.destinationDir(settings({
         home_dir = "/home/user",
@@ -201,6 +244,66 @@ t.test("filenameFor: every SUPPORTED_TYPE the feed keeps has an extension (no .b
         -- href with no extension of its own, so only the MIME map can answer.
         local name = D.filenameFor({ title = "T" }, { type = mtype, href = "http://x/get" })
         assert(name ~= "T.bin", mtype .. " has no extension mapping (fell through to .bin)")
+    end
+end)
+
+-- The #318 gap: Booklore serves AZW3 as application/vnd.amazon.ebook and CBZ
+-- as the registered application/vnd.comicbook+zip. Both were missing, so a
+-- shelf of Kindle files or comics rendered as an empty category while an EPUB
+-- shelf worked. Every type KOReader's DocumentRegistry knows is accepted now.
+t.test("filenameFor: the formats KOReader opens all get real extensions", function()
+    local cases = {
+        { "application/vnd.amazon.ebook",       "azw3" },
+        { "application/vnd.comicbook+zip",      "cbz"  },
+        { "application/x-cbz",                  "cbz"  },
+        { "application/vnd.comicbook-rar",      "cbr"  },
+        { "application/vnd.comicbook+tar",      "cbt"  },
+        { "application/vnd.ms-htmlhelp",        "chm"  },
+        { "application/oxps",                   "xps"  },
+        { "application/rtf",                    "rtf"  },
+        { "application/vnd.palm",               "pdb"  },
+        { "application/xhtml+xml",              "xhtml"},
+        { "application/fb2+zip",                "fb2.zip" },
+        { "application/zip",                    "zip"  },
+        { "application/msword",                 "doc"  },
+        { "application/vnd.oasis.opendocument.text", "odt" },
+    }
+    for _i, c in ipairs(cases) do
+        eq(D.filenameFor({ title = "T" }, { type = c[1], href = "http://x/get" }),
+           "T." .. c[2], c[1])
+    end
+end)
+
+t.test("SUPPORTED_TYPE accepts those types (so the entry is not dropped)", function()
+    local Feed = dofile("lib/bookshelf_opds_feed.lua")
+    for _i, mtype in ipairs({ "application/vnd.amazon.ebook",
+                              "application/vnd.comicbook+zip",
+                              "application/vnd.comicbook-rar",
+                              "application/vnd.ms-htmlhelp" }) do
+        assert(Feed.SUPPORTED_TYPE[mtype], mtype .. " is not acquirable")
+    end
+end)
+
+t.test("ambiguous and non-book types stay out", function()
+    local Feed = dofile("lib/bookshelf_opds_feed.lua")
+    -- octet-stream is "some binary" (Booklore's fallback for an unidentified
+    -- file); image types in a feed are covers, not books.
+    for _i, mtype in ipairs({ "application/octet-stream", "image/jpeg",
+                              "image/png", "text/x-python" }) do
+        assert(not Feed.SUPPORTED_TYPE[mtype], mtype .. " must not be acquirable")
+    end
+end)
+
+t.test("the feed filter and the download extension map are ONE table", function()
+    local Feed = dofile("lib/bookshelf_opds_feed.lua")
+    assert(type(Feed.TYPE_EXT) == "table", "feed must export TYPE_EXT")
+    for mtype in pairs(Feed.SUPPORTED_TYPE) do
+        assert(Feed.TYPE_EXT[mtype], mtype .. " acquirable but has no extension")
+    end
+    for mtype, ext in pairs(Feed.TYPE_EXT) do
+        assert(Feed.SUPPORTED_TYPE[mtype], mtype .. " has an extension but is not acquirable")
+        assert(type(ext) == "string" and ext ~= "" and not ext:find("^%."),
+            mtype .. " extension must be a bare suffix, got " .. tostring(ext))
     end
 end)
 

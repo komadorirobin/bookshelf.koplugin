@@ -4590,9 +4590,9 @@ function Settings:_updateSubItems()
                 if available then
                     return _("Update available") .. ": v" .. current
                         .. " \xE2\x86\x92 v" .. available
-                        .. " (" .. branchLabel() .. ")"
+                        .. " (" .. _("Stable release") .. ")"
                 end
-                return _("Check for updates") .. " (" .. branchLabel()
+                return _("Check for updates") .. " (" .. _("Stable release")
                     .. ", v" .. current .. ")"
             end,
             help_text = _("Checks GitHub for a newer Bookshelf release and"
@@ -4710,6 +4710,21 @@ function Settings:_tabsMenuItems()
             callback = function()
                 local on = BookshelfSettings.isTrue("chip_flex_widths")
                 BookshelfSettings.save("chip_flex_widths", not on)
+                rebuild()
+            end,
+        },
+        {
+            text = _("Uppercase labels"),
+            help_text = _("On: chip labels and the drill breadcrumb are shown"
+                .. " in capitals, the default look. Off: each label reads"
+                .. " exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."),
+            checked_func   = function()
+                return BookshelfSettings.nilOrTrue("chip_uppercase_labels")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local on = BookshelfSettings.nilOrTrue("chip_uppercase_labels")
+                BookshelfSettings.save("chip_uppercase_labels", not on)
                 rebuild()
             end,
             separator = true,
