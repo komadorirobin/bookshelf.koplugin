@@ -428,9 +428,10 @@ end
 -- and to stand the next onShow takeover down (the #110 raw-FM idiom).
 function Park.closeShelfToFileManager(live_widget)
     if not Park.isParked() then return false end
-    local rui = _parked
-    _parked = nil
-    _parked_plugin = nil
+    -- A second exit request can arrive before the deferred close tick. Keep the
+    -- first transition authoritative instead of scheduling onClose twice.
+    if _closing_to_fm then return true end
+    local rui, plugin = _parked, _parked_plugin
     _cancelPendingProbe()
     local file = rui.document and rui.document.file
     -- Same feedback affordance (and opt-out setting) as the fallback
@@ -447,11 +448,32 @@ function Park.closeShelfToFileManager(live_widget)
     UIManager:forceRePaint()
     _closing_to_fm = true
     UIManager:nextTick(function()
-        pcall(function() rui:onClose(false) end)
+        local close_ok, close_err = pcall(function() rui:onClose(false) end)
         -- onCloseDocument consumed the one-shot during onClose; clear it
         -- anyway in case that handler never ran (defensive - a stuck
         -- one-shot would silently eat the next real close's re-show).
         _closing_to_fm = false
+        if not close_ok then
+            -- The reader is still live when onClose failed before KOReader
+            -- replaced its singleton. Retain the park so a later action cannot
+            -- launch a duplicate ReaderUI over it. This mirrors _finishCore's
+            -- transactional failure handling.
+            if _readerInstance() == rui then
+                _parked, _parked_plugin = rui, plugin
+                _last_input = _gettime()
+                _pending_probe = function() _probe(rui) end
+                UIManager:scheduleIn(PROBE_EVERY_S, _pending_probe)
+            else
+                _parked, _parked_plugin = nil, nil
+            end
+            if msg then UIManager:close(msg) end
+            logger.err("[bookshelf] parked reader close-to-FM failed: "
+                .. tostring(close_err))
+            return
+        end
+        -- CloseDocument normally cleared these through noteRealClose(); make
+        -- the successful transition explicit for variants that do not emit it.
+        _parked, _parked_plugin = nil, nil
         if rui.showFileManager then
             pcall(function() rui:showFileManager(file) end)
         end

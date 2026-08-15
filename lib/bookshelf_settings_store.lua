@@ -42,7 +42,7 @@ local LEGACY_KEYS = {
     -- Library scan behaviour
     "calibre_metadata", "latest_walk_depth",
     -- UX toggles
-    "show_close_msg", "show_series_num",
+    "show_close_msg", "show_series_num", "android_safe_mode",
     "fade_finished_books", "fade_finished_folders",
     -- Cover-progress indicator colors / toggles
     "progress_fill", "progress_track", "bookmark_color",

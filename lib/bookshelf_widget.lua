@@ -10932,6 +10932,13 @@ local OPDS_POOL_POLL = 0.15
 -- Falls back to the sequential chain when forking is unavailable (Android) or
 -- a fork fails mid-run, so no platform loses the feature.
 function BookshelfWidget:_opdsCoverPool(queue, token, state)
+    -- The same subprocess primitive powers BIM extraction and this pool. On
+    -- affected Android renderers fork() can abort the process before Lua gets a
+    -- chance to handle an error, so the plugin-wide safe-mode promise must
+    -- cover OPDS too.
+    if _androidSafeModeEnabled() then
+        return self:_opdsCoverStep(queue, 1, token, state)
+    end
     local ok_ffi, ffiutil = pcall(require, "ffi/util")
     if not (ok_ffi and ffiutil and ffiutil.runInSubProcess) then
         return self:_opdsCoverStep(queue, 1, token, state)
@@ -10956,7 +10963,7 @@ function BookshelfWidget:_opdsCoverPool(queue, token, state)
     -- is not punished for the rest of the session.
     local cap = state.concurrency
                 or require("lib/bookshelf_opds_prefs").CONCURRENCY
-    local next_i, in_flight, fork_broken = 0, {}, false
+    local next_i, in_flight, fork_broken, fork_failed_i = 0, {}, false, nil
     state.t_begin = state.t_begin or _gettime()
     state.t_fetch = state.t_fetch or 0
     state.t_paint = state.t_paint or 0
@@ -10986,7 +10993,7 @@ function BookshelfWidget:_opdsCoverPool(queue, token, state)
         end
         UIManager:scheduleIn(1, c)
     end
-    local function launch(item)
+    local function launch(item, item_i)
         local payload
         if item.kind == "resolve" or item.kind == "page" then
             -- Both are "fetch a feed body and hand it back for the parent to
@@ -11012,7 +11019,11 @@ function BookshelfWidget:_opdsCoverPool(queue, token, state)
             end
         end
         local pid, rfd = ffiutil.runInSubProcess(payload, true)
-        if not pid then fork_broken = true; return false end
+        if not pid then
+            fork_broken = true
+            fork_failed_i = item_i
+            return false
+        end
         in_flight[#in_flight + 1] =
             { pid = pid, fd = rfd, item = item, t0 = _gettime() }
         return true
@@ -11032,7 +11043,7 @@ function BookshelfWidget:_opdsCoverPool(queue, token, state)
             if item.kind == "cover" and not OpdsCovers.needsFetch(item.rec) then
                 -- Already on disk: costs nothing, and must not occupy a worker.
             else
-                launch(item)
+                launch(item, next_i)
             end
         end
     end
@@ -11145,11 +11156,12 @@ function BookshelfWidget:_opdsCoverPool(queue, token, state)
             UIManager:scheduleIn(OPDS_POOL_POLL, poll)
             return
         end
-        if fork_broken and next_i < #queue then
+        if fork_broken then
             -- Forking died mid-run: finish what is left the old way rather
             -- than dropping it.
             local rest = {}
-            for i = next_i + 1, #queue do rest[#rest + 1] = queue[i] end
+            local first = fork_failed_i or (next_i + 1)
+            for i = first, #queue do rest[#rest + 1] = queue[i] end
             return self:_opdsCoverStep(rest, 1, token, state)
         end
         -- Done.
@@ -11216,6 +11228,7 @@ function BookshelfWidget:_opdsCoverStep(queue, idx, token, state)
         -- Sweep on ANY cover having landed (see the pool's tail for why).
         if state.landed > 0 then OpdsCovers.sweepCache() end
         local unpainted = (state.landed > state.painted) or state.resolved > 0
+            or (state.paged or 0) > 0
         if unpainted then
             local t0 = _gettime()
             self:_rebuild()
@@ -11268,7 +11281,28 @@ function BookshelfWidget:_opdsCoverStep(queue, idx, token, state)
         logger.dbg(string.format(
             "[bookshelf perf] opds cover repaint: %s rebuild+dirty=%.0fms", why, ms))
     end
-    if item.kind == "resolve" then
+    if item.kind == "page" then
+        local OpdsFeed = require("lib/bookshelf_opds_feed")
+        local _tf = _gettime()
+        local body = OpdsFeed.fetch(item.fetch_url or item.feed_url,
+                                    item.user, item.password, item.timeouts)
+        local fetch_ms = (_gettime() - _tf) * 1000
+        state.t_fetch = state.t_fetch + fetch_ms
+        state.n_fetch = state.n_fetch + 1
+        logger.dbg(string.format(
+            "[bookshelf perf] opds page fetch: %.0fms ok=%s %s",
+            fetch_ms, tostring(body ~= nil),
+            tostring(item.fetch_url or item.feed_url)))
+        if body and _storeFeedPage(item.server_key, item.feed_url,
+                                  item.fetch_url, body) then
+            state.paged = (state.paged or 0) + 1
+            local budget = item.plan or OPDS_LOOKAHEAD_MAX_REQUESTS
+            if state.paged < budget then
+                local more = self:_opdsLookaheadItem()
+                if more then queue[#queue + 1] = more end
+            end
+        end
+    elseif item.kind == "resolve" then
         local OpdsFeed = require("lib/bookshelf_opds_feed")
         local _tf = _gettime()
         local body = OpdsFeed.fetch(item.feed_url, item.user, item.password,

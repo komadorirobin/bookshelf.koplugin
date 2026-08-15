@@ -467,6 +467,12 @@ After adding new books over USB, Calibre, Syncthing, or KOReader's network downl
 - **Tap a chip** -- it also checks for filesystem changes on chip taps.
 - **Swipe down** on the shelf area for an immediate, full refresh; a brief "Refreshing library" notice appears.
 
+On Android, **Settings -> Advanced -> Performance tweaks -> Android safe mode**
+is enabled by default. It avoids device-specific HWUI crashes by disabling
+fork-backed cover/metadata and OPDS workers, automatic shelf preloading, file
+polling, and SimpleUI's background cover extraction. Turn it off only on a
+device known to handle those background subprocesses reliably.
+
 ---
 
 ## Reference
@@ -748,6 +754,7 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `author_format` | `"auto"` / `"first_last"` / `"last_first"` -- author name display. |
 | `bookshelf_ui_font` | Chosen Bookshelf interface font (a resolvable font face). Absent = follow KOReader's UI font. |
 | `cover_cache_mb` | Memory budget (MB) for the scaled-cover cache (default 24). The legacy `cover_cache_size` count key is discarded on first load. |
+| `android_safe_mode` | Android only. Default on; disables background jobs implicated in device-specific HWUI/fork crashes. |
 | `hardcover_links` / `hardcover_enrichment` / `hardcover_ratings` / `hardcover_reviews` | Optional Hardcover link and cached description/cover/rating/review metadata used by the Hardcover enrichment menu. |
 | `hardcover_hero_rating` | Show cached Hardcover ratings in the hero rating row instead of KOReader's local rating. |
 | `hardcover_use_metadata` | Use Hardcover's title/author/series/genres for linked books in place of their own. |

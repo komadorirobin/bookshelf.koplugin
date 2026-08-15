@@ -50,7 +50,7 @@ end
 local function rig(opts)
     opts = opts or {}
     local log = { fetched = {}, rebuilds = 0, sweeps = 0, dirty = 0,
-                  resolved_urls = {}, stored = {} }
+                  resolved_urls = {}, stored = {}, paged = {} }
     local pending = nil
     local covers = {
         needsFetch = function(rec)
@@ -76,6 +76,15 @@ local function rig(opts)
     local self_tbl = {
         _rebuild = function() log.rebuilds = log.rebuilds + 1 end,
         _opdsEnsureCovers = function() log.rearms = (log.rearms or 0) + 1 end,
+        _opdsLookaheadItem = function()
+            local left = (opts.lookahead_pages or 0) - (log.pages_queued or 0)
+            if left <= 0 then return nil end
+            log.pages_queued = (log.pages_queued or 0) + 1
+            return { kind = "page", server_key = "srv",
+                     feed_url = "https://c/list",
+                     fetch_url = "https://c/list?p=" .. (log.pages_queued + 2),
+                     plan = opts.plan or 6, timeouts = {} }
+        end,
         -- Seeded exactly as _opdsEnsureCovers does before starting a chain:
         -- the step compares the token it was handed against this, so a rig
         -- that leaves it nil makes every step read as superseded.
@@ -113,6 +122,11 @@ local function rig(opts)
             log.stored[#log.stored + 1] = url
             return true
         end,
+        _storeFeedPage            = function(_sk, store_url, fetch_url, _body)
+            if opts.page_store_fails then return false end
+            log.paged[#log.paged + 1] = { store_url = store_url, fetch_url = fetch_url }
+            return true
+        end,
         -- A resolved folder that turned out to hold one book hands back the
         -- cover work that book created; a folder holding several returns nil.
         -- opts.resolved_covers maps feed url -> record id to queue.
@@ -126,6 +140,7 @@ local function rig(opts)
         _opdsEnsureCovers_calls   = 0,
         OPDS_COVER_TICK           = 0.2,
         OPDS_COVER_REBUILD_EVERY  = 4,
+        OPDS_LOOKAHEAD_MAX_REQUESTS = 6,
         -- The first cover repaints on its own; the batch cadence applies
         -- thereafter, so a new page shows something rather than staying blank
         -- until the second round of fetches lands.
@@ -180,6 +195,13 @@ local function resolve_queue_of(n)
                  timeouts = { block_timeout = 5, total_timeout = 10 } }
     end
     return q
+end
+
+local function page_item(plan)
+    return { kind = "page", server_key = "srv",
+             feed_url = "https://c/list", fetch_url = "https://c/list?p=2",
+             plan = plan or 6, user = "u", password = "p",
+             timeouts = { block_timeout = 5, total_timeout = 10 } }
 end
 
 -- ── one download per tick ────────────────────────────────────────────────────
@@ -323,6 +345,37 @@ do
     eq(#r.log.stored, 1, "the fetched feed is cached, which is what resolving means")
     r.run_pending()
     eq(#r.log.resolved_urls, 2, "the next tile resolves on the following tick")
+end
+
+-- ── page lookahead survives the non-fork fallback ────────────────────────────
+do
+    local r = rig()
+    local st = r.fresh_state()
+    r.step({ page_item() }, 1, 7, st)
+    eq(#r.log.paged, 1, "a page item is fetched and stored by the step chain")
+    eq(r.log.paged[1].store_url, "https://c/list",
+        "the page is filed under the feed currently on screen")
+    eq(st.paged, 1, "the stored page is counted")
+    r.run_pending()
+    eq(r.log.rebuilds, 1, "the tail repaints so the enlarged page count is visible")
+end
+do
+    local r = rig{ lookahead_pages = 2, plan = 2 }
+    local st = r.fresh_state()
+    local q = { page_item(2) }
+    r.step(q, 1, 7, st)
+    eq(#q, 2, "a stored fallback page queues the next lookahead page")
+    r.run_pending()
+    eq(st.paged, 2, "the fallback walk honours the request budget")
+    eq(#q, 2, "and stops extending the queue at that budget")
+end
+do
+    local r = rig{ page_store_fails = true, lookahead_pages = 2 }
+    local st = r.fresh_state()
+    local q = { page_item() }
+    r.step(q, 1, 7, st)
+    eq(st.paged or 0, 0, "an unusable fallback page is not counted")
+    eq(#q, 1, "an unusable fallback page does not extend the walk")
 end
 do
     -- Credentials and the per-catalog timeout must reach the child fetch: a nav

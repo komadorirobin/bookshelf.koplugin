@@ -2324,7 +2324,8 @@ end
 -- Performance levers, grouped under one "Performance tweaks" submenu so the
 -- Advanced menu stays scannable.
 function Settings:_performanceSubItems()
-    local Screen = require("device").screen
+    local Device = require("device")
+    local Screen = Device.screen
     local items = {
         {
             text = _("Instant book close (beta)"),
@@ -2432,6 +2433,46 @@ function Settings:_performanceSubItems()
             end,
         },
     }
+
+    if Device:isAndroid() then
+        table.insert(items, 1, {
+            text = _("Android safe mode"),
+            help_text = _("Avoids Android/HWUI crashes seen on some devices by "
+                .. "disabling fork-backed cover and metadata extraction, OPDS "
+                .. "workers, automatic shelf preloading, and file polling. It "
+                .. "also disables SimpleUI's background cover extraction when "
+                .. "both plugins are installed. Default: On. Turn it off only "
+                .. "if your device is known to handle background subprocesses "
+                .. "reliably."),
+            checked_func = function()
+                return BookshelfSettings.nilOrTrue("android_safe_mode")
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local enabled = BookshelfSettings.nilOrTrue("android_safe_mode")
+                BookshelfSettings.save("android_safe_mode", not enabled)
+                BookshelfSettings.flush()
+                if self._bw then
+                    if self._bw._cancelPreload then self._bw:_cancelPreload() end
+                    if self._bw._cancelChipPreload then self._bw:_cancelChipPreload() end
+                    if self._bw._cancelFilePoll then self._bw:_cancelFilePoll() end
+                    if not BookshelfSettings.nilOrTrue("android_safe_mode") then
+                        if self._bw._maybeStartChipPreload then
+                            self._bw:_maybeStartChipPreload()
+                        end
+                        if self._bw._startFilePoll then self._bw:_startFilePoll() end
+                        if self._bw._schedulePreload
+                                and (self._bw._total_pages or 1) > (self._bw.page or 1) then
+                            self._bw:_schedulePreload(1)
+                        end
+                    end
+                end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end,
+        })
+    end
 
     -- Colour-panel only: on Kaleido / colour e-ink, covers only pick up the
     -- panel's colour waveform when the refresh carries the dither hint (#289).

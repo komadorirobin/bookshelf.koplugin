@@ -47,6 +47,7 @@ end
 --   cached          - set of record ids already on disk
 --   fork_fails      - true: runInSubProcess returns nil from the very first call
 --   fork_fails_after- launch count after which forking starts failing
+--   safe_mode       - true: Android-safe path must not fork at all
 --   resolved_covers - feed url -> record id the resolve pipelines in
 --   store_fails     - feed urls whose body will not store
 local function rig(opts)
@@ -191,6 +192,7 @@ local function rig(opts)
         OPDS_LOOKAHEAD_MAX_REQUESTS = 6,
         OPDS_FETCH_CONCURRENCY = 3,
         OPDS_POOL_POLL         = 0.15,
+        _androidSafeModeEnabled = function() return opts.safe_mode == true end,
     }
 
     local fn = compile("local self, queue, token, state = ... ; " .. body, env)
@@ -556,6 +558,14 @@ do
 end
 
 do
+    local r = rig{ safe_mode = true }
+    r.start(cover_queue(3), 7, r.fresh_state())
+    eq(#r.log.launched, 0, "Android safe mode never starts a forked worker")
+    eq(r.log.fell_back and r.log.fell_back.n, 3,
+        "Android safe mode hands the complete queue to the step chain")
+end
+
+do
     local r = rig{ fork_fails = true }
     r.start(cover_queue(3), 7, r.fresh_state())
     ok(r.log.fell_back ~= nil, "a fork that fails immediately falls back")
@@ -570,7 +580,18 @@ do
     r.answer_all("1")
     r.poll()
     ok(r.log.fell_back ~= nil, "the remainder goes to the step chain")
-    ok(r.log.fell_back.n > 0, "and it is the UNFETCHED remainder, not nothing")
+    eq(r.log.fell_back.n, 4,
+        "the failed third item and every later item reach the fallback")
+end
+
+do
+    local r = rig{ fork_fails_after = 2 }
+    local st = r.fresh_state()
+    r.start(cover_queue(3), 7, st)
+    r.answer_all("1")
+    r.poll()
+    eq(r.log.fell_back and r.log.fell_back.n, 1,
+        "a failed final item must not be mistaken for a drained queue")
 end
 
 print(string.format("opds cover pool: %d passed, %d failed", pass, fail))

@@ -158,6 +158,7 @@ t.test("migration copies legacy bookshelf_* keys out of G_reader_settings", func
     greader = {
         bookshelf_active_chip   = "genres",
         bookshelf_check_updates = true,
+        bookshelf_android_safe_mode = false,
         bookshelf_sort_series   = "name",   -- legacy per-chip sort key
         unrelated_key           = "keep",   -- non-bookshelf: must be left alone
     }
@@ -166,10 +167,12 @@ t.test("migration copies legacy bookshelf_* keys out of G_reader_settings", func
     -- Trigger the lazy open/migrate.
     eq(S.read("active_chip"), "genres")
     eq(S.read("check_updates"), true)
+    eq(S.read("android_safe_mode"), false)
     eq(S.read("sort_series"), "name")
     -- Source keys removed from the global store; unrelated key untouched.
     eq(greader.bookshelf_active_chip, nil)
     eq(greader.bookshelf_check_updates, nil)
+    eq(greader.bookshelf_android_safe_mode, nil)
     eq(greader.bookshelf_sort_series, nil)
     eq(greader.unrelated_key, "keep")
     -- Migration flag set so it never repeats.

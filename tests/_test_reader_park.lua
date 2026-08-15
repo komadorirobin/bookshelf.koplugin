@@ -458,7 +458,8 @@ t.test("closes the parked reader to the FileManager behind the shelf", function(
     assert(Park.park(makePlugin(rui)) == true)
     ticks = {} -- discard park's deferred refresh; this test is about the exit
     assert(Park.closeShelfToFileManager(shelf) == true)
-    assert(Park.isParked() == false)
+    assert(Park.isParked() == true,
+        "park ownership must remain until the deferred close succeeds")
     assert(closed_file == nil, "real close must be deferred to the tick")
     drainTicks()
     assert(closed_file == "/books/a.epub", "reader must real-close on the tick")
@@ -469,6 +470,29 @@ t.test("closes the parked reader to the FileManager behind the shelf", function(
     end
     assert(shelf_closed, "shelf widget must be dismissed after FM shows")
     assert(Park.consumeClosingToFM() == false, "one-shot must not leak")
+end)
+
+t.test("failed close-to-FM retains the parked reader and visible shelf", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    local fm_called = false
+    rui.onClose = function() error("close failed") end
+    rui.showFileManager = function() fm_called = true end
+    ReaderUI.instance = rui
+    local shelf = { _stopStatusTimer = function() end }
+    UIManager._window_stack = { { widget = rui }, { widget = shelf } }
+    assert(Park.park(makePlugin(rui)) == true)
+    ticks = {}
+    assert(Park.closeShelfToFileManager(shelf) == true)
+    drainTicks()
+    assert(Park.isParked() == true, "failed close must retain recoverable state")
+    assert(Park.parkedFile() == "/books/a.epub")
+    assert(fm_called == false, "FileManager must not open over a failed reader close")
+    for _i, w in ipairs(closed_widgets) do
+        assert(w ~= shelf, "the shelf must remain visible after a failed close")
+    end
+    assert(Park.consumeClosingToFM() == false, "failure must clear the one-shot")
+    assert(#scheduled == 1, "failure must re-arm the idle close probe")
 end)
 
 t.done()
