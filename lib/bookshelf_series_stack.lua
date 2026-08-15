@@ -21,6 +21,7 @@ local OverlapGroup   = require("ui/widget/overlapgroup")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
 local SpineWidget    = require("lib/bookshelf_spine_widget")
+local BookshelfSettings = require("lib/bookshelf_settings_store")
 local FolderCard     = require("lib/bookshelf_folder_card")
 local CountBadge     = require("lib/bookshelf_count_badge")
 local ImageSource    = require("lib/bookshelf_image_source")
@@ -56,11 +57,55 @@ function SeriesStack:init()
     local books = self.series and self.series.books
     local front = books and books[1]
     local stack_name = self.series and self.series.series_name or ""
+    -- Per-kind display mode (bookshelf_stack_display). Resolved from the
+    -- group's own kind, so series, authors and genres can each look different
+    -- -- which is the point of the setting. DIVIDER is the default and
+    -- reproduces the shipped tile exactly.
+    local StackDisplay = require("lib/bookshelf_stack_display")
     local stack_kind = self.series and self.series.kind
         -- Legacy series groups (built before kinds were carried on the
         -- shape) reach here with .books but no .kind. Default them to
         -- "series" so ImageSource has something to look up under.
         or (self.series and self.series.books and "series" or nil)
+    local display_mode = StackDisplay.modeFor(stack_kind)
+    -- Text mode wants no artwork, so the lookups below are skipped entirely
+    -- rather than rendered and hidden: on a genre or format tile the front
+    -- book's cover is noise, and this also skips its custom-image disk probe.
+    local want_art = not StackDisplay.isTextOnly(display_mode)
+    local show_cardboard = StackDisplay.showsCardboard(display_mode)
+    -- The pile depicts the stack: #books drives how many layers it draws, so a
+    -- two-book series reads as two books rather than as a generic pile.
+    local pile_books = books and #books or nil
+    local pile_inset = StackDisplay.pileInset(display_mode, pile_books)
+    local art_w = self.width - pile_inset
+    -- Shortened on both axes: the layers show past the cover's right and
+    -- bottom edges, which is what makes them read as separate objects rather
+    -- than as part of the cover's own frame.
+    local art_h = self.height - pile_inset
+    -- True-aspect covers: the SLOT is reserved at COVER_ASPECT_CAP, but a
+    -- cover must render at its OWN aspect inside it. The cardboard modes get
+    -- that from cover_align_top + cover_floor (the tab masks the leftover);
+    -- the bare modes have no cardboard, so they size the CARD itself, exactly
+    -- as shelf_row does for a book. Without this the card kept the capped
+    -- height and the cover stretched to fill it -- tall and narrow on device.
+    local card_y = 0
+    if BookshelfSettings.isTrue("true_cover_aspect") and not show_cardboard then
+        local _front = front
+        if _front then
+            art_h = SpineWidget.trueAspectBoxHeight(art_w, _front, art_h)
+        end
+    end
+    -- BOTTOM-ANCHOR the card + pile within the slot. A true-aspect cover is
+    -- shorter than its slot, and left at the top it floats -- covers jumping
+    -- up and down row to row instead of sitting on one shelf line, which is
+    -- the whole point of the true-aspect layout (shelf_row does the same for
+    -- books with a leading span).
+    --
+    -- The offset puts the PILE's bottom on the slot bottom, which is where a
+    -- non-stacked cover's drop shadow ends -- so a stack and a plain cover
+    -- share a baseline rather than the stack hanging below it.
+    card_y = self.height - art_h - pile_inset
+    if card_y < 0 then card_y = 0 end
 
     -- Custom stack image (#70 extension). Same precedence rules as
     -- FolderStack: explicit user override → image-library auto-
@@ -70,14 +115,14 @@ function SeriesStack:init()
     -- cache; pass cover_bb_disposable=false so SpineWidget doesn't
     -- free it on teardown.
     local custom_image_path
-    if stack_kind and stack_name ~= "" then
+    if want_art and stack_kind and stack_name ~= "" then
         custom_image_path = ImageSource.resolveStackImage(stack_kind, stack_name)
     end
 
     -- Built up front so cover_floor -- the slot-local y where the cardboard
     -- body begins -- is known before the representative cover renders.
     local folder_widget, label_widget, cover_floor = FolderCard.build{
-        width  = self.width,
+        width  = art_w,
         height = self.height,
         label  = stack_name,
     }
@@ -96,8 +141,8 @@ function SeriesStack:init()
                 },
                 cover_bb            = bb,
                 cover_bb_disposable = false,
-                width               = self.width,
-                height              = self.height,
+                width               = art_w,
+                height              = art_h,
                 cover_fill          = true,
                 is_selected         = self.is_selected,
                 is_bulk_selected    = self.is_bulk_selected,
@@ -107,8 +152,27 @@ function SeriesStack:init()
             custom_image_path = nil
         end
     end
+    if not book_widget and display_mode == StackDisplay.COLLAGE and books then
+        local paths = StackDisplay.collageCovers(books, 4)
+        local bb = StackDisplay.collageBB(paths, art_w - FolderCard.SHADOW_OFFSET,
+                                          self.height - FolderCard.SHADOW_OFFSET)
+        if bb then
+            -- disposable = true: unlike the ImageSource path, this buffer was
+            -- composed for this widget alone and nothing else references it.
+            book_widget = SpineWidget:new{
+                book = { title = stack_name, has_cover = true },
+                cover_bb            = bb,
+                cover_bb_disposable = true,
+                width               = art_w,
+                height              = art_h,
+                cover_fill          = true,
+                is_selected         = self.is_selected,
+                is_bulk_selected    = self.is_bulk_selected,
+            }
+        end
+    end
     if not book_widget then
-        if front then
+        if want_art and front then
             -- True-aspect, unconditionally (mirrors FolderStack): the
             -- cardboard tab+label already masks the bottom of this slot, so
             -- an undistorted cover only ever gives up pixels that were
@@ -120,10 +184,20 @@ function SeriesStack:init()
             -- under the cardboard.
             book_widget = SpineWidget:new{
                 book             = front,
-                width            = self.width,
-                height           = self.height,
-                cover_align_top  = true,
-                min_cover_h      = cover_floor,
+                width            = art_w,
+                height           = art_h,
+                -- ONLY under the cardboard. cover_align_top top-anchors a
+                -- shorter-than-box cover and background-fills the remainder,
+                -- and that remainder is invisible only because the cardboard
+                -- sits over it (see TopAlignedCoverBox in spine_widget, and
+                -- folder_card's cover_floor). In the modes that draw no
+                -- cardboard, the fill is exposed as a white bar across the
+                -- bottom of the cover, inside its border -- which is what a
+                -- squarer cover looked like on device. Without these the
+                -- cover renders as an ordinary book cover, which is what a
+                -- bare tile should look like anyway.
+                cover_align_top  = show_cardboard or nil,
+                min_cover_h      = show_cardboard and cover_floor or nil,
                 is_selected      = self.is_selected,
                 is_bulk_selected = self.is_bulk_selected,
                 suppress_badges  = true,
@@ -133,8 +207,8 @@ function SeriesStack:init()
             -- as the title (analogous to FolderStack's empty-folder path).
             book_widget = SpineWidget:new{
                 book             = { title = stack_name },
-                width            = self.width,
-                height           = self.height,
+                width            = art_w,
+                height           = art_h,
                 is_selected      = self.is_selected,
                 is_bulk_selected = self.is_bulk_selected,
                 suppress_badges  = true,
@@ -154,11 +228,26 @@ function SeriesStack:init()
     -- cover happens to be a portrait of X", so the cardboard + name
     -- stays under both image and non-image branches. (Built earlier,
     -- above, so cover_floor is available before the cover renders.)
-    local children = {
-        book_widget,
-        folder_widget,
-        label_widget,
-    }
+    --
+    -- That reasoning is why DIVIDER is the default and the only mode drawing
+    -- the cardboard. The other modes are a trade the user makes per kind:
+    -- stack and collage swap the cardboard for a different group cue, none
+    -- drops both. On an author or genre tile the name is doing the work the
+    -- artwork cannot, which is what Text mode is for.
+    local children = {}
+    if display_mode == StackDisplay.STACK then
+        local pile = StackDisplay.pileWidget(art_w + pile_inset, art_h + pile_inset, pile_books)
+        if pile then
+            pile.overlap_offset = { 0, card_y }
+            children[#children + 1] = pile
+        end
+    end
+    if card_y > 0 then book_widget.overlap_offset = { 0, card_y } end
+    children[#children + 1] = book_widget
+    if show_cardboard then
+        children[#children + 1] = folder_widget
+        children[#children + 1] = label_widget
+    end
     -- show_count_badge: caller-controlled (shelf_row reads
     -- stack_count_badge_mode and decides per-kind). nil/true keeps
     -- legacy behaviour (always show); false suppresses.
@@ -167,10 +256,30 @@ function SeriesStack:init()
         local badge = CountBadge.render(#books, self.selected_count, self.finished_count, self.finished_total)
         if badge then
             local badge_w = badge:getSize().w
-            local cover_right_x = self.width - FolderCard.SHADOW_OFFSET
+            -- Anchored to the FRONT COVER's right edge, not the slot's.
+            -- They are the same in every mode but stack, where the cover is
+            -- narrower than the slot to make room for the pile -- so a
+            -- slot-anchored badge drifted off the cover and sat over the
+            -- layers behind it, cutting through the very effect it was
+            -- floating above. Still clamped to the slot so it cannot overflow.
+            local cover_right_x = art_w - FolderCard.SHADOW_OFFSET
+            -- How far the badge hangs PAST the cover's right edge. Normally
+            -- half its width, which is the shipped look. Over a pile that is
+            -- too far: the layers behind are one step apart, so a half-badge
+            -- overhang covers two of them and the pile reads as one thick edge
+            -- instead of separate books. Clamped to a single step, so the
+            -- badge sits over the first layer and no further.
+            local overhang = math.ceil(badge_w / 2)
+            if pile_inset > 0 then
+                overhang = math.min(overhang, StackDisplay.pileStep())
+            end
             local badge_x = math.max(0, math.min(self.width - badge_w,
-                                                 cover_right_x - math.floor(badge_w / 2)))
-            badge.overlap_offset = { badge_x, -FolderCard.SHADOW_OFFSET }
+                                                 cover_right_x + overhang - badge_w))
+            -- Anchored to the CARD's top, not the slot's. With true aspect the
+            -- card is shorter than its slot and bottom-anchored, so a
+            -- slot-anchored badge floated above the cover by however much
+            -- shorter the cover was -- and by a different amount per tile.
+            badge.overlap_offset = { badge_x, card_y - FolderCard.SHADOW_OFFSET }
             children[#children + 1] = badge
         end
     end

@@ -2195,6 +2195,13 @@ SpineWidget.CARD_RADIUS     = CARD_RADIUS
 -- picks a different grey.
 SpineWidget.SHADOW_OFFSET   = SHADOW_OFFSET
 SpineWidget.shadowGray      = _shadowGray
+-- Placeholder card backgrounds (outer band, inner face), as a function for the
+-- same reason shadowGray is one: night mode picks different greys, and a caller
+-- caching the value would invert. Used by the collage tile to fill a cell it
+-- has no cover for, so an incomplete collage matches the placeholder card a
+-- coverless book would show rather than inventing a third grey.
+SpineWidget.fallbackBgs     = _fallbackBgs
+
 
 -- Per-axis chrome overhead between the widget box (self.width/self.height)
 -- and the actual cover IMAGE: the drop-shadow offset plus the 1dp card
@@ -2203,9 +2210,24 @@ SpineWidget.shadowGray      = _shadowGray
 --   img_w = slot_w - COVER_CHROME ;  box_h = round(img_w * aspect) + COVER_CHROME
 SpineWidget.COVER_CHROME = SHADOW_OFFSET + 2 * CARD_BORDER
 
--- True-aspect ceiling: 2:3 + ~10% overshoot. ~98% of real covers render
--- untrimmed under it; taller freaks clamp here so they can't blow past the row.
-SpineWidget.COVER_ASPECT_CAP = 1.65
+-- True-aspect ceiling. Every cover taller than this clamps here rather than
+-- growing the row, so the cap is a straight trade: fidelity for a handful of
+-- covers against a whole row of shelf.
+--
+-- Measured against a real 291-cover library (2026-08-14): median ~1.51, and
+--   <= 1.50  33%      <= 1.60  93.5%
+--   <= 1.55  79%      <= 1.65  97.9%
+-- The tail is thin -- three covers above 1.68 -- but there is a cluster at
+-- 1.64-1.66 that the original 1.65 was chosen to clear.
+--
+-- 1.55 is set from measured DEVICE arithmetic, not taste (issue #329). On a
+-- PW5 at 5 columns: 202px slots, 1402px of shelf available, and a row costs
+-- slot_w * cap + 37px of padding. Four rows need row_h <= 350, so the cap has
+-- to be <= 313/202 = 1.55. At 1.60 the row came to 360 and the fourth row was
+-- lost by 38px, leaving 322px of slack spread as the large inter-row gaps
+-- that issue reports. The 21% of covers above 1.55 lose at most ~6% of their
+-- height -- a few pixels of crop -- to gain a whole row of shelf.
+SpineWidget.COVER_ASPECT_CAP = 1.55
 
 -- SpineWidget.downloadedTickOffset(card_w, card_h, glyph_w, widget_h, halo_w)
 -- -> x, y
