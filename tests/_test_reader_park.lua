@@ -117,6 +117,7 @@ local function reset()
     scheduled = {}
     hot_park_enabled = true
     screen_rotation = 0
+    UIManager._window_stack = {}
     ReaderUI.instance = nil
     Park.noteRealClose()
     Park.consumeClosingToFM() -- drain any leftover one-shot
@@ -252,6 +253,28 @@ t.test("unpark on a non-parked session is a false no-op", function()
     assert(Park.unpark({}) == false)
 end)
 
+t.test("unpark keeps state when the window stack is unavailable", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    ReaderUI.instance = rui
+    assert(Park.park(makePlugin(rui)) == true)
+    UIManager._window_stack = nil
+    assert(Park.unpark({}) == false)
+    assert(Park.isParked() == true, "failed unpark must remain recoverable")
+    assert(Park.parkedFile() == "/books/a.epub")
+    UIManager._window_stack = {}
+end)
+
+t.test("unpark keeps state when the reader is absent from the stack", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    ReaderUI.instance = rui
+    assert(Park.park(makePlugin(rui)) == true)
+    UIManager._window_stack = { { widget = {} } }
+    assert(Park.unpark({}) == false)
+    assert(Park.isParked() == true, "missing stack entry must not clear park")
+end)
+
 print("--- opportunistic finish (idle probe) ---")
 
 -- Shared fixture: parked reader under the shelf, probe armed.
@@ -291,6 +314,19 @@ t.test("probe reschedules while input is recent, closes once idle", function()
     assert(Park.isParked() == false)
     drainTicks()
     assert(Park.isFinishingClose() == false, "flag must clear on the next tick")
+end)
+
+t.test("failed real close keeps the live reader parked", function()
+    reset()
+    local rui, plugin = parkFixture()
+    rui.onClose = function() error("close failed") end
+    fake_now = fake_now + 31
+    fireScheduled()
+    assert(Park.isParked() == true, "close failure must retain park state")
+    assert(Park.parkedFile() == "/books/a.epub")
+    assert(rui.fm_file == nil, "FileManager must not open after failed close")
+    assert(plugin.shown == false, "shelf must not pretend close succeeded")
+    assert(Park.isFinishingClose() == false, "finishing flag must reset on error")
 end)
 
 t.test("noteInput resets the idle clock", function()

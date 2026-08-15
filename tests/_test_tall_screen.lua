@@ -54,9 +54,14 @@ package.loaded["device"]         = {
 }
 package.loaded["logger"]          = { dbg  = function() end, warn = function() end,
                                       err  = function() end, info = function() end }
--- BookshelfSettings stub: returns nil for every read (defaults apply).
+local bookshelf_rows_setting = nil
+-- BookshelfSettings stub: defaults apply except where a test explicitly sets
+-- the user-facing row count.
 package.loaded["lib/bookshelf_settings_store"] = {
-    read   = function(_, default) return default end,
+    read   = function(key, default)
+        if key == "bookshelf_rows" then return bookshelf_rows_setting end
+        return default
+    end,
     save   = function() end,
     delete = function() end,
     flush  = function() end,
@@ -180,6 +185,41 @@ end)
 
 test("_nShelves: SimpleUI expanded keeps three visible rows", function()
     eq(bw(750, 1024, true, 160):_nShelves(), 3)
+end)
+
+test("_maxShelfRows: explicit rows reserve the SimpleUI dock", function()
+    bookshelf_rows_setting = 99
+    local standalone = bw(750, 1024, false)
+    local embedded = bw(750, 1024, false, 300)
+    local standalone_rows = standalone:_baseShelves()
+    local embedded_rows = embedded:_baseShelves()
+    bookshelf_rows_setting = nil
+    eq(embedded_rows < standalone_rows, true,
+        "embedded explicit rows must leave room for the dock")
+end)
+
+test("_nShelves: geometry helpers run once per decision", function()
+    local base_calls, max_calls = 0, 0
+    local widget = setmetatable({
+        _expanded = true,
+        _baseShelves = function()
+            base_calls = base_calls + 1
+            return 2
+        end,
+        _maxRows = function()
+            max_calls = max_calls + 1
+            return 3
+        end,
+    }, { __index = BW })
+    eq(widget:_nShelves(), 3)
+    eq(base_calls, 1, "base geometry should be calculated once")
+    eq(max_calls, 1, "expanded geometry should be calculated once")
+
+    base_calls, max_calls = 0, 0
+    widget._expanded = false
+    eq(widget:_nShelves(), 2)
+    eq(base_calls, 1, "collapsed base geometry should be calculated once")
+    eq(max_calls, 0, "collapsed mode should not calculate expanded geometry")
 end)
 
 -- NOTE: these row/column expectations track the shipped responsive layout

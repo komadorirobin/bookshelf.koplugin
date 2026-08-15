@@ -1822,6 +1822,49 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
     return true
 end
 
+-- SimpleUI knows neither which Bookshelf profile the user will open next nor
+-- whether they will open a book directly. Warm only the shared filesystem
+-- indexes for both profiles while its Home screen is confirmed idle. This is
+-- deliberately lighter than reader prewarm: no widget is created and no cover
+-- is decoded on the UI thread.
+function Bookshelf:onPrepareBookshelfHome(payload)
+    if type(payload) ~= "table" then return false end
+    if type(payload.is_alive) == "function" and not payload.is_alive() then
+        return false
+    end
+    if type(payload.is_active) == "function" and not payload.is_active() then
+        return false
+    end
+
+    local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
+    if not (ok_repo and Repo and type(Repo.getAllFilepaths) == "function") then
+        return false
+    end
+
+    local warmed = 0
+    for _, profile_key in ipairs({ "prose", "comics" }) do
+        if type(payload.is_alive) == "function" and not payload.is_alive() then
+            return false
+        end
+        if type(payload.is_active) == "function" and not payload.is_active() then
+            return false
+        end
+        local profile = Profiles.get(profile_key)
+        local ok, err = pcall(Repo.getAllFilepaths, Profiles.scope(profile))
+        if ok then
+            warmed = warmed + 1
+        else
+            logger.warn("[bookshelf] Home cache prewarm failed for "
+                .. profile_key .. ": " .. tostring(err))
+        end
+    end
+    if warmed > 0 then
+        logger.dbg("[bookshelf perf] Home cache prewarm: profiles="
+            .. tostring(warmed))
+    end
+    return warmed == 2
+end
+
 -- Re-align the reader launcher after a screen-geometry change (device rotation
 -- or a desktop window resize -- issue #196). The painted glyph self-heals (the
 -- view module repaints from the current screen size, and footer_geom drops a

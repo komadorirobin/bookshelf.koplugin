@@ -3744,6 +3744,12 @@ function BookshelfWidget:_launchReader(open_path, after_open_callback)
     local Park = require("lib/bookshelf_reader_park")
     if Park.isParked() and Park.parkedFile() == open_path then
         if Park.unpark(self, after_open_callback) then return end
+        -- The parked ReaderUI is still live but could not be found in the
+        -- current stack. Never fall through to showReader: that would create a
+        -- second instance for the same document and corrupt the close path.
+        logger.warn("[bookshelf] parked reader could not be restored: "
+            .. tostring(open_path))
+        return
     end
     self._pre_read_rotation = Screen:getRotationMode()
     -- Mark that BOOKSHELF launched this book. onCloseDocument's re-show is
@@ -8032,7 +8038,8 @@ function BookshelfWidget:_maxShelfRows()
     if slot_w < 1 then return 1 end
     local slot_h = math.floor(slot_w * self:_coverAspect())
     local hero_chip_pad = Size.padding.large
-    local usable = self.height - PAD - hero_chip_pad - chip_h - PAD - footer_h
+    local usable = self.height - self:_simpleUIReservedBottom()
+                 - PAD - hero_chip_pad - chip_h - PAD - footer_h
     local row_unit = math.floor(slot_h * SHELF_PACK_FLOOR) + PAD
     if row_unit < 1 then return 1 end
     local min_hero = math.floor(usable * HERO_MIN_FRAC)
@@ -8083,16 +8090,20 @@ end
 --                          rows the screen can natively hold render)
 function BookshelfWidget:_nShelves()
     local _dbg_rows = BookshelfSettings.read("bookshelf_rows")
-    logger.dbg(string.format(
-        "[bookshelf perf] _nShelves: expanded=%s rows_setting=%s base=%d max=%d",
-        tostring(self._expanded), tostring(_dbg_rows),
-        self:_baseShelves(), self:_maxRows()))
+    local base = self:_baseShelves()
     if self._expanded then
+        local max_rows = self:_maxRows()
+        logger.dbg(string.format(
+            "[bookshelf perf] _nShelves: expanded=true rows_setting=%s base=%d max=%d",
+            tostring(_dbg_rows), base, max_rows))
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
-        return math.max(self:_maxRows(), self:_baseShelves() + 1)
+        return math.max(max_rows, base + 1)
     end
-    return self:_baseShelves()
+    logger.dbg(string.format(
+        "[bookshelf perf] _nShelves: expanded=false rows_setting=%s base=%d",
+        tostring(_dbg_rows), base))
+    return base
 end
 
 -- _nCols() — columns per shelf row, DPI-independent.

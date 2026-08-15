@@ -166,13 +166,30 @@ end
 local function _finishCore(reason)
     if not Park.isParked() then return false end
     local rui, plugin = _parked, _parked_plugin
-    _parked, _parked_plugin = nil, nil
     _cancelPendingProbe()
     local file = rui.document and rui.document.file
     local t0 = _gettime()
     _finishing_close = true
-    pcall(function() rui:onClose(false) end)
+    local close_ok, close_err = pcall(function() rui:onClose(false) end)
     local t1 = _gettime()
+    if not close_ok then
+        -- onClose may fail before CloseDocument reaches noteRealClose(). Keep
+        -- the live reader parked so callers cannot open a second ReaderUI for
+        -- the same file. If KOReader already replaced the instance, discard
+        -- the stale state instead.
+        if _readerInstance() == rui then
+            _parked, _parked_plugin = rui, plugin
+        else
+            _parked, _parked_plugin = nil, nil
+        end
+        _finishing_close = false
+        logger.err("[bookshelf] parked reader close failed ("
+            .. tostring(reason) .. "): " .. tostring(close_err))
+        return false
+    end
+    -- CloseDocument normally cleared this through noteRealClose(); make the
+    -- successful transition explicit for KOReader variants that do not emit it.
+    _parked, _parked_plugin = nil, nil
     if rui.showFileManager then
         pcall(function() rui:showFileManager(file) end)
     end
@@ -312,9 +329,6 @@ end
 function Park.unpark(live_widget, after_open_callback)
     if not Park.isParked() then return false end
     local rui = _parked
-    _parked = nil
-    _parked_plugin = nil
-    _cancelPendingProbe()
     local stack = UIManager._window_stack
     if not stack then return false end
     local idx
@@ -325,6 +339,12 @@ function Park.unpark(live_widget, after_open_callback)
         end
     end
     if not idx then return false end
+    -- Commit the state transition only after the reader has been found. A
+    -- transient/malformed stack must leave the park recoverable instead of
+    -- allowing the caller to launch a duplicate ReaderUI.
+    _parked = nil
+    _parked_plugin = nil
+    _cancelPendingProbe()
     if live_widget then
         if live_widget._stopStatusTimer then
             pcall(function() live_widget:_stopStatusTimer() end)
@@ -360,7 +380,7 @@ end
 -- book at most.
 function Park.finishToMenu()
     if not Park.isParked() then return false end
-    _finishCore("menu")
+    if not _finishCore("menu") then return false end
     local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
     local fm = ok_fm and FileManager and FileManager.instance
     if fm and fm.menu and fm.menu.onShowMenu then
@@ -387,8 +407,8 @@ end
 function Park.runInFileManager(action)
     local finished = false
     if Park.isParked() then
-        _finishCore("fm-action")
-        finished = true
+        finished = _finishCore("fm-action")
+        if not finished then return false end
     end
     if action then
         local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
