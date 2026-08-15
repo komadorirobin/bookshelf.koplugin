@@ -2867,8 +2867,13 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
             -- books[2..3] peeking out behind — queue all three so the
             -- visible stack is sharp end-to-end. Capped at 3 to keep the
             -- queue size proportional to what's actually painted.
+            -- 4, not 3: a Collage tile draws up to four member covers, and a
+            -- member whose cover was never queued has none to draw -- BIM
+            -- extracts lazily, so an unqueued book returns nothing from
+            -- getCoverBB however many times the tile asks. The old cap of 3
+            -- dates from when series_stack rendered three covers.
             if item.books then
-                for i = 1, math.min(3, #item.books) do
+                for i = 1, math.min(4, #item.books) do
                     local b = item.books[i]
                     if b then maybe_queue(b.filepath, slot_specs) end
                 end
@@ -7939,8 +7944,18 @@ end
 -- width, variable height), bottom-anchored, up to that cap (see ShelfRow).
 -- Every collapsed-grid site that derives a row height from slot width must use
 -- this so the render, the vertical budget, and the row-count math stay in lockstep.
+-- The aspect the ROW-COUNT maths reserves per row. Must be the same number
+-- shelf_row sizes slots with, or the two disagree about how tall a row is:
+-- this was a hardcoded 1.65 while SpineWidget.COVER_ASPECT_CAP was retuned to
+-- 1.60, so tightening the cap shrank the covers and did not give back the row
+-- it was tightened for.
 function BookshelfWidget:_coverAspect()
-    return BookshelfSettings.isTrue("true_cover_aspect") and 1.65 or 1.5
+    if not BookshelfSettings.isTrue("true_cover_aspect") then return 1.5 end
+    local ok, SpineWidget = pcall(require, "lib/bookshelf_spine_widget")
+    if ok and SpineWidget and SpineWidget.COVER_ASPECT_CAP then
+        return SpineWidget.COVER_ASPECT_CAP
+    end
+    return 1.5
 end
 
 function BookshelfWidget:_bookGap(pad)
@@ -7994,6 +8009,15 @@ function BookshelfWidget:_maxRows()
         rows = math.max(rows, math.min(rows + 1, shrink_rows))
     end
 
+    -- Every input to the row-count decision, because the arithmetic cannot be
+    -- reproduced off-device (PAD, chip_h and footer_h are all screen-derived)
+    -- and "why 3 rows and not 4" is otherwise pure guesswork. Issue #329.
+    logger.dbg(string.format(
+        "[bookshelf perf] _maxRows=%d cols=%d slot=%dx%d aspect=%.2f row_h=%d "
+        .. "avail=%d (h=%d usable=%d top=%d strip=%d herogap=%d chip=%d chippad=%d footer=%d)",
+        rows, n_cols, slot_w, slot_h, self:_coverAspect(), row_h, available,
+        self.height, usable_h, outer_top_pad, strip_minimum, hero_chip_pad, chip_h,
+        chip_to_row_pad, footer_h))
     return rows
 end
 
@@ -8012,7 +8036,11 @@ function BookshelfWidget:_maxShelfRows()
     local row_unit = math.floor(slot_h * SHELF_PACK_FLOOR) + PAD
     if row_unit < 1 then return 1 end
     local min_hero = math.floor(usable * HERO_MIN_FRAC)
-    return math.max(1, math.floor((usable - min_hero) / row_unit))
+    local out = math.max(1, math.floor((usable - min_hero) / row_unit))
+    logger.dbg(string.format(
+        "[bookshelf perf] _maxShelfRows=%d slot_h=%d row_unit=%d usable=%d min_hero=%d",
+        out, slot_h, row_unit, usable, min_hero))
+    return out
 end
 
 -- _baseShelves() — non-expanded shelf-row count.
@@ -8054,6 +8082,11 @@ end
 --   expanded  → _maxRows() (hero collapses to a status strip so all
 --                          rows the screen can natively hold render)
 function BookshelfWidget:_nShelves()
+    local _dbg_rows = BookshelfSettings.read("bookshelf_rows")
+    logger.dbg(string.format(
+        "[bookshelf perf] _nShelves: expanded=%s rows_setting=%s base=%d max=%d",
+        tostring(self._expanded), tostring(_dbg_rows),
+        self:_baseShelves(), self:_maxRows()))
     if self._expanded then
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
@@ -9595,6 +9628,42 @@ function BookshelfWidget:_opdsEffectiveTab()
     return nil
 end
 
+-- _opdsBatchSize() -> how many entries one fetch should pull.
+--
+-- Defaults to the shelf's own page size, which is what every fetch used before
+-- this was configurable: ask for exactly enough to fill the page being
+-- rendered, so the first paint comes as fast as the layout allows. A chip can
+-- raise it, trading a slower first page for fewer round trips - worth it on a
+-- server on your own network, rarely otherwise.
+--
+-- Never returns less than a page. A batch smaller than the view would leave
+-- the page short on arrival and immediately re-enter the fetch path for the
+-- remainder, which is more round trips, not fewer.
+function BookshelfWidget:_opdsBatchSize()
+    local view = self:_viewSize() or 24
+    local Prefs = require("lib/bookshelf_opds_prefs")
+    return math.max(view, Prefs.batchSize(self:_opdsPrefsTab(), view))
+end
+
+-- _opdsPrefsTab() -> the real CHIP behind the current view, or nil.
+--
+-- Not the same question as _opdsEffectiveTab, and the two must not be
+-- confused. That one answers "which feed is on screen", and when the user has
+-- drilled into a subcatalog it answers with a synthesised stand-in carrying
+-- only label + source -- a table that has never been persisted and so holds
+-- none of the chip's settings. This one answers "whose settings govern that
+-- view", which is always the chip the drill started from: the catalog is what
+-- was configured, and drilling into one of its subcatalogs does not leave it.
+--
+-- Returns nil for a non-OPDS chip, so every caller can hand the result
+-- straight to bookshelf_opds_prefs (whose readers all treat nil as "defaults").
+function BookshelfWidget:_opdsPrefsTab()
+    local TabModel = require("lib/bookshelf_tab_model")
+    local tab = TabModel.getById(self.chip)
+    if tab and tab.source and tab.source.kind == "opds" then return tab end
+    return nil
+end
+
 -- Fetch feed pages for an OPDS tab until the window covers want_count
 -- entries (or the feed runs out), then rebuild. User-initiated only: chip
 -- tap on an empty window, page-turn past the window, swipe-down refresh.
@@ -9633,6 +9702,12 @@ function BookshelfWidget:_opdsFetchMore(tab, want_count, replace, on_done)
     local server = OpdsSource.getServer(tab.source.id)
     if not server then return end
     local feed_url = tab.source.feed_url or server.url
+    -- Per-catalog socket budget, resolved once for the whole walk rather than
+    -- per page: every page of one fetch belongs to the same catalog, and the
+    -- chip cannot change under a running coroutine. Read off the CHIP, not the
+    -- effective tab - a drilled subcatalog's stand-in carries no settings.
+    local feed_timeouts = require("lib/bookshelf_opds_prefs")
+        .timeouts(self:_opdsPrefsTab())
     -- Is `t` (an _opdsEffectiveTab result) the same feed this fetch is for?
     -- Compared on the RESOLVED url, not the raw field: a chip's own tab leaves
     -- source.feed_url nil and means "the server's root url", which is exactly
@@ -9710,7 +9785,22 @@ function BookshelfWidget:_opdsFetchMore(tab, want_count, replace, on_done)
                     break
                 end
                 seen_urls[url] = true
-                local go_on = Trapper:info(T(_("Fetching %1…"), tab.label or server.title))
+                -- Report progress THROUGH the walk, not just that a walk is
+                -- happening. One fetch can be many feed pages -- a catalog
+                -- serving 25 records a page needs eleven of them to satisfy a
+                -- batch of 200 -- and a line that reads "Fetching X…" on every
+                -- one of them is indistinguishable from eleven separate
+                -- fetches, which is exactly how it was read on device. The
+                -- count is what makes one long operation legible as one.
+                local go_on
+                if #win.entries > 0 then
+                    go_on = Trapper:info(T(_("Fetching %1… (%2 books)"),
+                                           tab.label or server.title,
+                                           #win.entries))
+                else
+                    go_on = Trapper:info(T(_("Fetching %1…"),
+                                           tab.label or server.title))
+                end
                 if not go_on then break end
                 -- Gated per request, not just the entry feed_url: a
                 -- rel=next link came from the server's XML and could in
@@ -9719,7 +9809,8 @@ function BookshelfWidget:_opdsFetchMore(tab, want_count, replace, on_done)
                 local same_origin = OpdsFeed.sameOrigin(server.url, url)
                 local body, err = OpdsFeed.fetch(url,
                     same_origin and server.username or nil,
-                    same_origin and server.password or nil)
+                    same_origin and server.password or nil,
+                    feed_timeouts)
                 if not body then
                     Trapper:clear()
                     -- The toast says "Couldn't reach <server>" for everything
@@ -9938,19 +10029,334 @@ function BookshelfWidget:_opdsRefresh(tab)
     -- Deliberately does NOT arm the nav flag: this calls _opdsFetchMore
     -- directly, so the gate has nothing to gate, and leaving it disarmed keeps
     -- the fetch's own tail rebuild passive (one cover pass, no second fetch).
-    self:_opdsFetchMore(tab, self:_viewSize() or 24, true)
+    self:_opdsFetchMore(tab, self:_opdsBatchSize(), true)
 end
 
--- Cover fill for an OPDS page is deliberately a no-op: the shelf does NOT
--- bulk-download remote cover images. A full page of them is a serial blocking
--- download that made paging feel stuck, and remote covers are unfamiliar and
--- often heavy -- so the shelf shows the title+author placeholder card and a
--- cover is fetched only when a book is TAPPED (_opdsFetchDetailCover, for the
--- detail modal), which then also lands it on that shelf cell on the next
--- rebuild. Kept as a named no-op so its render / page-turn call sites stay
--- self-documenting and re-enabling auto-fill is a one-place change.
+-- Gap between one background page fetch and the next. Not a throttle on the
+-- server -- the fetches are serial anyway -- but the window in which UIManager
+-- gets to process input, so a page turn lands promptly instead of queueing
+-- behind the rest of the page's work. 0.2s is opds_plus's ImageLoader interval.
+local OPDS_COVER_TICK = 0.2
+-- Items to let land before repainting. Every repaint is a full _rebuild and,
+-- on e-ink, a visible flash; painting per item costs more than it buys.
+local OPDS_COVER_REBUILD_EVERY = 4
+
+-- _storeChildFeed(server_key, feed_url, body) -> did anything get cached
+-- Parse a nav tile's child feed and persist it as that feed's window. That is
+-- the whole of "resolving" a folder: the repo's opds branch already flattens a
+-- cached single-book child into the book at render time, so populating the
+-- cache is all this has to do.
+--
+-- Returns false for a body that parsed to nothing usable, and stores nothing in
+-- that case, so a throttled or error page leaves the tile unresolved and
+-- retryable rather than caching an empty window that would read as "fetched,
+-- genuinely empty" forever. Restored from 1477764^ unchanged; it was never the
+-- part that failed.
+local function _storeChildFeed(server_key, feed_url, body)
+    if type(body) ~= "string" or body == "" then return false end
+    local OpdsFeed   = require("lib/bookshelf_opds_feed")
+    local OpdsWindow = require("lib/bookshelf_opds_window")
+    local catalog = OpdsFeed.parse(body)
+    local mapped = catalog and OpdsFeed.mapEntries(catalog, feed_url, server_key)
+    if not (mapped and (#mapped.records > 0 or mapped.next_url)) then return false end
+    local win = OpdsWindow.load(server_key, feed_url)
+    win.fetched_at = os.time()
+    OpdsWindow.appendPage(win, mapped)
+    OpdsWindow.save(server_key, feed_url, win)
+    return true
+end
+
+-- _opdsNavResolveQueue(records, chip) -> { work items }, { skip set }
+-- Nav tiles on this page whose child feed has never been fetched. The skip set
+-- is those same tiles keyed by filepath, so the cover queue can leave them
+-- alone: resolving one turns it into a book whose cover comes from the CHILD
+-- feed, so fetching the tile's own thumbnail first is a download spent on a
+-- tile that is about to stop existing.
+--
+-- Credentials are resolved here rather than at fetch time, and gated on
+-- sameOrigin exactly as the feed fetch and the cover fetch are: a nav href came
+-- out of the server's XML and could name any host.
+local function _opdsNavResolveQueue(records, chip)
+    local OpdsWindow = require("lib/bookshelf_opds_window")
+    local OpdsSource = require("lib/bookshelf_opds_source")
+    local OpdsFeed   = require("lib/bookshelf_opds_feed")
+    local Prefs      = require("lib/bookshelf_opds_prefs")
+    local timeouts   = Prefs.timeouts(chip)
+    local queue, skip = {}, {}
+    for _i, rec in ipairs(records) do
+        if rec.is_opds_nav and rec.opds and rec.opds.feed_url
+                and type(rec.filepath) == "string" then
+            local sk = rec.filepath:match("^OPDS://([^/]+)/")
+            if sk then
+                -- fetched_at is the self-limiting signal: a resolved child
+                -- window persists, so a multi-item folder is fetched once,
+                -- stays a folder, and is never fetched again. Without it this
+                -- would re-fetch every folder on every pass.
+                local win = OpdsWindow.load(sk, rec.opds.feed_url)
+                if (win.fetched_at or 0) <= 0 then
+                    local server = OpdsSource.getServer(sk)
+                    if server then
+                        local same = OpdsFeed.sameOrigin(server.url, rec.opds.feed_url)
+                        queue[#queue + 1] = {
+                            kind       = "resolve",
+                            server_key = sk,
+                            feed_url   = rec.opds.feed_url,
+                            user       = same and server.username or nil,
+                            password   = same and server.password or nil,
+                            timeouts   = timeouts,
+                        }
+                        skip[rec.filepath] = true
+                    end
+                end
+            end
+        end
+    end
+    return queue, skip
+end
+
+-- Cover fill for an OPDS page. OFF by default and per catalog: the shelf does
+-- NOT bulk-download remote cover images unless the chip asks it to.
+--
+-- Why the default is off. A full page of remote covers is a serial blocking
+-- download; over a slow public catalog it made paging feel stuck, and the
+-- covers themselves are often heavy. So the shelf shows the title+author
+-- placeholder card and a cover is fetched only when a book is TAPPED
+-- (_opdsFetchDetailCover, for the detail modal), which then also lands it on
+-- that shelf cell on the next rebuild.
+--
+-- Why it is now switchable. That reasoning is about PUBLIC catalogs. On a
+-- server on your own network the covers are a few milliseconds away and the
+-- placeholders are just worse, and two users have now read tap-only covers as
+-- the feature being broken. The batching, token and re-arm machinery below is
+-- unchanged from when this ran unconditionally, so the opt-in path is the one
+-- that was already proven on device rather than a fresh one.
+-- Despite the name this drives ALL background page work, covers and nav-tile
+-- resolution alike: one queue, one token, one abandon path, so the two can
+-- never race each other or double the fetches in flight. Kept as the name every
+-- render path already calls.
 function BookshelfWidget:_opdsEnsureCovers()
-    return
+    -- Effective, not active: a drilled navigation entry renders remote records
+    -- exactly like the chip's root feed does, so its thumbnails have to fill
+    -- too. Non-OPDS views resolve to nil and bail here as before.
+    if not self:_opdsEffectiveTab() then return end
+    -- The chip, not the effective tab: a drilled subcatalog's stand-in carries
+    -- no settings (see _opdsPrefsTab), and the catalog's choice governs its
+    -- subcatalogs too.
+    local Prefs = require("lib/bookshelf_opds_prefs")
+    local chip  = self:_opdsPrefsTab()
+    local want_covers  = Prefs.autoCovers(chip)
+    local want_resolve = Prefs.resolveNav(chip)
+    if not (want_covers or want_resolve) then return end
+    local records = self._page_items
+    if not records then return end
+    -- Offline (or Wi-Fi off): skip rather than let each miss block the main
+    -- loop on a socket timeout. isConnected() answers true on platforms with
+    -- no Wi-Fi toggle, so desktop builds still fill their thumbnails. Never
+    -- prompts -- a passive cover fill must not raise a Wi-Fi dialog.
+    local ok_net, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_net and NetworkMgr and NetworkMgr.isConnected
+            and not NetworkMgr:isConnected() then
+        return
+    end
+    -- "Missing" = has a thumbnail worth fetching (cachePath resolves - a
+    -- deterministic name, no disk check) AND the repo did NOT already attach
+    -- the record's OWN cover_image_path for it. The repo already did the one
+    -- lfs stat per record this pass needs (OpdsCovers.cachedPath, inside
+    -- getBySource); a second `not rec.has_cover` gate here would re-select
+    -- every record on every pass, because the repo never sets has_cover for
+    -- OPDS records (see the cover_image_path comment there) --
+    -- rec.cover_image_path is the up-to-date signal instead.
+    --
+    -- rec.cover_borrowed is the exception: a nav tile with none of its own
+    -- artwork yet borrows a child feed's cached cover so it isn't a bare
+    -- placeholder (see the borrow in bookshelf_book_repository.lua's opds
+    -- branch), but that borrow is not the tile's own download landing. Without
+    -- also selecting borrowed records here, the borrow's non-nil
+    -- cover_image_path would permanently look "already fetched" and the
+    -- tile's own cover would never enter fetchMissing -- borrowed forever,
+    -- never self-healing even once the tile's own artwork appears on disk.
+    -- Once it does, the repo's own-cover check (which runs first and wins)
+    -- fills cover_image_path from the tile's own cachedPath and leaves
+    -- cover_borrowed unset, so this stops selecting it on the very next pass.
+    local OpdsCovers = require("lib/bookshelf_opds_covers")
+    -- Nav resolution goes FIRST in the queue: it changes the shape of the page
+    -- (folders become books), so doing it before the covers means the covers
+    -- fetched are the ones the page ends up wanting.
+    local queue, resolving = {}, {}
+    if want_resolve then
+        queue, resolving = _opdsNavResolveQueue(records, chip)
+    end
+    if want_covers then
+        for _i, rec in ipairs(records) do
+            if rec.is_remote and (not rec.cover_image_path or rec.cover_borrowed)
+                    and OpdsCovers.cachePath(rec)
+                    -- Skipped only when this tile is actually queued for
+                    -- resolution: its cover will come from the child feed
+                    -- instead. A nav tile NOT being resolved (already cached, or
+                    -- resolution off) still needs its own thumbnail.
+                    and not resolving[rec.filepath] then
+                queue[#queue + 1] = { kind = "cover", rec = rec }
+            end
+        end
+    end
+    -- Bumped BEFORE the empty early return, not after it: an earlier chain may
+    -- still be in flight for a page the user has since left, and if this pass
+    -- returns without moving the token that chain still matches on completion
+    -- and repaints a page it knows nothing about. Harmless as repaints go, but
+    -- the guard is meant to be exact -- reaching this line at all means "the
+    -- current page's background work is now this pass's business".
+    self._opds_cover_token = (self._opds_cover_token or 0) + 1
+    if #queue == 0 then return end
+    local token = self._opds_cover_token
+    UIManager:scheduleIn(OPDS_COVER_TICK, function()
+        -- Teardown guard: the widget can be closed inside the window, and a
+        -- blocking fetch against a torn-down shelf is pure waste. Same liveness
+        -- test onCloseWidget maintains for _cover_settle_cb.
+        if BookshelfWidget.live ~= self then return end
+        -- Superseded guard: if the user paged (or drilled) within the window,
+        -- a newer pass has bumped the token and owns the page now.
+        if token ~= self._opds_cover_token then return end
+        self:_opdsCoverStep(queue, 1, token,
+                            { creds = {}, landed = 0, painted = 0, resolved = 0 })
+    end)
+end
+
+-- _opdsCoverStep(queue, idx, token, state) - fetch ONE cover, then hand the
+-- main loop back before taking the next.
+--
+-- Replaces a single blocking pass over the whole page. fetchMissing downloads
+-- serially with a 20-second budget and nothing yields inside it, so on a slow
+-- catalog the shelf froze in 20-second blocks: on Internet Archive, whose
+-- cover server has been measured at 8 seconds a request, that is two or three
+-- covers per freeze and a page turn that does not register until it ends. This
+-- is opds_plus's ImageLoader shape (one image per tick, re-scheduled), which
+-- is the model that reads as responsive rather than stuck.
+--
+-- What this does NOT fix: one cover is still a blocking download, so a single
+-- 8-second request still holds the loop for 8 seconds. The per-request
+-- timeouts (THUMB_BLOCK/THUMB_TOTAL, 5s/10s) are the ceiling on that. Fixing
+-- it properly needs the download off the UI thread entirely, which the forked
+-- subprocess pool in b73887b tried and lost to server throttling.
+--
+-- Guards are re-tested on EVERY tick, not once at the start. The entire point
+-- is that the user can act between ticks, and paging is exactly what bumps the
+-- token -- so an abandoned chain must notice at its next step rather than run
+-- the queue out against a page nobody is looking at.
+function BookshelfWidget:_opdsCoverStep(queue, idx, token, state)
+    local OpdsCovers = require("lib/bookshelf_opds_covers")
+    if BookshelfWidget.live ~= self then return end
+    if token ~= self._opds_cover_token then return end
+    local item = queue[idx]
+    if not item then
+        -- Chain complete. Paint whatever landed since the last repaint, and
+        -- sweep BEFORE that paint so the shelf renders what is on disk after
+        -- the sweep rather than briefly showing a cover the sweep just dropped
+        -- (the ordering fetchMissing established).
+        local unpainted = (state.landed > state.painted) or state.resolved > 0
+        if unpainted then
+            if state.landed > state.painted then OpdsCovers.sweepCache() end
+            local t0 = _gettime()
+            self:_rebuild()
+            UIManager:setDirty(self, "ui")
+            state.t_paint = (state.t_paint or 0) + (_gettime() - t0) * 1000
+        end
+        -- The verdict line: where the chain's wall time actually went, and how
+        -- much of it blocked the UI thread. fetch >> paint means the downloads
+        -- are the problem and belong off-thread; paint >> fetch means they do
+        -- not and the repaint strategy is what needs changing.
+        if (state.n_fetch or 0) > 0 or (state.t_paint or 0) > 0 then
+            local total = (_gettime() - (state.t_begin or _gettime())) * 1000
+            local tf, tp, nf = state.t_fetch or 0, state.t_paint or 0, state.n_fetch or 0
+            logger.dbg(string.format(
+                "[bookshelf perf] opds cover chain DONE: items=%d fetched=%d "
+                .. "landed=%d resolved=%d | fetch=%.0fms (%.0fms avg) "
+                .. "paint=%.0fms | blocking=%.0fms of %.0fms wall (%.0f%%)",
+                #queue, nf, state.landed, state.resolved, tf,
+                (nf > 0) and (tf / nf) or 0, tp, tf + tp, total,
+                (total > 0) and ((tf + tp) / total * 100) or 0))
+        end
+        -- Resolution changed the page: folders became books, and those books
+        -- have covers of their own that this queue never knew about. ONE re-arm
+        -- recomputes from the new page shape and fetches them.
+        --
+        -- Terminates because both kinds of work are self-limiting: a resolved
+        -- child window persists (fetched_at > 0), so the next pass finds nothing
+        -- to resolve, and covers that landed are on disk, so needsFetch stops
+        -- selecting them. Gated on resolved > 0 so a pass that only fetched
+        -- covers does not re-arm at all.
+        if state.resolved > 0 then self:_opdsEnsureCovers() end
+        return
+    end
+    -- Per-item timing, split FETCH from REPAINT. The two call for opposite
+    -- fixes: if the downloads dominate, moving them off the UI thread is the
+    -- answer; if the repaints do, threading changes nothing and the fix is to
+    -- stop calling a full _rebuild per batch. Guessing between those is how
+    -- this loop has already been rewritten twice.
+    local _t_start = _gettime()
+    state.t_fetch  = state.t_fetch  or 0
+    state.t_paint  = state.t_paint  or 0
+    state.n_fetch  = state.n_fetch  or 0
+    state.t_begin  = state.t_begin  or _t_start
+    local function _paint(why)
+        local t0 = _gettime()
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+        local ms = (_gettime() - t0) * 1000
+        state.t_paint = state.t_paint + ms
+        logger.dbg(string.format(
+            "[bookshelf perf] opds cover repaint: %s rebuild+dirty=%.0fms", why, ms))
+    end
+    if item.kind == "resolve" then
+        local OpdsFeed = require("lib/bookshelf_opds_feed")
+        local _tf = _gettime()
+        local body = OpdsFeed.fetch(item.feed_url, item.user, item.password,
+                                    item.timeouts)
+        local fetch_ms = (_gettime() - _tf) * 1000
+        state.t_fetch = state.t_fetch + fetch_ms
+        state.n_fetch = state.n_fetch + 1
+        logger.dbg(string.format(
+            "[bookshelf perf] opds resolve fetch: %.0fms ok=%s %s",
+            fetch_ms, tostring(body ~= nil), tostring(item.feed_url)))
+        if body and _storeChildFeed(item.server_key, item.feed_url, body) then
+            state.resolved = state.resolved + 1
+            -- Same cadence as covers, counted separately: resolving four
+            -- folders is four tiles changing shape, worth a repaint, and
+            -- mixing the two counters would delay whichever is in the minority.
+            if state.resolved % OPDS_COVER_REBUILD_EVERY == 0 then
+                _paint("resolve-batch")
+            end
+        end
+    else
+        local rec = item.rec
+        -- Already on disk: skip it within THIS tick rather than spending a tick
+        -- to discover it. A page whose covers are all cached would otherwise
+        -- take a fifth of a second per cell to walk. A Lua tail call, so a long
+        -- run of cached records costs no stack.
+        if not OpdsCovers.needsFetch(rec) then
+            return self:_opdsCoverStep(queue, idx + 1, token, state)
+        end
+        local _tf = _gettime()
+        local got = OpdsCovers.fetchOne(rec, state.creds)
+        local fetch_ms = (_gettime() - _tf) * 1000
+        state.t_fetch = state.t_fetch + fetch_ms
+        state.n_fetch = state.n_fetch + 1
+        logger.dbg(string.format(
+            "[bookshelf perf] opds cover fetch: %.0fms ok=%s %s",
+            fetch_ms, tostring(got), tostring(rec.filepath)))
+        if got then
+            state.landed = state.landed + 1
+            -- Repaint every few covers rather than every one: a full _rebuild
+            -- per cover costs more than it buys, and on e-ink every one of them
+            -- is a visible flash.
+            if state.landed - state.painted >= OPDS_COVER_REBUILD_EVERY then
+                state.painted = state.landed
+                _paint("cover-batch")
+            end
+        end
+    end
+    UIManager:scheduleIn(OPDS_COVER_TICK, function()
+        self:_opdsCoverStep(queue, idx + 1, token, state)
+    end)
 end
 
 -- _opdsAfterPage(items) - the one post-render hook for an OPDS chip, called
@@ -9992,7 +10398,14 @@ function BookshelfWidget:_opdsAfterPage(items)
     -- for a rebuild that turned out not to be a feed's would leak into the next
     -- passive one and spend itself on a fetch the user never asked for.
     local tab = self:_opdsEffectiveTab()
-    if not tab then return end
+    if not tab then
+        -- Not looking at a feed (a local chip, a search, a folder drill), so
+        -- the next OPDS view is an entry again. Without this, switching to a
+        -- local chip and back would read as "still in the same feed" and skip
+        -- the age check the user asked for on opening it.
+        self._opds_age_checked_key = nil
+        return
+    end
     -- 120s (see _opdsFetchBusy): comfortably longer than a slow feed page over
     -- 2G-ish Wi-Fi, short enough that a fetch killed by an error (which never
     -- reaches the tail that clears this) unblocks itself well before the user
@@ -10006,6 +10419,49 @@ function BookshelfWidget:_opdsAfterPage(items)
     -- feed url without re-reading the stock plugin's server list here.
     local busy_this = busy and self._opds_fetch_feed ~= nil
                       and self._opds_fetch_feed(tab)
+    -- Age-based refresh: the one automatic refetch the shelf performs, and the
+    -- fix for a feed that was otherwise cached until the user found the
+    -- swipe-down gesture (issue #321). Off unless the chip asks for it.
+    --
+    -- Scoped to ENTERING a feed rather than to every navigation gesture, which
+    -- is what the setting's own wording ("every time I open it") promises. A
+    -- page turn is a nav gesture too, and checking there would refetch from
+    -- the top mid-catalog -- and against a server that is down, on every
+    -- single turn, which is the retry spin the nav gate exists to stop. Leaving
+    -- and coming back re-checks, so a failed refresh is retried when the user
+    -- next asks for the feed and not before.
+    --
+    -- Still inside the user_nav gate above: a passive rebuild (file poll, a
+    -- cover landing, startup restore) must never reach the network, and an
+    -- expiry rule that fired on those would quietly undo that.
+    if not busy and type(items) == "table" then
+        local Prefs = require("lib/bookshelf_opds_prefs")
+        local chip  = self:_opdsPrefsTab()
+        if Prefs.refreshAge(chip) ~= nil then
+            local OpdsSource = require("lib/bookshelf_opds_source")
+            local OpdsWindow = require("lib/bookshelf_opds_window")
+            local server = OpdsSource.getServer(tab.source.id)
+            local feed_url = tab.source.feed_url or (server and server.url)
+            if feed_url then
+                local key = tostring(tab.source.id) .. "|" .. feed_url
+                local entering = self._opds_age_checked_key ~= key
+                self._opds_age_checked_key = key
+                local win = OpdsWindow.load(tab.source.id, feed_url)
+                if entering and Prefs.isStale(chip, win.fetched_at, os.time()) then
+                    -- replace = true, so the refetch REPLACES the stale window
+                    -- rather than topping it up: the whole point is that what
+                    -- is cached may be wrong, not merely short. _opdsFetchMore
+                    -- keeps the old window if the refetch comes back empty, so
+                    -- an expiry against a dead server does not blank the shelf.
+                    UIManager:nextTick(function()
+                        if BookshelfWidget.live ~= self then return end
+                        self:_opdsFetchMore(tab, self:_opdsBatchSize(), true)
+                    end)
+                    return
+                end
+            end
+        end
+    end
     if type(items) == "table" and items.opds_needs_fetch then
         if busy_this then
             -- A fetch for THIS feed is already running and its tail rebuilds
@@ -10044,7 +10500,7 @@ function BookshelfWidget:_opdsAfterPage(items)
         end
         -- Same offset/limit _fetchChipItems asked the repo for, so want_count
         -- is exactly "enough entries to fill the page being rendered".
-        local want = math.max(0, (self._cursor or 1) - 1) + self:_viewSize()
+        local want = math.max(0, (self._cursor or 1) - 1) + self:_opdsBatchSize()
         UIManager:nextTick(function()
             -- Teardown guard, as in _opdsEnsureCovers: don't open a Wi-Fi
             -- prompt / Trapper progress line for a shelf that has gone away.
