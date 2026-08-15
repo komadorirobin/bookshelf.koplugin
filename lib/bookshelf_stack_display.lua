@@ -1,8 +1,28 @@
 -- lib/bookshelf_stack_display.lua
 -- How a GROUP tile draws itself: filesystem folders and every kind of
 -- metadata stack (series, author, genre, collection, language, format,
--- rating). One setting per kind, so a library can say "folders look like
--- folders, series look like a pile, authors are just the cover".
+-- rating).
+--
+-- SET PER CHIP, with one library-wide default. This started as one setting
+-- per KIND ("folders look like folders, series look like a pile"), which read
+-- well in the settings menu and answered the wrong question in practice:
+--
+--   * A chip IS a kind, so the per-kind rows were a second, parallel way of
+--     saying what a chip shows - and the two could not be reconciled when a
+--     library had two chips on the same kind wanting different tiles.
+--   * An OPDS catalog's subcatalogs render as folder tiles, so they were
+--     bound to the same row as the filesystem's folders. Wanting a catalog to
+--     look different from your Documents folder was simply not expressible,
+--     which is the bug that prompted this.
+--   * The style is a property of the shelf you are looking at, so the place
+--     to change it is the chip you are looking at - not a submenu three
+--     levels into Settings that never mentions chips.
+--
+-- So: `group_display_default` is the library-wide style, and any chip may
+-- override it (tab.group_display, persisted with the rest of the chip by
+-- TabModel.save). Views that are not a chip - search results, which mix
+-- folders, authors, series and genres in one list - take the default, because
+-- there is no single chip whose opinion would apply.
 --
 -- Two widgets render groups -- bookshelf_folder_stack (folders, OPDS nav
 -- tiles) and bookshelf_series_stack (everything else) -- and they had
@@ -17,6 +37,9 @@
 --
 --   divider  the cardboard tab + name band. The shipped design, and the
 --            default everywhere, so an untouched library is unchanged.
+--   ribbon   a band across the lower third of the cover, name reversed out
+--            of it, running slightly PAST both edges so it reads as a strap
+--            around a bundle of books rather than a caption printed on one.
 --   stack    the cover inset to the right, with spine outlines peeking out
 --            behind it on the left. The pile IS the group cue, so no
 --            cardboard.
@@ -50,72 +73,89 @@ local _          = require("lib/bookshelf_i18n").gettext
 
 local M = {}
 
--- Mode values. nil is "divider", the shipped design: an unset library keeps
--- exactly the tiles it had, and no migration is needed for any existing
--- install. Stored as raw strings, never option indices, so reordering the
--- list below cannot silently change what a library looks like.
+-- Mode values, stored as raw strings and never as option indices, so
+-- reordering the list below cannot silently change what a library looks like.
+--
+-- DIVIDER carries an explicit value rather than being nil-as-default. nil now
+-- means "not set" -- which for a CHIP means "follow the library default" -- so
+-- a library whose default is Ribbon must still be able to say "this one chip
+-- is a divider card". With divider stored as nil those two were the same
+-- value and the chip could not disagree with the default.
 M.DIVIDER = "divider"
+M.RIBBON  = "ribbon"
 M.STACK   = "stack"
 M.COLLAGE = "collage"
 M.TEXT    = "text"
 M.NONE    = "none"
 
 M.OPTIONS = {
-    { value = nil,       label_func = function() return _("Divider card") end },
+    { value = M.DIVIDER, label_func = function() return _("Divider card") end },
+    { value = M.RIBBON,  label_func = function() return _("Ribbon") end },
     { value = M.STACK,   label_func = function() return _("Book stack") end },
     { value = M.COLLAGE, label_func = function() return _("Collage") end },
     { value = M.TEXT,    label_func = function() return _("Text") end },
     { value = M.NONE,    label_func = function() return _("None") end },
 }
 
--- Every group kind that reaches a tile, with the settings key it reads and
--- the menu row that sets it.
---
--- "folder" covers filesystem folders AND OPDS nav tiles: both render through
--- FolderStack, and a catalog's subcatalogs are folders in every sense that
--- matters to this setting.
---
--- format and rating have no dispatch branch of their own in shelf_row (they
--- fall into the `item.books` catch-all alongside series) but they ARE
--- distinct kinds on the record, so they get their own row rather than
--- silently following whatever series is set to.
-M.KINDS = {
-    { kind = "folder",   key = "folder_display",   label_func = function() return _("Folders") end },
-    { kind = "series",   key = "series_display",   label_func = function() return _("Series") end },
-    { kind = "author",   key = "author_display",   label_func = function() return _("Authors") end },
-    { kind = "genre",    key = "genre_display",    label_func = function() return _("Genres") end },
-    { kind = "tag",      key = "tag_display",      label_func = function() return _("Collections") end },
-    { kind = "language", key = "language_display", label_func = function() return _("Languages") end },
-    { kind = "format",   key = "format_display",   label_func = function() return _("Formats") end },
-    { kind = "rating",   key = "rating_display",   label_func = function() return _("Ratings") end },
-}
+-- The library-wide style. Unset = divider, the shipped design.
+M.DEFAULT_KEY = "group_display_default"
 
-local KEY_BY_KIND = {}
-for _i, k in ipairs(M.KINDS) do KEY_BY_KIND[k.kind] = k.key end
+-- "Follow the library default" as something a chip can actually be SET to,
+-- rather than only be by never having been touched.
+--
+-- Stored as a value rather than by clearing the key, because clearing depends
+-- on how a draft is merged on save and reads as an accident in a settings
+-- file; a named sentinel says what was meant. It is deliberately not a member
+-- of OPTIONS, so validated() rejects it and resolve() falls through to the
+-- default - which means every existing reader already handles it correctly
+-- with no change.
+M.FOLLOW_DEFAULT = "default"
 
 local function validated(value)
+    if type(value) ~= "string" then return nil end
     for _i, opt in ipairs(M.OPTIONS) do
         if opt.value == value then return value end
     end
     return nil
 end
 
--- settingKey(kind) -> the settings key for a group kind, or nil if the kind
--- has no row (which means "use the default").
-function M.settingKey(kind)
-    return KEY_BY_KIND[kind]
+-- defaultMode() -> the library-wide style, never nil.
+--
+-- No migration off the per-kind keys this replaced, deliberately: that model
+-- never shipped, so the only settings files carrying folder_display and
+-- friends are the ones it was built on. Those keys are simply never read
+-- again. Migration code is a permanent cost paid to preserve state that only
+-- ever existed on a dev machine.
+function M.defaultMode()
+    return validated(BookshelfSettings.read(M.DEFAULT_KEY)) or M.DIVIDER
 end
 
--- modeFor(kind) -> one of the M.* mode constants, never nil.
---
--- An unknown kind, or a stored value this build does not offer, resolves to
--- DIVIDER rather than to something surprising: a tile that renders as it
--- always did is the safe answer when we do not understand the question.
-function M.modeFor(kind)
-    local key = KEY_BY_KIND[kind]
-    if not key then return M.DIVIDER end
-    local v = validated(BookshelfSettings.read(key))
-    return v or M.DIVIDER
+-- resolve(override) -> the style a tile should draw itself in, never nil.
+-- `override` is a chip's stored group_display (nil = follow the default). A
+-- value this build does not offer is treated as unset rather than reaching a
+-- renderer that has no branch for it.
+function M.resolve(override)
+    return validated(override) or M.defaultMode()
+end
+
+-- pinned(override) -> the style this chip was explicitly SET to, or nil when
+-- it is following the library default. resolve() answers "what do I draw";
+-- this answers "did anyone choose", which is what a picker needs to tick the
+-- right row and a summary needs to say "Default setting" rather than naming a
+-- style the chip does not actually hold.
+function M.pinned(override)
+    return validated(override)
+end
+
+-- The chip editor's option list: the same styles, with "follow the library
+-- default" in front. The library default's OWN picker uses M.OPTIONS and must
+-- not offer this - a default that could be set to "the default" is circular.
+M.CHIP_OPTIONS = {
+    { value = M.FOLLOW_DEFAULT,
+      label_func = function() return _("Default setting") end },
+}
+for _i = 1, #M.OPTIONS do
+    M.CHIP_OPTIONS[#M.CHIP_OPTIONS + 1] = M.OPTIONS[_i]
 end
 
 -- labelFor(value) -> the option label for a stored value, defaulting to the
@@ -142,11 +182,12 @@ end
 -- Does this mode need the group's name printed BELOW the tile, the way a
 -- book's title is?
 --
--- Divider carries the name in its own band and Text makes the name the card's
--- title, so both already say what the group is. Stack, collage and none show
--- artwork with nothing naming it -- and on an author or genre tile the front
--- book's cover is not a name. Without this, choosing one of those three
--- silently made the group anonymous.
+-- Divider carries the name in its own band, Ribbon reverses it out of one and
+-- Text makes the name the card's title, so all three already say what the
+-- group is. Stack, collage and none show artwork with nothing naming it --
+-- and on an author or genre tile the front book's cover is not a name.
+-- Without this, choosing one of those three silently made the group
+-- anonymous.
 --
 -- Still subject to the reader's own "Show text below covers" setting: this
 -- says the name is NEEDED, not that it is shown regardless of preference.
@@ -154,13 +195,220 @@ function M.needsExternalLabel(mode)
     return mode == M.STACK or mode == M.COLLAGE or mode == M.NONE
 end
 
--- externalLabel(kind, name) -> the name to print below the tile, or nil.
+-- externalLabel(mode, name) -> the name to print below the tile, or nil.
 -- One call for shelf_row's seven group branches, so the rule lives here rather
 -- than being re-derived at each of them.
-function M.externalLabel(kind, name)
+function M.externalLabel(mode, name)
     if type(name) ~= "string" or name == "" then return nil end
-    if not M.needsExternalLabel(M.modeFor(kind)) then return nil end
+    if not M.needsExternalLabel(mode) then return nil end
     return name
+end
+
+-- Night mode is NOT a plain inversion of intent: KOReader inverts the whole
+-- framebuffer at refresh, so a colour that must LOOK the same in both modes is
+-- painted pre-inverted. Declared here, above its first use, because a `local`
+-- declared below a function that reads it silently rebinds to a nil global.
+local function _nightMode()
+    local ok, night = pcall(function()
+        return G_reader_settings and G_reader_settings:isTrue("night_mode")
+    end)
+    return ok and night or false
+end
+
+-- ─── The ribbon ──────────────────────────────────────────────────────────────
+-- A band across the lower third of the cover with the group's name reversed
+-- out of it, running slightly past both edges of the cover.
+--
+-- The overhang is the whole idea. A band that stops at the cover's edges is a
+-- caption printed ON the book; one that runs past them is a strap wrapped
+-- AROUND a bundle of them, which is the group cue this mode trades the
+-- cardboard for. It is small (a few pixels a side) because the slot has to
+-- contain it -- the tile cannot paint outside its own dimen without smearing
+-- into its neighbour.
+
+-- How tall the band is at minimum, as a fraction of the cover. A floor, not a
+-- ceiling: a two-line name grows the band, and the band grows UPWARD because
+-- its bottom edge is pinned (see ribbonWidget).
+local RIBBON_MIN_HEIGHT = 0.18
+-- Clear space left BELOW the band, as a fraction of the cover. The band is a
+-- strap around the books, not a footer welded to the bottom edge -- it needs
+-- cover showing beneath it to read as one. Floored at a few real pixels so it
+-- survives a small tile.
+local RIBBON_BOTTOM_GAP = 0.07
+-- How far the band runs past each edge of the cover.
+function M.ribbonOverhang()
+    return Screen:scaleBySize(4)
+end
+
+-- ribbonInset(mode) -> how much NARROWER the cover is in this mode, total.
+--
+-- The band has to overhang the cover while staying inside the tile: a widget
+-- that paints past its own dimen is not clipped, it just draws over whatever
+-- the neighbouring slot has already put there, and the shelf's repaint rects
+-- would not cover the overflow either. So the cover gives up the space
+-- instead -- an overhang each side, exactly as the pile shortens the cover to
+-- make room for its layers. Zero in every other mode, so callers apply it
+-- unconditionally.
+function M.ribbonInset(mode)
+    if mode ~= M.RIBBON then return 0 end
+    return M.ribbonOverhang() * 2
+end
+
+-- ribbonColors() -> fill, text
+-- The user's Folder overlay colours drive this, so one setting covers the
+-- cardboard band and this one. Unset is BLACK with white text (rather than
+-- the cardboard's manilla): a ribbon is a printed strap, and the whole point
+-- of the mode is the hard contrast band across the artwork.
+--
+-- constantInNight mirrors folder_card: night mode inverts the framebuffer at
+-- refresh, so a colour that must LOOK the same in both modes is painted
+-- pre-inverted. A colour the user chose explicitly is honoured as-is, because
+-- day and night are independently customisable.
+function M.ribbonColors()
+    local fill, text
+    local ok_cp, CoverProgress = pcall(require, "lib/bookshelf_cover_progress")
+    if ok_cp and CoverProgress and CoverProgress.resolvedColors then
+        local ok_c, c = pcall(CoverProgress.resolvedColors)
+        if ok_c and type(c) == "table" then
+            fill, text = c.folder_bg, c.folder_fg
+        end
+    end
+    local is_night = _nightMode()
+    local function constantInNight(color)
+        if is_night then return color:invert() end
+        return color
+    end
+    return fill or constantInNight(Blitbuffer.COLOR_BLACK),
+           text or constantInNight(Blitbuffer.COLOR_WHITE)
+end
+
+-- alpha=true trips appearance.koplugin's _renderText escape hatch (it gates on
+-- `not self.alpha`), so the band's own colours survive themes that otherwise
+-- repaint text in their palette. Same reason bookshelf_folder_card pins it on
+-- the cardboard label.
+local RibbonTextBox
+
+-- One rendered line's height for a face/width, memoised: the clamp below needs
+-- it per render and probing costs a full layout pass. Mirrors the same memo in
+-- bookshelf_folder_card.
+local _line_h_memo = {}
+local function _lineHeight(face, bold, width)
+    local key = tostring(face) .. "\1" .. tostring(bold) .. "\1" .. tostring(width)
+    local h = _line_h_memo[key]
+    if h then return h end
+    local TextBoxWidget = require("ui/widget/textboxwidget")
+    local probe = TextBoxWidget:new{ text = "Mg", face = face, bold = bold,
+                                     width = width }
+    h = probe:getSize().h
+    probe:free()
+    _line_h_memo[key] = h
+    return h
+end
+
+-- ribbonWidget(cover_w, cover_h, label) -> widget, y_offset
+--
+-- The widget is sized to the FULL band (cover width plus both overhangs) and
+-- the caller offsets it by -overhang on x, so the band is centred on the
+-- cover and protrudes evenly. y_offset is where the band's top sits relative
+-- to the cover's top, so a caller that has already offset the cover downward
+-- (true aspect bottom-anchors the card) adds the two together.
+--
+-- Returns nil for an empty label: a band with nothing in it says nothing and
+-- just hides a third of the artwork.
+function M.ribbonWidget(cover_w, cover_h, label)
+    if type(label) ~= "string" or label == "" then return nil end
+    if not (cover_w and cover_h and cover_w > 0 and cover_h > 0) then return nil end
+    local TextBoxWidget   = require("ui/widget/textboxwidget")
+    local FrameContainer  = require("ui/widget/container/framecontainer")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    -- The plugin's OWN font wrapper, not KOReader's ui/font. They differ in
+    -- the third argument: this one takes an options table and returns
+    -- (face, bold); KOReader's takes a faceindex and concatenates it into a
+    -- cache key, so handing it { bold = true } is a crash, not a bad font.
+    -- Same call the cardboard label makes (bookshelf_folder_card).
+    local BFont           = require("lib/bookshelf_fonts")
+    local Size            = require("ui/size")
+    if not RibbonTextBox then RibbonTextBox = TextBoxWidget:extend{ alpha = true } end
+
+    local text = label:gsub("/$", "")
+    local over    = M.ribbonOverhang()
+    local band_w  = cover_w + over * 2
+    local pad     = Size.padding.small
+    local avail_w = band_w - pad * 2
+    if avail_w <= 0 then return nil end
+
+    -- Same font and the same user scale the cardboard label uses, so the two
+    -- modes read as the same family rather than as two different designs.
+    local scale = BookshelfSettings.read("stack_label_font_scale", 100) or 100
+    local face_size = math.max(8, math.floor(15 * scale / 100))
+    local face, bold = BFont:getFace("infofont", face_size, { bold = true })
+    local fill, fg = M.ribbonColors()
+
+    -- Text clamped by the SAME rule the cardboard label uses: at most two
+    -- lines, ellipsis when it overflows. Derived from the real rendered line
+    -- height rather than from a fraction of the cover, so the two modes cut a
+    -- long folder name at the same place and a font-scale change moves both.
+    local line_h = _lineHeight(face, bold, avail_w)
+    local max_h  = 2 * line_h
+    local probe = TextBoxWidget:new{
+        text = text, face = face, bold = bold, width = avail_w,
+    }
+    local content_h = probe:getSize().h
+    probe:free()
+    local fits  = content_h <= max_h
+    local txt_h = fits and content_h or max_h
+    local txt = RibbonTextBox:new{
+        text      = text,
+        face      = face,
+        bold      = bold,
+        width     = avail_w,
+        height    = txt_h,
+        alignment = "center",
+        fgcolor   = fg,
+        -- TextBoxWidget FILLS its own background before drawing glyphs, and
+        -- that default is white: without this it paints a white rectangle
+        -- over the band and then draws white text onto it, which is exactly
+        -- as invisible as it sounds.
+        bgcolor   = fill,
+        height_overflow_show_ellipsis = not fits,
+    }
+
+    local band_h = math.max(txt_h + pad * 2,
+                            math.floor(cover_h * RIBBON_MIN_HEIGHT))
+    local band = FrameContainer:new{
+        width          = band_w,
+        height         = band_h,
+        background     = fill,
+        bordersize     = 0,
+        padding        = 0,
+        margin         = 0,
+        CenterContainer:new{
+            dimen = Geom:new{ w = band_w, h = band_h },
+            txt,
+        },
+    }
+
+    -- BOTTOM-ANCHORED, and the band grows UPWARD from that line. Anchoring the
+    -- TOP instead put every band at the same y and let each grow downward by
+    -- however many lines its name needed, so a row of folders had bands ending
+    -- at four different heights -- the one thing that makes a row of straps
+    -- read as an accident rather than a design. Pinned at the bottom they
+    -- share a line and only their thickness varies, which is what a real band
+    -- around a bundle does.
+    --
+    -- Not flush with the bottom edge: a strap has cover showing beneath it.
+    -- Measured from the cover's own bottom, above the drop shadow, so the gap
+    -- is to the artwork rather than to the shadow's outer edge.
+    local shadow = 0
+    local ok_sw, SpineWidget = pcall(require, "lib/bookshelf_spine_widget")
+    if ok_sw and SpineWidget and SpineWidget.SHADOW_OFFSET then
+        shadow = SpineWidget.SHADOW_OFFSET
+    end
+    local gap = math.max(Screen:scaleBySize(3),
+                         math.floor(cover_h * RIBBON_BOTTOM_GAP))
+    local y = cover_h - shadow - gap - band_h
+    if y < 0 then y = 0 end
+    return band, y
 end
 
 -- ─── The pile ────────────────────────────────────────────────────────────────
@@ -238,13 +486,6 @@ local BORDER_FADE_BY_DEPTH = { 0.80, 0.60, 0.44 }   -- border, depth 1..3
 -- how that is expressed.
 local SHADOW_BASE_DAY   = 0.5
 local SHADOW_BASE_NIGHT = 0.15
-
-local function _nightMode()
-    local ok, night = pcall(function()
-        return G_reader_settings and G_reader_settings:isTrue("night_mode")
-    end)
-    return ok and night or false
-end
 
 local function fadeAt(depth)
     return FADE_BY_DEPTH[depth] or FADE_BY_DEPTH[#FADE_BY_DEPTH]
@@ -432,27 +673,162 @@ end
 -- a cover is tens of thousands of pixels and the answer only has to be close
 -- enough to sit beside the real covers without jarring.
 local SAMPLE_STEPS = 8
-local function averageGrey(bb)
-    local ok, avg = pcall(function()
+-- ─── Palette extraction for the collage gap wash ─────────────────────────────
+--
+-- Covers are decoded to RGB32 by RenderImage whatever the screen is, so the
+-- colour is there to be read even on a greyscale device - it is only lost at
+-- paint time, when an 8bpp destination converts. So this samples in colour
+-- everywhere and lets the destination decide: real colour on a colour screen,
+-- and on e-ink the LUMINANCE of the colour picked, which is still a better
+-- answer than the mean was.
+--
+-- 16x16 per cover, up from the 8x8 the mean used. A feature has to survive
+-- sampling to be findable: a ring occupying five percent of a cover lands
+-- roughly a dozen samples at this density, which is enough to rank.
+local SAMPLE_STEPS = 16
+-- 3 bits per channel. Fine enough to keep gold apart from orange, coarse
+-- enough that the dozen samples off one ring land in the SAME bucket instead
+-- of scattering into a dozen singletons that each lose to the background.
+local BUCKET_BITS  = 3
+
+-- Saturation floor in the score below. Not zero: a black-and-white cover has
+-- nothing saturated at all, and with a bare `count * sat` every bucket would
+-- score zero and the pick would be arbitrary. With a floor, such a cover falls
+-- back to ranking by area, which is the old behaviour and the right one there.
+local SAT_FLOOR = 0.02
+-- How far apart two stops must be in RGB before both are worth having. Below
+-- this the wash has no visible travel and reads as the flat fill it replaced.
+local MIN_STOP_DISTANCE = 60
+
+-- bucketKey(r, g, b) -> integer bucket, and the quantised centre.
+local function bucketKey(r, g, b)
+    local shift = 8 - BUCKET_BITS
+    local qr, qg, qb = r >= 0 and math.floor(r / 2 ^ shift) or 0,
+                       math.floor(g / 2 ^ shift),
+                       math.floor(b / 2 ^ shift)
+    return (qr * 64) + (qg * 8) + qb
+end
+
+local function saturationOf(r, g, b)
+    local mx = math.max(r, g, b)
+    local mn = math.min(r, g, b)
+    if mx <= 0 then return 0 end
+    return (mx - mn) / mx
+end
+
+local function luminanceOf(c)
+    return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+end
+
+-- sampleCover(hist, bb) - fold one cover's pixels into a shared histogram.
+--
+-- Shared across every cover in the collage on purpose: the wash stands for the
+-- GROUP, so the palette is drawn from all of its books at once rather than one
+-- tone each. Two covers that share a strong colour reinforce it, which is
+-- usually the thing that makes a series look like a series.
+local function sampleCover(hist, bb)
+    pcall(function()
         local w, h = bb:getWidth(), bb:getHeight()
-        if not (w and h and w > 0 and h > 0) then return nil end
-        local total, n = 0, 0
+        if not (w and h and w > 0 and h > 0) then return end
         for sy = 0, SAMPLE_STEPS - 1 do
             for sx = 0, SAMPLE_STEPS - 1 do
                 local px = math.floor((sx + 0.5) * w / SAMPLE_STEPS)
                 local py = math.floor((sy + 0.5) * h / SAMPLE_STEPS)
-                local c = bb:getPixel(px, py)
+                local p = bb:getPixel(px, py)
+                local c = p and p.getColorRGB32 and p:getColorRGB32() or nil
                 if c then
-                    local g = c.getColor8 and c:getColor8() or nil
-                    if g and g.a then total = total + g.a; n = n + 1 end
+                    local k = bucketKey(c.r, c.g, c.b)
+                    local b = hist[k]
+                    if b then
+                        b.n = b.n + 1
+                        b.r = b.r + c.r; b.g = b.g + c.g; b.b = b.b + c.b
+                    else
+                        hist[k] = { n = 1, r = c.r, g = c.g, b = c.b }
+                    end
                 end
             end
         end
-        if n == 0 then return nil end
-        return total / n
     end)
-    if not ok then return nil end
-    return avg
+end
+
+-- pickPalette(hist, max_stops) -> up to max_stops {r,g,b} stops, dark to light.
+--
+-- SCORED BY count * (saturation + floor), which is the whole point of this
+-- over an average. A gold ring on a black cover is a few percent of the pixels
+-- and loses every popularity contest going, but it is the only thing on the
+-- cover anyone would describe - so area alone picks black, and area weighted
+-- by saturation picks gold. The mean picked neither: it returned a dark
+-- nothing that matched no part of the image.
+--
+-- Ordered by luminance rather than by score, so the wash runs dark to light
+-- like a shadow rather than jumping about by rank.
+--
+-- Pure: takes a plain histogram, returns plain tables. The blitbuffer work is
+-- sampleCover's, and keeping them apart is what makes this testable.
+function M.pickPalette(hist, max_stops)
+    if type(hist) ~= "table" then return {} end
+    max_stops = max_stops or 3
+    local ranked = {}
+    for _k, b in pairs(hist) do
+        if b.n and b.n > 0 then
+            local r, g, bl = b.r / b.n, b.g / b.n, b.b / b.n
+            ranked[#ranked + 1] = {
+                r = r, g = g, b = bl,
+                score = b.n * (saturationOf(r, g, bl) + SAT_FLOOR),
+            }
+        end
+    end
+    table.sort(ranked, function(x, y)
+        if x.score == y.score then return luminanceOf(x) < luminanceOf(y) end
+        return x.score > y.score
+    end)
+    local picked = {}
+    for _i, cand in ipairs(ranked) do
+        if #picked >= max_stops then break end
+        local far_enough = true
+        for _j, got in ipairs(picked) do
+            local dr, dg, db = cand.r - got.r, cand.g - got.g, cand.b - got.b
+            if math.sqrt(dr * dr + dg * dg + db * db) < MIN_STOP_DISTANCE then
+                far_enough = false
+                break
+            end
+        end
+        if far_enough then
+            picked[#picked + 1] = { r = cand.r, g = cand.g, b = cand.b }
+        end
+    end
+    table.sort(picked, function(x, y) return luminanceOf(x) < luminanceOf(y) end)
+    return picked
+end
+
+-- gradientColorAt(stops, t) -> {r,g,b} at position t (0..1) along the ombre.
+--
+-- The gap fill in a collage used to be ONE colour: the mean of every cover
+-- that resolved. Averaging is what made it read as a hole - a flat panel next
+-- to photographic covers looks like missing artwork, and the more covers it
+-- averaged the muddier and more uniform that panel got.
+--
+-- Pure, and separated from any blitting, because the arithmetic is the part
+-- worth testing: the endpoints have to land exactly on the first and last
+-- stop, or the wash starts mid-colour and meets the covers as a shade nobody
+-- picked.
+function M.gradientColorAt(stops, t)
+    if type(stops) ~= "table" or #stops == 0 then return nil end
+    if #stops == 1 then return stops[1] end
+    if type(t) ~= "number" then t = 0 end
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    -- Position along the whole run, in stop-intervals. t = 1 lands exactly on
+    -- the last stop rather than one interval past it.
+    local span = (#stops - 1) * t
+    local i    = math.floor(span)
+    if i >= #stops - 1 then return stops[#stops] end
+    local frac = span - i
+    local a, b = stops[i + 1], stops[i + 2]
+    return {
+        r = a.r + (b.r - a.r) * frac,
+        g = a.g + (b.g - a.g) * frac,
+        b = a.b + (b.b - a.b) * frac,
+    }
 end
 
 -- collagePlacement(member_count) -> which QUARTERS to use, in member order.
@@ -527,7 +903,10 @@ function M.collageBB(filepaths, width, height)
 
     local ok_cache, Cache = pcall(require, "lib/bookshelf_scaled_cover_cache")
     local ok_repo,  Repo  = pcall(require, "lib/bookshelf_book_repository")
-    local drawn, grey_total, grey_n = 0, 0, 0
+    local drawn = 0
+    -- One histogram across every cover: the wash stands for the GROUP, so its
+    -- palette comes from all of its books at once (see sampleCover).
+    local hist = {}
     local filled = {}
     local sources = {}
     for i = 1, 4 do
@@ -586,8 +965,7 @@ function M.collageBB(filepaths, width, height)
                 local scaled = src:scale(cell.w, cell.h)
                 if scaled then
                     out:blitFrom(scaled, cell.x, cell.y, 0, 0, cell.w, cell.h)
-                    local g = averageGrey(scaled)
-                    if g then grey_total = grey_total + g; grey_n = grey_n + 1 end
+                    sampleCover(hist, scaled)
                     if scaled.free then scaled:free() end
                     drawn = drawn + 1
                     filled[order[i]] = true
@@ -607,15 +985,16 @@ function M.collageBB(filepaths, width, height)
         if out.free then pcall(function() out:free() end) end
         return nil
     end
-    -- Fill the gaps.
-    local fill
-    if grey_n > 0 then
-        fill = Blitbuffer.gray((grey_total / grey_n) / 255)
-    else
+    -- Fill the gaps with a wash through the covers' own tones (see
+    -- gradientToneAt). Only ever 1 or 2 quarters: four covers leave no gap,
+    -- and fewer than two drawn returned nil above.
+    local fill          -- flat fallback, when there is nothing to sample
+    local wash = M.pickPalette(hist, 3)
+    if #wash == 0 then
+        wash = nil
         local ok_sw, SpineWidget = pcall(require, "lib/bookshelf_spine_widget")
         if ok_sw and SpineWidget and SpineWidget.fallbackBgs then
-            local outer = SpineWidget.fallbackBgs()
-            fill = outer
+            fill = SpineWidget.fallbackBgs()
         end
     end
     -- Divider cross between the cells, in the same colour the card's own
@@ -652,6 +1031,49 @@ function M.collageBB(filepaths, width, height)
                 end)
             end
         end
+    elseif wash then
+        -- COLOUR-SAFE PAINTING, which paintRect is not: it takes a C fast path
+        -- that collapses whatever colour it is given to value:getColor8().a,
+        -- so it can only ever fill grey. setPixel is the one write that keeps
+        -- a colour, and per-pixel over two quarters would be tens of thousands
+        -- of FFI calls.
+        --
+        -- So the wash is built once as a ONE-PIXEL-WIDE RGB32 strip - height
+        -- setPixel calls, a couple of hundred - then widened with scale() and
+        -- blitted in. Both of those keep colour (measured), and both are C.
+        --
+        -- The strip spans the whole tile, not each cell: the two gaps of a
+        -- diagonal collage sit in opposite corners, and a wash restarted per
+        -- cell would meet the covers at a different colour on each side. One
+        -- run down the tile keeps it a single surface.
+        --
+        -- Into an 8bpp destination the blit converts to grey, which is right:
+        -- the tone of the colour chosen, on a screen that cannot show the
+        -- colour. Nothing here needs to know which kind of screen it is on.
+        pcall(function()
+            local strip = Blitbuffer.new(1, height, Blitbuffer.TYPE_BBRGB32)
+            for y = 0, height - 1 do
+                local t = (height > 1) and (y / (height - 1)) or 0
+                local c = M.gradientColorAt(wash, t)
+                if c then
+                    strip:setPixel(0, y, Blitbuffer.ColorRGB32(
+                        math.floor(c.r + 0.5), math.floor(c.g + 0.5),
+                        math.floor(c.b + 0.5), 0xFF))
+                end
+            end
+            for q = 1, 4 do
+                if not filled[q] then
+                    local cell = quarters[q]
+                    local band = strip:scale(cell.w, height)
+                    if band then
+                        out:blitFrom(band, cell.x, cell.y, 0, cell.y,
+                                     cell.w, cell.h)
+                        if band.free then band:free() end
+                    end
+                end
+            end
+            if strip.free then strip:free() end
+        end)
     end
     paintDividers()
     return out

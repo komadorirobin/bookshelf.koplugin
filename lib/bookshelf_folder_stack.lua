@@ -80,17 +80,22 @@ local FolderStack = InputContainer:extend{
     -- something needed the walk. Only the collage uses them; every other mode
     -- renders from first_book alone.
     book_paths       = nil,
+    -- display_mode: how this tile draws itself, already resolved by the
+    -- caller (chip override, else the library default). Supplied rather than
+    -- read here because the tile has no idea which chip it belongs to, and
+    -- that is now the question that decides this. nil falls back to the
+    -- library default, which is what a caller that has no chip means.
+    display_mode     = nil,
 }
 
 function FolderStack:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
 
-    -- How this kind of group draws itself (bookshelf_stack_display). Folders
-    -- and OPDS nav tiles share the "folder" setting: a catalog's subcatalogs
-    -- are folders in every sense this setting cares about. DIVIDER is the
-    -- default and reproduces the shipped tile exactly.
+    -- How this tile draws itself (bookshelf_stack_display), resolved by the
+    -- caller from the active chip's override or the library default. DIVIDER
+    -- reproduces the shipped tile exactly.
     local StackDisplay = require("lib/bookshelf_stack_display")
-    local display_mode = StackDisplay.modeFor("folder")
+    local display_mode = StackDisplay.resolve(self.display_mode)
     -- Text mode wants no artwork at all, so it takes the placeholder branch
     -- below regardless of what covers exist. Suppressing the lookups (rather
     -- than rendering and hiding) also skips the custom-image disk probe and
@@ -105,8 +110,25 @@ function FolderStack:init()
     -- book_count is the folder's recursive total, but shelf_row only computes
     -- it when the count badge needs it -- nil here means "not asked", which
     -- pileLayers treats as a full pile rather than as an empty folder.
-    local pile_inset = StackDisplay.pileInset(display_mode, self.book_count)
-    local art_w = self.width - pile_inset
+    -- Will this tile take the plain-placeholder path below? A coverless
+    -- tap-resolving tile (an OPDS nav entry) renders as the bare label card
+    -- and draws NO pile and NO ribbon -- so it must not reserve room for them
+    -- either. Reserving it anyway shrank the card and left the reserved strip
+    -- empty at the bottom: a small cover with a gap under it before the label.
+    --
+    -- Decided here rather than at the plain branch itself because the insets
+    -- feed the whole size arithmetic, and by the time is_label_placeholder is
+    -- known the card has already been built at the reduced size.
+    local plain_ahead = self.plain_if_placeholder
+                        and not (self.folder and self.folder.first_book)
+    local pile_inset = plain_ahead and 0
+                       or StackDisplay.pileInset(display_mode, self.book_count)
+    -- Ribbon gives up an overhang each side so its band can run past the
+    -- cover without painting outside the tile (see StackDisplay.ribbonInset).
+    local ribbon_inset = plain_ahead and 0
+                         or StackDisplay.ribbonInset(display_mode)
+    local ribbon_x     = ribbon_inset > 0 and math.floor(ribbon_inset / 2) or 0
+    local art_w = self.width - pile_inset - ribbon_inset
     -- Shortened on both axes: the layers show past the cover's right and
     -- bottom edges, which is what makes them read as separate objects rather
     -- than as part of the cover's own frame.
@@ -268,6 +290,8 @@ function FolderStack:init()
             -- identifiable before it is opened.
             is_label_placeholder = true
             book_widget = SpineWidget:new{
+                -- Text style reads as a button, not a book (see flat_card).
+                flat_card        = StackDisplay.isTextOnly(display_mode),
                 book             = { title  = self.folder and self.folder.label or "",
                                      author = self.folder and self.folder.author or nil,
                                      -- Divider motif on the placeholder card:
@@ -383,11 +407,24 @@ function FolderStack:init()
         -- The cover was built at art_w; push it right so the layers sit to
         -- its left rather than under it.
     end
-    if card_y > 0 then book_widget.overlap_offset = { 0, card_y } end
+    if card_y > 0 or ribbon_x > 0 then
+        book_widget.overlap_offset = { ribbon_x, card_y }
+    end
     children[#children + 1] = book_widget      -- image (or book) + drop shadow
     if show_cardboard then
         children[#children + 1] = folder_widget   -- cardboard front
         children[#children + 1] = label_widget    -- folder name on body
+    end
+    -- The band, over the cover and past both its edges. Sized from the COVER
+    -- (art_w), offset back to the tile's own left edge so the overhang is
+    -- symmetric, and stacked after the cover so it paints on top of it.
+    if display_mode == StackDisplay.RIBBON then
+        local label = self.folder and (self.folder.label or self.folder.name)
+        local band, band_y = StackDisplay.ribbonWidget(art_w, art_h, label)
+        if band then
+            band.overlap_offset = { 0, card_y + band_y }
+            children[#children + 1] = band
+        end
     end
     addFade(children, card_y)
     -- Count badge: same anchor as SeriesStack so a row mixing folders
@@ -406,7 +443,7 @@ function FolderStack:init()
             -- slot-anchored badge drifted off the cover and sat over the
             -- layers behind it, cutting through the very effect it was
             -- floating above. Still clamped to the slot so it cannot overflow.
-            local cover_right_x = art_w - FolderCard.SHADOW_OFFSET
+            local cover_right_x = ribbon_x + art_w - FolderCard.SHADOW_OFFSET
             -- How far the badge hangs PAST the cover's right edge. Normally
             -- half its width, which is the shipped look. Over a pile that is
             -- too far: the layers behind are one step apart, so a half-badge

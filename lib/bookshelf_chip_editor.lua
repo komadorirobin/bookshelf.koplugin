@@ -383,6 +383,15 @@ function Editor:editTab(tab_id, opts)
         end
         override.label = draft.label
         override.icon  = draft.icon
+        -- Folder style is visual too, and it is the one the reader is most
+        -- likely to be choosing WHILE looking at the shelf - the preview is the
+        -- whole point of the picker. Without this the override carried the
+        -- persisted style and the shelf never moved until Save.
+        --
+        -- Assigning nil removes the key rather than clearing it to a value,
+        -- which is exactly right here: no key means the tile resolves against
+        -- the library default, which is what an unpinned chip is.
+        override.group_display = draft.group_display
         TabModel.setOverride(tab_id, override)
         if opts.on_change then opts.on_change() end
     end
@@ -602,7 +611,10 @@ function Editor:editTab(tab_id, opts)
         -- Filters cell for OPDS sources. OPDS filtering is the feed's own facets
         -- (Language / Category), shown as folder tiles at the top of the shelf.
         local is_opds_src = draft.source and draft.source.kind == "opds"
-        local source_status_row = {
+        -- Source gets a row to itself: it is the one choice that changes what
+        -- every other control on this dialog means, and sharing a row made it
+        -- read as a peer of the things it governs.
+        local source_row = {
             {
                 text_func = function()
                     return _("Source: ") .. _resolveSourceLabel(draft.source)
@@ -612,8 +624,12 @@ function Editor:editTab(tab_id, opts)
                 end,
             },
         }
+        -- Beneath it, the two per-chip overrides, paired: what this shelf
+        -- SHOWS (filters, or a catalog's own settings) and how its group tiles
+        -- LOOK.
+        local shelf_row = {}
         if not is_opds_src then
-            source_status_row[#source_status_row + 1] = {
+            shelf_row[#shelf_row + 1] = {
                 text_func = function()
                     return _("Filters: ") .. Filter.summary(draft.filter or {})
                 end,
@@ -628,7 +644,7 @@ function Editor:editTab(tab_id, opts)
             -- one global setting so each catalog can be tuned for what it
             -- actually is - a public catalog wants the conservative shelf
             -- defaults, a server on your own network usually does not.
-            source_status_row[#source_status_row + 1] = {
+            shelf_row[#shelf_row + 1] = {
                 text_func = function() return _("Catalog settings") end,
                 callback = function()
                     -- Mark dirty via applyLivePreview(true): Save only writes
@@ -643,6 +659,47 @@ function Editor:editTab(tab_id, opts)
                     end)
                 end,
             }
+        end
+
+        -- Folder style: how this chip's folder / stack tiles are drawn. Per
+        -- chip because a chip IS a kind of shelf -- and because an OPDS
+        -- catalog's subcatalogs render as folder tiles, so without this they
+        -- were bound to whatever the filesystem's folders were set to.
+        -- Not offered for a catalog: an OPDS subcatalog has no artwork of its
+        -- own, so its tiles are always the text style (see shelf_row). A row
+        -- that changed nothing would be worse than no row.
+        if not is_opds_src then
+        shelf_row[#shelf_row + 1] = {
+            text_func = function()
+                local SD = require("lib/bookshelf_stack_display")
+                local pinned = SD.pinned(draft.group_display)
+                if pinned then
+                    return _("Folder style: ") .. SD.labelFor(pinned)
+                end
+                -- Just "Default". Naming the style it resolves to as well made
+                -- the button too long for the row on a PW5, and it was the
+                -- less useful half: the shelf behind already shows the look,
+                -- while nothing else says which setting the chip is on.
+                return _("Folder style: Default")
+            end,
+            callback = function()
+                Editor:_pickGroupDisplay(draft, function()
+                    applyLivePreview()
+                    rebuild()
+                end, {
+                    -- Stand the editor down while the picker is up: it sits
+                    -- over the shelf rows whose tiles are being previewed.
+                    hide = function() UIManager:close(dialog) end,
+                    -- "ui", not a bare show. UIManager:show passes its
+                    -- refreshtype straight to setDirty, which only enqueues a
+                    -- refresh when it HAS one - so a bare show put the editor
+                    -- back on the window stack, taking taps, without ever
+                    -- painting it. It read as an invisible dialog swallowing
+                    -- the screen: a tap in the middle opened the source menu.
+                    show = function() UIManager:show(dialog, "ui") end,
+                })
+            end,
+        }
         end
 
         local buttons = {
@@ -676,8 +733,10 @@ function Editor:editTab(tab_id, opts)
                     callback       = function() move_tab(1) end,
                 },
             },
-            -- Row 1a: source (+ filters, non-OPDS only -- built above).
-            source_status_row,
+            -- Row 1a: source, full width.
+            source_row,
+            -- Row 1b: filters (or catalog settings) + folder style.
+            shelf_row,
             -- Row 1b: sort priority levels 1, 2, 3 (engine already supports
             -- unbounded levels via chainedComparator; three covers the
             -- common nested case "author surname -> series -> series index"
@@ -1073,14 +1132,6 @@ function Editor:_openCatalogSettings(draft, on_close)
             end),
             optionRow(_("Refresh"), _("Refresh this catalog"),
                       "opds_refresh_age", Prefs.REFRESH_OPTIONS),
-            optionRow(_("Covers"), _("Book covers"),
-                      "opds_cover_mode", Prefs.COVER_OPTIONS),
-            optionRow(_("Book folders"), _("Folders that hold one book"),
-                      "opds_resolve_nav", Prefs.RESOLVE_OPTIONS),
-            optionRow(_("Load at a time"), _("Books to load at a time"),
-                      "opds_batch", Prefs.BATCH_OPTIONS),
-            optionRow(_("Wait for server"), _("Wait for the server"),
-                      "opds_timeout", Prefs.TIMEOUT_OPTIONS),
             {{
                 text = _("Close"),
                 callback = function()
@@ -1092,6 +1143,126 @@ function Editor:_openCatalogSettings(draft, on_close)
         },
     }
     UIManager:show(d)
+end
+
+-- _pickGroupDisplay(draft, on_change) - how THIS chip draws its folder and
+-- stack tiles.
+--
+-- The list leads with "Default setting", so following the library default is
+-- a choice a chip can be put back to rather than only a state it starts in.
+-- Picking a named style pins it, and the chip keeps that look even if the
+-- library default changes underneath it later.
+-- The list STAYS OPEN and each pick lands on the shelf immediately, matching
+-- the library-wide row in the settings menu. A folder style is a look, and a
+-- look is chosen by seeing it: the old behaviour closed on the first tap, so
+-- comparing two styles meant reopening the picker for each one.
+--
+-- Re-shown rather than reinit'd between picks. ButtonDialog:reinit unlocks the
+-- MovableContainer, after which the dialog eats taps and wedges with no
+-- traceback; closing and building a fresh one is a repaint on e-ink and cannot
+-- get into that state. The dialog is centred, so it comes back where it was.
+-- chrome (optional): { hide, show } for the editor dialog itself. The picker
+-- previews a change to folder tiles, and the editor sits squarely over the
+-- shelf rows those tiles are on - so it goes away for the duration and comes
+-- back when the picker does. Closing it is safe and cheap: its onCloseWidget
+-- only repaints the region it occupied (which is what reveals the shelf), and
+-- nothing is freed, so the same widget re-shows intact and keeps the position
+-- it was anchored to.
+function Editor:_pickGroupDisplay(draft, on_change, chrome)
+    local Kit = require("lib/bookshelf_module_kit")
+    local StackDisplay = require("lib/bookshelf_stack_display")
+    local d
+    local show
+    -- Once, whichever way the picker ends. The editor must never be left
+    -- hidden: OK closes it programmatically, but a tap outside or Back goes
+    -- through ButtonDialog:onClose instead, and only that path fires
+    -- tap_close_callback. Programmatic closes do NOT fire it, which is what
+    -- lets the re-show between picks leave the editor hidden.
+    local restored = false
+    local function restoreChrome()
+        if restored then return end
+        restored = true
+        if chrome and chrome.show then chrome.show() end
+    end
+    if chrome and chrome.hide then chrome.hide() end
+    show = function()
+        -- Ticks what the chip IS, not what it draws: an untouched chip ticks
+        -- "Default setting" rather than the style that happens to resolve from
+        -- it, so the row that changes nothing is the row already on.
+        local current = StackDisplay.pinned(draft.group_display)
+                        or StackDisplay.FOLLOW_DEFAULT
+        local function radio(opt)
+            return Kit.radioRow{
+                label   = opt.label_func(),
+                active  = current == opt.value,
+                on_pick = function()
+                    -- Tapping the row already on is a no-op, not a rebuild of
+                    -- the shelf and the dialog to arrive back where we are.
+                    if current == opt.value then return end
+                    draft.group_display = opt.value
+                    -- Shelf first, then the list: the reader is looking at the
+                    -- shelf, and re-showing the dialog over an already-updated
+                    -- one is one repaint instead of two.
+                    if on_change then on_change() end
+                    UIManager:close(d)
+                    show()
+                end,
+            }
+        end
+        -- TWO COLUMNS, so the dialog is short enough to leave the shelf it is
+        -- previewing visible. "Default setting" keeps a full-width row of its
+        -- own: it is not a style, it is the absence of one, and the six styles
+        -- then pair evenly instead of leaving an odd button stretched across
+        -- the last row.
+        local rows = {}
+        local styles = {}
+        for _i, opt in ipairs(StackDisplay.CHIP_OPTIONS) do
+            if opt.value == StackDisplay.FOLLOW_DEFAULT then
+                rows[#rows + 1] = { radio(opt) }
+            else
+                styles[#styles + 1] = opt
+            end
+        end
+        for i = 1, #styles, 2 do
+            local pair = { radio(styles[i]) }
+            if styles[i + 1] then pair[2] = radio(styles[i + 1]) end
+            rows[#rows + 1] = pair
+        end
+        -- OK, not Close and not Apply. Every pick has already been applied, so
+        -- Apply would name work that has happened and Save would promise
+        -- persistence this does not do - the editor's own Save is what writes
+        -- the draft. OK means "done choosing", which is what the button is.
+        rows[#rows + 1] = {{
+            text = _("OK"),
+            callback = function()
+                UIManager:close(d)
+                restoreChrome()
+            end,
+        }}
+        d = ButtonDialog:new{
+            title       = _("Folder style"),
+            title_align = "center",
+            buttons     = rows,
+            -- HIGH, over the hero rather than the shelf. The dialog exists to
+            -- show a change to folder tiles, so covering them defeats it; the
+            -- hero is the part of the screen this setting has no effect on.
+            -- prefers_pop_down is required - MovableContainer places content
+            -- ABOVE its anchor by default, which for a near-top anchor means
+            -- clamping back to y=0 and covering the status bar too.
+            tap_close_callback = restoreChrome,
+            -- A PLAIN TABLE, not a Geom. MovableContainer centres horizontally
+            -- when the anchor's x is nil, and Geom defaults x to 0 - so a Geom
+            -- says "the left edge" where nil says "wherever it centres", and
+            -- the dialog rendered flush against the left of the screen. Only
+            -- x/y/w/h are read off this, so a bare table is the honest way to
+            -- leave one of them genuinely unset.
+            anchor = function()
+                return { y = Screen:scaleBySize(96) }, true
+            end,
+        }
+        UIManager:show(d)
+    end
+    show()
 end
 
 -- _pickOpdsOption(draft, field, options, title, on_close) - one radio list for
@@ -1107,10 +1278,18 @@ function Editor:_pickOpdsOption(draft, field, options, title, on_close)
     local Kit          = require("lib/bookshelf_module_kit")
     local d
     local rows = {}
+    -- Tick what the chip DOES, not what it has stored. An untouched chip has
+    -- no value in this field, nothing equals nil, and the list opened with no
+    -- row ticked at all - reading as "no setting" over a catalog that is very
+    -- much doing something. options[1] is the default by construction: every
+    -- option list here leads with it, labelFor already renders an unset chip
+    -- as options[1], and bookshelf_opds_prefs has a test holding that.
+    local current = draft[field]
+    if current == nil and options[1] then current = options[1].value end
     for _i, opt in ipairs(options) do
         rows[#rows + 1] = {Kit.radioRow{
             label  = opt.label_func(),
-            active = draft[field] == opt.value,
+            active = current == opt.value,
             on_pick = function()
                 draft[field] = opt.value
                 UIManager:close(d)

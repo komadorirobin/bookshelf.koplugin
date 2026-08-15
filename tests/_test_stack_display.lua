@@ -1,10 +1,10 @@
 -- tests/_test_stack_display.lua
--- Per-kind folder/stack display modes.
+-- Folder/stack display modes: the library default, a chip's override of it,
+-- and the one-time migration off the per-kind settings this replaced.
 --
 -- The default dominates everything else here: unset must mean the shipped
--- divider card, for every kind, including kinds this build has never heard of.
--- Any regression there changes every tile on every shelf of every library that
--- never opens this menu.
+-- divider card. Any regression there changes every tile on every shelf of
+-- every library that never opens this menu.
 package.path = "./?.lua;./?/init.lua;" .. package.path
 package.loaded["logger"] = { dbg=function() end, info=function() end,
                              warn=function() end, err=function() end }
@@ -12,8 +12,10 @@ package.loaded["logger"] = { dbg=function() end, info=function() end,
 -- Stub the KOReader surface the module touches at load time.
 local stored = {}
 package.loaded["lib/bookshelf_settings_store"] = {
-    read = function(k) return stored[k] end,
-    save = function(k, v) stored[k] = v end,
+    read   = function(k) return stored[k] end,
+    save   = function(k, v) stored[k] = v end,
+    delete = function(k) stored[k] = nil end,
+    flush  = function() end,
 }
 -- Colour stubs carry a getColor8 so the pile's border interpolation works:
 -- it blends the resolved card border toward the layer body in PAINTED space.
@@ -76,59 +78,73 @@ end
 
 local function reset() stored = {} end
 
--- ── defaults ─────────────────────────────────────────────────────────────────
+-- ── the library default ──────────────────────────────────────────────────────
 reset()
-for _i, k in ipairs(SD.KINDS) do
-    eq(SD.modeFor(k.kind), SD.DIVIDER, k.kind .. ": unset means the divider card")
-end
-eq(SD.modeFor("nonsense"), SD.DIVIDER, "an unknown kind falls back to the divider card")
-eq(SD.modeFor(nil), SD.DIVIDER, "a nil kind falls back to the divider card")
-eq(SD.showsCardboard(SD.DIVIDER), true, "divider draws the cardboard")
-eq(SD.pileInset(SD.DIVIDER), 0, "divider needs no room for a pile")
-
--- Every kind that renders through a stack widget must have a row, or it would
--- silently follow a default nobody can change. This is the list that keeps the
--- menu and the renderers in agreement.
-local kinds = {}
-for _i, k in ipairs(SD.KINDS) do kinds[k.kind] = true end
-for _i, needed in ipairs{ "folder", "series", "author", "genre", "tag",
-                          "language", "format", "rating" } do
-    ok(kinds[needed], "kind '" .. needed .. "' has a settings row")
-end
-
--- Keys must be distinct, or two kinds would share one setting.
-local seen_keys = {}
-for _i, k in ipairs(SD.KINDS) do
-    ok(not seen_keys[k.key], "settings key " .. k.key .. " is used by exactly one kind")
-    seen_keys[k.key] = true
-end
-
--- ── stored values ────────────────────────────────────────────────────────────
+eq(SD.defaultMode(), SD.DIVIDER, "an untouched library shows the shipped divider card")
 reset()
-stored.series_display = SD.STACK
-stored.genre_display  = SD.TEXT
-stored.author_display = SD.NONE
-eq(SD.modeFor("series"), SD.STACK, "series honours its own setting")
-eq(SD.modeFor("genre"),  SD.TEXT,  "genre honours its own setting")
-eq(SD.modeFor("author"), SD.NONE,  "author honours its own setting")
-eq(SD.modeFor("folder"), SD.DIVIDER, "an untouched kind is unaffected by its neighbours")
+stored[SD.DEFAULT_KEY] = SD.RIBBON
+eq(SD.defaultMode(), SD.RIBBON, "a stored default is honoured")
+stored[SD.DEFAULT_KEY] = "hologram"
+eq(SD.defaultMode(), SD.DIVIDER, "a mode this build does not offer never reaches a renderer")
+stored[SD.DEFAULT_KEY] = 3
+eq(SD.defaultMode(), SD.DIVIDER, "nor does a non-string one")
 
--- A value this build does not offer must not reach a renderer.
+-- ── a chip's override of it ──────────────────────────────────────────────────
 reset()
-stored.series_display = "hologram"
-eq(SD.modeFor("series"), SD.DIVIDER, "an unknown stored mode falls back to the divider card")
-stored.series_display = 3
-eq(SD.modeFor("series"), SD.DIVIDER, "a non-string stored mode falls back too")
+stored[SD.DEFAULT_KEY] = SD.RIBBON
+eq(SD.resolve(nil), SD.RIBBON, "a chip that has chosen nothing follows the default")
+eq(SD.resolve(SD.STACK), SD.STACK, "a chip that has chosen overrides the default")
+eq(SD.resolve("hologram"), SD.RIBBON,
+   "an override this build does not offer falls back to the default, not to a crash")
+-- Divider carries an explicit value precisely so a chip can disagree with a
+-- non-divider default. With divider stored as nil these two were the same.
+eq(SD.resolve(SD.DIVIDER), SD.DIVIDER,
+   "a chip can be an explicit divider card while the library default is not")
+local values = {}
+for _i, opt in ipairs(SD.OPTIONS) do
+    ok(type(opt.value) == "string", "every option carries a real value, not nil-as-default")
+    ok(not values[opt.value], "option value " .. tostring(opt.value) .. " appears once")
+    values[opt.value] = true
+end
+for _i, needed in ipairs{ SD.DIVIDER, SD.RIBBON, SD.STACK, SD.COLLAGE, SD.TEXT, SD.NONE } do
+    ok(values[needed], "mode '" .. needed .. "' is offered in the menu")
+end
+
+-- NO migration off the per-kind keys this replaced, deliberately: that model
+-- never shipped, so the only settings files carrying folder_display and
+-- friends are the ones it was built on. A stale key is simply never read.
+reset()
+stored.folder_display = SD.STACK
+stored.series_display = SD.COLLAGE
+eq(SD.defaultMode(), SD.DIVIDER, "a stale per-kind key does not seed the default")
+eq(SD.resolve(nil), SD.DIVIDER, "nor does it reach a tile")
+eq(stored.folder_display, SD.STACK, "and nothing rewrites the user's settings behind them")
 
 -- ── mode predicates ──────────────────────────────────────────────────────────
 reset()
-for _i, mode in ipairs{ SD.STACK, SD.COLLAGE, SD.TEXT, SD.NONE } do
+for _i, mode in ipairs{ SD.RIBBON, SD.STACK, SD.COLLAGE, SD.TEXT, SD.NONE } do
     eq(SD.showsCardboard(mode), false, mode .. " does not draw the cardboard")
 end
+eq(SD.showsCardboard(SD.DIVIDER), true, "divider draws the cardboard")
 eq(SD.isTextOnly(SD.TEXT), true, "text mode suppresses artwork")
-for _i, mode in ipairs{ SD.DIVIDER, SD.STACK, SD.COLLAGE, SD.NONE } do
+for _i, mode in ipairs{ SD.DIVIDER, SD.RIBBON, SD.STACK, SD.COLLAGE, SD.NONE } do
     eq(SD.isTextOnly(mode), false, mode .. " still renders artwork")
 end
+
+-- ── the ribbon ───────────────────────────────────────────────────────────────
+-- The band runs PAST the cover, and the only way to do that without painting
+-- over the next tile is for the cover to give up the room.
+ok(SD.ribbonInset(SD.RIBBON) > 0, "ribbon shortens the cover to make room for its overhang")
+eq(SD.ribbonInset(SD.RIBBON), SD.ribbonOverhang() * 2, "an overhang each side, symmetric")
+for _i, mode in ipairs{ SD.DIVIDER, SD.STACK, SD.COLLAGE, SD.TEXT, SD.NONE } do
+    eq(SD.ribbonInset(mode), 0, mode .. " gives up no room for a band")
+end
+ok(SD.ribbonInset(SD.RIBBON) < 30, "and the overhang stays small enough for a tile")
+-- The name IS the ribbon, so a nameless group gets no band rather than an
+-- empty bar across a third of its artwork.
+eq(SD.ribbonWidget(100, 200, nil), nil, "no band without a name")
+eq(SD.ribbonWidget(100, 200, ""), nil, "nor for an empty one")
+eq(SD.ribbonWidget(0, 200, "Dune"), nil, "nor for a zero-width cover")
 
 -- Only stack reserves room; every other mode gets the full slot, so callers can
 -- subtract the inset unconditionally.
@@ -183,10 +199,10 @@ for _i, opt in ipairs(SD.OPTIONS) do
 end
 eq(SD.labelFor("hologram"), SD.OPTIONS[1].label_func(),
     "an unknown value renders as the default option's label")
--- The default option must be the nil one: a stored "divider" string would be a
--- second way to say the same thing and would defeat the unset-means-default
--- rule the renderers rely on.
-eq(SD.OPTIONS[1].value, nil, "the first option is the unset default")
+-- Divider leads the list, and carries a real value. nil now means "not set",
+-- which for a chip means "follow the library default" -- so divider has to be
+-- sayable, or a chip could never disagree with a non-divider default.
+eq(SD.OPTIONS[1].value, SD.DIVIDER, "the divider card leads the list")
 
 -- ── external labels ─────────────────────────────────────────────────────────
 -- Divider carries the name in its own band, Text makes the name the card. The
@@ -201,18 +217,21 @@ for _i, mode in ipairs{ SD.STACK, SD.COLLAGE, SD.NONE } do
 end
 
 reset()
-eq(SD.externalLabel("series", "Discworld"), nil,
+eq(SD.needsExternalLabel(SD.RIBBON), false, "ribbon carries the name in its band")
+
+-- externalLabel takes the resolved MODE, not a kind: the tile's style is now
+-- the caller's answer, not a global this module looks up per kind.
+eq(SD.externalLabel(SD.DIVIDER, "Discworld"), nil,
     "a divider-mode group needs no external label")
-stored.series_display = SD.STACK
-eq(SD.externalLabel("series", "Discworld"), "Discworld",
+eq(SD.externalLabel(SD.RIBBON, "Discworld"), nil,
+    "nor does a ribbon-mode one")
+eq(SD.externalLabel(SD.STACK, "Discworld"), "Discworld",
     "a stack-mode group hands back its name")
-stored.series_display = SD.TEXT
-eq(SD.externalLabel("series", "Discworld"), nil,
+eq(SD.externalLabel(SD.TEXT, "Discworld"), nil,
     "a text-mode group needs no external label")
-stored.series_display = SD.NONE
-eq(SD.externalLabel("series", ""), nil, "an empty name is never labelled")
-eq(SD.externalLabel("series", nil), nil, "a missing name is never labelled")
-eq(SD.externalLabel("series", 42), nil, "a non-string name is never labelled")
+eq(SD.externalLabel(SD.NONE, ""), nil, "an empty name is never labelled")
+eq(SD.externalLabel(SD.NONE, nil), nil, "a missing name is never labelled")
+eq(SD.externalLabel(SD.NONE, 42), nil, "a non-string name is never labelled")
 
 -- ── the pile widget ──────────────────────────────────────────────────────────
 local pile = SD.pileWidget(100, 200, 4)
@@ -285,6 +304,119 @@ eq(SD.collageBB({}, 100, 200), nil, "no covers is not a collage")
 eq(SD.collageBB(nil, 100, 200), nil, "a nil list is not a collage")
 eq(SD.collageBB({ "/b/1.epub", "/b/2.epub" }, 0, 200), nil,
     "a degenerate slot yields no collage")
+
+-- ── "follow the library default" as an explicit choice ─────────────────────
+-- A chip could always BE unset, but the picker had no row for it, so once a
+-- style was chosen there was no way back except changing the library default.
+-- The sentinel has to stay invisible to every existing reader: resolve() must
+-- treat it exactly like an untouched chip.
+eq(SD.resolve(SD.FOLLOW_DEFAULT), SD.defaultMode(),
+   "the follow-default sentinel resolves to the library default")
+eq(SD.resolve(nil), SD.resolve(SD.FOLLOW_DEFAULT),
+   "and is indistinguishable from never having been set")
+eq(SD.pinned(SD.FOLLOW_DEFAULT), nil, "it is not a pinned style")
+eq(SD.pinned(nil), nil, "and neither is an untouched chip")
+eq(SD.pinned(SD.STACK), SD.STACK, "a chosen style reads back as pinned")
+eq(SD.pinned("nonsense"), nil, "a style this build does not offer is not pinned")
+-- The library default's own picker must not offer "the default", which would
+-- be circular; only the chip editor's list carries it.
+eq(SD.CHIP_OPTIONS[1].value, SD.FOLLOW_DEFAULT, "the chip list leads with it")
+eq(#SD.CHIP_OPTIONS, #SD.OPTIONS + 1, "and is otherwise the same list")
+local in_global = false
+for _i, o in ipairs(SD.OPTIONS) do
+    if o.value == SD.FOLLOW_DEFAULT then in_global = true end
+end
+eq(in_global, false, "the library-wide list does not offer it")
+
+-- ── the collage gap wash: palette ──────────────────────────────────────────
+-- Gaps used to be one flat colour: the mean of every cover that resolved. A
+-- flat panel beside photographic covers reads as missing artwork, and the more
+-- covers it averaged the muddier it got.
+--
+-- The scoring is count * (saturation + floor), and the case that forces it is
+-- a gold ring on a black cover: the ring is a few percent of the pixels and
+-- loses every popularity contest, but it is the only thing anyone would
+-- describe. Area alone picks black; area weighted by saturation picks gold.
+local function hist(entries)
+    -- entries: { {n=, r=, g=, b=}, ... } already averaged per bucket
+    local h = {}
+    for i, e in ipairs(entries) do
+        h[i] = { n = e.n, r = e.r * e.n, g = e.g * e.n, b = e.b * e.n }
+    end
+    return h
+end
+
+do
+    -- 90% neutral dark, plus mid and light greys that OUTNUMBER the gold, so
+    -- ranking has to do real work: there are five candidates for three slots,
+    -- and by area alone the gold is fifth and never picked.
+    local p = SD.pickPalette(hist{
+        { n = 900, r = 12,  g = 12,  b = 12  },   -- the background
+        { n = 300, r = 60,  g = 60,  b = 60  },   -- shadow
+        { n = 200, r = 110, g = 110, b = 110 },   -- midtone
+        { n = 150, r = 170, g = 170, b = 170 },   -- highlight
+        { n = 50,  r = 212, g = 168, b = 40  },   -- the ring: outnumbered 18:1
+    }, 3)
+    eq(#p, 3, "three stops from five candidates")
+    local has_gold = false
+    for _i, c in ipairs(p) do
+        if c.r > 150 and c.g > 120 and c.b < 100 then has_gold = true end
+    end
+    eq(has_gold, true, "the ring's gold beats four larger greys on saturation")
+    -- And the wash runs dark to light, not by rank.
+    local lum = function(c) return 0.299*c.r + 0.587*c.g + 0.114*c.b end
+    local ordered = true
+    for i = 2, #p do if lum(p[i]) < lum(p[i-1]) then ordered = false end end
+    eq(ordered, true, "stops are ordered dark to light")
+end
+
+do
+    -- A black-and-white cover has nothing saturated. Without the saturation
+    -- FLOOR every bucket scores zero, ranking collapses to the tiebreak, and a
+    -- single stray near-black pixel outranks the 600 that make up the actual
+    -- dark - then swallows it as "too close" and shifts the whole wash.
+    local p = SD.pickPalette(hist{
+        { n = 600, r = 20,  g = 20,  b = 20  },   -- the real dark
+        { n = 300, r = 200, g = 200, b = 200 },   -- the real light
+        { n = 1,   r = 2,   g = 2,   b = 2   },   -- one stray pixel
+    }, 3)
+    ok(#p >= 2, "a monochrome cover still yields a usable wash")
+    eq(math.floor(p[1].r), 20, "area decides when nothing is saturated, so the dark is the real one")
+end
+
+do
+    -- Stops too close together make a wash with no visible travel - that is
+    -- just the flat fill again, with extra steps.
+    local p = SD.pickPalette(hist{
+        { n = 500, r = 100, g = 100, b = 100 },
+        { n = 400, r = 104, g = 102, b = 101 },   -- indistinguishable
+    }, 3)
+    eq(#p, 1, "near-identical colours collapse to one stop")
+end
+
+eq(#SD.pickPalette({}, 3), 0, "no samples, no stops")
+eq(#SD.pickPalette(nil, 3), 0, "no histogram, no stops")
+
+-- ── the collage gap wash: interpolation ────────────────────────────────────
+-- If the endpoints do not land exactly on the first and last stop, the wash
+-- starts mid-colour and meets the covers as a shade nobody picked.
+local A = { r = 40,  g = 60,  b = 80  }
+local B = { r = 200, g = 160, b = 120 }
+local C = { r = 120, g = 110, b = 100 }
+eq(SD.gradientColorAt({ A }, 0).r, 40, "one stop: flat at the start")
+eq(SD.gradientColorAt({ A }, 1).r, 40, "one stop: flat at the end")
+eq(SD.gradientColorAt({ A, B }, 0).r,   40,  "two stops: t=0 IS the first stop")
+eq(SD.gradientColorAt({ A, B }, 1).r,   200, "two stops: t=1 IS the last stop")
+eq(SD.gradientColorAt({ A, B }, 1).b,   120, "and on every channel")
+eq(SD.gradientColorAt({ A, B }, 0.5).r, 120, "two stops: halfway is halfway")
+eq(SD.gradientColorAt({ A, B }, 0.5).g, 110, "on the green channel too")
+-- Three covers put a stop in the middle, so t=0.5 must land ON it.
+eq(SD.gradientColorAt({ A, C, B }, 0.5).r, 120, "three stops: the middle stop is reached")
+eq(SD.gradientColorAt({ A, C, B }, 1).r,   200, "three stops: t=1 IS the last stop")
+eq(SD.gradientColorAt({ A, B }, -0.5).r, 40,  "below the run clamps to the first stop")
+eq(SD.gradientColorAt({ A, B }, 1.5).r,  200, "above the run clamps to the last stop")
+eq(SD.gradientColorAt({}, 0.5),  nil, "no stops, no colour")
+eq(SD.gradientColorAt(nil, 0.5), nil, "no list, no colour")
 
 print(string.format("stack display: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

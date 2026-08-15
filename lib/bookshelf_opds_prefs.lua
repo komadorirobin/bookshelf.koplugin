@@ -29,34 +29,64 @@ local _ = require("lib/bookshelf_i18n").gettext
 
 local M = {}
 
--- Sentinel for "refresh every time this catalog is opened". Distinct from nil
--- (never expire on age) and it cannot be 0-as-falsy confusion in Lua, but it
--- IS 0, so every comparison against it must be `== 0` and never `not x`.
-M.REFRESH_ALWAYS = 0
-
-local HOUR, DAY = 3600, 86400
-
--- Refresh age: how stale a stored copy of a feed may be before opening the
--- catalog refetches it. nil is the default and means age alone never triggers
--- a refetch -- the swipe-down gesture stays the only refresh, which is what
--- every release up to now did.
+-- Two sentinels, both of which must be compared with == and never tested for
+-- truthiness: they ARE 0 and -1.
 --
--- The default's LABEL names that gesture on purpose. A cached feed that never
--- expires surprised the reporter of #321 badly enough to hand-edit a settings
--- file, having never found the swipe; the setting that explains the current
--- behaviour is also the best place to teach it.
+--   REFRESH_ALWAYS  refetch on every entry to the catalog
+--   REFRESH_NEVER   never expire on age; the swipe-down gesture is the only
+--                   refresh, which is what every release up to now did
+M.REFRESH_ALWAYS = 0
+M.REFRESH_NEVER  = -1
+
+local MINUTE, HOUR, DAY = 60, 3600, 86400
+
+-- SWIPE-DOWN ONLY by default, and the default is the point of this setting.
+--
+-- This was five minutes, chosen against #321: that reporter hand-edited a
+-- settings file to get fresh content, never having found the swipe-down
+-- gesture, and an age default meant nobody had to find it.
+--
+-- What changed is what a cached feed now IS. It used to be one batch, so
+-- expiring it cost one request and the reader lost nothing they had built up.
+-- A feed now accumulates as it is paged, and the last-page chevron will walk a
+-- category to its end on request - hundreds of entries and a minute of
+-- fetching. The age check refetches with replace, ONE batch: so walking a
+-- category to page 78, going to make a cup of tea, and coming back put the
+-- reader on page 1 of a single batch with all of that thrown away. Five
+-- minutes is far shorter than the work it can now discard.
+--
+-- The staleness #321 complained about is also much cheaper to fix than it was:
+-- swipe-down works from anywhere in a catalog, including inside a drilled
+-- subcatalog, and it no longer empties the shelf when the network is
+-- unreachable. Readers who never find it see a catalog that only changes when
+-- they ask - which for a book catalog, unlike a news feed, is a defensible
+-- thing to be. Anyone who wants the old behaviour sets it per catalog.
+--
+-- Where this is checked has not changed: on ENTERING a feed, inside the
+-- user-initiated gate, so a passive rebuild still makes no network call.
+--
+-- Ordering: the default leads, because labelFor renders an unset chip with
+-- OPTIONS[1] and the row would otherwise read as something the chip is not.
+-- After that, ascending, with the always-refetch opt-in at the end.
+M.REFRESH_DEFAULT = M.REFRESH_NEVER
+
 M.REFRESH_OPTIONS = {
-    { value = nil,               label_func = function() return _("Only when I swipe down") end },
+    { value = M.REFRESH_NEVER,   label_func = function() return _("Only when I swipe down") end },
+    { value = 5 * MINUTE,        label_func = function() return _("If it's over 5 minutes old") end },
     { value = HOUR,              label_func = function() return _("If it's over an hour old") end },
     { value = DAY,               label_func = function() return _("If it's over a day old") end },
     { value = DAY * 7,           label_func = function() return _("If it's over a week old") end },
     { value = M.REFRESH_ALWAYS,  label_func = function() return _("Every time I open it") end },
 }
 
--- Cover loading. "tap" is the shipped behaviour: the shelf shows a title and
--- author card and a cover is downloaded only for the book the user taps. Bulk
--- cover downloads over a slow public catalog made paging feel broken, which is
--- why that is the default and why turning it off is opt-in per catalog.
+-- Cover loading is no longer a choice: the shelf always fills covers.
+--
+-- It was opt-in because the original implementation downloaded a whole page
+-- SERIALLY on the UI thread, and over a slow public catalog that made paging
+-- feel broken. That implementation is gone -- fetches run in forked workers
+-- off the UI thread, a landed cover repaints on a ramp, and a page turn
+-- abandons the chain. The reason for the option went with it, and a covers
+-- plugin whose covers are off by default is a bad joke.
 --
 -- DELIBERATELY NOT OFFERED: a "use the small thumbnail instead" variant. Which
 -- URL a record's cover is has to be one answer shared by
@@ -64,75 +94,67 @@ M.REFRESH_OPTIONS = {
 -- repo, which calls cachePath while building records and knows nothing about
 -- chips. A per-chip preference splits that agreement across two modules, and
 -- when they disagree the symptom is a cover that downloads to one path and is
--- looked for at another - covers that silently never appear. Not worth it for
--- "slightly smaller downloads".
-M.COVER_TAP  = "tap"
-M.COVER_AUTO = "auto"
+-- looked for at another - covers that silently never appear.
 
-M.COVER_OPTIONS = {
-    { value = nil,          label_func = function() return _("Load when I tap a book") end },
-    { value = M.COVER_AUTO, label_func = function() return _("Load automatically") end },
-}
-
--- Nav-tile resolution. Some catalogs present every BOOK as a one-book
--- subcatalog rather than as an entry you can download: ManyBooks' title lists
--- and Gutenberg's category lists both do. The shelf cannot know a folder holds
--- a single book without fetching it, so those tiles render as folders that
--- resolve when tapped - and once automatic covers are on, they render as a
--- real book cover wearing folder chrome, which reads as a bug.
+-- Nav-tile resolution is no longer a choice either: a subcatalog holding one
+-- book is always shown as that book.
 --
--- Turning this on fetches each such tile's feed in the background so a
--- folder-of-one flattens into its book (the repo already does that flattening
--- once the child feed is cached; this only populates the cache).
+-- It was opt-in because it costs one feed fetch PER TILE, and a fifteen-tile
+-- page was fifteen requests paced one per tick. Three things changed that
+-- arithmetic: tiles that DECLARE more than one item are skipped without being
+-- fetched (IA's category tiles say ~10000 apiece), the fetches run in parallel
+-- workers rather than one per tick, and a resolved tile's cover now joins the
+-- same chain instead of waiting for a second pass.
 --
--- Off by default, and the default matters more here than anywhere else in this
--- file: this is one feed fetch PER TILE, so a fifteen-tile page is fifteen
--- requests. An always-on, six-wide-parallel version of exactly this was built
--- and removed (1477764) because public catalogs throttled the burst and served
--- half-filled pages. It is back only as an opt-in, and paced one request per
--- tick rather than in a burst.
+-- Honest about the limit, which no setting could fix: a tile holding two
+-- editions (Gutenberg's do) is a real folder and stays one. This makes
+-- single-book folders into books; it cannot make a two-item folder into a
+-- book.
+
+-- How many records to ask a feed for is no longer a choice either: one
+-- screenful, and the shelf keeps a page in hand ahead of you
+-- (BookshelfWidget:_opdsPrefetchAhead).
 --
--- Honest about the limit: a tile holding two editions (Gutenberg's do) is a
--- real folder and stays one. This makes single-book folders into books; it
--- cannot make a two-item folder into a book.
-M.RESOLVE_BOOKS = "books"
-
-M.RESOLVE_OPTIONS = {
-    { value = nil,             label_func = function() return _("Leave them as folders") end },
-    { value = M.RESOLVE_BOOKS, label_func = function() return _("Show them as books") end },
-}
-
--- How many records to ask a feed for in one go. nil follows the shelf's own
--- page size, which is what the fetch path has always used and which keeps the
--- first page appearing as fast as the layout allows. A bigger number is fewer
--- round trips and a longer wait for the first paint -- worth it on a LAN,
--- rarely worth it otherwise.
-M.BATCH_OPTIONS = {
-    { value = nil, label_func = function() return _("Match the shelf") end },
-    { value = 50,  label_func = function() return "50" end },
-    { value = 100, label_func = function() return "100" end },
-    { value = 200, label_func = function() return "200" end },
-}
-
--- Socket timeouts, as the (block, total) pair socketutil wants. The default
--- pair is KOReader's own LARGE_BLOCK/LARGE_TOTAL, which is what every feed
--- fetch has used to date and is tuned for public catalogs that stall.
+-- A fixed number was the wrong shape twice over. Too small and every page turn
+-- waited on a round trip; too large and the FIRST page waited on all of them.
+-- Worse, it was a number chosen against a page size that changes underneath it
+-- - swiping up to reveal another row grew the view past the batch, and the
+-- extra slots stayed empty because nothing had asked for those books.
 --
--- The short pair is the one worth having: on a server on your own network a
--- 30-second wait for something that is simply not running reads as a hang,
--- and failing in 10 tells you the truth sooner.
-M.TIMEOUT_DEFAULT = 30
-local TIMEOUT_PAIRS = {
-    [10] = { block = 5,  total = 10 },
-    [30] = { block = 10, total = 30 },
-    [60] = { block = 15, total = 60 },
-}
+-- Fetching exactly one screen keeps the first paint as fast as the layout
+-- allows, and the background top-up means the round trip for the NEXT screen
+-- has already happened by the time you ask for it.
 
-M.TIMEOUT_OPTIONS = {
-    { value = nil, label_func = function() return _("30 seconds") end },
-    { value = 10,  label_func = function() return _("10 seconds") end },
-    { value = 60,  label_func = function() return _("60 seconds") end },
-}
+-- Socket timeouts, as the (block, total) pair socketutil wants. One pair for
+-- everyone: 10s to the first byte, 30s in total.
+--
+-- This was configurable so a LAN server could fail fast instead of hanging for
+-- KOReader's 30/60 default. It is not worth a menu row -- 30 seconds is
+-- already "this server is not answering" on any network, and the short pair
+-- only ever changed how quickly you learnt that.
+local TIMEOUT_BLOCK = 10
+local TIMEOUT_TOTAL = 30
+
+-- How many background fetches one catalog may have in flight at once.
+--
+-- TEN, measured (2026-08-15, Gutenberg per-book feeds, disjoint URL slices):
+--
+--   width  3   4.8s   median 766ms   0 fails    3.7 req/s
+--   width  6   2.5s   median 762ms   0 fails    7.1 req/s
+--   width 10   1.9s   median 791ms   0 fails    9.6 req/s
+--   width 16   5.3s   median 870ms   1 fail     3.4 req/s
+--
+-- Clean linear scaling to 10 with FLAT latency - no throttling signature at
+-- all - and then a collapse at 16 to worse than width 3, with errors. So the
+-- server's ceiling is real and sits between the two; 10 is 35% faster than 6
+-- and still the safe side of it.
+--
+-- The pool still HALVES this on any failure and recovers slowly (see
+-- bookshelf_widget's _opdsCoverPool). One catalog was measurable here -
+-- Internet Archive was unreachable from the test network, and it is the one
+-- with a throttling history - so the client has to notice a server pushing
+-- back rather than trust this number everywhere.
+M.CONCURRENCY = 10
 
 -- A stored value is only honoured if it is one this build offers. A chip
 -- written by a newer version (or hand-edited) falls back to the default
@@ -144,14 +166,14 @@ local function validated(options, value)
     return nil
 end
 
--- refreshAge(tab) -> seconds, or nil for "never expire on age".
--- Returns M.REFRESH_ALWAYS (0) for "every time", so callers MUST test with
--- `age == 0` before any truthiness check.
+-- refreshAge(tab) -> seconds, M.REFRESH_ALWAYS (0) or M.REFRESH_NEVER (-1).
+-- Never nil: unset means the default, not "no expiry". Callers MUST compare
+-- against the sentinels with == rather than testing truthiness.
 function M.refreshAge(tab)
-    if type(tab) ~= "table" then return nil end
+    if type(tab) ~= "table" then return M.REFRESH_DEFAULT end
     local v = tab.opds_refresh_age
-    if type(v) ~= "number" then return nil end
-    return validated(M.REFRESH_OPTIONS, v)
+    if type(v) ~= "number" then return M.REFRESH_DEFAULT end
+    return validated(M.REFRESH_OPTIONS, v) or M.REFRESH_DEFAULT
 end
 
 -- isStale(tab, fetched_at, now) -> boolean. The single place the age rule
@@ -162,7 +184,7 @@ end
 -- fetch. Saying "stale" here too would turn one fetch into two.
 function M.isStale(tab, fetched_at, now)
     local age = M.refreshAge(tab)
-    if age == nil then return false end
+    if age == M.REFRESH_NEVER then return false end
     if type(fetched_at) ~= "number" or fetched_at <= 0 then return false end
     if age == M.REFRESH_ALWAYS then return true end
     if type(now) ~= "number" then return false end
@@ -174,55 +196,36 @@ function M.isStale(tab, fetched_at, now)
     return elapsed >= age
 end
 
--- coverMode(tab) -> M.COVER_TAP | M.COVER_AUTO | M.COVER_AUTO_THUMB
-function M.coverMode(tab)
-    if type(tab) ~= "table" then return M.COVER_TAP end
-    local v = validated(M.COVER_OPTIONS, tab.opds_cover_mode)
-    return v or M.COVER_TAP
-end
-
--- autoCovers(tab) -> boolean. The question every call site on the render path
--- actually asks.
-function M.autoCovers(tab)
-    return M.coverMode(tab) == M.COVER_AUTO
+-- autoCovers(tab) -> boolean. Kept as a function, not inlined at the call
+-- sites, so the reason it is always true stays in one place (see the cover
+-- comment above) and a future change has one thing to edit.
+function M.autoCovers(_tab)
+    return true
 end
 
 -- resolveNav(tab) -> boolean. Should the background pass fetch nav tiles to
--- flatten single-book folders?
-function M.resolveNav(tab)
-    if type(tab) ~= "table" then return false end
-    return validated(M.RESOLVE_OPTIONS, tab.opds_resolve_nav) == M.RESOLVE_BOOKS
+-- flatten single-book folders? Always, now.
+function M.resolveNav(_tab)
+    return true
 end
 
--- batchSize(tab, view_size) -> number. view_size is the shelf's own page size
--- and is used as-is when the chip has no override, so an unset chip fetches
--- exactly what it fetched before this setting existed.
-function M.batchSize(tab, view_size)
-    local fallback = (type(view_size) == "number" and view_size > 0)
-        and view_size or 24
-    if type(tab) ~= "table" then return fallback end
-    local v = validated(M.BATCH_OPTIONS, tab.opds_batch)
-    if type(v) ~= "number" or v <= 0 then return fallback end
-    return v
+-- concurrency(tab) -> the pool's STARTING width. The pool narrows from here on
+-- failure; this is the opening bid, not a ceiling it must respect.
+function M.concurrency(_tab)
+    return M.CONCURRENCY
 end
 
 -- timeouts(tab) -> { block_timeout = n, total_timeout = n }
 --
 -- Keys match the net_opts shape bookshelf_opds_covers already passes to
--- CoverFetch.download and that OpdsFeed.fetch now accepts, so the result goes
+-- CoverFetch.download and that OpdsFeed.fetch accepts, so the result goes
 -- straight to either without a translation step in between (a translation step
 -- is where a block/total pair gets silently swapped).
 --
--- Always a fresh table: handing out the shared pair would let one caller's
+-- Always a fresh table: handing out a shared pair would let one caller's
 -- mutation retune every later request in the session.
-function M.timeouts(tab)
-    local secs = M.TIMEOUT_DEFAULT
-    if type(tab) == "table" then
-        local v = validated(M.TIMEOUT_OPTIONS, tab.opds_timeout)
-        if type(v) == "number" then secs = v end
-    end
-    local pair = TIMEOUT_PAIRS[secs] or TIMEOUT_PAIRS[M.TIMEOUT_DEFAULT]
-    return { block_timeout = pair.block, total_timeout = pair.total }
+function M.timeouts(_tab)
+    return { block_timeout = TIMEOUT_BLOCK, total_timeout = TIMEOUT_TOTAL }
 end
 
 -- labelFor(options, value) -> the option list's label for a stored value, or

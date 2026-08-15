@@ -3044,6 +3044,32 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
     local shapes_for_slice, total = _filterAllShapes(shapes, filter, miss_light_cache)
     local out  = {}
     local stop = _hydrationStop(offset, limit, total, total, "getAll", opts and opts.light_only)
+    -- Light path, same as the HIT branch above. It has to be here too: a
+    -- light_only caller passes limit = 10000 and _hydrationStop deliberately
+    -- lifts the MAX_HYDRATE ceiling for it, so falling through to the full
+    -- build below would decode a cover BlitBuffer for every book in the
+    -- folder and free none of them -- the OOM shape light_only exists to
+    -- avoid, reached whenever the walk cache is cold for this path (first
+    -- visit, or the TTL lapsed) and a "Go to letter" jump is the call that
+    -- warms it.
+    if opts and opts.light_only then
+        local light_cache = miss_light_cache
+                            or _getLightMetaCache(miss_lc_home, miss_lc_depth)
+        for i = offset + 1, stop do
+            local shape = shapes_for_slice[i]
+            if shape.kind == "folder" then
+                out[#out + 1] = { kind = "folder", path = shape.path,
+                                  label = shape.label, name = shape.label }
+            else
+                local b = _lightMetaForFp(light_cache, shape.fp)
+                out[#out + 1] = b or { fp = shape.fp, filepath = shape.fp }
+            end
+        end
+        logger.dbg(string.format(
+            "[bookshelf perf] getAll: MISS light=%.0fms items=%d/%d",
+            (_gettime() - _t0) * 1000, #out, total))
+        return out, total
+    end
     for i = offset + 1, stop do
         local shape = shapes_for_slice[i]
         if shape.kind == "folder" then
@@ -5249,9 +5275,15 @@ local NAV_COVER_BORROW_ITER = 200
 -- whose formats were all unsupported), and promoting it would swap a working
 -- folder for a dead tile.
 local function opdsLoneChildBook(win)
-    local entries = win and win.entries
-    if type(entries) ~= "table" then return nil end
+    if type(win) ~= "table" then return nil end
     if win.next_url then return nil end
+    -- Two rows is all this needs: a second entry of any kind disqualifies the
+    -- window, so there is no reason to materialise a whole child feed to find
+    -- that out. (The window no longer carries its records - they stay in the
+    -- database until something asks for a page.)
+    local OpdsWindow = require("lib/bookshelf_opds_window")
+    local entries = OpdsWindow.slice(win, 0, 2)
+    if type(entries) ~= "table" then return nil end
     local book
     for _i = 1, #entries do
         local e = entries[_i]
@@ -5521,7 +5553,7 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
         local page, total, open_ended = OpdsWindow.slice(win, offset, limit)
         page.opds_open_ended = open_ended
         page.opds_needs_fetch = OpdsWindow.needsFetch(win, offset or 0, limit or 0)
-                                or (#win.entries == 0 and win.fetched_at == 0)
+                                or ((win.count or 0) == 0 and win.fetched_at == 0)
         -- Child windows loaded while decorating this page, keyed by feed url.
         -- The flattening pass and the cover borrow below both want a nav
         -- record's child window and neither may pay for it twice, so the load
@@ -5609,7 +5641,10 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
                 if rec.is_opds_nav and not rec.cover_image_path
                         and rec.opds and rec.opds.feed_url then
                     local child_win = childWindow(rec.opds.feed_url)
-                    local entries = (child_win and child_win.entries) or {}
+                    -- Only the first few rows are ever scanned for a cover to
+                    -- borrow, so ask for exactly those rather than the feed.
+                    local entries = child_win
+                        and OpdsWindow.slice(child_win, 0, NAV_COVER_BORROW_ITER) or {}
                     local scanned = 0
                     for _j = 1, math.min(#entries, NAV_COVER_BORROW_ITER) do
                         if scanned >= NAV_COVER_BORROW_SCAN then break end

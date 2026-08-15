@@ -3247,6 +3247,17 @@ test("getBySource: opds kind attaches cover_image_path via OpdsCovers.cachedPath
     package.loaded["lib/bookshelf_opds_window"] = {
         load = function(_id, _feed_url) return { entries = {}, fetched_at = 1, total = 2 } end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             -- Fresh copies, same contract as the real slice().
             local page = {}
             for _i, r in ipairs({ rec_cached, rec_missing }) do
@@ -3305,6 +3316,17 @@ test("getBySource: opds nav tile borrows first cached child cover when it has no
             return { entries = {} }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3342,6 +3364,17 @@ test("getBySource: opds nav tile stays nil when the child feed has no cached win
         -- Never drilled into: no persisted window for the child feed.
         load = function(_id, _feed_url) return { entries = {} } end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3381,6 +3414,17 @@ test("getBySource: opds nav tile cover borrow is capped at the first 12 child en
             return { entries = {} }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3428,6 +3472,17 @@ test("getBySource: opds nav tile cover borrow skips coverless entries without sp
             return { entries = {} }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3480,6 +3535,17 @@ test("getBySource: opds nav tile's own cover wins over a previously borrowed one
             return { entries = {} }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3563,6 +3629,17 @@ test("getBySource: opds nav tile cover borrow stops after 200 raw child entries"
             return { entries = {} }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3761,6 +3838,17 @@ test("getBySource: opds nav folder holding exactly one cached book renders as th
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3818,6 +3906,17 @@ test("getBySource: opds nav folder with two cached books stays a folder (and loa
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3861,6 +3960,17 @@ test("getBySource: opds nav folder holding one book plus a subfolder stays a fol
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3889,6 +3999,17 @@ test("getBySource: opds nav folder with no cached child window stays a folder", 
         -- Never fetched: OpdsWindow.load hands back the empty default.
         load = function(_id, _feed_url) return { entries = {}, fetched_at = 0 } end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3931,6 +4052,17 @@ test("getBySource: opds nav folder whose child window is only partly fetched sta
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -3968,6 +4100,17 @@ test("getBySource: opds nav folder whose lone child has no acquisitions stays a 
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -4007,6 +4150,17 @@ test("getBySource: opds folder-of-one flattening is skipped on the light_only sc
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -4065,6 +4219,17 @@ test("getBySource: opds book records mirror opds.summary into description", func
         -- test is only about the description mirror.
         load = function(_id, _feed_url) return { entries = {}, fetched_at = 0 } end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local page = {}
             for _i, r in ipairs({ with_summary, no_summary, own_desc, nav }) do
                 local copy = {}
@@ -4113,6 +4278,17 @@ test("getBySource: the flattened folder-of-one book carries its summary as descr
             return { entries = {}, fetched_at = 1 }
         end,
         slice = function(_win, _offset, _limit)
+            if _win and _win.entries and #_win.entries > 0 then
+                local _src, _out = _win.entries, {}
+                local _from = (_offset or 0) + 1
+                local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+                for _i = _from, _to do
+                    local _c = {}
+                    for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                    _out[#_out + 1] = _c
+                end
+                return _out, #_src, false
+            end
             local copy = {}
             for k, v in pairs(nav) do copy[k] = v end
             return { copy }, 1, false
@@ -4156,6 +4332,19 @@ test("Repo.opdsLoneChildBook returns a decorated copy for a cached folder of one
             if feed_url == "http://L1/work" then return { entries = { child }, fetched_at = 1 } end
             return { entries = {}, fetched_at = 0 }
         end,
+        -- opdsLoneChildBook reads the child window through slice() now
+        -- (two rows is all it needs to disqualify one), so the stub has to
+        -- answer for the window it is handed.
+        slice = function(_win, _offset, _limit)
+            local _src, _out = (_win and _win.entries) or {}, {}
+            local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+            for _i = (_offset or 0) + 1, _to do
+                local _c = {}
+                for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                _out[#_out + 1] = _c
+            end
+            return _out, #_src, false
+        end,
     }
     package.loaded["lib/bookshelf_opds_covers"] = {
         cachePath  = function(rec) return "/cache/" .. rec.filepath .. ".img" end,
@@ -4197,6 +4386,19 @@ test("Repo.opdsLoneChildBook says nil for an uncached, multi-book or unexhausted
                 return { entries = { one }, fetched_at = 1, next_url = "http://L2/partial?p=2" }
             end
             return { entries = {}, fetched_at = 0 }
+        end,
+        -- opdsLoneChildBook reads the child window through slice() now
+        -- (two rows is all it needs to disqualify one), so the stub has to
+        -- answer for the window it is handed.
+        slice = function(_win, _offset, _limit)
+            local _src, _out = (_win and _win.entries) or {}, {}
+            local _to = math.min((_offset or 0) + (_limit or #_src), #_src)
+            for _i = (_offset or 0) + 1, _to do
+                local _c = {}
+                for _k, _v in pairs(_src[_i]) do _c[_k] = _v end
+                _out[#_out + 1] = _c
+            end
+            return _out, #_src, false
         end,
     }
     package.loaded["lib/bookshelf_opds_covers"] = {
