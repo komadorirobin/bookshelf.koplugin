@@ -64,6 +64,10 @@ package.loaded["lib/bookshelf_epub_metadata"] = {
         _G._test_epub_author_call_count = (_G._test_epub_author_call_count or 0) + 1
         return _G._test_epub_author_creators and _G._test_epub_author_creators[fp] or nil
     end,
+    subtitleForFile = function(fp)
+        _G._test_epub_subtitle_call_count = (_G._test_epub_subtitle_call_count or 0) + 1
+        return _G._test_epub_subtitles and _G._test_epub_subtitles[fp] or nil
+    end,
     invalidate = function() end,
 }
 package.loaded["docsettings"] = {
@@ -207,6 +211,34 @@ test("getCurrent: returns a book when lastfile is set", function()
     assert(b.page_count == 688, "expected page_count=688 got " .. tostring(b.page_count))
     assert(b.format == "EPUB", "expected format=EPUB got " .. tostring(b.format))
     assert(b.filename == "dune", "expected filename=dune got " .. tostring(b.filename))
+end)
+
+test("buildBook: hydrates EPUB3 subtitle for the hero", function()
+    local fp = "/books/demon-slayer-8.epub"
+    _G._test_bim_data = {
+        [fp] = { title = "Demon Slayer: Kimetsu No Yaiba, Vol. 8" },
+    }
+    _G._test_docsettings_data = { [fp] = {} }
+    _G._test_epub_subtitles = { [fp] = "The Strength of the Hashira" }
+    _G._test_epub_subtitle_call_count = 0
+    local b = Repo.buildBook(fp)
+    _G._test_epub_subtitles = nil
+    assert(b.subtitle == "The Strength of the Hashira",
+        "expected BookOrbit subtitle got " .. tostring(b.subtitle))
+    assert(_G._test_epub_subtitle_call_count == 1,
+        "expected one lazy OPF subtitle lookup")
+end)
+
+test("buildBookMeta: shelf-grid metadata does not unzip EPUB for subtitle", function()
+    local fp = "/books/grid-only.epub"
+    _G._test_bim_data = { [fp] = { title = "Grid only" } }
+    _G._test_epub_subtitles = { [fp] = "Must stay lazy" }
+    _G._test_epub_subtitle_call_count = 0
+    local b = Repo.buildBookMeta(fp)
+    _G._test_epub_subtitles = nil
+    assert(b.subtitle == nil, "grid metadata unexpectedly hydrated subtitle")
+    assert(_G._test_epub_subtitle_call_count == 0,
+        "grid metadata must not trigger an OPF unzip")
 end)
 
 test("buildBook: EPUB page count prefers rendered DocSettings over BIM estimate", function()

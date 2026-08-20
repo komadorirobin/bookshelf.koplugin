@@ -375,6 +375,7 @@ function Settings:_heroSubItems(keys)
         local _ignore = {
             _("Status line"),
             _("Title"),
+            _("Subtitle"),
             _("Author"),
             _("Rating (interactive)"),
             _("Metadata"),
@@ -1631,7 +1632,7 @@ function Settings:_settingsSubItems()
     items[#items + 1] = {
         text                = _("Edit book detail view"),
         help_text = _("The lines of book information shown in the hero area:"
-            .. " title, author, rating, metadata, description, tags and"
+            .. " title, subtitle, author, rating, metadata, description, tags and"
             .. " progress. Tap a line to edit its template; hold to toggle"
             .. " it. The status line at the top has its own entry."),
         enabled_func        = function() return self._bw ~= nil end,

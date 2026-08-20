@@ -52,6 +52,7 @@ end)
 local function bookFixture()
     return {
         title = "Dune",
+        subtitle = "A Novel",
         author = "Frank Herbert",
         authors = { "Frank Herbert" },
         series = "Dune #1",
@@ -65,6 +66,9 @@ end
 
 test("metadata: %title", function()
     eq(Tokens.expand("%title", bookFixture()), "Dune")
+end)
+test("metadata: %subtitle", function()
+    eq(Tokens.expand("%subtitle", bookFixture()), "A Novel")
 end)
 test("metadata: %author", function()
     eq(Tokens.expand("%author", bookFixture()), "Frank Herbert")

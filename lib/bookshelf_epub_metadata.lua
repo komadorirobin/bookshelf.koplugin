@@ -1,6 +1,7 @@
 -- bookshelf_epub_metadata.lua
 -- Small, cached EPUB OPF helpers for metadata that KOReader's
--- BookInfoManager currently flattens away (notably creator roles).
+-- BookInfoManager currently flattens away (notably creator roles and
+-- EPUB 3 title refinements such as subtitles).
 
 local EpubMetadata = {}
 
@@ -93,6 +94,52 @@ function EpubMetadata.extractAuthorCreatorsFromOpf(opf)
     return #authors > 0 and authors or nil
 end
 
+-- EPUB 3 represents a subtitle as another dc:title whose id is refined by a
+-- title-type meta entry. BookOrbit writes this standards-based form:
+--
+--   <dc:title id="t-sub">The Strength of the Hashira</dc:title>
+--   <meta refines="#t-sub" property="title-type">subtitle</meta>
+--
+-- KOReader's BookInfoManager currently keeps only the main title, so retain
+-- the refinement here. The BookOrbit custom meta fallback supports files
+-- written by older/intermediate versions without guessing that an arbitrary
+-- second, untyped dc:title is a subtitle.
+function EpubMetadata.extractSubtitleFromOpf(opf)
+    if type(opf) ~= "string" or opf == "" then return nil end
+
+    local subtitle_ids = {}
+    local property_subtitle
+    for attrs, value in opf:gmatch("<%s*[%w_%-:]*meta([^>]*)>(.-)</%s*[%w_%-:]*meta%s*>") do
+        local property = (_attr(attrs, "property") or ""):lower()
+        local refines = _attr(attrs, "refines")
+        local cleaned = _cleanText(value)
+        if property == "title-type" and refines and cleaned:lower() == "subtitle" then
+            subtitle_ids[refines:gsub("^#", "")] = true
+        elseif property == "bookorbit:subtitle" and cleaned ~= "" then
+            property_subtitle = cleaned
+        end
+    end
+
+    for attrs, value in opf:gmatch("<%s*[%w_%-:]*title([^>]*)>(.-)</%s*[%w_%-:]*title%s*>") do
+        local id = _attr(attrs, "id")
+        if id and subtitle_ids[id] then
+            local subtitle = _cleanText(value)
+            if subtitle ~= "" then return subtitle end
+        end
+    end
+
+    if property_subtitle then return property_subtitle end
+
+    for attrs in opf:gmatch("<%s*[%w_%-:]*meta([^>]*)/?>") do
+        local name = (_attr(attrs, "name") or ""):lower()
+        if name == "bookorbit:subtitle" then
+            local subtitle = _cleanText(_attr(attrs, "content"))
+            if subtitle ~= "" then return subtitle end
+        end
+    end
+    return nil
+end
+
 local function _readCommand(cmd, max_bytes)
     local ok, fh = pcall(io.popen, cmd, "r")
     if not ok or not fh then return nil end
@@ -150,24 +197,34 @@ local function _statKey(filepath)
     return tostring(mtime or "") .. ":" .. tostring(size or "")
 end
 
+local function _metadataForFile(filepath)
+    local stat_key = _statKey(filepath)
+    local cached = _cache[filepath]
+    if cached and cached.stat_key == stat_key then return cached end
+
+    local entry = { stat_key = stat_key }
+    local ok, opf = pcall(_readOpfFromEpub, filepath)
+    if ok and opf then
+        entry.authors = EpubMetadata.extractAuthorCreatorsFromOpf(opf)
+        entry.subtitle = EpubMetadata.extractSubtitleFromOpf(opf)
+    end
+    _cache[filepath] = entry
+    return entry
+end
+
 function EpubMetadata.authorCreatorsForFile(filepath)
     if type(filepath) ~= "string" or not filepath:lower():match("%.epub$") then
         return nil
     end
 
-    local stat_key = _statKey(filepath)
-    local cached = _cache[filepath]
-    if cached and cached.stat_key == stat_key then
-        return _copyList(cached.authors)
-    end
+    return _copyList(_metadataForFile(filepath).authors)
+end
 
-    local authors
-    local ok, opf = pcall(_readOpfFromEpub, filepath)
-    if ok and opf then
-        authors = EpubMetadata.extractAuthorCreatorsFromOpf(opf)
+function EpubMetadata.subtitleForFile(filepath)
+    if type(filepath) ~= "string" or not filepath:lower():match("%.epub$") then
+        return nil
     end
-    _cache[filepath] = { stat_key = stat_key, authors = authors }
-    return _copyList(authors)
+    return _metadataForFile(filepath).subtitle
 end
 
 function EpubMetadata.invalidate(filepath)

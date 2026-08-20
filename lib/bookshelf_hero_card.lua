@@ -677,6 +677,23 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         end
     end
 
+    -- Build the optional subtitle up front so the title can reserve its exact
+    -- rendered height. This avoids shortening titles on books that do not have
+    -- a subtitle and still protects the lower regions when a subtitle wraps.
+    local subtitle_widget
+    if regions.subtitle and not regions.subtitle.disabled then
+        local subtitle_text = Tokens.expand(regions.subtitle.template, book, state)
+        subtitle_text = subtitle_text:gsub("%[/?[biu]%]", "")
+        if not Tokens.isEmpty(subtitle_text) then
+            local subtitle_face = regionFace(regions.subtitle)
+            local subtitle_lh = (subtitle_face.size or 14)
+                * (1 + (regions.subtitle.line_height or 0.3))
+            subtitle_widget = buildLine(
+                subtitle_text, regions.subtitle, right_w, book,
+                math.max(1, math.floor(subtitle_lh * 2)))
+        end
+    end
+
     -- Title (rendered after rating so the stars sit at a fixed y above it).
     -- Pre-balance the title text when it would wrap to 2-3 lines, so the
     -- last line isn't a one- or two-word widow. Single-line titles and
@@ -696,7 +713,8 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                                           regions.title.bold or false)
             end
             -- Cap the title so the top block (status/rating already placed +
-            -- title + the author/metadata lines still to come) fits the hero.
+            -- title + the subtitle/author/metadata lines still to come) fits
+            -- the hero.
             -- A long title then truncates with an ellipsis instead of wrapping
             -- unbounded and pushing author/metadata out of a short hero. Tall
             -- heros leave a large cap so normal titles never truncate;
@@ -712,7 +730,12 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 local f = regionFace(r)
                 return (f.size or 14) * 1.35
             end
-            local reserve = regionLineH(regions.author)
+            local subtitle_h = 0
+            if subtitle_widget then
+                local subtitle_size = subtitle_widget:getSize()
+                subtitle_h = subtitle_size and subtitle_size.h or 0
+            end
+            local reserve = subtitle_h + regionLineH(regions.author)
                 + regionLineH(regions.metadata) + Size.padding.default * 2
             local max_title_h = math.max(math.floor(title_lh),
                 cover_h - top_used - reserve)
@@ -720,6 +743,11 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 buildLine(title_text, regions.title, right_w, book, max_title_h)
         end
     end
+
+    -- Subtitle (directly below the title). It is capped at two lines so an
+    -- unusually long subtitle cannot crowd the author and description out of
+    -- a short hero; missing subtitles collapse without leaving a gap.
+    if subtitle_widget then right_top[#right_top + 1] = subtitle_widget end
 
     -- Author
     if not regions.author.disabled then
@@ -801,13 +829,13 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     end
 
     -- Progressive hide: when the hero is too short to fit the top block
-    -- (status/rating/title/author/metadata) AND the bottom block, trim the
+    -- (status/rating/title/subtitle/author/metadata) AND the bottom block, trim the
     -- bottom block — tags first (least essential), then the progress line —
     -- until they fit cover_h. This is the same idea the description already
     -- uses (it self-limits to leftover slack); extending it to tags/progress
     -- keeps title/author readable when a small hero (e.g. after a pinch-zoom
     -- to many columns + rows) would otherwise cram the regions on top of each
-    -- other. Title/author/metadata are kept; the description, added next,
+    -- other. Title/subtitle/author/metadata are kept; the description, added next,
     -- budgets itself against whatever bottom block survives.
     do
         local breath = Size.padding.default

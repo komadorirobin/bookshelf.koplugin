@@ -1,5 +1,5 @@
 -- bookshelf_hero_regions.lua
--- Single source of truth for the hero card's five editable regions:
+-- Single source of truth for the hero card's editable regions:
 -- defaults, sparse-field resolution, persistence helpers, and the
 -- canonical render order. Pure Lua, KOReader-free at load time.
 
@@ -9,7 +9,7 @@ Regions.SETTINGS_KEY = "bookshelf_hero_regions"
 
 -- Render order from top to bottom. Renderer and chooser modal both use
 -- this list. Adding a region means adding it here AND adding a default.
-Regions.ORDER = { "status", "rating", "title", "author", "metadata", "description", "tags", "progress" }
+Regions.ORDER = { "status", "rating", "title", "subtitle", "author", "metadata", "description", "tags", "progress" }
 
 Regions.DEFAULTS = {
     status = {
@@ -36,11 +36,21 @@ Regions.DEFAULTS = {
         -- title-as-unit feel.
         line_height = 0.05,
     },
-    -- Metadata: an extra line between author and description. EPUB has no
-    -- formal subtitle/metadata field, but the dominant use case is showing
-    -- series info via a conditional template — the user can substitute
-    -- their own static text or template for any other purpose. Empty
-    -- template = region collapses (Tokens.isEmpty check skips paint).
+    -- Standards-based EPUB 3 subtitle. The region collapses completely when
+    -- the book has no subtitle, preserving the previous hero layout.
+    subtitle = {
+        template  = "%subtitle",
+        font_face = nil,
+        font_size = 18,
+        bold      = false,
+        uppercase = false,
+        alignment = "left",
+        line_height = 0.05,
+    },
+    -- Metadata: an extra line between author and description. The dominant
+    -- use case is showing series info via a conditional template — the user
+    -- can substitute their own static text or template for any other purpose.
+    -- Empty template = region collapses (Tokens.isEmpty check skips paint).
     metadata = {
         template  = "[if:series]%series_name[if:series_num] / #%series_num[/if][/if]",
         font_face = nil,
@@ -117,6 +127,7 @@ Regions.DEFAULTS = {
 Regions.LABELS = {
     status      = "Status line",
     title       = "Title",
+    subtitle    = "Subtitle",
     author      = "Author",
     rating      = "Rating (interactive)",
     metadata    = "Metadata",

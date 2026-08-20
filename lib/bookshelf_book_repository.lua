@@ -946,6 +946,14 @@ function Repo.buildBookMeta(filepath, opts)
         filename    = filename,
         format      = _formatLabel(filepath) or "",
         title       = title,
+        -- Some metadata providers expose this directly. EPUB 3 refinements
+        -- that BIM flattens away are loaded lazily by buildBook(), so the
+        -- light/grid metadata path never has to unzip every EPUB on a page.
+        subtitle    = (cb and type(cb.subtitle) == "string" and cb.subtitle ~= ""
+                        and cb.subtitle)
+                       or (type(info.subtitle) == "string" and info.subtitle ~= ""
+                           and info.subtitle)
+                       or nil,
         author      = authors and authors[1] or nil,
         authors     = authors,
         -- Calibre-curated sort form ("Surname, Forename" or
@@ -1263,6 +1271,19 @@ end
 function Repo.buildBook(filepath)
     local book = Repo.buildBookMeta(filepath)
     if not book then return nil end
+    -- BIM currently drops EPUB 3 dc:title/title-type=subtitle refinements.
+    -- Resolve that field only for a fully hydrated book (current/preview hero),
+    -- never during buildBookMeta's shelf-grid walk. The OPF helper caches by
+    -- mtime+size and shares the same read with creator-role extraction.
+    if not book.subtitle then
+        local ok_mod, EpubMetadata = pcall(require, "lib/bookshelf_epub_metadata")
+        if ok_mod and EpubMetadata and EpubMetadata.subtitleForFile then
+            local ok_subtitle, subtitle = pcall(EpubMetadata.subtitleForFile, filepath)
+            if ok_subtitle and type(subtitle) == "string" and subtitle ~= "" then
+                book.subtitle = subtitle
+            end
+        end
+    end
     local ds = getDocSettings():open(filepath)
     book.page_num = ds:readSetting("last_page")
     book.book_pct = ds:readSetting("percent_finished")

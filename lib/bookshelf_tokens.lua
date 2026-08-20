@@ -55,6 +55,7 @@ Tokens.DEFAULT_CLOCK_LINE =
 -- _() strings so xgettext can extract them (issues #129 / #143).
 Tokens.CATALOGUE = {
     { category = "Book",     token = "%title",            description = _("Title") },
+    { category = "Book",     token = "%subtitle",         description = _("Subtitle") },
     { category = "Authors",  token = "%author",           description = _("First author") },
     { category = "Authors",  token = "%author_2",         description = _("Second author") },
     { category = "Authors",  token = "%author_3",         description = _("Third author") },
@@ -139,6 +140,7 @@ local function _formatAuthor(raw)
 end
 
 Tokens.expanders.title       = metaToken("title")
+Tokens.expanders.subtitle    = metaToken("subtitle")
 Tokens.expanders.author      = function(book)
     return _formatAuthor(book and book.author or "")
 end

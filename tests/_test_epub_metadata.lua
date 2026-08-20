@@ -1,5 +1,5 @@
 -- tests/_test_epub_metadata.lua
--- Pure-Lua tests for EPUB OPF creator-role parsing.
+-- Pure-Lua tests for EPUB OPF creator-role and subtitle parsing.
 
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
@@ -61,6 +61,37 @@ test("extractAuthorCreatorsFromOpf: returns nil when creators have no author rol
     ]]
     local authors = EpubMetadata.extractAuthorCreatorsFromOpf(opf)
     assert(authors == nil, "expected nil fallback")
+end)
+
+test("extractSubtitleFromOpf: reads EPUB3 title-type subtitle", function()
+    local opf = [[
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <dc:title id="t-main">Demon Slayer: Kimetsu No Yaiba, Vol. 8</dc:title>
+            <meta refines="#t-main" property="title-type">main</meta>
+            <dc:title id="t-sub">The Strength of the Hashira</dc:title>
+            <meta refines="#t-sub" property="title-type">subtitle</meta>
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractSubtitleFromOpf(opf), "The Strength of the Hashira")
+end)
+
+test("extractSubtitleFromOpf: supports BookOrbit custom meta fallback", function()
+    local opf = [[
+        <metadata>
+            <meta name="bookorbit:subtitle" content="A Custom Subtitle" />
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractSubtitleFromOpf(opf), "A Custom Subtitle")
+end)
+
+test("extractSubtitleFromOpf: does not guess from an untyped second title", function()
+    local opf = [[
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <dc:title>Main title</dc:title>
+            <dc:title>Ambiguous alternate title</dc:title>
+        </metadata>
+    ]]
+    assert(EpubMetadata.extractSubtitleFromOpf(opf) == nil, "expected nil")
 end)
 
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))

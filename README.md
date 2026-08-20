@@ -72,13 +72,14 @@ On an [OPDS catalogue](#opds-catalogues) shelf, the same search icon searches th
 
 ### The hero card (top of the shelf area)
 
-The big card at the top of the screen previews the focused book. Tap a cover on the grid to focus it; the card refreshes with its title, author, description, rating, and progress. Tap the hero card cover to open the book.
+The big card at the top of the screen previews the focused book. Tap a cover on the grid to focus it; the card refreshes with its title, subtitle (when present), author, description, rating, and progress. Tap the hero card cover to open the book.
 
-The hero card has eight sections you can show, hide, or restyle:
+The hero card has nine sections you can show, hide, or restyle:
 
 - **Status line** -- top right; defaults to disk space, battery, frontlight, Wi-Fi, and time.
 - **Rating** -- five tappable stars (off by default; tap a star to set or clear).
 - **Title**
+- **Subtitle** -- a smaller line below the title, read from EPUB 3 subtitle metadata when present.
 - **Author**
 - **Metadata** -- a free-form line; the default shows the series and series number for books in a series.
 - **Description** -- the book blurb. Tap to read the full text in a scrollable viewer.
@@ -645,6 +646,7 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | Token | Example |
 |-------|---------|
 | `%title` | *The Great Gatsby* |
+| `%subtitle` | *The Strength of the Hashira* |
 | `%author` | *F. Scott Fitzgerald* (first author) |
 | `%author_2` / `%author_3` | second / third author (empty if absent) |
 | `%authors` | *Neil Gaiman, Terry Pratchett* (all authors) |
@@ -743,7 +745,7 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | Key | Shape |
 |-----|-------|
 | `tabs` | Ordered list of chip records (id, label, icon, source, filter, sort_priority, enabled). |
-| `hero_regions` | Per-section overrides (sparse). One entry per section (status / rating / title / author / metadata / description / tags / progress) with any subset of template, font_face, font_size, bold, uppercase, alignment, disabled, bar_style, bar_height. The interactive **tags** section also takes per-category toggles (show_author / show_series / show_collections / show_genres / show_folder) plus font_size and alignment. |
+| `hero_regions` | Per-section overrides (sparse). One entry per section (status / rating / title / subtitle / author / metadata / description / tags / progress) with any subset of template, font_face, font_size, bold, uppercase, alignment, disabled, bar_style, bar_height. The interactive **tags** section also takes per-category toggles (show_author / show_series / show_collections / show_genres / show_folder) plus font_size and alignment. |
 | `font_scale` | Global zoom for hero text (50-200%). |
 | `chip_font_scale` | Chip bar font size (50-300%). |
 | `chip_flex_widths` | Boolean. When true, longer-labelled chips get more horizontal space than icon-only ones. |
