@@ -75,11 +75,15 @@ test("metadata: %illustrator", function()
     eq(Tokens.expand("%illustrator", bookFixture()), "Masayuki Taguchi")
 end)
 test("metadata: optional illustrator composes on the author line", function()
-    local template = "%authors_short[if:illustrator]  %illustrator (art)[/if]"
+    local template = "%authors_short[if:illustrator]"
+        .. "[if:author_count], [/if]%illustrator (art)[/if]"
     eq(Tokens.expand(template, bookFixture()),
-        "Frank Herbert  Masayuki Taguchi (art)")
+        "Frank Herbert, Masayuki Taguchi (art)")
     local without = bookFixture(); without.illustrator = nil
     eq(Tokens.expand(template, without), "Frank Herbert")
+    local illustrator_only = bookFixture()
+    illustrator_only.author, illustrator_only.authors = nil, nil
+    eq(Tokens.expand(template, illustrator_only), "Masayuki Taguchi (art)")
 end)
 test("metadata: %author", function()
     eq(Tokens.expand("%author", bookFixture()), "Frank Herbert")

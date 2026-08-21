@@ -761,7 +761,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 and not author_template:find("%illustrator", 1, true) then
             local illustrator = Tokens.expand("%illustrator", book, state)
             if not Tokens.isEmpty(illustrator) then
-                author_text = (Tokens.isEmpty(author_text) and "" or author_text .. "  ")
+                author_text = (Tokens.isEmpty(author_text) and "" or author_text .. ", ")
                     .. illustrator .. " (art)"
             end
         end
