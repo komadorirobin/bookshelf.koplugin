@@ -960,6 +960,11 @@ function Repo.buildBookMeta(filepath, opts)
                        or (type(info.illustrator) == "string" and info.illustrator ~= ""
                            and info.illustrator)
                        or nil,
+        translator  = (cb and type(cb.translator) == "string" and cb.translator ~= ""
+                        and cb.translator)
+                       or (type(info.translator) == "string" and info.translator ~= ""
+                           and info.translator)
+                       or nil,
         author      = authors and authors[1] or nil,
         authors     = authors,
         -- Calibre-curated sort form ("Surname, Forename" or
@@ -1281,7 +1286,7 @@ function Repo.buildBook(filepath)
     -- Resolve that field only for a fully hydrated book (current/preview hero),
     -- never during buildBookMeta's shelf-grid walk. The OPF helper caches by
     -- mtime+size and shares the same read with creator-role extraction.
-    if not book.subtitle or not book.illustrator then
+    if not book.subtitle or not book.illustrator or not book.translator then
         local ok_mod, EpubMetadata = pcall(require, "lib/bookshelf_epub_metadata")
         if ok_mod and EpubMetadata then
             if not book.subtitle and EpubMetadata.subtitleForFile then
@@ -1294,6 +1299,14 @@ function Repo.buildBook(filepath)
                 local ok_illustrator, illustrator = pcall(EpubMetadata.illustratorForFile, filepath)
                 if ok_illustrator and type(illustrator) == "string" and illustrator ~= "" then
                     book.illustrator = illustrator
+                end
+            end
+            if not book.translator and EpubMetadata.translatorForFile then
+                local ok_translator, translator = pcall(
+                    EpubMetadata.translatorForFile, filepath)
+                if ok_translator and type(translator) == "string"
+                        and translator ~= "" then
+                    book.translator = translator
                 end
             end
         end

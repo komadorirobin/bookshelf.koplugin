@@ -54,6 +54,7 @@ local function bookFixture()
         title = "Dune",
         subtitle = "A Novel",
         illustrator = "Masayuki Taguchi",
+        translator = "Susanne Widén",
         author = "Frank Herbert",
         authors = { "Frank Herbert" },
         series = "Dune #1",
@@ -74,15 +75,25 @@ end)
 test("metadata: %illustrator", function()
     eq(Tokens.expand("%illustrator", bookFixture()), "Masayuki Taguchi")
 end)
+test("metadata: %translator", function()
+    eq(Tokens.expand("%translator", bookFixture()), "Susanne Widén")
+end)
 test("metadata: optional illustrator composes on the author line", function()
     local template = "%authors_short[if:illustrator]"
-        .. "[if:author_count], [/if]%illustrator (art)[/if]"
+        .. "[if:author_count], [/if]%illustrator (art)"
+        .. "[else][if:translator][if:author_count], [/if]"
+        .. "%translator (trans.)[/if][/if]"
     eq(Tokens.expand(template, bookFixture()),
         "Frank Herbert, Masayuki Taguchi (art)")
-    local without = bookFixture(); without.illustrator = nil
+    local translator_fallback = bookFixture(); translator_fallback.illustrator = nil
+    eq(Tokens.expand(template, translator_fallback),
+        "Frank Herbert, Susanne Widén (trans.)")
+    local without = bookFixture()
+    without.illustrator, without.translator = nil, nil
     eq(Tokens.expand(template, without), "Frank Herbert")
     local illustrator_only = bookFixture()
     illustrator_only.author, illustrator_only.authors = nil, nil
+    illustrator_only.translator = nil
     eq(Tokens.expand(template, illustrator_only), "Masayuki Taguchi (art)")
 end)
 test("metadata: %author", function()

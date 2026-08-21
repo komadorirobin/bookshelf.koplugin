@@ -113,5 +113,24 @@ test("extractIllustratorFromOpf: supports EPUB3 refined contributor role", funct
     eq(EpubMetadata.extractIllustratorFromOpf(opf), "Standard Illustrator")
 end)
 
+test("extractTranslatorFromOpf: reads BookOrbit custom metadata", function()
+    local opf = [[
+        <metadata>
+            <meta property="bookorbit:custom:translator">Susanne Widén</meta>
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractTranslatorFromOpf(opf), "Susanne Widén")
+end)
+
+test("extractTranslatorFromOpf: supports EPUB3 refined contributor role", function()
+    local opf = [[
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <dc:contributor id="c1">Standard Translator</dc:contributor>
+            <meta refines="#c1" property="role" scheme="marc:relators">trl</meta>
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractTranslatorFromOpf(opf), "Standard Translator")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

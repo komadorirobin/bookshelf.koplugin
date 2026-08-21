@@ -68,6 +68,8 @@ test("read: returns defaults when nothing stored", function()
         "subtitle should default to a smaller font than title")
     assert(r.author.template:find("%illustrator", 1, true),
         "default author line should include the illustrator token")
+    assert(r.author.template:find("%translator", 1, true),
+        "default author line should include the translator fallback token")
 end)
 
 test("resolve: sparse field falls through to default", function()

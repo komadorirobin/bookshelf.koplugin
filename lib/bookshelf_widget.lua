@@ -14069,6 +14069,34 @@ function BookshelfWidget:_descriptionArgs(book)
         or (book.hardcover_description and book.description) or nil)
     if not file_html and not hc_html then return nil end
 
+    -- The hero intentionally shows only one secondary contributor to stay on
+    -- one line. The full description view has room for every credited role.
+    local function htmlEscape(value)
+        return tostring(value or ""):gsub("&", "&amp;")
+            :gsub("<", "&lt;"):gsub(">", "&gt;")
+    end
+    local credits = {}
+    local author_names
+    if type(book.authors) == "table" and #book.authors > 0 then
+        author_names = table.concat(book.authors, ", ")
+    elseif type(book.author) == "string" and book.author ~= "" then
+        author_names = book.author
+    end
+    local function addCredit(label, value)
+        if type(value) == "string" and value ~= "" then
+            credits[#credits + 1] = "<b>" .. htmlEscape(label) .. ":</b> "
+                .. htmlEscape(value)
+        end
+    end
+    addCredit(_("Author(s)"), author_names)
+    addCredit(_("Illustrator"), book.illustrator)
+    addCredit(_("Translator"), book.translator)
+    if #credits > 0 then
+        local credits_html = "<p>" .. table.concat(credits, "<br>") .. "</p>"
+        if file_html then file_html = credits_html .. file_html end
+        if hc_html then hc_html = credits_html .. hc_html end
+    end
+
     local title = book.title or _("Description")
     if book.author then title = title .. " — " .. book.author end
 

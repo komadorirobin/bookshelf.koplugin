@@ -61,7 +61,8 @@ Regions.DEFAULTS = {
     },
     author = {
         template  = "[if:authors]%authors[else]%author[/if]"
-                 .. "[if:illustrator][if:author_count], [/if]%illustrator (art)[/if]",
+                 .. "[if:illustrator][if:author_count], [/if]%illustrator (art)"
+                 .. "[else][if:translator][if:author_count], [/if]%translator (trans.)[/if][/if]",
         font_face = nil,
         font_size = 16,
         bold      = false,
@@ -242,7 +243,8 @@ Regions.FRESH_INSTALL = {
     },
     author = {
         template  = "%authors_short[if:illustrator]"
-                 .. "[if:author_count], [/if]%illustrator (art)[/if]",
+                 .. "[if:author_count], [/if]%illustrator (art)"
+                 .. "[else][if:translator][if:author_count], [/if]%translator (trans.)[/if][/if]",
         font_face = "Caveat-Regular.ttf", font_size = 26, bold = false,
         uppercase = false, alignment = "left",
     },

@@ -25,7 +25,8 @@ assert(r.author.font_face == "Caveat-Regular.ttf", "author -> Caveat-Regular.ttf
 assert(r.author.font_size == 26, "author sized 26")
 assert(r.author.template
         == "%authors_short[if:illustrator][if:author_count], [/if]"
-            .. "%illustrator (art)[/if]",
+            .. "%illustrator (art)[else][if:translator][if:author_count], [/if]"
+            .. "%translator (trans.)[/if][/if]",
     "author uses short author names and optional illustrator")
 
 -- tags enabled, progress bar rounded, customised templates carried over

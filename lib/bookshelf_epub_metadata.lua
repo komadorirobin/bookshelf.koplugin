@@ -144,10 +144,10 @@ function EpubMetadata.extractSubtitleFromOpf(opf)
     return nil
 end
 
--- BookOrbit writes custom metadata as a property meta element. Prefer that
--- explicit field, then fall back to the standard EPUB creator/contributor
--- role so files produced by other metadata editors work too.
-function EpubMetadata.extractIllustratorFromOpf(opf)
+-- BookOrbit writes custom contributor metadata as property meta elements.
+-- Prefer those explicit fields, then fall back to standard EPUB contributor
+-- roles so files produced by other metadata editors work too.
+local function _extractContributorFromOpf(opf, custom_property, accepted_roles)
     if type(opf) ~= "string" or opf == "" then return nil end
 
     local refined_roles = {}
@@ -155,7 +155,7 @@ function EpubMetadata.extractIllustratorFromOpf(opf)
             "<%s*[%w_%-:]-meta%s+([^>]*)>(.-)</%s*[%w_%-:]-meta%s*>") do
         local property = (_attr(attrs, "property") or ""):lower()
         local cleaned = _cleanText(value)
-        if property == "bookorbit:custom:illustrator" and cleaned ~= "" then
+        if property == custom_property and cleaned ~= "" then
             return cleaned
         end
         local refines = _attr(attrs, "refines")
@@ -168,9 +168,9 @@ function EpubMetadata.extractIllustratorFromOpf(opf)
     -- editor serialises custom fields as an EPUB 2-style self-closing meta.
     for attrs in opf:gmatch("<%s*[%w_%-:]-meta%s+([^>]*)/?>") do
         local name = (_attr(attrs, "name") or ""):lower()
-        if name == "bookorbit:custom:illustrator" then
-            local illustrator = _cleanText(_attr(attrs, "content"))
-            if illustrator ~= "" then return illustrator end
+        if name == custom_property then
+            local contributor = _cleanText(_attr(attrs, "content"))
+            if contributor ~= "" then return contributor end
         end
     end
 
@@ -182,14 +182,26 @@ function EpubMetadata.extractIllustratorFromOpf(opf)
             local id = _attr(attrs, "id")
             if (not role or role == "") and id then role = refined_roles[id] end
             role = _normaliseRole(role)
-            if role == "ill" or role == "illustrator" then
-                local illustrator = _cleanText(value)
-                if illustrator ~= "" then return illustrator end
+            if accepted_roles[role] then
+                local contributor = _cleanText(value)
+                if contributor ~= "" then return contributor end
             end
         end
     end
 
     return fromElements("contributor") or fromElements("creator")
+end
+
+function EpubMetadata.extractIllustratorFromOpf(opf)
+    return _extractContributorFromOpf(opf, "bookorbit:custom:illustrator", {
+        ill = true, illustrator = true,
+    })
+end
+
+function EpubMetadata.extractTranslatorFromOpf(opf)
+    return _extractContributorFromOpf(opf, "bookorbit:custom:translator", {
+        trl = true, translator = true,
+    })
 end
 
 local function _readCommand(cmd, max_bytes)
@@ -260,6 +272,7 @@ local function _metadataForFile(filepath)
         entry.authors = EpubMetadata.extractAuthorCreatorsFromOpf(opf)
         entry.subtitle = EpubMetadata.extractSubtitleFromOpf(opf)
         entry.illustrator = EpubMetadata.extractIllustratorFromOpf(opf)
+        entry.translator = EpubMetadata.extractTranslatorFromOpf(opf)
     end
     _cache[filepath] = entry
     return entry
@@ -285,6 +298,13 @@ function EpubMetadata.illustratorForFile(filepath)
         return nil
     end
     return _metadataForFile(filepath).illustrator
+end
+
+function EpubMetadata.translatorForFile(filepath)
+    if type(filepath) ~= "string" or not filepath:lower():match("%.epub$") then
+        return nil
+    end
+    return _metadataForFile(filepath).translator
 end
 
 function EpubMetadata.invalidate(filepath)

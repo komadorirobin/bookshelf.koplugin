@@ -754,15 +754,25 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         local author_template = regions.author.template or ""
         local author_text = Tokens.expand(author_template, book, state)
         author_text = author_text:gsub("%[/?[biu]%]", "")
-        -- Existing installations retain their saved author template. Append
-        -- the new field automatically unless the user has already placed the
-        -- illustrator token explicitly in that template.
-        if book and type(book.illustrator) == "string" and book.illustrator ~= ""
-                and not author_template:find("%illustrator", 1, true) then
+        -- Existing installations retain their saved author template. Prefer
+        -- illustrator in the compact hero; translator is the fallback when no
+        -- illustrator exists. Explicit tokens in a custom template win.
+        local has_illustrator = book and type(book.illustrator) == "string"
+            and book.illustrator ~= ""
+        local has_translator = book and type(book.translator) == "string"
+            and book.translator ~= ""
+        if has_illustrator and not author_template:find("%illustrator", 1, true) then
             local illustrator = Tokens.expand("%illustrator", book, state)
             if not Tokens.isEmpty(illustrator) then
                 author_text = (Tokens.isEmpty(author_text) and "" or author_text .. ", ")
                     .. illustrator .. " (art)"
+            end
+        elseif not has_illustrator and has_translator
+                and not author_template:find("%translator", 1, true) then
+            local translator = Tokens.expand("%translator", book, state)
+            if not Tokens.isEmpty(translator) then
+                author_text = (Tokens.isEmpty(author_text) and "" or author_text .. ", ")
+                    .. translator .. " (trans.)"
             end
         end
         if not Tokens.isEmpty(author_text) then
