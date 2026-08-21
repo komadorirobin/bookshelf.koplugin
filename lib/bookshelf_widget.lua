@@ -28,6 +28,7 @@ local Screen          = Device.screen
 local _           = require("lib/bookshelf_i18n").gettext
 
 local Repo        = require("lib/bookshelf_book_repository")
+local FolderLabel = require("lib/bookshelf_folder_label")
 local Profiles    = require("lib/bookshelf_profiles")
 local Filter      = require("lib/bookshelf_filter")
 local HeroCard    = require("lib/bookshelf_hero_card")
@@ -967,7 +968,7 @@ function BookshelfWidget:showFileLocation(filepath)
     if loc.folder ~= loc.root then
         self._drilldown_path[1] = {
             kind = "folder",
-            label = loc.folder:match("([^/]+)$") or loc.folder,
+            label = FolderLabel.display(loc.folder:match("([^/]+)$") or loc.folder),
             payload = { path = loc.folder },
             parent_cursor = 1,
         }
@@ -1296,7 +1297,9 @@ function BookshelfWidget:_restoreDrillPath(saved)
     for _, e in ipairs(saved) do
         if e.kind == "folder" and e.path then
             self._drilldown_path[#self._drilldown_path + 1] = {
-                kind = "folder", label = e.label,
+                kind = "folder",
+                label = FolderLabel.display(
+                    e.label or e.path:match("([^/]+)$") or e.path),
                 payload = { path = e.path },
             }
         elseif e.kind == "search" and e.query then
@@ -1944,7 +1947,10 @@ function BookshelfWidget:_rebuild()
     if #self._drilldown_path > 0 then
         breadcrumb_path = {}
         for i, entry in ipairs(self._drilldown_path) do
-            breadcrumb_path[i] = { label = entry.label }
+            breadcrumb_path[i] = {
+                label = entry.kind == "folder"
+                    and FolderLabel.display(entry.label) or entry.label,
+            }
             if entry.kind == "search" then in_search_mode = true end
         end
     end
@@ -13519,7 +13525,8 @@ function BookshelfWidget:_buildPillSpecs(book, collection_set, close_cb, filter)
         end
     end
     if _show("folder") and parent_dir and parent_dir ~= "" and parent_dir ~= home_dir then
-        local folder_label = parent_dir:match("([^/]+)$") or parent_dir
+        local folder_label = FolderLabel.display(
+            parent_dir:match("([^/]+)$") or parent_dir)
         pill_specs[#pill_specs + 1] = {
             cat    = "folder",
             label  = folder_label,
@@ -17820,6 +17827,7 @@ function BookshelfWidget:_expandFolder(folder)
     -- folder name cleanly.
     local label = folder.label or folder.path:match("([^/]+)$") or folder.path
     label = label:gsub("/$", "")
+    label = FolderLabel.display(label)
     self:_drillInto{
         kind    = "folder",
         label   = label,

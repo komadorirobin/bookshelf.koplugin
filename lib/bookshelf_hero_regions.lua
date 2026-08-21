@@ -60,7 +60,7 @@ Regions.DEFAULTS = {
         alignment = "right",
     },
     author = {
-        template  = "[if:authors]%authors[else]%author[/if]",
+        template  = "[if:authors]%authors[else]%author[/if][if:illustrator]  %illustrator (art)[/if]",
         font_face = nil,
         font_size = 16,
         bold      = false,
@@ -240,7 +240,7 @@ Regions.FRESH_INSTALL = {
         uppercase   = false, alignment = "left", line_height = 0.05,
     },
     author = {
-        template  = "%authors_short",
+        template  = "%authors_short[if:illustrator]  %illustrator (art)[/if]",
         font_face = "Caveat-Regular.ttf", font_size = 26, bold = false,
         uppercase = false, alignment = "left",
     },

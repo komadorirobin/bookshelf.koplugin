@@ -11,6 +11,7 @@ local Repo = {}
 
 local logger = require("logger")
 local Filter = require("lib/bookshelf_filter")
+local FolderLabel = require("lib/bookshelf_folder_label")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local _ok = pcall(require, "lib/bookshelf_i18n")  -- soft: tests stub-load without it
 local i18n = package.loaded["lib/bookshelf_i18n"]
@@ -954,6 +955,11 @@ function Repo.buildBookMeta(filepath, opts)
                        or (type(info.subtitle) == "string" and info.subtitle ~= ""
                            and info.subtitle)
                        or nil,
+        illustrator = (cb and type(cb.illustrator) == "string" and cb.illustrator ~= ""
+                        and cb.illustrator)
+                       or (type(info.illustrator) == "string" and info.illustrator ~= ""
+                           and info.illustrator)
+                       or nil,
         author      = authors and authors[1] or nil,
         authors     = authors,
         -- Calibre-curated sort form ("Surname, Forename" or
@@ -1275,12 +1281,20 @@ function Repo.buildBook(filepath)
     -- Resolve that field only for a fully hydrated book (current/preview hero),
     -- never during buildBookMeta's shelf-grid walk. The OPF helper caches by
     -- mtime+size and shares the same read with creator-role extraction.
-    if not book.subtitle then
+    if not book.subtitle or not book.illustrator then
         local ok_mod, EpubMetadata = pcall(require, "lib/bookshelf_epub_metadata")
-        if ok_mod and EpubMetadata and EpubMetadata.subtitleForFile then
-            local ok_subtitle, subtitle = pcall(EpubMetadata.subtitleForFile, filepath)
-            if ok_subtitle and type(subtitle) == "string" and subtitle ~= "" then
-                book.subtitle = subtitle
+        if ok_mod and EpubMetadata then
+            if not book.subtitle and EpubMetadata.subtitleForFile then
+                local ok_subtitle, subtitle = pcall(EpubMetadata.subtitleForFile, filepath)
+                if ok_subtitle and type(subtitle) == "string" and subtitle ~= "" then
+                    book.subtitle = subtitle
+                end
+            end
+            if not book.illustrator and EpubMetadata.illustratorForFile then
+                local ok_illustrator, illustrator = pcall(EpubMetadata.illustratorForFile, filepath)
+                if ok_illustrator and type(illustrator) == "string" and illustrator ~= "" then
+                    book.illustrator = illustrator
+                end
             end
         end
     end
@@ -3050,7 +3064,7 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
                 shapes[#shapes + 1] = {
                     kind          = "folder",
                     path          = e.fp,
-                    label         = e.name,
+                    label         = FolderLabel.display(e.name),
                     first_book_fp = first_fp,
                 }
             end
@@ -4577,7 +4591,9 @@ function Repo.getFolderChoices()
     local out = {}
     for path in pairs(seen) do
         local basename = path:match("([^/]+)$") or path
-        out[#out + 1] = { value = path, label = basename, subtitle = path }
+        out[#out + 1] = {
+            value = path, label = FolderLabel.display(basename), subtitle = path,
+        }
     end
     table.sort(out, function(a, b) return a.value:lower() < b.value:lower() end)
     return out
@@ -4606,7 +4622,9 @@ function Repo.getAllFolderChoices()
                     and entry:sub(-4) ~= ".sdr" then
                 local fp = _joinPath(root, entry)
                 if lfs.attributes(fp, "mode") == "directory" then
-                    out[#out + 1] = { value = fp, label = entry, subtitle = fp }
+                    out[#out + 1] = {
+                        value = fp, label = FolderLabel.display(entry), subtitle = fp,
+                    }
                     walk(fp, level + 1)
                 end
             end
@@ -4871,7 +4889,7 @@ function Repo.searchAll(query, scope)
                     folders[#folders + 1] = {
                         kind       = "folder",
                         path       = dir,
-                        label      = basename,
+                        label      = FolderLabel.display(basename),
                         first_book = first_book,
                     }
                 end

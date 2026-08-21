@@ -751,8 +751,20 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
 
     -- Author
     if not regions.author.disabled then
-        local author_text = Tokens.expand(regions.author.template, book, state)
+        local author_template = regions.author.template or ""
+        local author_text = Tokens.expand(author_template, book, state)
         author_text = author_text:gsub("%[/?[biu]%]", "")
+        -- Existing installations retain their saved author template. Append
+        -- the new field automatically unless the user has already placed the
+        -- illustrator token explicitly in that template.
+        if book and type(book.illustrator) == "string" and book.illustrator ~= ""
+                and not author_template:find("%illustrator", 1, true) then
+            local illustrator = Tokens.expand("%illustrator", book, state)
+            if not Tokens.isEmpty(illustrator) then
+                author_text = (Tokens.isEmpty(author_text) and "" or author_text .. "  ")
+                    .. illustrator .. " (art)"
+            end
+        end
         if not Tokens.isEmpty(author_text) then
             right_top[#right_top + 1] = buildLine(author_text, regions.author, right_w, book)
         end

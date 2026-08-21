@@ -23,7 +23,9 @@ assert(r.title.template == "%title", "title template")
 -- author: bundled Caveat, size 26, short author names
 assert(r.author.font_face == "Caveat-Regular.ttf", "author -> Caveat-Regular.ttf")
 assert(r.author.font_size == 26, "author sized 26")
-assert(r.author.template == "%authors_short", "author uses short author names")
+assert(r.author.template
+        == "%authors_short[if:illustrator]  %illustrator (art)[/if]",
+    "author uses short author names and optional illustrator")
 
 -- tags enabled, progress bar rounded, customised templates carried over
 assert(r.tags.disabled == false, "tags enabled")

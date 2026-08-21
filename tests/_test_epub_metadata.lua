@@ -1,5 +1,5 @@
 -- tests/_test_epub_metadata.lua
--- Pure-Lua tests for EPUB OPF creator-role and subtitle parsing.
+-- Pure-Lua tests for EPUB OPF creator-role, subtitle, and illustrator parsing.
 
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
@@ -92,6 +92,25 @@ test("extractSubtitleFromOpf: does not guess from an untyped second title", func
         </metadata>
     ]]
     assert(EpubMetadata.extractSubtitleFromOpf(opf) == nil, "expected nil")
+end)
+
+test("extractIllustratorFromOpf: reads BookOrbit custom metadata", function()
+    local opf = [[
+        <metadata>
+            <meta property="bookorbit:custom:illustrator">Masayuki Taguchi</meta>
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractIllustratorFromOpf(opf), "Masayuki Taguchi")
+end)
+
+test("extractIllustratorFromOpf: supports EPUB3 refined contributor role", function()
+    local opf = [[
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <dc:contributor id="c1">Standard Illustrator</dc:contributor>
+            <meta refines="#c1" property="role" scheme="marc:relators">ill</meta>
+        </metadata>
+    ]]
+    eq(EpubMetadata.extractIllustratorFromOpf(opf), "Standard Illustrator")
 end)
 
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))

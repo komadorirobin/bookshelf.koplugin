@@ -72,7 +72,7 @@ On an [OPDS catalogue](#opds-catalogues) shelf, the same search icon searches th
 
 ### The hero card (top of the shelf area)
 
-The big card at the top of the screen previews the focused book. Tap a cover on the grid to focus it; the card refreshes with its title, subtitle (when present), author, description, rating, and progress. Tap the hero card cover to open the book.
+The big card at the top of the screen previews the focused book. Tap a cover on the grid to focus it; the card refreshes with its title, subtitle (when present), author and illustrator, description, rating, and progress. Tap the hero card cover to open the book.
 
 The hero card has nine sections you can show, hide, or restyle:
 
@@ -647,6 +647,7 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 |-------|---------|
 | `%title` | *The Great Gatsby* |
 | `%subtitle` | *The Strength of the Hashira* |
+| `%illustrator` | *Masayuki Taguchi* |
 | `%author` | *F. Scott Fitzgerald* (first author) |
 | `%author_2` / `%author_3` | second / third author (empty if absent) |
 | `%authors` | *Neil Gaiman, Terry Pratchett* (all authors) |

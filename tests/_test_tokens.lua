@@ -53,6 +53,7 @@ local function bookFixture()
     return {
         title = "Dune",
         subtitle = "A Novel",
+        illustrator = "Masayuki Taguchi",
         author = "Frank Herbert",
         authors = { "Frank Herbert" },
         series = "Dune #1",
@@ -69,6 +70,16 @@ test("metadata: %title", function()
 end)
 test("metadata: %subtitle", function()
     eq(Tokens.expand("%subtitle", bookFixture()), "A Novel")
+end)
+test("metadata: %illustrator", function()
+    eq(Tokens.expand("%illustrator", bookFixture()), "Masayuki Taguchi")
+end)
+test("metadata: optional illustrator composes on the author line", function()
+    local template = "%authors_short[if:illustrator]  %illustrator (art)[/if]"
+    eq(Tokens.expand(template, bookFixture()),
+        "Frank Herbert  Masayuki Taguchi (art)")
+    local without = bookFixture(); without.illustrator = nil
+    eq(Tokens.expand(template, without), "Frank Herbert")
 end)
 test("metadata: %author", function()
     eq(Tokens.expand("%author", bookFixture()), "Frank Herbert")

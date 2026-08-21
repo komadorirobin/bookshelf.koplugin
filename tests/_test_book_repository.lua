@@ -68,6 +68,11 @@ package.loaded["lib/bookshelf_epub_metadata"] = {
         _G._test_epub_subtitle_call_count = (_G._test_epub_subtitle_call_count or 0) + 1
         return _G._test_epub_subtitles and _G._test_epub_subtitles[fp] or nil
     end,
+    illustratorForFile = function(fp)
+        _G._test_epub_illustrator_call_count =
+            (_G._test_epub_illustrator_call_count or 0) + 1
+        return _G._test_epub_illustrators and _G._test_epub_illustrators[fp] or nil
+    end,
     invalidate = function() end,
 }
 package.loaded["docsettings"] = {
@@ -229,16 +234,36 @@ test("buildBook: hydrates EPUB3 subtitle for the hero", function()
         "expected one lazy OPF subtitle lookup")
 end)
 
-test("buildBookMeta: shelf-grid metadata does not unzip EPUB for subtitle", function()
+test("buildBook: hydrates BookOrbit illustrator for the hero", function()
+    local fp = "/books/battle-royale-1.epub"
+    _G._test_bim_data = { [fp] = { title = "Battle Royale, Vol. 1" } }
+    _G._test_docsettings_data = { [fp] = {} }
+    _G._test_epub_illustrators = { [fp] = "Masayuki Taguchi" }
+    _G._test_epub_illustrator_call_count = 0
+    local b = Repo.buildBook(fp)
+    _G._test_epub_illustrators = nil
+    assert(b.illustrator == "Masayuki Taguchi",
+        "expected BookOrbit illustrator got " .. tostring(b.illustrator))
+    assert(_G._test_epub_illustrator_call_count == 1,
+        "expected one lazy OPF illustrator lookup")
+end)
+
+test("buildBookMeta: shelf-grid metadata does not unzip EPUB for hero extras", function()
     local fp = "/books/grid-only.epub"
     _G._test_bim_data = { [fp] = { title = "Grid only" } }
     _G._test_epub_subtitles = { [fp] = "Must stay lazy" }
     _G._test_epub_subtitle_call_count = 0
+    _G._test_epub_illustrators = { [fp] = "Must also stay lazy" }
+    _G._test_epub_illustrator_call_count = 0
     local b = Repo.buildBookMeta(fp)
     _G._test_epub_subtitles = nil
+    _G._test_epub_illustrators = nil
     assert(b.subtitle == nil, "grid metadata unexpectedly hydrated subtitle")
+    assert(b.illustrator == nil, "grid metadata unexpectedly hydrated illustrator")
     assert(_G._test_epub_subtitle_call_count == 0,
         "grid metadata must not trigger an OPF unzip")
+    assert(_G._test_epub_illustrator_call_count == 0,
+        "grid metadata must not trigger an illustrator OPF lookup")
 end)
 
 test("buildBook: EPUB page count prefers rendered DocSettings over BIM estimate", function()
