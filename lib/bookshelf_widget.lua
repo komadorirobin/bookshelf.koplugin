@@ -39,6 +39,7 @@ local ChipBar   = require("lib/bookshelf_chip_bar")
 local BandMetrics = require("lib/bookshelf_band_metrics")
 local ShelfRow    = require("lib/bookshelf_shelf_row")
 local SpineWidget = require("lib/bookshelf_spine_widget")
+local StackDisplay = require("lib/bookshelf_stack_display")
 -- Covers-or-list, and the two setting keys that decide it. At file scope
 -- because _viewMode()/_isListMode() are on the hot path -- several calls per
 -- geometry pass, dozens per rebuild -- and a per-call require() of a
@@ -4656,6 +4657,30 @@ function BookshelfWidget:_shelfLabelMode()
     return mode
 end
 
+-- Whether a cover-grid row needs the strip normally reserved below every
+-- tile for its title/author/series label. The comics profile's top-level
+-- folder shelves are a homogeneous surface: every tile is a folder, and
+-- Divider/Ribbon/Text already print the folder name on the tile itself.
+-- Reserving an empty strip below both rows made those cards stop well above
+-- the footer even though ordinary prose books filled the same band correctly.
+--
+-- Stack/Collage/None still need the strip because those styles do not name the
+-- group themselves. Once the user drills into a manga folder, books can be
+-- mixed in again, so the regular label geometry resumes.
+function BookshelfWidget:_shelfLabelStripVisible()
+    if not self:_shelfLabelMode() then return false end
+    local profile_chip = self:_profileChip(self.chip)
+    local top_level_comics_folders = self.profile
+        and self.profile.key == "comics"
+        and profile_chip and profile_chip.kind == "folder"
+        and #(self._drilldown_path or {}) == 0
+    if top_level_comics_folders then
+        local mode = StackDisplay.resolve(self:_groupDisplayMode())
+        return StackDisplay.needsExternalLabel(mode)
+    end
+    return true
+end
+
 -- ─── List view ───────────────────────────────────────────────────────────────
 
 -- _viewMode() — "covers" or "list". The single answer to "which presentation
@@ -4886,8 +4911,20 @@ end
 -- caller falls back to the natural height rather than to a constant -- see
 -- _listNaturalRowHeight.
 function BookshelfWidget:_listRows(max_rows)
+    -- Manga series folders are description-heavy lists. Four rows on the
+    -- embedded B7 Pro layout leave too little room for the synopsis and used
+    -- to put row four into the footer before the dock reservation was fixed.
+    -- Keep this profile-specific rather than lowering list density for prose,
+    -- authors, search results, or upstream's regular library.
+    local tip = self._drilldown_path and self._drilldown_path[#self._drilldown_path]
+    local comics_folder_limit = self.profile and self.profile.key == "comics"
+        and tip and tip.kind == "folder" and 3 or nil
+    if comics_folder_limit
+        and (not max_rows or max_rows > comics_folder_limit) then
+        max_rows = comics_folder_limit
+    end
     local n = self:_chipListValue("list_rows")
-    if type(n) ~= "number" then return nil end
+    if type(n) ~= "number" then return comics_folder_limit end
     n = math.floor(n)
     if n < 1 then n = 1 end
     if max_rows and n > max_rows then n = max_rows end
@@ -5252,7 +5289,7 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
         n_slots           = n_cols,
         selected_filepath = shared.selected_filepath,
         selection         = bw._selection,
-        show_titles       = (label_mode ~= nil),
+        show_titles       = self:_shelfLabelStripVisible(),
         label_mode        = label_mode,
         in_series         = in_series,
         group_display     = self:_groupDisplayMode(),
@@ -9581,7 +9618,8 @@ function BookshelfWidget:_listCollapsedHeroHeight(hide_chip_bar)
         hero_h = math.floor(self.height * HERO_MIN_FRAC)
     end
     local chip_contrib = hide_chip_bar and 0 or chip_h
-    local room = self.height - PAD - footer_h - chip_contrib
+    local room = self.height - self:_simpleUIReservedBottom()
+               - PAD - footer_h - chip_contrib
                - (hide_chip_bar and 0 or PAD)
     -- The MINIMUM row, not the current one. What this cap says is "the hero
     -- must leave room for at least one row", and the minimum is exactly that
@@ -9700,7 +9738,8 @@ function BookshelfWidget:_listBandUncached(expanded, hide_chip_bar)
     -- budget below, once per end.
     local layout_top_pad = hide_chip_bar and hero_chip_pad or PAD
     local base_top_pad   = math.floor(layout_top_pad / 2)
-    local band = self.height - PAD - hero_h - footer_h
+    local band = self.height - self:_simpleUIReservedBottom()
+               - PAD - hero_h - footer_h
                - chip_contrib - (hide_chip_bar and 0 or hero_chip_pad)
     -- rowsThatFit counts the gaps BETWEEN rows, which is exactly the dividers
     -- the layout paints; the span after the LAST row is bottom_gap and is

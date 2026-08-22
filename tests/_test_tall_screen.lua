@@ -211,6 +211,43 @@ test("_collapsedGridSplit reserves the SimpleUI dock", function()
         "collapsed cover grid must not allocate rows inside the dock")
 end)
 
+test("top-level comics folders skip an empty embedded-name label strip", function()
+    local widget = bw(750, 1024, false)
+    widget.profile = { key = "comics" }
+    widget.chip = "profile_manga"
+    widget._drilldown_path = {}
+    widget._shelfLabelMode = function() return "title" end
+    widget._profileChip = function()
+        return { kind = "folder", path = "/storage/emulated/0/ePubs/Manga" }
+    end
+    widget._groupDisplayMode = function() return "divider" end
+    eq(widget:_shelfLabelStripVisible(), false,
+        "divider cards already carry the folder name")
+
+    widget._groupDisplayMode = function() return "collage" end
+    eq(widget:_shelfLabelStripVisible(), true,
+        "collages still need their external name")
+
+    widget._groupDisplayMode = function() return "divider" end
+    widget._drilldown_path = { { kind = "folder" } }
+    eq(widget:_shelfLabelStripVisible(), true,
+        "drilled shelves may contain books and keep normal labels")
+end)
+
+test("drilled comics folders show at most three list rows", function()
+    local widget = bw(750, 1024, false)
+    widget.profile = { key = "comics" }
+    widget._drilldown_path = { { kind = "folder" } }
+    widget._chipListValue = function() return 4 end
+    eq(widget:_listRows(8), 3, "an existing four-row choice must be capped")
+
+    widget._chipListValue = function() return nil end
+    eq(widget:_listRows(8), 3, "the comics-folder default must also be three")
+
+    widget._chipListValue = function() return 2 end
+    eq(widget:_listRows(8), 2, "a reader may still choose fewer rows")
+end)
+
 test("_nShelves: geometry helpers run once per decision", function()
     local base_calls, max_calls = 0, 0
     local widget = setmetatable({

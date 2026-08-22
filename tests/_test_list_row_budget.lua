@@ -385,9 +385,22 @@ local function bandOf(o, expanded, hide_chips)
         _layoutPrimitives = function() return o.PAD, o.content_w, o.chip_h end,
         _statusStripHeight = function() return o.strip end,
         _listCollapsedHeroHeight = function() return o.cover_hero end,
+        _simpleUIReservedBottom = function()
+            return o.simpleui_reserved or 0
+        end,
     }
     return methodOf("_listBandUncached", env)(self, expanded, hide_chips)
 end
+
+t.test("the list band reserves the SimpleUI dock", function()
+    local embedded = {}
+    for k, v in pairs(PW5) do embedded[k] = v end
+    embedded.simpleui_reserved = 160
+    local standalone_band = bandOf(PW5, false, false).band
+    local embedded_band   = bandOf(embedded, false, false).band
+    eq(standalone_band - embedded_band, 160,
+        "the dock must be removed from the list row budget")
+end)
 
 local function bandPlan(o, expanded, hide_chips, rows_setting)
     o = o or PW5
@@ -872,6 +885,7 @@ local function heroPair(o)
         _bookGap       = function(_s, pad) return pad end,
         _coverAspect   = function() return aspect end,
         _shelfLabelMode = function() return nil end,
+        _shelfLabelStripVisible = function() return false end,
         _listMinRowHeight = function() return row_h end,
         _simpleUIReservedBottom = function()
             return o.simpleui_reserved or 0
