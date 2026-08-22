@@ -148,6 +148,15 @@ local function _paginationFooterMarginPx(key)
     return sign * Screen:scaleBySize(math.abs(v))
 end
 
+-- The footer's outer box may be shortened with a negative top margin, but its
+-- child is deliberately shifted above that box and still paints at full
+-- height. Reserve from the topmost of the outer box and painted child so shelf
+-- rows never get budgeted underneath the visible pagination controls.
+local function _paginationFooterVisibleReserve(base_h, top_margin, bottom_margin)
+    local outer_h = math.max(1, base_h + top_margin + bottom_margin)
+    return math.max(1, outer_h - math.min(0, top_margin))
+end
+
 -- _footerReserveH() — vertical space the screen-anchored pagination footer
 -- occupies. _rebuild reserves exactly this at the bottom of the layout
 -- (label_h), so any code deciding how many rows fit has to subtract the SAME
@@ -169,9 +178,10 @@ local function _footerReserveH()
     end
     local base_h = scaled(32, Screen:scaleBySize(12))
         + 2 * scaled(4, 1) + scaled(12, 0)
-    return math.max(1, base_h
-        + _paginationFooterMarginPx("pagination_footer_top_margin")
-        + _paginationFooterMarginPx("pagination_footer_bottom_margin"))
+    return _paginationFooterVisibleReserve(
+        base_h,
+        _paginationFooterMarginPx("pagination_footer_top_margin"),
+        _paginationFooterMarginPx("pagination_footer_bottom_margin"))
 end
 
 -- _asCoverGrid(fn) — run fn() with the view mode pinned to covers, then drop
@@ -301,7 +311,11 @@ function BookshelfWidget:_paginationFooterReserveHeight()
     local show_footer_row = (not has_simpleui)
         or (self._selection and self._selection:isActive())
         or SIMPLEUI_USE_OFFICIAL_FOOTER
-    return show_footer_row and self:_paginationFooterHeight() or 0
+    if not show_footer_row then return 0 end
+    return _paginationFooterVisibleReserve(
+        self:_paginationFooterBaseHeight(),
+        self:_paginationFooterTopMargin(),
+        self:_paginationFooterBottomMargin())
 end
 
 -- _coverNeedsResize(info, specs) — bookshelf-specific re-extract gate.
