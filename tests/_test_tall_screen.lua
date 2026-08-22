@@ -143,6 +143,10 @@ local function bw(width, height, expanded, simpleui_reserved)
             height = height,
             _expanded = expanded or false,
             _simpleui_bar_ctx = simpleui_reserved and { total_h = simpleui_reserved } or nil,
+            -- Pin this suite to the cover grid. Under Auto an expanded shelf
+            -- is a list, whose row geometry is covered by the list suites.
+            _chipViewMode = function() return "covers" end,
+            _isDrilledIn  = function() return false end,
         },
         { __index = BW }
     )
@@ -210,6 +214,7 @@ test("_nShelves: geometry helpers run once per decision", function()
             max_calls = max_calls + 1
             return 3
         end,
+        _isListMode = function() return false end,
     }, { __index = BW })
     eq(widget:_nShelves(), 3)
     eq(base_calls, 1, "base geometry should be calculated once")

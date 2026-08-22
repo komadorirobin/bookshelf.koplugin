@@ -111,6 +111,10 @@ local REVIEW_CSS = [[
     body   { margin: 0; padding: 0; font-family: sans-serif; }
     h1     { font-size: 1.8em; margin: 0 0 0.15em 0; padding: 0; }
     p      { margin: 0 0 0.7em 0; text-align: left; }
+    /* A paragraph that contains line breaks arrives as div.p: HtmlBoxWidget's
+       <br> workaround injects a <div> that would CLOSE a real <p> and give
+       the first break a paragraph margin (issue #338). Same rhythm as p. */
+    div.p  { margin: 0 0 0.7em 0; text-align: left; }
     .stars   { font-family: "nerdstars"; font-size: 1.15em; }
     p.stars  { margin: 0.5em 0 0.05em 0; }
     p.rating { margin: 0 0 0.5em 0; }
@@ -410,13 +414,44 @@ function ReviewsModal:init()
         header_h = probe and probe:getSize().h or 0
     end
 
-    -- Footer row: Close | (Refresh) | zoom - | zoom + | Open. Close on the left,
-    -- Open on the right; the zoom controls sit between.
+    -- Footer row: (Open) | (Refresh) | zoom - | zoom + | Close.
+    --
+    -- CLOSE HOLDS THE BOTTOM-RIGHT CORNER (issue 338 #2), a straight swap of
+    -- the original Close-left/Open-right row. The reporter's case, verified
+    -- against KOReader source: ImageViewer, the book-cover viewer and the
+    -- description viewer all put Close at the bottom-RIGHT, and a reader
+    -- trained by those kept opening the book when they meant to close this
+    -- popup. Open takes the slot Close vacated -- the corner belongs to
+    -- Close whether or not a caller wires Open at all.
     local button_row = {}
-    button_row[#button_row + 1] = {
-        text = _("Close"),
-        callback = function() self:onClose() end,
-    }
+    -- Open the book. Only when a caller wired on_open. The popup stays ON
+    -- SCREEN through the document load - closing it first exposed the shelf
+    -- for the whole load gap (a visible flash). Feedback is painted straight
+    -- to the framebuffer (the load blocks the UI loop): the Open button
+    -- inverts and the header cover flexes open. onClose runs AFTER the open
+    -- kicks off; by then ShowingReader has armed the shelf's transition
+    -- paint suppression, so the close repaints nothing and the framebuffer
+    -- keeps showing the popup until the reader's first paint replaces it.
+    if self.on_open then
+        button_row[#button_row + 1] = {
+            text = _("Open"),
+            id   = "open",
+            callback = function()
+                local cb = self.on_open
+                if not cb then return end
+                pcall(function() self:_paintOpenFeedback() end)
+                -- The spine tap that opened this popup is still recorded as
+                -- SpineWidget.last_tapped for the SAME book - the shelf-side
+                -- opening effect would capture POPUP pixels at the covered
+                -- spine's rect and paint corruption. Clear the rendezvous.
+                pcall(function()
+                    require("lib/bookshelf_spine_widget").last_tapped = nil
+                end)
+                cb()
+                self:onClose()
+            end,
+        }
+    end
     -- Refresh only when a caller supplied on_refresh (unused by the book-detail
     -- popup; reviews load cache-first). Kept for any other caller.
     if self.on_refresh then
@@ -452,34 +487,10 @@ function ReviewsModal:init()
         callback = function() self:_changeFontSize(DESC_FONT_STEP) end,
         hold_callback = resetFontSize,
     }
-    -- Open the book. Only when a caller wired on_open. The popup stays ON
-    -- SCREEN through the document load - closing it first exposed the shelf
-    -- for the whole load gap (a visible flash). Feedback is painted straight
-    -- to the framebuffer (the load blocks the UI loop): the Open button
-    -- inverts and the header cover flexes open. onClose runs AFTER the open
-    -- kicks off; by then ShowingReader has armed the shelf's transition
-    -- paint suppression, so the close repaints nothing and the framebuffer
-    -- keeps showing the popup until the reader's first paint replaces it.
-    if self.on_open then
-        button_row[#button_row + 1] = {
-            text = _("Open"),
-            id   = "open",
-            callback = function()
-                local cb = self.on_open
-                if not cb then return end
-                pcall(function() self:_paintOpenFeedback() end)
-                -- The spine tap that opened this popup is still recorded as
-                -- SpineWidget.last_tapped for the SAME book - the shelf-side
-                -- opening effect would capture POPUP pixels at the covered
-                -- spine's rect and paint corruption. Clear the rendezvous.
-                pcall(function()
-                    require("lib/bookshelf_spine_widget").last_tapped = nil
-                end)
-                cb()
-                self:onClose()
-            end,
-        }
-    end
+    button_row[#button_row + 1] = {
+        text = _("Close"),
+        callback = function() self:onClose() end,
+    }
     -- Keep the row spec; the footer ButtonTable is rebuilt FRESH each _assemble
     -- (merging its layout into the modal's nils it, so a reused one would lose
     -- its focus layout after the first tab switch).
@@ -523,7 +534,7 @@ function ReviewsModal:init()
     -- without rebuilding the @font-face rule.
     self._css = css
 
-    self.scroll_html = ScrollHtmlWidget:new{
+    self.scroll_html = self:_scroller{
         html_body         = self:_activeHtml(),
         css               = css,
         default_font_size = Screen:scaleBySize(self.font_size),
@@ -695,8 +706,9 @@ function ReviewsModal:_buildSourceChips(tab)
     -- Match the main bookshelf nav chip bar exactly: a logical 16pt label scaled
     -- by the user's chip-font setting. NOT Screen:scaleBySize (the font layer
     -- scales that again) -- keeps these source chips smaller than the tab bar.
-    local _chip_scale = Store.read("chip_font_scale") or 100
-    local size    = math.floor(16 * _chip_scale / 100 + 0.5)
+    -- Through BandMetrics on CHIP_KEY, the one place that derivation lives.
+    local BandMetrics = require("lib/bookshelf_band_metrics")
+    local size    = BandMetrics.fontSize(BandMetrics.CHIP_KEY)
 
     -- Build the label widgets first (uppercased, UTF-8-aware so accented
     -- letters fold correctly -- issue #130) to find a uniform cell height.
@@ -819,7 +831,7 @@ function ReviewsModal:_buildSourcedBody(tab, w, h)
     -- own header+hairline gap (lib/bookshelf_widget.lua's _buildReviewsTab).
     -- (A later rule overrides just padding-top from the shared `body { padding }`.)
     local css = self._css .. string.format("\nbody { padding-top: %dpx; }", Screen:scaleBySize(8))
-    local scroller = ScrollHtmlWidget:new{
+    local scroller = self:_scroller{
         html_body         = (src and src.html) or "<p></p>",
         css               = css,
         default_font_size = Screen:scaleBySize(self.font_size),
@@ -1175,6 +1187,32 @@ end
 -- multiswipe would otherwise fire its action instead of closing (issue #171
 -- regression). KOReader's own fullscreen widgets close on any multiswipe
 -- regardless of gesture config; match that.
+-- _scroller(opts) -> a ScrollHtmlWidget that YIELDS an unusable swipe-down.
+--
+-- The stock widget's onScrollText claims every south swipe, even on page 1
+-- where scrollText(-1) does nothing -- so a swipe-down over the body was
+-- swallowed whether or not there was anything to scroll, and the modal never
+-- saw it. Overridden per instance rather than subclassed: it is one branch,
+-- and the modal is the only caller that wants it.
+--
+-- Only SOUTH, and only AT THE TOP. Mid-document, a swipe-down scrolls back up
+-- exactly as before -- "I'd need to detect if the area has any vertical
+-- scroll available first before passing to a close action". North swipes are
+-- untouched: an at-the-end no-op close would fire while someone is reading
+-- the last page, which is the wrong surprise.
+function ReviewsModal:_scroller(opts)
+    local w = ScrollHtmlWidget:new(opts)
+    local orig = w.onScrollText
+    w.onScrollText = function(w_self, arg, ges)
+        if ges and ges.direction == "south"
+                and w_self.htmlbox_widget.page_number <= 1 then
+            return false   -- nothing above: let the modal's swipe-down close
+        end
+        return orig(w_self, arg, ges)
+    end
+    return w
+end
+
 function ReviewsModal:onMultiSwipe(_arg, _ges)
     self:onClose()
     return true
@@ -1210,7 +1248,18 @@ function ReviewsModal:onSwipe(_arg, ges)
             end
         end
     end
+    -- A reserved-zone swipe (e.g. right-edge brightness) keeps its job first.
     if self:_tryPassthrough(ges) then return true end
+    -- Swipe-down dismisses, matching every stock KOReader popup (issue 338
+    -- #1). A south swipe only reaches here when no child claimed it: over the
+    -- header, the tab chips or the footer always, and over the body exactly
+    -- when the scroller had nothing above the fold to scroll back to -- see
+    -- _scroller. Mid-document, the body consumes it as a scroll, so a reader
+    -- paging back up never falls out of the popup.
+    if dir == "south" then
+        self:onClose()
+        return true
+    end
     return false
 end
 

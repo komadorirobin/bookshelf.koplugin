@@ -636,6 +636,266 @@ test("getSeriesGroups: groups books by series_name, sorts by latest activity", f
     assert(groups[2].books[2].filepath == "/lib/foundation2.epub")
 end)
 
+-- issue #299: a Calibre custom series column puts the book in BOTH stacks.
+-- The secondary series can only come from metadata.calibre's user_metadata
+-- (EPUB metadata and BIM carry one series), which only the PLAIN rapidjson
+-- parse keeps -- load_calibre strips it, verified empirically. The stub
+-- offers both loaders so the test also pins WHICH one the code chose.
+test("getSeriesGroups: a Calibre series column adds a second membership (#299)",
+function()
+    Repo.invalidateWalkCache()
+    package.loaded["readhistory"].hist = {
+        { file = "/lib/foreverwar.epub", time = 500 },
+    }
+    _G._test_bim_data = {
+        ["/lib/foreverwar.epub"] = { title = "The Forever War",
+                                     series = "The Forever War #1" },
+        ["/lib/other.epub"]      = { title = "Other" },
+    }
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1,
+                          bookshelf_calibre_metadata = true }
+    -- SAVED AND RESTORED, unlike the suite's usual drive-by stubbing: this
+    -- attributes stub answers the no-key TABLE form (walkBooks prefers it,
+    -- and _calibreMetadataFor reads .size off it), and the table MUST carry
+    -- mode -- walkBooks reads attr.mode off the table and only falls back to
+    -- keyed calls when the table form returns nil, so a mode-less table made
+    -- the walk skip every entry. Left in place, the same stub then leaked
+    -- "file"-for-everything into later tests.
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    lfs_stub.dir = function(path)
+        local files = (path == "/lib")
+            and { ".", "..", "foreverwar.epub", "other.epub" } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+        if key == nil then
+            return { mode = "file", modification = 0, size = 1024 }
+        end
+    end
+    local calibre_entries = {
+        {
+            lpath = "foreverwar.epub",
+            title = "The Forever War",
+            series = "The Forever War", series_index = 1,
+            pubdate = "1974-01-01T00:00:00+00:00",
+            publisher = "St. Martin's Press",
+            rating = 9,
+            user_metadata = {
+                ["#series2"] = { datatype = "series",
+                                 ["#value#"] = "SF Masterworks",
+                                 ["#extra#"] = 83 },
+                ["#notseries"] = { datatype = "text",
+                                   ["#value#"] = "ignore me" },
+                ["#signed"] = { datatype = "bool", ["#value#"] = true },
+                ["#dateread"] = { datatype = "datetime",
+                                  ["#value#"] = "2019-06-02T00:00:00+00:00" },
+                ["#review"] = { datatype = "comments",
+                                ["#value#"] = "<p>very long HTML…</p>" },
+            },
+        },
+    }
+    -- LAYERED over the suite's existing rapidjson stub (the hardcover cache
+    -- fake installs one with the encode/decode the enrichment paths need),
+    -- and restored below -- replacing it outright broke every Hardcover test
+    -- that ran after this one.
+    local prev_rapidjson = package.loaded["rapidjson"]
+    local rj = {}
+    for k, v in pairs(prev_rapidjson or {}) do rj[k] = v end
+    rj.load = function(_path) return calibre_entries end
+    rj.load_calibre = function(_path)
+        error("load_calibre strips user_metadata; the small-file path "
+            .. "must take the plain parse")
+    end
+    package.loaded["rapidjson"] = rj
+
+    local groups = Repo.getSeriesGroups(10)
+    -- Two stacks (plus the standalone, which is not a group): the primary
+    -- series and the custom column's.
+    local names = {}
+    for _i, g in ipairs(groups) do
+        if g.series_name then names[g.series_name] = g end
+    end
+    assert(names["The Forever War"], "the primary series stack is missing")
+    assert(names["SF Masterworks"],
+        "the custom series column must create its own stack")
+    -- Same book, both stacks, and the SECONDARY stack orders by the
+    -- secondary number (#83), not the primary's #1.
+    local sm = names["SF Masterworks"]
+    assert(sm.books[1].filepath == "/lib/foreverwar.epub"
+        or (sm.books[1].title == "The Forever War"),
+        "the book must be a member of the secondary stack")
+    -- The text-typed column must NOT have become a series.
+    assert(not names["ignore me"],
+        "a non-series custom column leaked into the series stacks")
+
+    -- The %calibre{name} field map: standard fields and custom columns,
+    -- rendered to strings at slim time, keyed without '#', lowercased.
+    local rec = Repo.buildBookMeta("/lib/foreverwar.epub")
+    assert(rec and type(rec.calibre) == "table",
+        "the book record must carry the calibre field map")
+    local f = rec.calibre
+    assert(f.pubdate == "1974", "pubdate reduces to the year, got "
+        .. tostring(f.pubdate))
+    assert(f.publisher == "St. Martin's Press", "publisher passes through")
+    assert(f.rating == "4.5", "rating halves to the star scale, got "
+        .. tostring(f.rating))
+    assert(f.notseries == "ignore me", "a text column keyed without '#'")
+    assert(f.signed == "yes", "a true bool renders as yes")
+    assert(f.dateread == "2019", "a datetime column reduces to the year")
+    assert(f.review == nil, "comments-datatype columns must be skipped")
+
+    package.loaded["rapidjson"] = prev_rapidjson
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    Repo.invalidateWalkCache()
+end)
+
+-- The harvest sidecar (calibre.bookshelf.json): KOReader's calibre plugin
+-- rewrites metadata.calibre from load_calibre's whitelist on wireless sync,
+-- permanently deleting author_sort and user_metadata. A calibre-written file
+-- passing through us harvests those two into our own sidecar; a rewritten
+-- file gets them merged back. This drives the full cycle.
+test("calibre harvest: written on a calibre file, merged back after the wipe",
+function()
+    Repo.invalidateWalkCache()
+    package.loaded["readhistory"].hist = {}
+    _G._test_bim_data = {
+        ["/lib/foreverwar.epub"] = { title = "The Forever War" },
+    }
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1,
+                          bookshelf_calibre_metadata = true }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    lfs_stub.dir = function(path)
+        local files = (path == "/lib") and { ".", "..", "foreverwar.epub" } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+        if key == nil then
+            return { mode = "file", modification = 0, size = 1024 }
+        end
+    end
+
+    -- Phase 1: a calibre-written file (author_sort + user_metadata present).
+    local calibre_file = {
+        { lpath = "foreverwar.epub", title = "The Forever War",
+          author_sort = "Haldeman, Joe",
+          series = "The Forever War", series_index = 1,
+          user_metadata = {
+              ["#series2"] = { datatype = "series",
+                               ["#value#"] = "SF Masterworks",
+                               ["#extra#"] = 83 },
+          } },
+    }
+    local harvest_file = nil   -- what our sidecar "contains on disk"
+    local dumped
+    local prev_rapidjson = package.loaded["rapidjson"]
+    local rj = {}
+    for k, v in pairs(prev_rapidjson or {}) do rj[k] = v end
+    rj.load = function(path)
+        if path:find("calibre.bookshelf.json", 1, true) then
+            if not harvest_file then error("no harvest yet") end
+            return harvest_file
+        end
+        return calibre_file
+    end
+    rj.dump = function(value, path, _opts)
+        assert(path:find("calibre.bookshelf.json", 1, true),
+            "the only thing we ever write is our own sidecar: " .. path)
+        dumped = value
+        harvest_file = value
+    end
+    package.loaded["rapidjson"] = rj
+
+    local groups = Repo.getSeriesGroups(10)
+    assert(dumped and dumped.books and dumped.books["foreverwar.epub"],
+        "a calibre-written file must be harvested")
+    local h = dumped.books["foreverwar.epub"]
+    assert(h.author_sort == "Haldeman, Joe", "author_sort must be harvested")
+    assert(h.extra_series and h.extra_series[1].name == "SF Masterworks",
+        "the series column must be harvested")
+
+    -- Phase 2: KOReader's plugin has rewritten the file -- whitelisted fields
+    -- only. The 60s TTL memo would hide the change, so invalidate as a chip
+    -- switch after a real sync would.
+    calibre_file = {
+        { lpath = "foreverwar.epub", title = "The Forever War",
+          series = "The Forever War", series_index = 1 },
+    }
+    Repo.invalidateWalkCache()
+    Repo.invalidateCalibreCache()
+
+    local groups2 = Repo.getSeriesGroups(10)
+    local names = {}
+    for _i, g in ipairs(groups2) do
+        if g.series_name then names[g.series_name] = true end
+    end
+    assert(names["SF Masterworks"],
+        "the harvested series column must survive the wireless-sync wipe")
+
+    package.loaded["rapidjson"] = prev_rapidjson
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    Repo.invalidateWalkCache()
+    Repo.invalidateCalibreCache()
+end)
+
+-- %books_read's backing count: Finished means KOReader's own Reader Status.
+test("countFinishedBooks: counts Finished sidecars across the walk", function()
+    Repo.invalidateWalkCache()
+    _G._test_bim_data = {
+        ["/lib/done.epub"]    = { title = "Done" },
+        ["/lib/reading.epub"] = { title = "Reading" },
+        ["/lib/unread.epub"]  = { title = "Unread" },
+    }
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_docsettings_data = {
+        ["/lib/done.epub"]    = { summary = { status = "complete" } },
+        ["/lib/reading.epub"] = { summary = { status = "reading" },
+                                  percent_finished = 0.4 },
+    }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    lfs_stub.dir = function(path)
+        local files = (path == "/lib")
+            and { ".", "..", "done.epub", "reading.epub", "unread.epub" } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+    end
+    local prev_sidecar = package.loaded["docsettings"].hasSidecarFile
+    package.loaded["docsettings"].hasSidecarFile = function(_self, fp)
+        return _G._test_docsettings_data[fp] ~= nil
+    end
+
+    assert(Repo.countFinishedBooks() == 1,
+        "one Finished book, got " .. tostring(Repo.countFinishedBooks()))
+    -- Cached inside the TTL: mark another finished, count holds until the
+    -- walk cache is invalidated (a library change).
+    _G._test_docsettings_data["/lib/reading.epub"].summary.status = "complete"
+    assert(Repo.countFinishedBooks() == 1, "the TTL cache must hold")
+    Repo.invalidateWalkCache()
+    Repo.invalidateProgressCache()
+    assert(Repo.countFinishedBooks() == 2,
+        "after invalidation the new Finished book must count")
+
+    package.loaded["docsettings"].hasSidecarFile = prev_sidecar
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    _G._test_docsettings_data = nil
+    Repo.invalidateWalkCache()
+end)
+
 -- issue #127 (A): an empty / whitespace / name-less embedded series must not
 -- create a junk stack. The Calibre branch already guarded this; the embedded
 -- info.series branch now does too.
@@ -4497,6 +4757,76 @@ test("Repo.opdsLoneChildBook says nil for an uncached, multi-book or unexhausted
     assert(multi == nil, "two books is a real folder")
     assert(partial == nil, "a feed with more pages behind it keeps its folder")
     assert(no_key == nil, "a missing server key answers nil rather than erroring")
+end)
+
+-- ============================================================================
+-- progressFor's gate answer, and fileSizeFor
+-- ============================================================================
+
+test("progressFor reports whether the book has ever been opened", function()
+    -- The fifth return is the sidecar gate the function already runs, handed
+    -- back instead of discarded. List view's Progress column needs it to tell
+    -- a never-opened book (the dash) from one opened and still at 0% ("0%"),
+    -- and it must be the SAME answer, not a second guess at it.
+    _G._test_docsettings_data = {
+        ["/books/read.epub"] = { percent_finished = 0.4,
+                                 summary = { status = "reading" } },
+    }
+    Repo.invalidateProgressCache()
+
+    local pct, status, _rating, _pages, opened = Repo.progressFor("/books/read.epub")
+    assert(opened == true, "a book with a sidecar reads as opened")
+    assert(pct == 0.4 and status == "reading", "the first four returns moved")
+
+    local _p, _s, _r, _pg, never = Repo.progressFor("/books/untouched.epub")
+    assert(never == false, "a book with no sidecar must not read as opened")
+
+    local _p2, _s2, _r2, _pg2, no_path = Repo.progressFor(nil)
+    assert(no_path == false, "a nil filepath must not read as opened")
+
+    _G._test_docsettings_data = nil
+    Repo.invalidateProgressCache()
+end)
+
+test("fileSizeFor stats once and memoizes, and forgets on a walk invalidate", function()
+    -- A book on disk always has a size, and BookInfoManager stores none, so
+    -- the File size column has to come here. 27 rows a page turn means the
+    -- memo is the whole cost model.
+    local calls = 0
+    local prev_attr = package.loaded["libs/libkoreader-lfs"].attributes
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        if key == "size" then
+            calls = calls + 1
+            if fp == "/books/there.epub" then return 4096 end
+            return nil                      -- no file behind it
+        end
+        return prev_attr(fp, key)
+    end
+
+    Repo.invalidateWalkCache()
+    assert(Repo.fileSizeFor("/books/there.epub") == 4096)
+    assert(Repo.fileSizeFor("/books/there.epub") == 4096)
+    assert(calls == 1, "the second read statted again, got " .. calls)
+
+    -- A miss is remembered too, or a stale path re-stats on every page turn
+    -- for as long as it stays on screen.
+    assert(Repo.fileSizeFor("/books/gone.epub") == nil)
+    assert(Repo.fileSizeFor("/books/gone.epub") == nil)
+    assert(calls == 2, "the miss was not memoized, got " .. calls)
+
+    -- Degenerate inputs answer nil without touching the filesystem.
+    assert(Repo.fileSizeFor(nil) == nil)
+    assert(Repo.fileSizeFor("") == nil)
+    assert(calls == 2, "a nil/empty path reached the filesystem")
+
+    -- A walk invalidation is the signal that files may have been added,
+    -- removed or replaced, so the sizes have to be re-read.
+    Repo.invalidateWalkCache()
+    assert(Repo.fileSizeFor("/books/there.epub") == 4096)
+    assert(calls == 3, "invalidateWalkCache did not clear the size memo")
+
+    package.loaded["libs/libkoreader-lfs"].attributes = prev_attr
+    Repo.invalidateWalkCache()
 end)
 
 -- ============================================================================

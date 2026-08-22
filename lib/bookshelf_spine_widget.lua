@@ -729,6 +729,37 @@ local SpineWidget = InputContainer:extend{
     -- happens on the settle rebuild. Usually inherited from the module draft
     -- flag (see below) rather than set per-instance.
     draft               = nil,
+    -- Ask for the no-cover placeholder WITHOUT its title/author text: just the
+    -- card. Opt-in from callers that draw this widget as a thumbnail and carry
+    -- the book's name themselves -- list view's cover column is the one today
+    -- (bookshelf_list_row.lua). The caller knows its own intent, so it says so
+    -- rather than leaving _renderFallback to infer "too small for text" from a
+    -- size, which is a judgement about the caller the renderer can only get
+    -- wrong: the grid's own smallest coverless tile (6 columns, stack folder
+    -- style) needs its label MORE than a roomy one, not less.
+    bare_placeholder    = false,
+    -- Draw the cover FLAT: square corners, no drop shadow, and -- the part
+    -- that is easy to miss -- no shadow reservation in the layout either.
+    -- _cardDimensions normally hands the card (width - SHADOW_OFFSET,
+    -- height - SHADOW_OFFSET) so the shadow has an L of pixels to paint into,
+    -- which means "remove the shadow" and "give the cover those pixels back"
+    -- are the same request. A flat thumbnail fills the box it was given.
+    --
+    -- Opt-in for the same reason bare_placeholder is: intent belongs to the
+    -- caller. List view's cover column is a spreadsheet cell -- a table has no
+    -- room for chrome and nothing in it is meant to look raised off the page --
+    -- while the grid and the hero are card surfaces whose shadow and radius are
+    -- the whole look. Inferring flatness from a size instead would be the
+    -- renderer guessing at the caller, which cost the grid its coverless folder
+    -- labels the last time it was tried (see bare_placeholder).
+    --
+    -- Distinct from flat_card, which is the Text folder style's "this tile is a
+    -- BUTTON, not a book": that one restyles the no-cover placeholder (drops
+    -- the ornate inner frame, flattens the two fills together) and keeps the
+    -- shadow's reserved pixels precisely so the tile stays aligned with the
+    -- folder cardboard drawn around it. Opposite requirement, so a separate
+    -- flag rather than one overloaded one.
+    flat_thumb          = false,
 }
 
 -- Module-level draft flag: BookshelfWidget:_rebuild{draft=true} raises it for
@@ -891,8 +922,11 @@ function SpineWidget:_renderShadowedCard(inner)
             width     = card_w,
             height    = card_h,
             thickness = SELECTED_BORDER,
-            radius    = CARD_RADIUS,
+            radius    = self.flat_thumb and 0 or CARD_RADIUS,
         }
+    elseif self.flat_thumb then
+        -- No shadow, and _cardDimensions already gave the reserved pixels back
+        -- to the card.
     elseif self.flat_card then
         -- A button does not cast a shadow. Suppressed here rather than by
         -- skipping the wrapper, so selection borders, badges and glyphs all
@@ -1480,6 +1514,11 @@ end
 -- sizing their inner card widget so the card doesn't overlap the
 -- dangle zone that _renderShadowedCard reserves on the bottom edge.
 function SpineWidget:_cardDimensions()
+    -- Flat thumbnails cast no shadow, so there is nothing to reserve for and
+    -- the card takes the whole slot. The reservation is the layout half of the
+    -- shadow -- leaving it in would keep charging a list row for chrome it
+    -- asked not to have.
+    if self.flat_thumb then return self.width, self.height end
     -- Glyph is now fully INSIDE the card (no dangle), so no extra
     -- bottom-margin reservation needed.
     return self.width - SHADOW_OFFSET, self.height - SHADOW_OFFSET
@@ -1836,7 +1875,7 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         inner       = cover_inner,
         width       = card_w,
         height      = card_h,
-        radius      = CARD_RADIUS,
+        radius      = self.flat_thumb and 0 or CARD_RADIUS,
         border_size = border,
     }
     if on_hold_fade then
@@ -1882,6 +1921,11 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         -- the mask color to match the backdrop so the corner squares
         -- merge seamlessly with the surrounding black.
         cover_args.bg_color = Blitbuffer.COLOR_BLACK
+    elseif self.flat_thumb then
+        -- Square corners mean no corner mask runs at all, so there are no
+        -- masked pixels for a shadow to show through -- and no shadow behind
+        -- this card to restore anyway. Left explicit rather than relying on
+        -- radius == 0 making the shadow_* fields inert downstream.
     else
         -- The card sits at (0, 0) in the OverlapGroup; the shadow paints
         -- at (SHADOW_OFFSET, SHADOW_OFFSET) with the same w/h and same
@@ -1937,6 +1981,42 @@ function SpineWidget:_renderFallback()
     local content_pad   = math.max(Screen:scaleBySize(4), math.floor(card_w * 0.04))
     local content_w     = outer_inset_w - border * 2 - content_pad * 2
 
+    -- Degenerate slot: the card's frame alone, no text.
+    --
+    -- Two ways in, and they are deliberately different questions.
+    --
+    -- 1. The caller ASKED for it (bare_placeholder). A list row draws this
+    --    placeholder at a row-height thumbnail and prints the title in its own
+    --    column, so text on the card would be a smaller, redundant copy. Intent
+    --    is the caller's to declare -- inferring it from a width instead cost
+    --    the cover grid its coverless folder labels at 6 columns, where the
+    --    stack style's inset leaves a card that is small but perfectly able to
+    --    carry a name.
+    --
+    -- 2. The text physically cannot render. TextBoxWidget re-wraps a line it is
+    --    about to ellipsis-truncate against `targeted_width - ellipsis_width`
+    --    (frontend/ui/widget/textboxwidget.lua:879) and aborts inside native
+    --    code -- no Lua traceback, the whole app goes down -- when that is not
+    --    strictly positive. So the floor is exactly the real failure condition,
+    --    measured against the face that is about to render, and no grid slot
+    --    that can hold a word ever trips it.
+    local function bareCard()
+        local plain = ColorSafeFrame:new{
+            bordersize = border,
+            color      = colors.border,
+            radius     = self.flat_thumb and 0 or CARD_RADIUS,
+            padding    = 0,
+            background = outer_bg,
+            Widget:new{ dimen = Geom:new{
+                w = math.max(1, card_w - border * 2),
+                h = math.max(1, card_h - border * 2),
+            } },
+        }
+        self._cover_card = plain
+        return (self:_renderShadowedCard(plain))
+    end
+    if self.bare_placeholder then return bareCard() end
+
     -- Title text: cap height so a 4-line title still leaves room for
     -- the rule + author below.
     local title_text  = (self.book and self.book.title) or "?"
@@ -1961,6 +2041,22 @@ function SpineWidget:_renderFallback()
         lo = 12, hi = 22, bold = true,
     }
     local title_face, title_bold = BFont:getFace("infofont", title_size, { bold = true })
+    -- The hard floor described above, now that the face is known. The author
+    -- below renders at author_size <= title_size and unbolded, so its ellipsis
+    -- can never be the wider of the two -- one measurement covers both text
+    -- widgets. nil-safe: a stubbed or absent RenderText leaves the width at 0,
+    -- which only ever means "don't take this branch", never a crash of its own.
+    local ellipsis_w = 0
+    do
+        local ok_rt, RenderText = pcall(require, "ui/rendertext")
+        if ok_rt and RenderText and RenderText.getEllipsisWidth then
+            local ok_w, w = pcall(function()
+                return RenderText:getEllipsisWidth(title_face, title_bold)
+            end)
+            if ok_w and type(w) == "number" then ellipsis_w = w end
+        end
+    end
+    if content_w <= ellipsis_w then return bareCard() end
     -- Balance a wrapping title so its last line isn't a lone word (same
     -- treatment as the hero title). Line count is unchanged, so the fitted
     -- height still holds. Skip when it stayed one line.
@@ -2096,9 +2192,37 @@ function SpineWidget:_renderFallback()
         },
     }
 
-    -- Author region only renders if there's actually a name to show;
-    -- skipping it lets the title centre vertically when alone.
-    local stack_children = { align = "center", title, rule_centerer }
+    -- WHAT ACTUALLY FITS. The title, the rule and the author used to be
+    -- assembled unconditionally, on the reasoning that each region caps at a
+    -- FRACTION of card_h -- which holds until the floors bite. title_max_h is
+    -- `max(scaleBySize(20), card_h * 0.40)`, so on a short card the floor wins
+    -- and the title alone can claim most of it; the rule and the author are
+    -- then stacked on regardless and paint outside the card.
+    --
+    -- Nothing reached that before: a grid slot is portrait and tall. A LIST
+    -- ROW is neither -- a catalogue row draws this card at the full row width
+    -- and one line's height -- and there it overflowed into the row beneath,
+    -- which is what "it will need to collapse down to just the title (no
+    -- icon/subtitle) on smaller rows" is describing.
+    --
+    -- Measured, not predicted: `title` carries height_adjust, so its getSize
+    -- reports the height it actually took rather than its cap, and the same
+    -- goes for the author below. So the card drops decoration only when it
+    -- genuinely cannot hold it, and a tile that used to fit one is unchanged.
+    --
+    -- ORDER MATTERS: the rule goes before the author. The rule is decoration
+    -- and the author is information, but the author is also the thing that
+    -- makes a two-region card look like a card rather than a label -- and
+    -- dropping the rule alone recovers a whole band. Losing the motif first is
+    -- also what the maintainer asked for in as many words ("no icon/subtitle",
+    -- icon first).
+    local avail_h = outer_inset_h - border * 2 - content_pad * 2
+    local used_h  = title:getSize().h
+    local stack_children = { align = "center", title }
+    if used_h + band_h <= avail_h then
+        stack_children[#stack_children + 1] = rule_centerer
+        used_h = used_h + band_h
+    end
     if author_text ~= "" then
         local author_max_h = math.max(Screen:scaleBySize(14), math.floor(card_h * 0.20))
         -- Author fits its own band but never outgrows the title (kept
@@ -2120,7 +2244,14 @@ function SpineWidget:_renderFallback()
             height_adjust                 = true,
             height_overflow_show_ellipsis = true,
         }
-        stack_children[#stack_children + 1] = author
+        if used_h + author:getSize().h <= avail_h then
+            stack_children[#stack_children + 1] = author
+        else
+            -- Built to be measured and not used. TextBoxWidget allocates a
+            -- bitmap at construction, so it is freed rather than left to the
+            -- collector -- this runs once per coverless tile per render.
+            author:free()
+        end
     end
     local stack = VerticalGroup:new(stack_children)
 
@@ -2154,7 +2285,7 @@ function SpineWidget:_renderFallback()
     local card = ColorSafeFrame:new{
         bordersize = border,
         color      = colors.border,
-        radius     = CARD_RADIUS,
+        radius     = self.flat_thumb and 0 or CARD_RADIUS,
         padding    = 0,
         background = outer_bg,
         VerticalGroup:new{
@@ -2214,6 +2345,11 @@ end
 SpineWidget.BorderOverlay   = BorderOverlay
 SpineWidget.SELECTED_BORDER = SELECTED_BORDER
 SpineWidget.CARD_RADIUS     = CARD_RADIUS
+-- The card's hairline frame thickness, so the list thumbnail's opening effect
+-- can inset past it and leave it alone. A grid cover's frame is part of the
+-- object swinging open and squeezes with the artwork; a list thumbnail's frame
+-- is the table cell's edge, and deforming it reads as the ROW bending.
+SpineWidget.CARD_BORDER     = CARD_BORDER
 -- Drop-shadow geometry + colour, so the opening-book effect can restore a
 -- selected cover's shadow after erasing its ring (a selected cover swaps its
 -- shadow for the ring, #271 follow-up). shadowGray() is a function: night mode

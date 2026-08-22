@@ -102,6 +102,7 @@ function Settings:_pickTokenViaLibraryModal(LibraryModal, dialog)
         { key = "Time",     label = _("Time") },
         { key = "Device",   label = _("Device") },
         { key = "Logic",    label = _("Logic") },
+        { key = "Style",    label = _("Style") },
     }
     local active_chip = "all"
     local search_query
@@ -391,15 +392,10 @@ function Settings:_heroSubItems(keys)
                 local label    = _(Regions.LABELS[key] or key)
                 local resolved = Regions.read()[key]
                 local book, state = self:_previewContext()
-                local preview = ""
-                local ok, expanded = pcall(Tokens.expand,
-                    resolved.template or "", book, state)
-                if ok and expanded then
-                    preview = expanded:gsub("%[/?[biu]%]", "")
-                                      :gsub("%%bar", "")
-                                      :gsub("%s+", " ")
-                    preview = preview:match("^%s*(.-)%s*$") or ""
-                end
+                -- Shared with the list's line rows; see Tokens.menuPreview for
+                -- why %bar has to become a glyph rather than vanish, and why
+                -- the brace modifiers are stripped before expansion.
+                local preview = Tokens.menuPreview(resolved.template, book, state)
                 if preview == "" then return label end
                 if #preview > 36 then preview = preview:sub(1, 35) .. "\xE2\x80\xA6" end
                 return label .. ": " .. preview
@@ -410,11 +406,10 @@ function Settings:_heroSubItems(keys)
                 return not Regions.read()[key].disabled
             end,
             callback = function(touchmenu_instance)
-                -- Rating is an interactive widget, not a text-templated
-                -- region — a line editor for it is meaningless. Tap toggles
-                -- enabled, same as hold elsewhere.
+                -- Rating uses a compact editor for visibility, star size and
+                -- alignment; it deliberately has no token-template field.
                 if key == "rating" then
-                    self:_toggleRegionEnabled(key, touchmenu_instance)
+                    self:_editHeroRegion(key, touchmenu_instance)
                     return
                 end
                 self:_editHeroRegion(key, touchmenu_instance)
@@ -1079,6 +1074,244 @@ function Settings:_coverDisplaySubItems()
     }
 end
 
+-- ---------------------------------------------------------------------------
+-- List view menu
+-- ---------------------------------------------------------------------------
+
+-- _listViewSubItems() -- the rows the list/table view needs:
+--
+--     (rows, columns and view are set per shelf: long-press a chip)
+--     Line 1: The Hobbit
+--     Line 2: Tolkien   12% of 310 pages
+--     Add a line
+--
+-- The mode toggles that closed this menu ("Show as list when shelf is
+-- expanded / collapsed / inside folders") are GONE, replaced by the per-chip
+-- Show as pick over one fixed Auto policy -- lib/bookshelf_view_mode.lua has
+-- the ruling.
+--
+-- The column pickers that used to sit here are GONE, with the column model
+-- itself (lib/bookshelf_list_lines.lua's header has the account). A row is an
+-- ordered set of token templates now, and each one is edited through the SAME
+-- line editor the hero card uses -- the maintainer's ruling: "I think it will
+-- be best for the long run to use the bookends style row editors, allowing far
+-- more choice over content, formatting, size."
+--
+-- The line rows are the maintainer's requested shape too: "I meant for each
+-- row to be edited from a link in the main menu", i.e. one flat row per line,
+-- not a flyout per line. Tap opens the editor. HOLD opens move-up / move-down
+-- / delete, which is where the ordering controls went -- putting three more
+-- buttons on every line row would have tripled the width of a menu whose whole
+-- job is to be scannable.
+--
+-- A separate submenu rather than rows inside Cover display: list view is not a
+-- cover setting, and burying it there would make it undiscoverable.
+--
+-- The two "show as list" checkboxes are the WHOLE view-mode model -- one
+-- persisted boolean per shelf state, independent of each other
+-- (lib/bookshelf_view_mode.lua). The long-press on the pagination page label
+-- writes whichever of the two matches the state the shelf is in, so this
+-- screen is an exact mirror of what is on screen rather than something a
+-- gesture can outrank. There used to be a session override that could, and its
+-- help text had to describe it; both are gone.
+--
+-- Text size is NOT here: it is list_font_scale, which lives under Text size
+-- with every other font-scale knob. Nor are rows and columns any more -- those
+-- are per chip, in the chip's own shelf-style menu.
+function Settings:_listViewSubItems()
+    local ViewMode = require("lib/bookshelf_view_mode")
+    local Lines    = require("lib/bookshelf_list_lines")
+    -- Every change in this menu moves what a row CONTAINS -- lines added,
+    -- deleted, reordered, a preset applied, a toggle flipped -- but no longer
+    -- what a row is TALL. That comes from the row count now, so there is
+    -- nothing to settle afterwards: a rebuild is the whole of it. The second
+    -- rebuild and the scale settle that used to sit here went with the
+    -- density model.
+    local function markDirty()
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+    end
+
+    -- No 'Show cover in lists' toggle any more. It was reported broken --
+    -- "sometimes works but for some reason not when a chip has its list style
+    -- overridden" -- and the ruling was to remove it rather than mend it:
+    -- a list row always has its cover cell now, and the denser text-only
+    -- table went with the toggle. One less setting, one less way for a chip
+    -- override and a global to disagree.
+    local items = {
+        -- Discovery, now that the density and mode controls live per chip:
+        -- this menu is the only place a reader who has not found the chip
+        -- long-press will look. Disabled rows rather than help_text on some
+        -- other item, so it reads without a tap.
+        {
+            text = _("Rows, columns and view are set per shelf:"),
+            enabled = false,
+        },
+        {
+            text = _("long-press a chip, then open Shelf style."),
+            enabled = false,
+            separator = true,
+        },
+    }
+
+    -- Columns and rows are NOT here any more. They MOVED to the chip's own
+    -- shelf-style dialog, on the maintainer's ruling: "move row and column
+    -- settings from the main menu, and put them into the per chip shelf style
+    -- menu". Two reasons it belongs there and not here -- a catalogue chip and
+    -- a library chip want different densities, and the same dialog already
+    -- owns the mode those numbers depend on, so it can show the list's
+    -- numbers or the grid's rather than both.
+    --
+    -- What is left in this menu is what a row SAYS: its lines, and the
+    -- toggles for where list mode applies.
+
+    for i = 1, #Lines.layout().lines do
+        items[#items + 1] = self:_listLineRow(i, markDirty)
+    end
+
+    items[#items + 1] = {
+        -- Two whole strings rather than a label with a bracketed suffix glued
+        -- on: a translator needs the finished sentence, and concatenating
+        -- fragments is how you get word order that only works in English.
+        text_func = function()
+            if #Lines.layout().lines >= Lines.MAX_LINES then
+                return _("Add a line (maximum reached)")
+            end
+            return _("Add a line")
+        end,
+        enabled_func = function()
+            return #Lines.layout().lines < Lines.MAX_LINES
+        end,
+        keep_menu_open = true,
+        separator = true,
+        callback = function(touchmenu_instance)
+            Lines.addLine()
+            markDirty()
+            -- The submenu is built from the line COUNT, so a new line needs
+            -- the whole table rebuilt, not just its rows refreshed.
+            self:_reopenListViewMenu(touchmenu_instance)
+        end,
+    }
+
+    return items
+end
+
+-- _reopenSubMenu(tmi, build) -- rebuild an open submenu in place.
+--
+-- Generalised from _reopenListViewMenu, which does the same for the List view
+-- screen: adding or deleting a preset changes the SET of rows, and
+-- TouchMenu:updateItems only re-renders the rows it already has. The live
+-- table's identity has to be preserved -- TouchMenu holds the reference, so
+-- replacing it leaves the menu rendering the old array.
+function Settings:_reopenSubMenu(touchmenu_instance, build)
+    if not touchmenu_instance then return end
+    if touchmenu_instance.item_table then
+        local live = touchmenu_instance.item_table
+        for i = #live, 1, -1 do live[i] = nil end
+        for i, row in ipairs(build()) do live[i] = row end
+    end
+    if touchmenu_instance.updateItems then
+        touchmenu_instance:updateItems()
+    end
+end
+
+-- _listLineRow(index, markDirty) -- one "Line N: <preview>" row.
+--
+-- The preview is the template expanded against the same book the hero editor
+-- previews with, so the row shows what the line will actually say rather than
+-- the raw template. Falling back to the bare label when it expands to nothing
+-- matters more than it looks: a line whose tokens are all empty for the
+-- preview book would otherwise render as "Line 2: " with a dangling colon.
+function Settings:_listLineRow(index, markDirty)
+    local Lines          = require("lib/bookshelf_list_lines")
+    local ListLineEditor = require("lib/bookshelf_list_line_editor")
+    local Tokens         = require("lib/bookshelf_tokens")
+    return {
+        keep_menu_open = true,
+        text_func = function()
+            local label = ListLineEditor.label(index)
+            local line  = Lines.layout().lines[index]
+            if not line then return label end
+            local book, state = self:_previewContext()
+            -- Tokens.menuPreview, not a local gsub chain: %bar becomes a little
+            -- bar of blocks, %spacer and the brace modifiers come out entirely,
+            -- and the hero's region rows get the identical treatment from the
+            -- identical code.
+            local preview = Tokens.menuPreview(line.template, book, state)
+            if preview == "" then return label end
+            if #preview > 36 then preview = preview:sub(1, 35) .. "\xE2\x80\xA6" end
+            return label .. ": " .. preview
+        end,
+        callback = function(touchmenu_instance)
+            ListLineEditor.show(index, self._bw, self, touchmenu_instance)
+        end,
+        hold_callback = function(touchmenu_instance)
+            self:_listLineActions(index, markDirty, touchmenu_instance)
+        end,
+    }
+end
+
+-- _listLineActions -- the hold menu on a line row: reorder and delete.
+--
+-- Both refuse at their edges rather than wrapping or emptying the row; the
+-- rules live in bookshelf_list_lines.lua (Lines.moveLine / Lines.removeLine)
+-- and this only greys out the buttons to match, so the menu cannot promise
+-- something the model will decline.
+function Settings:_listLineActions(index, markDirty, touchmenu_instance)
+    local Lines          = require("lib/bookshelf_list_lines")
+    local ListLineEditor = require("lib/bookshelf_list_line_editor")
+    local ButtonDialog   = require("ui/widget/buttondialog")
+    local count = #Lines.layout().lines
+    local dialog
+    local function act(fn)
+        return function()
+            UIManager:close(dialog)
+            fn()
+            markDirty()
+            self:_reopenListViewMenu(touchmenu_instance)
+        end
+    end
+    dialog = ButtonDialog:new{
+        title = ListLineEditor.label(index),
+        buttons = {
+            {
+                { text = _("Move up"),
+                  enabled = index > 1,
+                  callback = act(function() Lines.moveLine(index, -1) end) },
+                { text = _("Move down"),
+                  enabled = index < count,
+                  callback = act(function() Lines.moveLine(index, 1) end) },
+            },
+            {
+                { text = _("Delete"),
+                  -- One line is the floor: with none, layout() hands back the
+                  -- shipped defaults, so "delete the last line" would silently
+                  -- restore two lines the user never asked for.
+                  enabled = count > 1,
+                  callback = act(function() Lines.removeLine(index) end) },
+            },
+            {
+                { text = _("Cancel"), is_enter_default = true,
+                  callback = function() UIManager:close(dialog) end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+-- _reopenListViewMenu -- rebuild the List view submenu in place.
+--
+-- Adding, deleting or reordering a line changes the SET of rows, not just
+-- their labels, and TouchMenu:updateItems only re-renders the rows it already
+-- has. One line over _reopenSubMenu, which is the same operation for any
+-- submenu and carries the account of why the table's identity has to survive.
+function Settings:_reopenListViewMenu(touchmenu_instance)
+    self:_reopenSubMenu(touchmenu_instance,
+        function() return self:_listViewSubItems() end)
+end
+
 -- The library-wide group-tile style: one radio list, and the fallback for
 -- every chip that has not set its own (bookshelf_stack_display's header
 -- explains why the per-kind rows this replaced were the wrong shape).
@@ -1651,6 +1884,12 @@ function Settings:_settingsSubItems()
         text                = _("Cover display"),
         sub_item_table_func = function()
             return self:_coverDisplaySubItems()
+        end,
+    }
+    items[#items + 1] = {
+        text                = _("List view"),
+        sub_item_table_func = function()
+            return self:_listViewSubItems()
         end,
     }
     items[#items + 1] = {
@@ -3257,14 +3496,23 @@ function Settings:_openLayoutEditor(touchmenu_instance)
 
     -- Effective current grid, reading through the widget so an unset (legacy)
     -- value still shows the real column/row count being rendered.
+    --
+    -- Explicitly the COVER GRID's numbers (_gridCols / _gridBaseRows /
+    -- _gridMaxRows), not whatever the shelf happens to be rendering: these
+    -- readers feed nudgeCols/nudgeRows, which SAVE the value they read back
+    -- into bookshelf_columns / bookshelf_rows. Opened over list view, the live
+    -- _nCols() is 1 and _baseShelves() counts list rows, so a single "+" tap
+    -- would overwrite a 5-column grid with 2 and the row count with a list
+    -- fill. Same rule the pinch/spread handler follows (_nudgeColumns swallows
+    -- the gesture in list mode); this is the other writer.
     local function curCols()
-        return (bw and bw._nCols and bw:_nCols()) or 4
+        return (bw and bw._gridCols and bw:_gridCols()) or 4
     end
     local function curRows()
-        return (bw and bw._baseShelves and bw:_baseShelves()) or 2
+        return (bw and bw._gridBaseRows and bw:_gridBaseRows()) or 2
     end
     local function maxRows()
-        return (bw and bw._maxShelfRows and bw:_maxShelfRows()) or 6
+        return (bw and bw._gridMaxRows and bw:_gridMaxRows()) or 6
     end
     local COLS_MIN, COLS_MAX = 2, 6
 
@@ -3533,6 +3781,90 @@ function Settings:_pickChipFontScale(touchmenu_instance)
         -- Open below the chip bar, not over it: this dialog resizes the strip.
         anchor = self:_chipBarAnchor(),
         title = _("Chip bar font scale"),
+        buttons = {
+            {
+                { text = "-10",  callback = function() nudge(-10) end },
+                { text = "-1",   callback = function() nudge(-1)  end },
+                { text_func = function() return tostring(getValue()) .. "%" end,
+                  enabled = false },
+                { text = "+1",   callback = function() nudge(1)   end },
+                { text = "+10",  callback = function() nudge(10)  end },
+            },
+            {
+                { text = _("Cancel"), callback = function() revert(); close() end },
+                { text = _("Default"),
+                  callback = function() setValue(100); rebuild(); Focus.reinitLocked(dialog) end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+        tap_close_callback = revert,
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+end
+
+-- The list-view row scale, stepped in ROWS rather than in percent.
+--
+-- It was 1 / 10 percentage-point nudges, then it was a ROW-COUNT stepper, and
+-- it is a text-size control again -- which is what the key was always called.
+--
+-- The middle version existed because list_font_scale moved the row height and
+-- the type together, so a percentage step either did nothing visible or
+-- crossed two row boundaries at once. That is fixed at the source now: the row
+-- count is its own setting and the row height comes from it, so this key does
+-- one thing.
+--
+--     "it should now control the size of text lines within the rows without
+--      changing the row height"
+--
+-- So: 5-point steps, no snapping, no live-shelf probe, and no relationship to
+-- how many books are on screen. Rows moved out to the chip's own shelf-style
+-- menu and to the pinch.
+--
+-- No `anchor`. _pickChipFontScale opens below the chip bar because it resizes
+-- that strip and would otherwise sit on top of the thing being resized; the
+-- rows this one resizes fill the whole shelf, so there is nowhere to hide and
+-- the plain centred dialog every other scale picker uses is the honest shape.
+function Settings:_pickListFontScale(touchmenu_instance)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local key = "list_font_scale"
+    local original = BookshelfSettings.read(key, 100)
+    -- See _pickCoverBadgeFontScale for the hide+restore rationale.
+    local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
+
+    local function getValue() return BookshelfSettings.read(key, 100) end
+    local function setValue(v)
+        v = math.max(50, math.min(300, v))
+        BookshelfSettings.save(key, v)
+    end
+    local function rebuild()
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+
+    local dialog
+    -- The same steps as every other text-size nudge on this screen (chip bar,
+    -- cover labels, hero): a fine and a coarse pair. A lone +/-5 matched
+    -- nothing else and read as a different kind of control.
+    local function nudge(delta)
+        setValue(getValue() + delta)
+        rebuild()
+        Focus.reinitLocked(dialog)
+    end
+    local function close() UIManager:close(dialog); restoreMenu() end
+    local function revert()
+        setValue(original)
+        rebuild()
+    end
+
+    dialog = ButtonDialog:new{
+        dismissable = false,  -- nudge-dialog lockdown; see _pickCoverBadgeFontScale
+        title = _("Text size"),
         buttons = {
             {
                 { text = "-10",  callback = function() nudge(-10) end },
@@ -4339,8 +4671,18 @@ function Settings:_textSizeSubItems()
         row(_("Cover labels"),          "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
         row(_("Cover badges"),          "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
         row(_("Stack & folder labels"), "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
+        row(_("Chip bar"),              "chip_font_scale",           100, "_pickChipFontScale"),
+        -- Adjacent to the chip bar because a list row is built to the same
+        -- shape -- same face, same base size, same band arithmetic
+        -- (lib/bookshelf_band_metrics.lua) -- and at 100 on both they render
+        -- identically. They are separate keys so the two can be tuned apart.
+        --
+        -- "List rows" is what this row said while the key was a density
+        -- control. It is not one any more -- the row count is its own setting,
+        -- per chip -- so the label says what it now does: the size of the text
+        -- inside a row, with the row's height left alone.
         (function()
-            local r = row(_("Chip bar"), "chip_font_scale", 100, "_pickChipFontScale")
+            local r = row(_("List text"), "list_font_scale", 100, "_pickListFontScale")
             r.separator = true  -- end the shelf band
             return r
         end)(),

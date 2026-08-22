@@ -620,6 +620,82 @@ end
 -- and cache the resulting filepath→metadata map, refreshing when the
 -- file's mtime changes (Calibre just re-synced) or after a 60s TTL.
 local CALIBRE_TTL = 60
+
+-- ── calibre.bookshelf.json: our own sidecar KOReader will not touch ─────────
+--
+-- KOReader's calibre plugin rewrites metadata.calibre after a wireless sync
+-- from load_calibre's whitelisted fields, permanently deleting everything
+-- else -- measured against the real binding, the fields WE read that do not
+-- survive are author_sort, languages, comments and user_metadata. So when a
+-- calibre-written file passes through here, the two fields with NO other
+-- source anywhere -- author_sort (the old wipe, NiLuJe/lua-rapidjson#1 still
+-- dormant) and the custom series columns (issue 299) -- are HARVESTED into a
+-- sidecar of our own, beside metadata.calibre, keyed by lpath. When a
+-- KOReader-rewritten file comes through instead, the harvest is merged back
+-- over it. languages and comments are deliberately not harvested: both fall
+-- back to the book's own embedded metadata through BIM, so the sidecar stays
+-- a few KB instead of duplicating every description in the library.
+--
+-- WHICH KIND OF FILE is decided by evidence, not mtime: a calibre-written
+-- file carries user_metadata or author_sort keys on its entries (calibre
+-- writes them for every book once the columns exist); a file where NO entry
+-- has either has been through KOReader's plugin. Trusting a calibre-written
+-- file wholly is what lets a user genuinely clearing a column see it clear.
+local HARVEST_NAME = "calibre.bookshelf.json"
+
+local function _harvestPath(meta_path)
+    return meta_path:gsub("/[^/]+$", "") .. "/" .. HARVEST_NAME
+end
+
+local function _loadHarvest(meta_path)
+    local ok_json, rapidjson = pcall(require, "rapidjson")
+    if not ok_json then return nil end
+    local ok, data = pcall(rapidjson.load, _harvestPath(meta_path))
+    if ok and type(data) == "table" and type(data.books) == "table" then
+        return data.books
+    end
+    return nil
+end
+
+local function _sameHarvestEntry(a, b)
+    if (a and a.author_sort) ~= (b and b.author_sort) then return false end
+    local ea, eb = (a and a.extra_series) or {}, (b and b.extra_series) or {}
+    if #ea ~= #eb then return false end
+    for i = 1, #ea do
+        if ea[i].name ~= eb[i].name or ea[i].num ~= eb[i].num then
+            return false
+        end
+    end
+    local fa, fb = (a and a.calibre) or {}, (b and b.calibre) or {}
+    for k, v in pairs(fa) do if fb[k] ~= v then return false end end
+    for k in pairs(fb) do if fa[k] == nil then return false end end
+    return true
+end
+
+local function _saveHarvest(meta_path, books, previous)
+    -- Only on change: this runs inside the metadata reload, and a JSON write
+    -- per reload would be flash wear for nothing.
+    local changed = false
+    if not previous then
+        changed = next(books) ~= nil
+    else
+        for k, v in pairs(books) do
+            if not _sameHarvestEntry(v, previous[k]) then changed = true break end
+        end
+        if not changed then
+            for k in pairs(previous) do
+                if books[k] == nil then changed = true break end
+            end
+        end
+    end
+    if not changed then return end
+    local ok_json, rapidjson = pcall(require, "rapidjson")
+    if not ok_json or type(rapidjson.dump) ~= "function" then return end
+    pcall(rapidjson.dump, { version = 1, books = books },
+          _harvestPath(meta_path), { pretty = true })
+    logger.dbg("[bookshelf] calibre harvest written: " .. _harvestPath(meta_path))
+end
+
 local _calibre_state = {
     last_check = 0,
     file_path  = nil,
@@ -673,8 +749,36 @@ local function _calibreMetadataFor(filepath)
         _calibre_state.map = nil
         return nil
     end
-    local data
-    if rapidjson.load_calibre then
+    -- WHICH PARSER, and why it matters (issue 299): rapidjson.load_calibre is
+    -- KOReader's slimming parser -- fast and memory-light because it KEEPS
+    -- ONLY the fields its calibre plugin needs, and user_metadata (where a
+    -- Calibre custom series column lives) is not one of them. Verified
+    -- empirically: load_calibre drops it, plain load keeps it. So secondary
+    -- series need the plain parse -- but a plain parse builds the WHOLE file
+    -- as Lua tables, and a big library's metadata.calibre (long comments, one
+    -- entry per book) can be tens of MB, which is a real transient spike on a
+    -- 256MB Kindle. The gate: plain-parse only under the size cap, slim each
+    -- entry immediately to the fields this file actually reads, and above the
+    -- cap fall back to load_calibre -- exactly today's behaviour, minus
+    -- secondary series.
+    --
+    -- KNOWN FRAGILITY, the author_sort wipe all over again: KOReader's OWN
+    -- calibre plugin loads this file through load_calibre and its
+    -- saveBookList() dumps those slimmed tables straight back -- so the first
+    -- WIRELESS calibre sync rewrites metadata.calibre without user_metadata,
+    -- permanently, and secondary series silently degrade to the primary until
+    -- a USB sync regenerates the file. Reading here cannot defend against a
+    -- writer elsewhere; the durable fix is upstream, adding user_metadata to
+    -- load_calibre's whitelist beside author_sort (NiLuJe/lua-rapidjson#1,
+    -- dormant). USB-sync libraries -- where calibre writes the file and the
+    -- wireless plugin never does -- are unaffected.
+    local CALIBRE_FULL_PARSE_MAX = 8 * 1024 * 1024
+    local data, full
+    if (attr and attr.size or 0) <= CALIBRE_FULL_PARSE_MAX then
+        local ok, d = pcall(rapidjson.load, meta_path)
+        if ok and type(d) == "table" then data, full = d, true end
+    end
+    if not data and rapidjson.load_calibre then
         local ok, d = pcall(rapidjson.load_calibre, meta_path)
         if ok then data = d end
     end
@@ -686,11 +790,143 @@ local function _calibreMetadataFor(filepath)
         _calibre_state.map = nil
         return nil
     end
+    -- Slim a full-parse entry down to what the readers of this map use
+    -- (grep cb%. for the list), plus extra_series extracted from any Calibre
+    -- custom column of datatype "series" -- reduced here to bare name/number
+    -- pairs so the retained map never holds the user_metadata blobs.
+    local function slim(book)
+        local out = {
+            lpath        = book.lpath,
+            title        = book.title,
+            authors      = book.authors,
+            author_sort  = book.author_sort,
+            series       = book.series,
+            series_index = book.series_index,
+            tags         = book.tags,
+            keywords     = book.keywords,
+            languages    = book.languages,
+            comments     = book.comments,
+        }
+        if type(book.user_metadata) == "table" then
+            local extras
+            for _col, def in pairs(book.user_metadata) do
+                if type(def) == "table" and def.datatype == "series"
+                        and type(def["#value#"]) == "string"
+                        and def["#value#"] ~= "" then
+                    extras = extras or {}
+                    extras[#extras + 1] = {
+                        name = def["#value#"],
+                        num  = type(def["#extra#"]) == "number"
+                               and tostring(def["#extra#"]) or nil,
+                    }
+                end
+            end
+            out.extra_series = extras
+        end
+        -- Arbitrary calibre fields for the %calibre{name} token: a flat map
+        -- of display-ready STRINGS keyed by lowercased lookup name without
+        -- the leading '#', built here so the retained map holds a few short
+        -- strings per book and never the user_metadata blobs. Dates reduce
+        -- to the year (the driving request is publication year); rating
+        -- halves from the file's 0-10 to calibre's star scale; columns of
+        -- datatype "comments" are skipped outright -- long-form HTML is the
+        -- wrong shape for a one-line token and a real memory cost when
+        -- multiplied by every book in the library.
+        local fields
+        local function put(key, value)
+            if value == nil or value == "" then return end
+            fields = fields or {}
+            fields[key] = value
+        end
+        local function yearOf(v)
+            local y = type(v) == "string" and v:match("^(%d%d%d%d)")
+            -- calibre writes 0100/0101-01-01 for "no date set".
+            if y and y:sub(1, 1) ~= "0" then return y end
+        end
+        local function displayValue(v, datatype)
+            if datatype == "comments" then return nil end
+            if datatype == "datetime" then return yearOf(v) end
+            local t = type(v)
+            if t == "string" then return v ~= "" and v or nil end
+            if t == "number" then return string.format("%g", v) end
+            -- false maps to nil, not "no": it keeps [if:calibre{col}]
+            -- truthiness honest, since any non-empty string reads truthy.
+            if t == "boolean" then return v and "yes" or nil end
+            if t == "table" then
+                local parts = {}
+                for _j, item in ipairs(v) do
+                    if type(item) == "string" and item ~= "" then
+                        parts[#parts + 1] = item
+                    end
+                end
+                if #parts > 0 then return table.concat(parts, ", ") end
+            end
+        end
+        put("pubdate", yearOf(book.pubdate))
+        put("publisher", displayValue(book.publisher))
+        if type(book.rating) == "number" and book.rating > 0 then
+            put("rating", string.format("%g", book.rating / 2))
+        end
+        if type(book.user_metadata) == "table" then
+            for col, def in pairs(book.user_metadata) do
+                if type(def) == "table" then
+                    local key = tostring(col):gsub("^#", ""):lower()
+                    if fields == nil or fields[key] == nil then
+                        put(key, displayValue(def["#value#"], def.datatype))
+                    end
+                end
+            end
+        end
+        out.calibre = fields
+        return out
+    end
     local lib_root = meta_path:gsub("/[^/]+$", "")
     local map = {}
+    local calibre_written = false
     for _i, book in ipairs(data) do
         if type(book) == "table" and book.lpath then
-            map[lib_root .. "/" .. book.lpath] = book
+            if book.user_metadata ~= nil or book.author_sort ~= nil then
+                calibre_written = true
+            end
+            map[lib_root .. "/" .. book.lpath] = full and slim(book) or book
+        end
+    end
+    if full and calibre_written then
+        -- A calibre-written file: harvest everything with no other source.
+        local harvest = {}
+        for _i, book in ipairs(data) do
+            if type(book) == "table" and book.lpath then
+                local entry = map[lib_root .. "/" .. book.lpath]
+                if entry and (entry.author_sort or entry.extra_series
+                              or entry.calibre) then
+                    harvest[book.lpath] = {
+                        author_sort  = entry.author_sort,
+                        extra_series = entry.extra_series,
+                        calibre      = entry.calibre,
+                    }
+                end
+            end
+        end
+        _saveHarvest(meta_path, harvest, _loadHarvest(meta_path))
+    elseif not calibre_written then
+        -- KOReader's plugin has rewritten the file: merge what was harvested
+        -- back over the survivors, by lpath.
+        local harvest = _loadHarvest(meta_path)
+        if harvest then
+            for lpath, saved in pairs(harvest) do
+                local entry = map[lib_root .. "/" .. lpath]
+                if entry then
+                    if entry.author_sort == nil then
+                        entry.author_sort = saved.author_sort
+                    end
+                    if entry.extra_series == nil then
+                        entry.extra_series = saved.extra_series
+                    end
+                    if entry.calibre == nil then
+                        entry.calibre = saved.calibre
+                    end
+                end
+            end
         end
     end
     _calibre_state.file_path  = meta_path
@@ -975,6 +1211,10 @@ function Repo.buildBookMeta(filepath, opts)
         -- libraries; cachedSurname falls back to parsing `author` then.
         author_sort = cb and type(cb.author_sort) == "string"
                        and cb.author_sort ~= "" and cb.author_sort or nil,
+        -- Field map behind the %calibre{name} token (built in slim(), so
+        -- nil on the >8MB load_calibre fallback path and for non-Calibre
+        -- libraries -- the token answers empty there).
+        calibre     = cb and type(cb.calibre) == "table" and cb.calibre or nil,
         genres      = genres,
         -- Per-source genre lists for the book-detail Tags tab's source chip bar
         -- (Hardcover added by enrichBook). Cheap by-products of genre resolution.
@@ -1141,11 +1381,40 @@ local function _buildLightMetaFromInfo(fp, info)
     -- filename is also returned so callers like searchBooks can include
     -- it in their search haystack without paying for the heavy
     -- buildBookMeta path.
+    -- Secondary series (issue 299): a Calibre custom column of datatype
+    -- "series" ("The Forever War" is also #83 in "SF Masterworks"). The only
+    -- practical source is metadata.calibre -- EPUB metadata and BIM both
+    -- carry ONE series -- and the loader has already reduced the columns to
+    -- name/number pairs (see the full-parse note in _calibreMetadataFor; on
+    -- an oversized file the slimming parser wins and there are no extras).
+    -- series_name/series_num stay the PRIMARY series untouched: tokens, the
+    -- hero and sorting all read those, and a book's number differs per
+    -- series, so each extra carries its own. Deduped case-insensitively
+    -- against the primary and each other.
+    local extra_series
+    if cb and type(cb.extra_series) == "table" then
+        for _i, es in ipairs(cb.extra_series) do
+            if type(es.name) == "string" and es.name ~= ""
+                    and (not series_name
+                         or es.name:lower() ~= series_name:lower()) then
+                local dup = false
+                for _j, have in ipairs(extra_series or {}) do
+                    if have.name:lower() == es.name:lower() then dup = true break end
+                end
+                if not dup then
+                    extra_series = extra_series or {}
+                    extra_series[#extra_series + 1] = { name = es.name, num = es.num }
+                end
+            end
+        end
+    end
+
     local rec = {
         filepath    = fp,
         filename    = filename,
         series_name = series_name,
         series_num  = series_num,
+        extra_series = extra_series,
         author      = authors and authors[1] or nil,
         authors     = authors,
         -- See buildBookMeta: Calibre-curated sort form, consumed by
@@ -1155,6 +1424,7 @@ local function _buildLightMetaFromInfo(fp, info)
         -- buildBookMeta path.
         author_sort = cb and type(cb.author_sort) == "string"
                        and cb.author_sort ~= "" and cb.author_sort or nil,
+        calibre     = cb and type(cb.calibre) == "table" and cb.calibre or nil,
         genres      = genres,
         genre_sources = genre_sources,
         title       = title,
@@ -1612,6 +1882,10 @@ _progress_cache    = {}   -- filepath → { pct, status, expires_at }
 -- to globals (not the locals the readers consult), so the invalidation
 -- would silently no-op.
 local _folderHasBooks_cache
+-- Repo.fileSizeFor's memo (created just below progressFor). Forward-declared
+-- for the same reason as the line above: invalidateWalkCache clears it, and
+-- without the decl that assignment would write a global the reader never sees.
+local _size_memo
 local _normalize_genre_cache
 local _normalize_author_cache
 local _normalize_lang_cache
@@ -1632,7 +1906,64 @@ local _shapeVisible
 local _applyFilter
 local _recordMatches
 
+-- State for Repo.countFinishedBooks, which is DEFINED after cachedWalk --
+-- the walk is a later local and Lua does not hoist. The state lives here
+-- so invalidateWalkCache below can clear it.
+local _finished_count = { value = nil, expires_at = 0 }
+
+-- Repo.countStartedBooks() -> how many books the statistics plugin has ANY
+-- reading time for, or nil when its database is unavailable.
+--
+-- The other half of "books read" (the %books_read/%books_started pair):
+-- Finished is a sidecar fact and needs the sweep above; STARTED is exactly
+-- what KOReader's statistics.sqlite3 records, so this uses the same method
+-- as the reading-stats micro-module -- read-only open, busy timeout, one
+-- query, short TTL -- rather than a second sweep. total_read_time > 0 rather
+-- than a bare count: the plugin inserts a row on open, and a book looked at
+-- for zero seconds is not started by anyone's definition.
+local _started_count = { value = nil, expires_at = 0 }
+function Repo.countStartedBooks()
+    local now = os.time()
+    if _started_count.value ~= nil and now < _started_count.expires_at then
+        return _started_count.value or nil
+    end
+    local n
+    local ok = pcall(function()
+        local DataStorage = require("datastorage")
+        local path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
+        local lfs = require("libs/libkoreader-lfs")
+        if lfs.attributes(path, "mode") ~= "file" then return end
+        local SQ3 = require("lua-ljsqlite3/init")
+        local conn = SQ3.open(path, "ro")
+        local ok_q, err = pcall(function()
+            conn:exec("PRAGMA busy_timeout=200;")
+            local stmt = conn:prepare(
+                "SELECT COUNT(*) FROM book WHERE total_read_time > 0")
+            local row = stmt:step()
+            stmt:close()
+            n = tonumber(row and row[1])
+        end)
+        conn:close()
+        if not ok_q then error(err) end
+    end)
+    if not ok then n = nil end
+    _started_count.value = n or false
+    _started_count.expires_at = now + 60
+    return n
+end
+
+-- Drop the metadata.calibre memo: forces a re-stat on the next read, so a
+-- freshly synced file is noticed immediately instead of after the 60s TTL.
+-- The mtime guard still reuses the parsed map when the file has not changed,
+-- so calling this liberally costs one lfs stat.
+function Repo.invalidateCalibreCache()
+    _calibre_state.last_check = 0
+    _calibre_state.file_mtime = -1
+end
+
 function Repo.invalidateWalkCache()
+    Repo.invalidateCalibreCache()
+    _finished_count.value = nil
     _walk_cache       = {}
     _series_cache     = {}
     _authors_cache    = {}
@@ -1652,6 +1983,9 @@ function Repo.invalidateWalkCache()
     -- invalidation can mean sideloaded sidecars (Syncthing, USB), so the
     -- "has it ever been opened?" answers may have changed too.
     _sidecar_memo     = {}
+    -- Same reasoning for file sizes: a walk invalidation is the signal that
+    -- files may have been added, removed or replaced under us.
+    _size_memo        = {}
     -- _folderHasBooks_cache: memoizes whether a folder contains a book at
     -- any depth. Previously preserved across invalidations so the negative-
     -- result-for-an-empty-folder didn't have to re-walk. Trouble: when a
@@ -1899,8 +2233,94 @@ function Repo.readProgress(filepath)
     return pct, status, rating, page_count
 end
 
+-- Repo.progressFor(filepath) -> pct, status, rating, page_count, opened
+--
+-- readProgress with the cheap gate in front of it, given a name so the render
+-- side does not have to reproduce the pairing.
+--
+-- `opened` is the gate's own answer, handed back rather than thrown away: a
+-- DocSettings sidecar exists if and only if KOReader has opened the file, so
+-- it is the one honest signal for "this book has reading history" -- which is
+-- what tells a never-opened book (nothing to show) apart from one opened and
+-- still at 0% (which really is 0%). Returning it here rather
+-- than exposing a second entry point keeps that to ONE call per row: asking
+-- twice would be memoized and cheap, but it would also be two things that
+-- could disagree.
+--
+-- Every rendering path builds its records with buildBookMeta, which is
+-- BookInfoManager-only by design (see its header ~line 586) -- so none of
+-- these four fields is on a record the shelf draws, and the sort prefetches
+-- that DO compute them (the getAll block near "needs.percent or needs.status"
+-- and the getBySource "sort-needs progress" block) write them onto the LIGHT
+-- candidate records they sort, both of which are discarded before the visible
+-- slice is rehydrated. A renderer that wants progress therefore has to ask,
+-- and asking is what bookshelf_cover_progress.decide already does per visible
+-- cover today.
+--
+-- The gate is the whole point of the wrapper: readProgress alone opens a
+-- DocSettings for every never-opened book just to learn it has nothing, where
+-- _hasSidecar answers that with a memoized stat in the right metadata
+-- location (#113/#117). Same pairing _recordMatches and the getBySource
+-- prefetch already use; routing new callers through here means they share the
+-- one _sidecar_memo instead of re-statting alongside it.
+--
+-- Deliberately NOT wired into any fetch path. This is a lazy per-rendered-item
+-- lookup, bounded by PROGRESS_CACHE_TTL, not a fifth field for buildBookMeta
+-- to populate across the whole library.
+function Repo.progressFor(filepath)
+    if not filepath then return nil, nil, nil, nil, false end
+    if _hasSidecar(filepath) then
+        local pct, status, rating, pages = Repo.readProgress(filepath)
+        return pct, status, rating, pages, true
+    end
+    -- No sidecar means never opened: no percentage, status or rating exists to
+    -- read. A page count still can -- pageCountFromFilename (#159) is a match
+    -- on the name with no file touched, and readProgress would have returned
+    -- it -- so hand it back, and the Pages column agrees with the page_count
+    -- sort key instead of going blank exactly where the sort has a value.
+    return nil, nil, nil, pageCountFromFilename(filepath), false
+end
+
+-- Repo.fileSizeFor(filepath) -> bytes, or nil.
+--
+-- One lfs stat, memoized for the session. Same shape and same purpose as
+-- progressFor -- a lazy per-rendered-item lookup for a value the record the
+-- shelf draws does not carry -- but far cheaper: buildBookMeta is
+-- BookInfoManager-only and BIM stores no file size at all, while the size is a
+-- field of the stat every other walker in this file already takes.
+--
+-- Not folded into buildBookMeta on purpose. That would stat every book on
+-- every rebuild, in cover mode too, for a column almost nobody has switched
+-- on; here the cost is bounded by the rows on screen and by whether the File
+-- size column is active at all.
+--
+-- Invalidated with the walk cache rather than on a TTL: a file's size changes
+-- only when the file itself is replaced, which is a sideload, which is what
+-- invalidateWalkCache exists for.
+_size_memo = {}
+function Repo.fileSizeFor(filepath)
+    if type(filepath) ~= "string" or filepath == "" then return nil end
+    local memo = _size_memo[filepath]
+    if memo ~= nil then
+        if memo == false then return nil end
+        return memo
+    end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_lfs or not lfs or not lfs.attributes then return nil end
+    local ok, bytes = pcall(lfs.attributes, filepath, "size")
+    if not ok or type(bytes) ~= "number" then
+        -- Remember the miss too: a path with no file behind it (a stale
+        -- history entry, a card that has been ejected) would otherwise re-stat
+        -- on every page turn for as long as it stays on screen.
+        _size_memo[filepath] = false
+        return nil
+    end
+    _size_memo[filepath] = bytes
+    return bytes
+end
+
 function Repo.getReadingStatus(filepath)
-    local pct, status_name = Repo.readProgress(filepath)
+    local pct, status_name = Repo.progressFor(filepath)
     if status_name == "finished" or status_name == "complete" or (pct and pct >= 1) then
         return { state = "read", pct = pct or 1 }
     elseif status_name == "reading" or status_name == "on_hold"
@@ -2090,6 +2510,42 @@ local function cachedWalk(home, depth)
     local copy = {}
     for i = 1, #entry.list do copy[i] = entry.list[i] end
     return copy
+end
+
+-- Repo.countFinishedBooks() -> how many books in the library are Finished.
+--
+-- For the %books_read token (a Reddit request: "a 'books read: NNNN' line in
+-- the hero status area"). "Read" means what KOReader's own Reader Status
+-- means: summary.status Finished, which is the only lifetime the reader has
+-- actually declared -- the statistics plugin counts opened books, which is a
+-- different and less flattering number.
+--
+-- Costed like the status FILTER sweep, through the same primitives:
+-- progressFor is sidecar-gated (books never opened cost one memoised stat)
+-- and per-file memoised, so the first count after a cold start pays one
+-- DocSettings read per opened book and every later count inside the TTL is a
+-- table lookup. 60s TTL rather than event-driven: a lifetime total being up
+-- to a minute stale is invisible, and the walk invalidation below clears it
+-- on any library change anyway.
+-- (_finished_count is declared above, beside the other caches, so the
+-- walk invalidation can clear it without a forward reference.)
+function Repo.countFinishedBooks()
+    local now = os.time()
+    if _finished_count.value and now < _finished_count.expires_at then
+        return _finished_count.value
+    end
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local n = 0
+    for _i, c in ipairs(cachedWalk(home, depth) or {}) do
+        local _pct, status = Repo.progressFor(c.fp)
+        -- Both spellings: readProgress normalises complete -> finished, but
+        -- accept the raw value too so this cannot break if that mapping moves.
+        if status == "finished" or status == "complete" then n = n + 1 end
+    end
+    _finished_count.value = n
+    _finished_count.expires_at = now + 60
+    return n
 end
 
 local function candidatesForScope(home, depth, scope)
@@ -3621,8 +4077,25 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
         -- one batch SELECT for the first chip; subsequent chips (Authors,
         -- Genres) hit the same cache.
         local book = _lightMetaForFp(light_cache, c.fp)
+        -- Every series this book belongs to (issue 299): the primary, plus
+        -- any Calibre custom series columns. Each membership carries its OWN
+        -- number -- The Forever War is #1 in its series and #83 in SF
+        -- Masterworks -- and the per-entry series_num below is what the
+        -- within-group sort reads, so both stacks order correctly.
+        local memberships
         if book and book.series_name then
-            local sname = book.series_name
+            memberships = { { name = book.series_name,
+                              num  = book.series_num } }
+        end
+        if book and type(book.extra_series) == "table" then
+            memberships = memberships or {}
+            for _j, es in ipairs(book.extra_series) do
+                memberships[#memberships + 1] = { name = es.name, num = es.num }
+            end
+        end
+        if memberships then
+            for _j, m in ipairs(memberships) do
+            local sname = m.name
             -- Bucket case-insensitively so "Southern Reach" and "southern
             -- reach" merge into one stack. Display the first-seen spelling,
             -- but upgrade to a Title Case variant if one shows up.
@@ -3639,13 +4112,14 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, scope_or_fi
                 g._seen[book.filepath] = true
                 g.books[#g.books + 1] = {
                     filepath   = book.filepath,
-                    series_num = book.series_num,
+                    series_num = m.num,
                     genres     = book.genres,
                     lang       = book.lang,
                 }
             end
             local t = read_time[book.filepath] or c.mtime or 0
             if t > g.latest then g.latest = t end
+            end
         elseif book then
             -- No series: a standalone shape (#160), cached alongside the
             -- group shapes. Carries the same sort-key fields the comparator

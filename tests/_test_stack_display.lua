@@ -321,7 +321,31 @@ eq(SD.pinned("nonsense"), nil, "a style this build does not offer is not pinned"
 -- The library default's own picker must not offer "the default", which would
 -- be circular; only the chip editor's list carries it.
 eq(SD.CHIP_OPTIONS[1].value, SD.FOLLOW_DEFAULT, "the chip list leads with it")
-eq(#SD.CHIP_OPTIONS, #SD.OPTIONS + 1, "and is otherwise the same list")
+
+-- ── TILE STYLES ONLY ───────────────────────────────────────────────────────
+-- This field carries no view-mode vocabulary. A chip's list-or-covers pin was
+-- briefly a sentinel in here and the maintainer split it back out into its own
+-- field: a chip has to be able to say "divider cards" without also asserting a
+-- mode. Pinned so a future merge has to argue with a test rather than with a
+-- comment.
+eq(#SD.CHIP_OPTIONS, #SD.OPTIONS + 1,
+   "CHIP_OPTIONS is the styles plus one sentinel; something else crept in")
+assert(SD.LIST == nil, "a view-mode value is back in the tile-style module")
+assert(SD.isList == nil, "a view-mode predicate is back in the tile-style module")
+for _i, opt in ipairs(SD.CHIP_OPTIONS) do
+    assert(opt.value ~= "list" and opt.value ~= "covers",
+        "a view mode is being offered as a tile style: " .. tostring(opt.value))
+end
+
+-- chipLabelFor: what a chip's ROW says its TILES are. Distinct from labelFor,
+-- which falls back to the first tile style -- right for the library default,
+-- wrong for a chip, where "not set" and "set to Divider card" are different
+-- states.
+eq(SD.chipLabelFor(SD.STACK), SD.labelFor(SD.STACK))
+eq(SD.chipLabelFor(nil), "Default")
+eq(SD.chipLabelFor(SD.FOLLOW_DEFAULT), "Default")
+eq(SD.chipLabelFor("nonsense"), "Default",
+   "a value this build does not know reads as unset, not as Divider card")
 local in_global = false
 for _i, o in ipairs(SD.OPTIONS) do
     if o.value == SD.FOLLOW_DEFAULT then in_global = true end

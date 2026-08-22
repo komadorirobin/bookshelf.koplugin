@@ -80,8 +80,8 @@ local function ensureAnchor(anchor_dimen, prefers_pop_down, mirrored, with_defau
     return left, top
 end
 
--- Enough StackDisplay for the picker to build its rows. The styles themselves
--- are not what is under test; _test_stack_display covers those.
+-- Enough StackDisplay for the picker to build its tile rows. The styles
+-- themselves are not what is under test; _test_stack_display covers those.
 local StackDisplay = {
     FOLLOW_DEFAULT = "default",
     CHIP_OPTIONS = {
@@ -95,6 +95,10 @@ local StackDisplay = {
     },
     pinned = function(v) if v and v ~= "default" then return v end end,
 }
+-- The picker's OTHER section: the chip's view-mode pin, which is a different
+-- field entirely (see lib/bookshelf_view_mode.lua). Real module, not a stub --
+-- it is a pure resolver with no dependencies, so there is nothing to fake.
+local ViewMode = require("lib/bookshelf_view_mode")
 
 local Kit = { radioRow = function(o)
     return { text = (o.active and "\xE2\x9C\x93 " or "") .. o.label,
@@ -106,6 +110,8 @@ local env = {
     ipairs = ipairs, pairs = pairs, type = type, tostring = tostring,
     math = math, table = table,
     _ = function(s) return s end,
+    -- Upvalues of the real module that the extracted function closes over.
+    ViewMode = ViewMode,
     Screen = {
         getWidth     = function() return SCREEN_W end,
         getHeight    = function() return SCREEN_H end,
@@ -126,6 +132,20 @@ local env = {
     require = function(mod)
         if mod == "lib/bookshelf_module_kit" then return Kit end
         if mod == "lib/bookshelf_stack_display" then return StackDisplay end
+        -- The picker offers a "List layout" section listing saved presets.
+        -- None here: this suite is about where the dialog LANDS, and an empty
+        -- list is also the case that must not add a header for a section with
+        -- nothing in it.
+        if mod == "lib/bookshelf_list_presets" then
+            return { list = function() return {} end }
+        end
+        -- The density section asks the library which mode it renders in, so a
+        -- chip on "Default" is offered the numbers it will actually use. Both
+        -- toggles off = the cover grid, which is the shape with the fewest
+        -- rows and so the one that most affects where the dialog lands.
+        if mod == "lib/bookshelf_settings_store" then
+            return { isTrue = function() return false end }
+        end
         error("picker required an unexpected module: " .. tostring(mod))
     end,
 }

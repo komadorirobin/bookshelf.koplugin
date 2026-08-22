@@ -4,9 +4,25 @@
 -- or deleted at its right. The on_change callback fires with the freshly
 -- ordered items table after every interaction.
 --
--- Used by:
---   * the chip editor (sort priority levels, with show_reverse = true)
---   * the tabs-list editor (tab order, with show_delete = true for custom)
+-- NO CALLERS, as of the list-view column editors.
+--
+-- The header used to claim the chip editor and the tabs-list editor; grep says
+-- neither has ever required this file. The chip editor builds its
+-- sort-priority levels as one button per level, opening Editor:_pickSortLevel,
+-- and reorders chips with its own move-left/move-right chevrons -- so from the
+-- v2.0.0 commit that added this widget it had no callers at all until
+-- bookshelf_list_column_picker.lua used it for the list's column order.
+--
+-- Both of those are gone. The picker was replaced by a checkbox list in the
+-- start menu's visual style, at the maintainer's ruling ("the design feels off
+-- - can we base it on the start menu design perhaps"), and then list view lost
+-- its columns altogether: a row is a set of token templates now
+-- (lib/bookshelf_list_lines.lua), which is a line editor's job, not a
+-- reorderable list of ids.
+--
+-- So this file is unreferenced again. It is left in place rather than deleted
+-- because that is not a call to make silently; show_reverse and on_row_tap
+-- were already unexercised in the shipping build, and now the rest is too.
 
 local Button         = require("ui/widget/button")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -79,6 +95,15 @@ function List:_rebuild()
     for k in pairs(self._vg) do
         if type(k) == "number" then self._vg[k] = nil end
     end
+    -- ...and then invalidate the cached layout, which emptying the children
+    -- does NOT do. VerticalGroup:getSize() short-circuits on self._size once it
+    -- has been computed, and paintTo indexes self._offsets per child
+    -- (frontend/ui/widget/verticalgroup.lua), so a rebuild that adds or removes
+    -- a row against a stale cache paints rows on top of each other or indexes
+    -- past the end of _offsets. resetLayout() is the supported way to drop
+    -- both, and is what bookshelf_widget.lua already calls on its own vgroup
+    -- after splicing rows in place.
+    if self._vg.resetLayout then self._vg:resetLayout() end
     local btn_w = Screen:scaleBySize(48)
     for i, item in ipairs(self.items) do
         local label = item.label_func and item.label_func(item) or item.label or ""

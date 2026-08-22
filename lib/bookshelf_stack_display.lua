@@ -24,6 +24,14 @@
 -- folders, authors, series and genres in one list - take the default, because
 -- there is no single chip whose opinion would apply.
 --
+-- SINCE LIST VIEW, a chip can also be pinned to covers or to a list outright.
+-- That is a SEPARATE field (tab.view_mode, see lib/bookshelf_view_mode.lua)
+-- shown as its own section of the same picker, not a value in this one. The two
+-- were briefly merged and split back out on the maintainer's ruling: a chip
+-- needs to be able to say "divider cards" without also asserting a view mode,
+-- and "always a list" without discarding the tile style it would use if it ever
+-- showed tiles again.
+--
 -- Two widgets render groups -- bookshelf_folder_stack (folders, OPDS nav
 -- tiles) and bookshelf_series_stack (everything else) -- and they had
 -- identical image ladders and identical cardboard overlays. Rather than
@@ -150,6 +158,12 @@ end
 -- The chip editor's option list: the same styles, with "follow the library
 -- default" in front. The library default's OWN picker uses M.OPTIONS and must
 -- not offer this - a default that could be set to "the default" is circular.
+--
+-- Tile styles ONLY. Whether a chip is a list or a grid at all is a separate
+-- field with its own vocabulary (lib/bookshelf_view_mode.lua's CHIP_OPTIONS),
+-- shown as its own section of the same picker. The two were briefly merged into
+-- this list and the maintainer split them back out: a tile style has to be able
+-- to sit on a chip without also asserting a view mode, and vice versa.
 M.CHIP_OPTIONS = {
     { value = M.FOLLOW_DEFAULT,
       label_func = function() return _("Default setting") end },
@@ -165,6 +179,18 @@ function M.labelFor(value)
         if opt.value == value then return opt.label_func() end
     end
     return M.OPTIONS[1].label_func()
+end
+
+-- chipLabelFor(override) -> what a CHIP's row should say its TILES are set to.
+--
+-- Not labelFor: that one falls back to the first tile style, which is right for
+-- the library default (it is always set to something) and wrong for a chip,
+-- where "not set" and "set to Divider card" are different states the picker has
+-- to be able to tick apart.
+function M.chipLabelFor(override)
+    local pinned = validated(override)
+    if pinned then return M.labelFor(pinned) end
+    return _("Default")
 end
 
 -- Does this mode draw the cardboard tab + name band? Only divider does. The

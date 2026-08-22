@@ -173,6 +173,76 @@ test("position: %pages_left = page_count - page_num", function()
     eq(Tokens.expand("%pages_left", b), "546")
 end)
 
+-- ── %size / %added / %opened ───────────────────────────────────────────────
+--
+-- The three file facts. The FORMAT is what is pinned here, not merely
+-- non-emptiness: the list view's own accessors render the same three values
+-- through Tokens.formatFileSize / Tokens.formatDate, so a change to either
+-- formatter has to break something.
+
+test("file: %size renders bytes / KB / MB the way the list column did", function()
+    local b = bookFixture()
+    b.size = 900;              eq(Tokens.expand("%size", b), "900 B")
+    b.size = 2048;             eq(Tokens.expand("%size", b), "2 KB")
+    b.size = 1024 * 1024 * 3 / 2
+    eq(Tokens.expand("%size", b), "1.5 MB")
+end)
+test("file: %size is empty when the record has no size", function()
+    eq(Tokens.expand("%size", bookFixture()), "")
+end)
+test("file: a zero-byte file is '0 B', not empty", function()
+    local b = bookFixture(); b.size = 0
+    eq(Tokens.expand("%size", b), "0 B")
+end)
+test("file: a negative size is nonsense, so it is empty", function()
+    local b = bookFixture(); b.size = -1
+    eq(Tokens.expand("%size", b), "")
+end)
+
+test("file: %added / %opened render an ISO date", function()
+    local when = os.time({ year = 2026, month = 3, day = 9, hour = 12 })
+    local b = bookFixture()
+    b.date_added, b.last_opened = when, when
+    eq(Tokens.expand("%added", b), os.date("%Y-%m-%d", when))
+    eq(Tokens.expand("%opened", b), os.date("%Y-%m-%d", when))
+end)
+test("file: an absent or zero epoch is no date, not 1970", function()
+    local b = bookFixture()
+    eq(Tokens.expand("%added|%opened", b), "|")
+    -- The OPDS feed parser stamps a literal modification = 0 on every
+    -- catalogue record it builds; 1970-01-01 down a column of them was the
+    -- bug the list view's own date accessor already had to refuse.
+    b.date_added, b.last_opened = 0, 0
+    eq(Tokens.expand("%added|%opened", b), "|")
+end)
+
+test("file: the three tokens are in the picker catalogue", function()
+    local seen = {}
+    for _i, e in ipairs(Tokens.CATALOGUE) do seen[e.token] = e end
+    for _i, tok in ipairs({ "%size", "%added", "%opened" }) do
+        assert(seen[tok], tok .. " is expandable but not offered in the picker")
+        assert(type(seen[tok].description) == "string"
+            and seen[tok].description ~= "", tok .. " has no description")
+        assert(Tokens.categoryLabel(seen[tok].category),
+            tok .. " has no category label")
+    end
+end)
+
+test("file: %size does not swallow another token's name", function()
+    -- Tokens.expand gsubs each name in turn, longest first. A new short name
+    -- that is a prefix of a longer one would eat it; assert the three new ones
+    -- leave every existing token intact.
+    local b = bookFixture()
+    b.size, b.date_added, b.last_opened = 1024, 1, 1
+    for name in pairs(Tokens.expanders) do
+        if name ~= "size" and name ~= "added" and name ~= "opened" then
+            assert(not name:find("^size") and not name:find("^added")
+                and not name:find("^opened"),
+                "%" .. name .. " starts with one of the new token names")
+        end
+    end
+end)
+
 local function clockState()
     return { now = os.time({ year=2026, month=5, day=3, hour=14, min=35, sec=0 }) }
 end
@@ -429,7 +499,7 @@ test("sanitiseReviewHtml strips <br> padding at paragraph edges", function()
     -- the real break after the attribution is kept.
     eq(Tokens.sanitiseReviewHtml(
         "<blockquote>q</blockquote><p><br><strong>cite</strong><br>text<br></p>"),
-       "<blockquote>q</blockquote><p><strong>cite</strong><br>text</p>")
+       '<blockquote>q</blockquote><div class="p"><strong>cite</strong><br>text</div>')
 end)
 test("sanitiseReviewHtml returns empty for nil/empty", function()
     eq(Tokens.sanitiseReviewHtml(nil), "")
@@ -495,7 +565,9 @@ end)
 
 test("sanitiseReviewHtml: keeps a single intra-paragraph break", function()
     local out = Tokens.sanitiseReviewHtml("<p>line one<br>line two</p>")
-    eq(out, "<p>line one<br>line two</p>", "single intra-paragraph break lost:")
+    -- div.p, not p: a break-carrying paragraph is converted so KOReader's
+    -- <br> workaround cannot close it early (issue #338, tested above).
+    eq(out, '<div class="p">line one<br>line two</div>', "single intra-paragraph break lost:")
 end)
 
 test("autoLinkReportHtml: lists linked books and counts no-id (exact mode)", function()
@@ -551,6 +623,319 @@ test("autoLinkReportHtml: escapes HTML in names/titles", function()
     }
     assert(html:find("A &amp; B &lt;x&gt;", 1, true), "name not escaped: " .. html)
     assert(not html:find("<x>", 1, true), "raw angle bracket leaked")
+end)
+
+-- ── %status vs %status_label ───────────────────────────────────────────────
+
+test("%status keeps its four canonical values", function()
+    -- Load-bearing: [if:status=finished] compares against these, and they must
+    -- be the same in every language. Translating them would break every
+    -- conditional written against the token, and only for non-English users.
+    eq(Tokens.expand("%status", { status = "complete" }, nil),  "finished")
+    eq(Tokens.expand("%status", { status = "abandoned" }, nil), "on_hold")
+    eq(Tokens.expand("%status", { status = "new" }, nil),       "unread")
+    eq(Tokens.expand("%status", {}, nil),                       "unread")
+    eq(Tokens.expand("%status", { status = "reading" }, nil),   "reading")
+end)
+
+test("%status_label is the readable half, and a separate token", function()
+    eq(Tokens.expand("%status_label", { status = "complete" }, nil),  "Finished")
+    eq(Tokens.expand("%status_label", { status = "abandoned" }, nil), "On hold")
+    eq(Tokens.expand("%status_label", { status = "reading" }, nil),   "Reading")
+    eq(Tokens.expand("%status_label", {}, nil),                       "Unread")
+    -- A state this build has not heard of is still information: show the raw
+    -- value rather than blanking, which would look like a broken token.
+    eq(Tokens.expand("%status_label", { status = "marinating" }, nil),
+       "marinating")
+end)
+
+test("the longest-name-first pass does not eat %status_label", function()
+    -- The expander loop substitutes by name, longest first. Were the order
+    -- ever reversed, "%status_label" would match "%status" and render
+    -- "reading_label" -- which compiles, renders, and is wrong.
+    eq(Tokens.expand("%status_label / %status", { status = "reading" }, nil),
+       "Reading / reading")
+end)
+
+-- ── %favourite ─────────────────────────────────────────────────────────────
+--
+-- Membership comes from ReadCollection, not from the book record: on every
+-- fetch path except the Favourites chip itself, book.in_favorites is nil, so a
+-- token that trusted the record would render nothing on almost every page.
+-- Stubbed here for the same reason the real one reaches past the record.
+
+local FAV = {}
+package.loaded["readcollection"] = { coll = { favorites = FAV } }
+package.loaded["lib/bookshelf_cover_progress"] = {
+    FAV_GLYPH_STAR  = "STAR",
+    FAV_GLYPH_HEART = "HEART",
+    favoriteIcon    = function() return package.loaded._fav_icon or "heart" end,
+}
+
+test("%favourite renders the icon only for a favourite", function()
+    for k in pairs(FAV) do FAV[k] = nil end
+    eq(Tokens.expand("%favourite", { filepath = "/a.epub" }, nil), "")
+    FAV["/a.epub"] = true
+    eq(Tokens.expand("%favourite", { filepath = "/a.epub" }, nil), "HEART")
+    eq(Tokens.expand("%favourite", { filepath = "/b.epub" }, nil), "")
+    -- No filepath at all (a group projection) must not error.
+    eq(Tokens.expand("%favourite", { title = "Sci-fi" }, nil), "")
+end)
+
+test("%favourite follows the fav_icon setting the cover badge reads", function()
+    for k in pairs(FAV) do FAV[k] = nil end
+    FAV["/a.epub"] = true
+    package.loaded._fav_icon = "star"
+    eq(Tokens.expand("%favourite", { filepath = "/a.epub" }, nil), "STAR")
+    package.loaded._fav_icon = nil
+end)
+
+test("both spellings resolve, and gate a conditional", function()
+    for k in pairs(FAV) do FAV[k] = nil end
+    FAV["/a.epub"] = true
+    eq(Tokens.expand("%favorite", { filepath = "/a.epub" }, nil), "HEART")
+    -- The conditional grammar falls through to the expanders, so one
+    -- definition gives [if:favourite] as well -- which is what lets a template
+    -- put a separator round the icon without leaving a stray one everywhere
+    -- else.
+    eq(Tokens.expand("[if:favourite]%favourite [/if]%title",
+        { filepath = "/a.epub", title = "Dune" }, nil), "HEART Dune")
+    eq(Tokens.expand("[if:favourite]%favourite [/if]%title",
+        { filepath = "/b.epub", title = "Dune" }, nil), "Dune")
+end)
+
+-- ── A modifier never outlives its token ────────────────────────────────────
+--
+-- %bar takes brace modifiers ({rel} today). Every surface that DELETES a %bar
+-- has to delete the brace form first, or the token goes and the modifier stays
+-- -- and "{rel}" renders as literal text next to nothing.
+--
+-- Asserted against the source because the renderers need a framebuffer to run
+-- and the mistake is a missing gsub, which is visible. Tokens owns this because
+-- Tokens owns the modifier vocabulary: menuPreview strips modifiers before it
+-- expands for exactly the same reason.
+
+test("the hero drops %bar{rel} when it drops %bar", function()
+    local src = io.open("lib/bookshelf_hero_card.lua"):read("*a")
+    -- The branch that runs for a book with no reading position, which is EVERY
+    -- OPDS preview -- a remote book has no book_pct. Reported from one:
+    -- "%bar{rel} ... in an opds preview '{rel}' is left as text in the hero".
+    -- Bounded by the landmark that FOLLOWS it rather than by a matching
+    -- `end`: an `end` anchor is indentation-sensitive, and against the buggy
+    -- one-line version it ran on and swallowed unrelated source that happened
+    -- to contain a brace pattern -- so the test passed the check it was
+    -- supposed to fail and reported the wrong reason for failing the next one.
+    local block = src:match(
+        "if not %(book and book%.book_pct%) then(.-)if not Tokens%.isEmpty")
+    assert(block, "the unopened-book strip is gone or was renamed")
+    -- COMMENTS OUT FIRST, the same precaution _test_list_row_budget takes on
+    -- its own source read: the comment beside this code quotes the pattern it
+    -- is describing, so a check that reads the prose passes on the strength of
+    -- the documentation while the code beneath it is wrong. Caught by breaking
+    -- the code deliberately and watching the test stay green.
+    block = block:gsub("%-%-[^\n]*", "")
+    local braces = block:find('{[%w_,]*}', 1, true)
+    -- Either spelling of a bare strip: the constant, or the literal it holds.
+    local bare = block:find('BAR_TOKEN_PATTERN, ""', 1, true)
+                 or block:find('gsub("%%bar", "")', 1, true)
+    assert(braces, "the strip must remove %bar with a brace modifier")
+    assert(bare, "the strip must remove a bare %bar too")
+    -- ORDER. A bare strip first eats the token and leaves the braces behind,
+    -- which is precisely the reported bug -- so this is not a stylistic point.
+    assert(braces < bare,
+        "the brace form has to be stripped BEFORE the bare token")
+end)
+
+test("the list drops %bar{rel} when it drops %bar", function()
+    -- The same rule on the other renderer: stripElastic and stripBar both
+    -- delete bar tokens, and a remote record's bar is dropped through the
+    -- latter.
+    local src = io.open("lib/bookshelf_list_row.lua"):read("*a")
+    for _i, fn in ipairs({ "stripElastic", "stripBar" }) do
+        local block = src:match("local function " .. fn .. "%(s%)(.-)\nend")
+        assert(block, fn .. " is gone or was renamed")
+        local braces = block:find('{[%w_,]*}', 1, true)
+        local bare   = block:find('BAR_TOKEN_PATTERN, ""', 1, true)
+        assert(braces and bare and braces < bare,
+            fn .. " must strip the brace form, and before the bare token")
+    end
+end)
+
+-- ── mapOutsideElastic: a case transform must not respell a token ───────────
+--
+-- The bug it fixes: a list line with UPPERCASE set ran its whole expanded
+-- string through TextSegments.upper, "%spacer" included. findElastic matches
+-- the token lowercase, so the line stopped having one and rendered
+-- "THE HOBBIT%SPACER★★★★☆" as a single left-aligned run.
+--
+-- string.upper stands in for TextSegments.upper here: this suite runs under a
+-- plain interpreter and the real one needs utf8proc. What is being tested is
+-- WHERE the function is applied, not what it does.
+
+test("uppercasing a line leaves %spacer a spacer", function()
+    local out = Tokens.mapOutsideElastic("The Hobbit%spacer4 stars",
+                                         string.upper)
+    eq(out, "THE HOBBIT%spacer4 STARS")
+    -- The point of the whole exercise: the result still splits.
+    assert(out:find("%%spacer"), "the token must survive as a token")
+end)
+
+test("uppercasing leaves %bar and its modifier alone", function()
+    eq(Tokens.mapOutsideElastic("read%bar{rel}left", string.upper),
+       "READ%bar{rel}LEFT")
+    eq(Tokens.mapOutsideElastic("a%barb", string.upper), "A%barB")
+end)
+
+test("mapOutsideElastic walks tokens in the order they appear", function()
+    -- NOT findElastic's ranking, which hands %bar the slack wherever it sits.
+    -- Applied in that order the spacer would fall inside the "before" run and
+    -- be uppercased anyway, which is the bug all over again.
+    eq(Tokens.mapOutsideElastic("a%spacerb%bar{rel}c", string.upper),
+       "A%spacerB%bar{rel}C")
+end)
+
+test("mapOutsideElastic transforms a line with no tokens at all", function()
+    eq(Tokens.mapOutsideElastic("plain text", string.upper), "PLAIN TEXT")
+    eq(Tokens.mapOutsideElastic("", string.upper), "")
+    eq(Tokens.mapOutsideElastic(nil, string.upper), nil)
+end)
+
+test("mapOutsideElastic keeps a token at either end", function()
+    eq(Tokens.mapOutsideElastic("%spacertail", string.upper), "%spacerTAIL")
+    eq(Tokens.mapOutsideElastic("head%spacer", string.upper), "HEAD%spacer")
+    eq(Tokens.mapOutsideElastic("%spacer", string.upper), "%spacer")
+end)
+
+test("the elastic patterns are spelled in exactly one place", function()
+    -- The fix above only holds while the walker and the renderer agree on what
+    -- a token looks like. A second copy of "%%spacer" in the row is how they
+    -- come apart -- and it is how this bug was introduced in the first place.
+    local src = io.open("lib/bookshelf_list_row.lua"):read("*a")
+    local code = {}
+    for line in src:gmatch("[^\n]+") do
+        if not line:match("^%s*%-%-") then code[#code + 1] = line end
+    end
+    code = table.concat(code, "\n")
+    assert(code:match("SPACER_TOKEN_PATTERN%s*=%s*Tokens%.SPACER_PATTERN"),
+        "the row must take the spacer pattern from Tokens, not restate it")
+    assert(code:match("BAR_TOKEN_PATTERN%s*=%s*Tokens%.BAR_PATTERN"),
+        "the row must take the bar pattern from Tokens, not restate it")
+    assert(not code:match('"%%%%spacer"'),
+        "a second literal spelling of the spacer token is back in the row")
+end)
+
+test("the row uppercases AROUND the elastic tokens", function()
+    -- The call site, pinned. lineText hands one pre-rendered string to both
+    -- the budget and the renderer, so it is the only place the transform can
+    -- happen -- and applying it bare is the bug.
+    local src = io.open("lib/bookshelf_list_row.lua"):read("*a")
+    local block = src:match("function ListRow%.lineText%b()(.-)\nend\n")
+    assert(block, "ListRow.lineText is gone or was renamed")
+    block = block:gsub("%-%-[^\n]*", "")   -- the prose quotes both spellings
+    assert(block:match("Tokens%.mapOutsideElastic"),
+        "lineText must uppercase through Tokens.mapOutsideElastic")
+    assert(not block:match("text%s*=%s*TextSegments%.upper%(text%)"),
+        "lineText must not uppercase the whole expanded line: that respells "
+        .. "%spacer and %bar and demotes them to plain text")
+end)
+
+-- ── Issue 338: a <br> must not survive inside a <p> ─────────────────────────
+--
+-- KOReader's HtmlBoxWidget rewrites every <br> to "&nbsp;<div></div>" to work
+-- around a MuPDF bug, and HTML5 parsing closes a <p> at a <div> -- so the
+-- FIRST break in any paragraph gained a full paragraph margin. Rendered as:
+-- "an extra line break for the first time the <br> appears", and only the
+-- first. The sanitiser now converts a break-carrying <p> to <div class="p">,
+-- which the modal styles with the same margins.
+
+test("a paragraph containing breaks becomes div.p", function()
+    local out = Tokens.sanitiseReviewHtml("<p>a<br>b<br>c</p>")
+    eq(out, '<div class="p">a<br>b<br>c</div>')
+end)
+
+test("a paragraph without breaks stays a paragraph", function()
+    -- The rhythm rules (p.stars, p.byline, the reviews' own paragraphs) key
+    -- on <p>; rewriting every paragraph would orphan them.
+    eq(Tokens.sanitiseReviewHtml("<p>plain paragraph</p>"),
+       "<p>plain paragraph</p>")
+end)
+
+test("mixed paragraphs convert individually", function()
+    local out = Tokens.sanitiseReviewHtml(
+        "<p>a<br>b</p><p>no breaks</p><p>c<br>d</p>")
+    eq(out, '<div class="p">a<br>b</div><p>no breaks</p>'
+         .. '<div class="p">c<br>d</div>')
+end)
+
+test("the reporter's calibre shape comes out break-safe", function()
+    -- The exact structure from issue 338: one <p>, every line separated by a
+    -- <br> at the start of a source line.
+    local raw = "<div>\n<p>Book one\n<br>Book two\n<br>Book three</p></div>"
+    local out = Tokens.sanitiseReviewHtml(raw)
+    assert(not out:match("<p>"),
+        "a break-carrying paragraph must not reach HtmlBoxWidget as a <p>: "
+        .. out)
+    assert(out:find('<div class="p">', 1, true), "the div.p wrapper is missing")
+    -- And the paragraph-edge break rules still ran first: no leading or
+    -- trailing breaks inside the converted block.
+    assert(not out:match('class="p">%s*<br>'), "an edge break survived")
+end)
+
+test("top-level breaks are not touched by the paragraph conversion", function()
+    local out = Tokens.sanitiseReviewHtml("<b>x</b><br><b>y</b><br>z")
+    assert(out:find("<b>x</b><br>", 1, true),
+        "breaks outside any paragraph already rendered correctly and must "
+        .. "stay exactly as they were: " .. out)
+end)
+
+test("%books_read reads the state, like every device token", function()
+    -- A state token on purpose: an expander requiring the repository is the
+    -- boundary the token_record suite pins shut. No state, no answer -- the
+    -- same degrade %batt has on a list row.
+    eq(Tokens.expand("%books_read", bookFixture()), "")
+    eq(Tokens.expand("read: %books_read", bookFixture(),
+                     { books_read = 42 }), "read: 42")
+    -- %sysused (PR 343): same device-state contract as %mem/%ram.
+    eq(Tokens.expand("%sysused", bookFixture()), "")
+    eq(Tokens.expand("%sysused", bookFixture(), { sysused_mib = 187 }),
+       "187 MiB")
+    -- The stats-plugin twin follows the same contract.
+    eq(Tokens.expand("%books_started", bookFixture()), "")
+    eq(Tokens.expand("started: %books_started", bookFixture(),
+                     { books_started = 7 }), "started: 7")
+end)
+
+test("%calibre{field}: expands from the book's calibre field map", function()
+    local book = bookFixture()
+    book.calibre = { pubdate = "1974", year = "2005", publisher = "Gollancz" }
+    eq(Tokens.expand("(%calibre{pubdate})", book), "(1974)")
+    -- Case-insensitive, leading '#' optional: how calibre users know
+    -- their own column names.
+    eq(Tokens.expand("%calibre{#Year}", book), "2005")
+    -- Missing field and missing map both answer empty, not an error.
+    eq(Tokens.expand("%calibre{isbn}", book), "")
+    eq(Tokens.expand("%calibre{pubdate}", bookFixture()), "")
+end)
+
+test("%calibre{field}: works in conditionals, truthy and compared", function()
+    local book = bookFixture()
+    book.calibre = { pubdate = "1974" }
+    eq(Tokens.expand("[if:calibre{pubdate}]dated[/if]", book), "dated")
+    eq(Tokens.expand("[if:calibre{pubdate}]dated[/if]", bookFixture()), "")
+    eq(Tokens.expand('[if:calibre{pubdate}="1974"]hit[else]miss[/if]', book),
+       "hit")
+    eq(Tokens.expand("[if:calibre{pubdate}>1980]late[else]early[/if]", book),
+       "early")
+end)
+
+test("%calibre{field}: survives menuPreview's modifier strip", function()
+    local book = bookFixture()
+    book.calibre = { pubdate = "1974" }
+    local preview = Tokens.menuPreview("%calibre{pubdate} %title", book)
+    assert(preview:find("1974", 1, true),
+        "the preview must show the expanded field, got: " .. preview)
+    assert(not preview:find("calibre", 1, true),
+        "no literal %calibre may survive the preview: " .. preview)
 end)
 
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))

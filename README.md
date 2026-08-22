@@ -128,6 +128,14 @@ Every shelf shows a line of text under each cover -- the title by default. One s
 
 The full gesture reference is in [Gestures cheatsheet](#gestures-cheatsheet) below; physical-key devices have their own reference in [Keyboard and D-pad](#keyboard-and-d-pad).
 
+### List view
+
+Any shelf can be a text list instead of covers. Long-press the shelf's chip and pick **List** under Show as (or **Auto** to let each screen decide), or hold the page number in the footer to flip the shelf you are looking at. The same dialog sets how many **rows** (1 to 12) and **columns** (1 to 3) the list uses, and pinching the shelf fits one more or one fewer row.
+
+Rows are built from the same editable lines as the hero card: up to six per row, each with its own template, font, size, weight, slant, case and alignment, edited under **menu > Settings > List view**. Tokens work in every line, so a row can carry a progress bar (`%bar`, or `%bar{rel}` to make its length reflect how long the book is), file size, dates, or anything else from the [Token cheatsheet](#token-cheatsheet). As rows get shorter, lines drop from the bottom up, so the title and author are the last to go.
+
+Series, authors and folders draw as a fan of their members' covers; OPDS subcatalogues become full-width buttons. There is also a setting to switch any shelf to a list automatically when you swipe up to expand it, and the list's text size lives under **Settings > Text size**.
+
 ### Folder styles (how groups look)
 
 Anything that stands for several books -- a series, an author, a folder, a collection -- is drawn as a group tile, and you choose how those look. **menu -> Settings -> Cover display -> Default folder style** sets it for the whole library:
@@ -383,6 +391,22 @@ Pick a different image-library location under **menu -> Settings -> Library & se
 Long-press an image-set folder or stack and tap *Clear … image* to revert to the cardboard default.
 
 ---
+
+## Calibre metadata (beta)
+
+For libraries managed by Calibre. Turn on **menu > Settings > Advanced > BETA: Read calibre metadata.calibre** and Bookshelf reads the `metadata.calibre` file Calibre writes into the library folder, alongside each book's embedded metadata.
+
+What it adds:
+
+- Calibre's title, authors, series, tags, language and description win over the values embedded in the book file, so edits made in Calibre show up without reconverting books
+- Calibre's author sort ("Le Guin, Ursula K.") orders author shelves, including hand-edited sort values
+- A custom column of the **Series** type gives its books a second series shelf alongside the primary one
+- `%calibre{name}` shows any column in a token line: `%calibre{pubdate}` for the publication year, `%calibre{publisher}`, `%calibre{rating}`, or a custom column by its lookup name (`%calibre{#mycolumn}`; the `#` is optional). This works anywhere tokens do -- hero card sections, list view lines, and conditionals like `[if:calibre{pubdate}>1990]`. Date columns show as the year; long-text (comments-type) columns are not exposed.
+
+Two things worth knowing:
+
+- KOReader's own wireless Calibre connection rewrites `metadata.calibre` after a sync and permanently drops author sort and custom columns from it. Bookshelf works around this automatically: whenever it reads a Calibre-written file it saves those fields into a small `calibre.bookshelf.json` beside it, and merges them back after KOReader's rewrite. No setup needed -- but the library must have been written by Calibre itself (USB sync, or a Calibre-managed folder) at least once, since a wireless-only library never has those fields on disk to save.
+- A `metadata.calibre` over 8 MB is read with a slimmer parser that skips custom columns, to protect low-memory devices.
 
 ## Author names
 
@@ -661,6 +685,12 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%hardcover_rating` | *4.5* (cached Hardcover rating, empty when unavailable) |
 | `%hardcover_stars` | Cached Hardcover rating as star glyphs |
 | `%status` | *reading* (unread / reading / on_hold / finished) |
+| `%status_label` | *Reading* (the status as a readable label) |
+| `%favourite` | Favourite icon (empty when not a favourite) |
+| `%size` | *2.2 MB* (file size) |
+| `%added` | Date the file was added to the library |
+| `%opened` | Date the book was last opened |
+| `%calibre{name}` | Any calibre column by lookup name: `%calibre{pubdate}` for the publication year, `%calibre{publisher}`, or a custom column like `%calibre{#mycolumn}`. Needs the [calibre metadata beta](#calibre-metadata-beta); dates show as the year. |
 | `%filename` | *The_Great_Gatsby* |
 | `%format` | *EPUB* |
 | `%lang` | *en* |
@@ -676,6 +706,7 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%pages_left` | *176* |
 | `%book_pct` / `%book_pct_left` | *19%* / *81%* |
 | `%bar` | Inline progress-bar widget (Progress section only) |
+| `%bar{rel}` | Same bar, but its length reflects how long the book is |
 | `%spacer` | Elastic gap that pushes content left/right. `Reading%spacer47%` renders *Reading* on the left and *47%* on the right. |
 
 #### Statistics (requires the `statistics` plugin)
@@ -690,6 +721,15 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%speed` | *42* (pages per hour) |
 
 Statistics tokens auto-hide when the plugin is absent or the book has no recorded reading time.
+
+#### Library
+
+| Token | Example |
+|-------|---------|
+| `%books_read` | *13* (books in your whole library marked Finished) |
+| `%books_started` | Books with any reading time recorded by the statistics plugin |
+
+These are library-wide rather than per-book, so they suit the hero status line and micro-modules.
 
 #### Time and date
 
@@ -711,6 +751,7 @@ Statistics tokens auto-hide when the plugin is absent or the book has no recorde
 | `%warmth` | Frontlight warmth (natural-light only) |
 | `%nightmode` | Moon glyph when night mode is on, sun otherwise |
 | `%mem` / `%ram` | System memory (%) / KOReader RSS (MiB) |
+| `%sysused` | System memory used (MiB) |
 | `%disk` | Free space on the books partition (GB) |
 
 #### Conditionals

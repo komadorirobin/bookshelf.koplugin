@@ -8,6 +8,11 @@
 -- (issue #129). i18n is initialised before plugins load, so the locale
 -- is set by the time this module is required.
 local _ = require("lib/bookshelf_i18n").gettext
+-- The inline style vocabulary ([b] / [i] / [font=] / [size=]). Owned by its
+-- own module because the RENDERER needs to split a line on it; needed here
+-- because everything that transforms or previews a template has to know which
+-- brackets are markup. Pure string code, no requires of its own, no cycle.
+local InlineStyle = require("lib/bookshelf_inline_style")
 
 local Tokens = {}
 
@@ -22,6 +27,7 @@ Tokens.CATEGORY_LABELS = {
     Device   = _("Device"),
     Logic    = _("Logic"),
     Progress = _("Progress"),
+    Style    = _("Style"),
     Time     = _("Time"),
 }
 function Tokens.categoryLabel(cat)
@@ -70,9 +76,14 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%rating_number",    description = _("Rating as a number 1-5 (empty when unrated)") },
     { category = "Book",     token = "%hardcover_rating", description = _("Cached Hardcover rating number") },
     { category = "Book",     token = "%hardcover_stars",  description = _("Cached Hardcover rating as stars") },
-    { category = "Book",     token = "%status",           description = _("Reading status (unread / reading / on_hold / finished)") },
+    { category = "Book",     token = "%status",           description = _("Reading status, raw value for conditionals (unread / reading / on_hold / finished)") },
+    { category = "Book",     token = "%status_label",     description = _("Reading status as a readable label (Unread / Reading / On hold / Finished)") },
+    { category = "Book",     token = "%favourite",        description = _("Favourite icon, empty when not a favourite") },
     { category = "Book",     token = "%filename",         description = _("File name") },
     { category = "Book",     token = "%format",           description = _("Format (EPUB/PDF/…)") },
+    { category = "Book",     token = "%calibre{name}",     description = _("A calibre column by name, like %calibre{pubdate} or a custom column; dates show the year (needs the calibre beta)") },
+    { category = "Book",     token = "%size",             description = _("File size on disk") },
+    { category = "Book",     token = "%added",            description = _("Date added (the file's own date)") },
     { category = "Book",     token = "%description",      description = _("Book blurb (HTML stripped)") },
     { category = "Book",     token = "%quote",            description = _("A random highlight from this book") },
     { category = "Book",     token = "%quote_source",     description = _("The book and author for %quote") },
@@ -88,6 +99,9 @@ Tokens.CATALOGUE = {
     { category = "Progress", token = "%days_reading_book",description = _("Days since first opened (statistics)") },
     { category = "Progress", token = "%pages_per_day",    description = _("Pages per day (statistics)") },
     { category = "Progress", token = "%speed",            description = _("Speed in pages/hour (statistics)") },
+    { category = "Progress", token = "%opened",           description = _("Date this book was last opened") },
+    { category = "Progress", token = "%books_read",       description = _("How many books in your whole library are marked Finished") },
+    { category = "Progress", token = "%books_started",    description = _("How many books have any reading time recorded (statistics)") },
     { category = "Time",     token = "%time_12h",         description = _("Time (12-hour)") },
     { category = "Time",     token = "%time_24h",         description = _("Time (24-hour)") },
     { category = "Time",     token = "%date",             description = _("Date (e.g. 4 May)") },
@@ -105,6 +119,7 @@ Tokens.CATALOGUE = {
     { category = "Device",   token = "%light_icon",       description = _("Frontlight icon") },
     { category = "Device",   token = "%warmth",           description = _("Warmth value (natural-light only)") },
     { category = "Device",   token = "%mem",              description = _("System memory used (%)") },
+    { category = "Device",   token = "%sysused",          description = _("System memory used (MiB)") },
     { category = "Device",   token = "%ram",              description = _("KOReader RSS (MiB)") },
     { category = "Device",   token = "%disk",             description = _("Storage free (GB)") },
     { category = "Logic",    token = "[if:foo]…[/if]",    description = _("Show … when token foo is set") },
@@ -114,6 +129,20 @@ Tokens.CATALOGUE = {
     { category = "Logic",    token = "[if:lang=ja][font=NAME]…[/font][else]…[/if]", description = _("Per-language font: e.g. a Japanese face for ja books, another otherwise") },
     { category = "Logic",    token = "[if:full_width]…[/if]", description = _("Show … only in the full-width status line (micro-module + full-screen views), not the cover-view status") },
     { category = "Logic",    token = "%spacer",           description = _("Elastic gap: pushes content left/right to the region edges") },
+    { category = "Progress", token = "%bar",              description = _("Progress bar, filling the rest of the line") },
+    { category = "Progress", token = "%bar{rel}",         description = _("Progress bar whose length reflects how long the book is") },
+    -- Style tags. The OPENER is what the picker inserts, because a tag with no
+    -- closer simply runs to the end of the line -- which is the common case
+    -- (a small series number after a %spacer needs no closer at all). The
+    -- description names the closer for the reader who wants to end one early.
+    --
+    -- List lines only, so far: the hero takes [font=] for a whole region and
+    -- ignores the rest.
+    { category = "Style",    token = "[b]",               description = _("Bold from here on ([/b] ends it)") },
+    { category = "Style",    token = "[i]",               description = _("Italic from here on ([/i] ends it)") },
+    { category = "Style",    token = "[size=-4]",         description = _("Smaller from here on: 4pt below the line's own size ([/size] ends it)") },
+    { category = "Style",    token = "[size=+4]",         description = _("Larger from here on; [size=12] sets an exact point size ([/size] ends it)") },
+    { category = "Style",    token = "[font=NAME]",       description = _("A different font from here on: replace NAME with a font name ([/font] ends it)") },
 }
 
 local function metaToken(field)
@@ -200,6 +229,34 @@ Tokens.expanders.status = function(book)
     return s
 end
 
+-- %status_label -> the same four states, as words a reader would recognise.
+--
+-- A SEPARATE token rather than capitalising %status, because %status's four
+-- canonical strings are load-bearing: [if:status=finished] compares against
+-- them, and they are the same in every language. Translating or title-casing
+-- what that token returns would silently break every conditional written
+-- against it, and would break it only for users not running in English --
+-- which is the worst possible way for it to break.
+--
+-- So: %status is the value, %status_label is the display. A user who wants
+-- "Reading" gets it without writing out four conditionals by hand, which is
+-- what the list-view migration note said they would otherwise have to do.
+local STATUS_LABELS = {
+    unread   = function() return _("Unread")   end,
+    reading  = function() return _("Reading")  end,
+    on_hold  = function() return _("On hold")  end,
+    finished = function() return _("Finished") end,
+}
+Tokens.expanders.status_label = function(book)
+    local s = Tokens.expanders.status(book)
+    local label = STATUS_LABELS[s]
+    -- Unknown state: return the raw value rather than empty. A state this
+    -- build has not heard of is still information, and blanking it would look
+    -- like the token was broken.
+    if not label then return s end
+    return label()
+end
+
 -- Rating as a plain number (1-5), empty when unrated. The existing
 -- %rating returns star glyphs; this one is the raw value for users who
 -- want numeric comparisons in conditionals or a different display.
@@ -208,6 +265,49 @@ Tokens.expanders.rating_number = function(book)
     local r = tonumber(book.rating)
     if not r or r < 1 then return "" end
     return tostring(math.floor(r))
+end
+
+-- ── File facts: size and the two dates ─────────────────────────────────────
+--
+-- The three fields behind these (`size`, `date_added`, `last_opened`) are not
+-- on the record the shelf renders -- BookInfoManager stores no file size, and
+-- neither date has a memoised accessor. lib/bookshelf_token_record.lua resolves
+-- all three on demand, one stat apiece, and only for a template that names one.
+-- So these expanders read a field like every other expander does; whether the
+-- field is there is the wrapper's problem, not theirs.
+--
+-- The two formatters are exported because the list view's column accessors
+-- render exactly these values and must not disagree about how: two spellings of
+-- a file size in one plugin is a difference the user reads as a bug.
+
+-- Binary-prefix sizes, matching how KOReader reports file sizes elsewhere.
+-- Returns nil (not "") for a non-size, so a caller can tell "no value" from
+-- "zero bytes"; the expander below is what turns nil into the empty string.
+function Tokens.formatFileSize(bytes)
+    if type(bytes) ~= "number" or bytes < 0 then return nil end
+    if bytes < 1024 then return string.format("%d B", bytes) end
+    local kb = bytes / 1024
+    if kb < 1024 then return string.format("%d KB", math.floor(kb + 0.5)) end
+    return string.format("%.1f MB", kb / 1024)
+end
+
+-- ISO date from a unix epoch. A non-positive epoch is "no date" rather than
+-- 1970: every field that reaches here (a file mtime, a ReadHistory time) uses
+-- 0 for "unknown", and the OPDS feed parser stamps a literal
+-- `modification = 0` on every catalogue record it builds.
+function Tokens.formatDate(epoch)
+    if type(epoch) ~= "number" or epoch <= 0 then return nil end
+    return os.date("%Y-%m-%d", epoch)
+end
+
+Tokens.expanders.size   = function(b)
+    return b and Tokens.formatFileSize(b.size) or ""
+end
+Tokens.expanders.added  = function(b)
+    return b and Tokens.formatDate(b.date_added) or ""
+end
+Tokens.expanders.opened = function(b)
+    return b and Tokens.formatDate(b.last_opened) or ""
 end
 
 Tokens.expanders.series      = metaToken("series")
@@ -233,6 +333,55 @@ Tokens.expanders.rating = function(book)
     local empty  = "\xE2\x98\x86"  -- ☆ U+2606
     return filled:rep(r) .. empty:rep(5 - r)
 end
+
+-- %favourite -> the favourite icon when this book is in the Favourites
+-- collection, empty otherwise. Which icon is the user's `fav_icon` setting,
+-- the same one the cover badge reads, so a book marked with a heart on a cover
+-- is marked with a heart in a list.
+--
+-- Requested for list view -- "Show favourite icon not on the cover but as a
+-- token (maybe before the title by default)" -- but deliberately not restricted
+-- to it: a hero region can carry it too, and the token vocabulary is one
+-- vocabulary.
+--
+-- Renders the GLYPH rather than a flag, matching %rating (stars, not a number)
+-- and %batt_icon. Because the conditional grammar falls through to the
+-- expanders, that one definition also gives [if:favourite]…[/if] for free, so a
+-- template can put a separator round it without leaving a stray space on every
+-- other book.
+--
+-- Membership goes straight to ReadCollection, exactly as the cover badge's does
+-- (bookshelf_spine_widget.lua:1313-1329): book.in_favorites is only ever set by
+-- Repo.getFavorites, so on every other fetch path -- which is every list page
+-- that is not the Favourites chip -- the field is nil. The lookup is a hash hit
+-- on an in-memory table keyed by filepath, so it costs nothing per row.
+--
+-- NOT gated on show_fav_badge. That setting governs the corner badge on covers;
+-- a token the user typed into a line is the user asking for it here, and
+-- silently rendering nothing would look like the token was broken.
+--
+-- Both spellings resolve. The plugin's user-facing copy says "Favourite"
+-- almost everywhere while its data keys say "favorites", and a template that
+-- silently renders nothing because of a spelling is a bad half-hour.
+local _CoverProgress
+local function favouriteGlyph(book)
+    local fp = book and book.filepath
+    if not fp then return "" end
+    local rc_ok, rc = pcall(require, "readcollection")
+    local in_fav = rc_ok and rc and rc.coll and rc.coll.favorites
+                   and rc.coll.favorites[fp] ~= nil
+    if not in_fav then return "" end
+    if not _CoverProgress then
+        local ok_cp, m = pcall(require, "lib/bookshelf_cover_progress")
+        if not ok_cp then return "" end
+        _CoverProgress = m
+    end
+    return _CoverProgress.favoriteIcon() == "star"
+        and _CoverProgress.FAV_GLYPH_STAR
+        or  _CoverProgress.FAV_GLYPH_HEART
+end
+Tokens.expanders.favourite = favouriteGlyph
+Tokens.expanders.favorite  = favouriteGlyph
 
 local HC_STAR       = "\xef\x80\x85" -- nf-fa-star            (U+F005)
 local HC_HALF_STAR  = "\xef\x84\xa3" -- nf-fa-star_half_empty (U+F123)
@@ -463,6 +612,27 @@ function Tokens.sanitiseReviewHtml(raw)
     -- Leading / trailing breaks on the whole fragment.
     s = s:gsub("^%s*<br>%s*", "")
     s = s:gsub("%s*<br>%s*$", "")
+    -- ── A <br> must not be left inside a <p> (issue #338) ──────────────────
+    --
+    -- KOReader's HtmlBoxWidget works around a MuPDF bug (a <br> renders as a
+    -- break PLUS a blank line) by rewriting every <br> to "&nbsp;<div></div>"
+    -- (htmlboxwidget.lua:241). That is only legal OUTSIDE a paragraph: HTML5
+    -- parsing closes a <p> at a <div>, so for "<p>a<br>b<br>c</p>" the first
+    -- injected div ends the paragraph -- line a gets a full paragraph margin
+    -- -- while the rest land outside it, where the trick works. The reported
+    -- symptom, exactly: "an extra line break for the first time the <br>
+    -- appears", and only the first.
+    --
+    -- So a paragraph that contains a break becomes a <div class="p"> -- a div
+    -- nests inside a div, so the workaround stays intact -- and the modal's
+    -- stylesheet gives div.p the same margins as p. Inline spans crossing the
+    -- breaks are untouched, since nothing is split.
+    s = s:gsub("<p>(.-)</p>", function(chunk)
+        if chunk:find("<br>", 1, true) then
+            return '<div class="p">' .. chunk .. "</div>"
+        end
+        return nil   -- keep the original <p> exactly
+    end)
     return s
 end
 
@@ -642,6 +812,25 @@ end
 
 local function pct(v) return string.format("%d%%", math.floor((v or 0) * 100 + 0.5)) end
 
+-- %books_read: how many books in the WHOLE library are marked Finished.
+-- A STATE token, exactly like %batt: the widget's device-state builder
+-- supplies the count, because a token expander reaching into the repository
+-- is the boundary bookshelf_token_record exists to protect (its suite pins
+-- that this file never requires the repo). Empty wherever no state is
+-- passed -- list rows, like every device token -- and the ask was the hero
+-- status line, which passes it.
+Tokens.expanders.books_read = function(_b, s)
+    return (s and s.books_read) and tostring(s.books_read) or ""
+end
+
+-- %books_started: the statistics plugin's own number -- books with any
+-- recorded reading time. The pair exists because "books read" means both
+-- things to different people: Finished is a deliberate act (Reader Status),
+-- started is what the stats database actually measures.
+Tokens.expanders.books_started = function(_b, s)
+    return (s and s.books_started) and tostring(s.books_started) or ""
+end
+
 Tokens.expanders.page_num   = function(b) return b and b.page_num and tostring(b.page_num) or "" end
 Tokens.expanders.page_count = function(b) return b and b.page_count and tostring(b.page_count) or "" end
 Tokens.expanders.book_pct       = function(b) return b and b.book_pct and pct(b.book_pct) or "" end
@@ -761,6 +950,7 @@ Tokens.expanders.light_pct = function(_b, s)
 end
 Tokens.expanders.warmth= function(_b, s) return s and s.warmth and tostring(s.warmth) or "" end
 Tokens.expanders.mem   = function(_b, s) return s and s.mem and (tostring(s.mem) .. "%") or "" end
+Tokens.expanders.sysused = function(_b, s) return s and s.sysused_mib and (tostring(s.sysused_mib) .. " MiB") or "" end
 Tokens.expanders.ram   = function(_b, s) return s and s.ram_mib and (tostring(s.ram_mib) .. " MiB") or "" end
 Tokens.expanders.disk  = function(_b, s) return s and s.disk_free or "" end
 
@@ -774,6 +964,77 @@ Tokens.expanders.disk  = function(_b, s) return s and s.disk_free or "" end
 --   %bar    -> progress bar widget, progress-region-only
 --   %spacer -> elastic whitespace, available in any region
 
+-- The two spelled once. Every renderer that detects them after expansion
+-- matches these rather than restating the pattern -- the list row's findElastic
+-- and its strippers, and mapOutsideElastic below. (The hero card still carries
+-- its own copies; it predates this and matching them is all it does with them.)
+--
+-- BAR_MODIFIER_PATTERN is anchored, to be matched at the character AFTER a
+-- %bar, and carries the capture the reader needs: `text:find(P, be + 1)`
+-- returns start, stop, modifier.
+Tokens.BAR_PATTERN          = "%%bar"
+Tokens.SPACER_PATTERN       = "%%spacer"
+Tokens.BAR_MODIFIER_PATTERN = "^{([%w_,]*)}"
+
+-- ── Transforming a line's TEXT without touching its markup ─────────────────
+--
+-- Tokens.mapOutsideElastic(text, fn) -> fn applied to every run of text
+-- BETWEEN the elastic tokens; %bar, %bar{mod} and %spacer pass through
+-- verbatim.
+--
+-- One caller today, and it is a bug fix: a list line with UPPERCASE set ran
+-- the whole expanded string through TextSegments.upper, which uppercased the
+-- literal "%spacer" along with everything else. findElastic matches it
+-- lowercase, so the token stopped being a token -- the line rendered
+-- "THE HOBBIT%SPACER★★★★☆" as one left-aligned run, which is what
+-- "the spacer does nothing there" looks like from the outside. %bar had the
+-- same fault, and %bar{rel} a second one on top: the modifier is compared
+-- lowercase, so an uppercased {REL} silently dropped the relative length.
+--
+-- The rule this encodes: a case transform belongs to what the reader typed and
+-- to what the tokens EXPANDED to, never to a token's own spelling. The hero
+-- does not have the bug because it uppercases each side AFTER splitting the
+-- line (mkseg in bookshelf_hero_card.lua); the list pre-renders one string per
+-- line, so it steps over the tokens instead.
+-- Every span a text transform must step over, longest form of each first so a
+-- tie on position picks %bar{rel} over the %bar inside it.
+--
+-- The style tags are here for the same reason the elastic tokens are: they are
+-- matched by lowercase name, so "[SIZE=12]" is not a tag and renders as four
+-- literal characters in the middle of the line.
+local PROTECTED = {
+    Tokens.BAR_PATTERN .. "{[%w_,]*}",
+    Tokens.BAR_PATTERN,
+    Tokens.SPACER_PATTERN,
+    InlineStyle.TAG_SPAN_PATTERN,
+}
+
+function Tokens.mapOutsideElastic(text, fn)
+    if type(text) ~= "string" or text == "" then return text end
+    local out, pos = {}, 1
+    while true do
+        -- Earliest-first, NOT findElastic's ranking: that one hands %bar the
+        -- slack wherever it sits, which is the right answer to a different
+        -- question and would walk this string out of order.
+        local s, e
+        for _i, pattern in ipairs(PROTECTED) do
+            local ps, pe = text:find(pattern, pos)
+            -- On a tie the LONGER match wins, which is what keeps %bar{rel}
+            -- whole: the bare %bar starts at the same character.
+            if ps and (not s or ps < s or (ps == s and pe > e)) then
+                s, e = ps, pe
+            end
+        end
+        if not s then break end
+        out[#out + 1] = fn(text:sub(pos, s - 1)) or ""
+        out[#out + 1] = text:sub(s, e)
+        pos = e + 1
+    end
+    if #out == 0 then return fn(text) or "" end
+    out[#out + 1] = fn(text:sub(pos)) or ""
+    return table.concat(out)
+end
+
 -- ─── Conditional evaluator ──────────────────────────────────────────────────
 -- Recognises [if:cond]…[else]…[/if]. Cond grammar:
 --   atom    := [not] (token | token op value)
@@ -783,9 +1044,39 @@ Tokens.expanders.disk  = function(_b, s) return s and s.disk_free or "" end
 -- Strings vs numbers: numeric tokens compare numerically; string tokens
 -- compare by string equality. Missing tokens compare as empty/zero.
 
+-- ── %calibre{field}: any calibre column by lookup name ─────────────────────
+-- The braces carry an ARGUMENT, not a modifier like {x4}, so this cannot be
+-- a plain expander (those are bare %names substituted by gsub). It gets its
+-- own pass in Tokens.expand, and menuPreview runs that pass BEFORE its
+-- modifier strip, which would otherwise eat the braces and strand a literal
+-- "%calibre" in the preview. Field names match case-insensitively, with or
+-- without calibre's leading '#' (a custom column "#year" answers both
+-- %calibre{year} and %calibre{#Year}). Values come pre-rendered as strings
+-- on book.calibre by the repository, only when the calibre beta is on.
+local function calibreField(book, field)
+    local map = book and book.calibre
+    if type(map) ~= "table" then return "" end
+    local key = tostring(field or ""):gsub("^%s*#?", ""):gsub("%s*$", ""):lower()
+    return map[key] or ""
+end
+
+function Tokens.expandCalibreBraces(text, book)
+    -- Plain find: the pattern-free form, so the '%' is literal.
+    if not text:find("%calibre{", 1, true) then return text end
+    return (text:gsub("%%calibre{([^}]*)}", function(field)
+        return calibreField(book, field)
+    end))
+end
+
 local function valueForCondition(name, book, state)
     -- Single source of truth for if-condition values. Falls through to
     -- expanders so e.g. "book_pct" in a condition matches %book_pct token.
+    local calibre_arg = name:match("^calibre{(.-)}$")
+    if calibre_arg then
+        local v = calibreField(book, calibre_arg)
+        if v == "" then return nil end
+        return v
+    end
     local exp = Tokens.expanders[name]
     if not exp then return nil end
     local v = exp(book, state)
@@ -805,9 +1096,13 @@ end
 local function evaluateAtom(atom, book, state)
     local negate, body = atom:match("^%s*(not)%s+(.+)$")
     if not negate then body = atom end
-    local v = valueForCondition(body:match("^%s*([%w_]+)") or "", book, state)
+    local v = valueForCondition(body:match("^%s*(calibre%b{})")
+                                or body:match("^%s*([%w_]+)") or "", book, state)
     -- token op value form
-    local name, op, raw = body:match('^%s*([%w_]+)%s*([=<>!]+)%s*(.+)%s*$')
+    local name, op, raw = body:match('^%s*(calibre%b{})%s*([=<>!]+)%s*(.+)%s*$')
+    if not name then
+        name, op, raw = body:match('^%s*([%w_]+)%s*([=<>!]+)%s*(.+)%s*$')
+    end
     if name and op then
         local lhs = valueForCondition(name, book, state)
         local quoted = raw:match('^"(.-)"$')
@@ -936,6 +1231,7 @@ function Tokens.expand(format, book, state)
     if not format:find("[%%[{]") then return format end
     local result = expandDatetimeBraces(format, state)
     result = expandConditionals(result, book, state)
+    result = Tokens.expandCalibreBraces(result, book)
     local names = tokenNamesByLengthDesc()
     for _i, name in ipairs(names) do
         local expander = Tokens.expanders[name]
@@ -946,13 +1242,60 @@ function Tokens.expand(format, book, state)
     return result
 end
 
+-- ── How a template reads in a MENU ROW ─────────────────────────────────────
+--
+-- Tokens.menuPreview(template, book, state) -> a one-line summary.
+--
+-- Every "Line 2: Tolkien  0% of 310 pages" row and every hero region row shows
+-- the template EXPANDED, so the reader sees what the line will say rather than
+-- what they typed. Three token families do not survive that trip and have to be
+-- handled here instead of leaking into the label:
+--
+--   %bar        is a WIDGET. It is not text and has no expander, so it arrives
+--               at the label as the literal characters "%bar". Bookends shows
+--               it as a little bar of geometric shapes and so does this: plain
+--               Unicode (U+25B0 / U+25B1), NOT a Private Use Area glyph, so it
+--               renders in a menu's ordinary face with no symbols font.
+--   {rel}, {xN} are MODIFIERS on those widgets, meaningless as text.
+--   %spacer     is an elastic GAP the renderer splits the line on. In a menu
+--               row there is nothing to split, so it read as the literal word
+--               "%spacer" sitting in the middle of the preview.
+--
+-- Shared rather than copied: this was three near-identical gsub chains (the
+-- list line rows, the hero region rows, the hero line editor), each stripping a
+-- different subset -- which is exactly why %spacer survived in two of them.
+Tokens.BAR_PREVIEW = "\xE2\x96\xB0\xE2\x96\xB0\xE2\x96\xB1\xE2\x96\xB1"  -- ▰▰▱▱
+
+function Tokens.menuPreview(format, book, state)
+    -- Modifiers come off BEFORE expansion, and that order is the whole trick:
+    -- %description IS a real token, so expanding first substitutes the blurb
+    -- and leaves a literal "{x4}" stranded in the middle of the preview.
+    local src = Tokens.expandCalibreBraces(format or "", book)
+    src = src:gsub("(%%[%a_]+){[%w_,]*}", "%1")
+    local ok, text = pcall(Tokens.expand, src, book, state)
+    if not ok or not text then return "" end
+    -- The style tags. Most of them ARE rendered now -- a list line turns them
+    -- into runs -- but they are markup either way, and a preview that shows
+    -- the markup is showing the one thing the reader will not see. One strip
+    -- for the whole vocabulary, so a tag added later cannot leak into a menu
+    -- row by being forgotten here.
+    text = InlineStyle.strip(text)
+    -- The two widget-shaped tokens, which have no expanders and so arrive here
+    -- as their own literal text.
+    text = text:gsub("%%bar", Tokens.BAR_PREVIEW)
+    text = text:gsub("%%spacer", " ")
+    text = text:gsub("%s+", " ")
+    return (text:match("^%s*(.-)%s*$")) or ""
+end
+
 function Tokens.isEmpty(s)
     if not s then return true end
-    -- Strip the v0.1 inline format tags ([b][i][u] and closers) before deciding
-    -- emptiness, otherwise [b][/b] around an empty value would count as
-    -- non-empty. New format tags added in future versions need to be added here.
-    local stripped = s:gsub("%[/?[biu]%]", "")
-    return stripped:match("^%s*$") ~= nil
+    -- Strip the style tags before deciding emptiness, or "[b][/b]" around a
+    -- value that resolved to nothing counts as content. One strip for the
+    -- whole vocabulary rather than a list to keep in step: the note that used
+    -- to sit here -- "new format tags added in future versions need to be
+    -- added here" -- is exactly the maintenance this avoids.
+    return InlineStyle.strip(s):match("^%s*$") ~= nil
 end
 
 return Tokens

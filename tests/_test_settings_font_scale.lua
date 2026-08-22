@@ -172,6 +172,8 @@ local PLAIN_PICKERS = {
     { fn = "_pickFontScale",              key = "font_scale",               min = 50, max = 200, steps = { -10, -5, 5, 10 } },
     { fn = "_pickHeroModuleFontScale",    key = "hero_module_font_scale",   min = 50, max = 200, steps = { -10, -5, 5, 10 } },
     { fn = "_pickChipFontScale",          key = "chip_font_scale",          min = 50, max = 300, steps = { -10, -1, 1, 10 } },
+    -- _pickListFontScale is NOT here any more: it steps in rows, not in
+    -- percentage points, and has its own tests below.
     { fn = "_pickStackLabelFontScale",    key = "stack_label_font_scale",   min = 50, max = 300, steps = { -10, -5, 5, 10 } },
 }
 
@@ -630,6 +632,65 @@ t.test("Reset clears the night variant of every colour key too", function()
         "reset must delete the _night variant alongside each base key")
 end)
 
+-- ── The Text size band ─────────────────────────────────────────────────────
+
+t.test("Text size lists every scale key exactly once, on its own picker", function()
+    -- The menu is the only route to any of these keys, so a row wired to the
+    -- wrong pick function is a setting the user cannot reach and nothing else
+    -- in the suite would notice: the pickers above are all driven directly.
+    resetStore()
+    Settings._bw, Settings._plugin = makeBw(), makePlugin()
+    local rows = Settings:_textSizeSubItems()
+    local keys, seen = {}, {}
+    for _i, r in ipairs(rows) do
+        -- Scale rows end in %, while the two footer offset rows end in px and
+        -- may be negative. Strip either value suffix to compare menu labels.
+        local label = r.text_func()
+        local name = label:gsub(": %-?%d+%%$", "")
+        name = name:gsub(": %-?%d+ px$", "")
+        assert(name ~= label, "malformed Text size row: " .. label)
+        keys[#keys + 1] = name
+    end
+    for _i, k in ipairs(keys) do
+        assert(not seen[k], "duplicate Text size row: " .. k)
+        seen[k] = true
+    end
+    -- The order is the menu's own banding (shelf, then hero, then menus), and
+    -- "Chip bar" / "List text" are adjacent on purpose: they are the same band
+    -- shape on two keys, and a user tuning one should see the other.
+    eq(keys, {
+        "Cover labels", "Cover badges", "Stack & folder labels",
+        "Chip bar", "List text",
+        "\xEE\x9E\xBD  Hero card", "\xEE\xB1\xAF  Hero micro-modules",
+        "Start menu", "Pagination footer", "Pagination top margin",
+        "Pagination bottom margin", "Modal tabs",
+    })
+end)
+
+t.test("the chip bar row and the list row row drive different keys", function()
+    -- The separation, at the surface the user touches. Both rows read 100 by
+    -- default; nudging one must move only its own label.
+    resetStore()
+    Settings._bw, Settings._plugin = makeBw(), makePlugin()
+    local function rowNamed(name)
+        for _i, r in ipairs(Settings:_textSizeSubItems()) do
+            if r.text_func():match("^" .. name .. ": ") then return r end
+        end
+        error("no Text size row named " .. name)
+    end
+    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 100%")
+    eq(rowNamed("List text").text_func(), "List text: 100%")
+    BookshelfSettings.save("list_font_scale", 150)
+    eq(rowNamed("List text").text_func(), "List text: 150%")
+    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 100%",
+        "the chip bar row moved with the list key")
+    BookshelfSettings.save("chip_font_scale", 80)
+    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 80%")
+    eq(rowNamed("List text").text_func(), "List text: 150%",
+        "the list row row moved with the chip key")
+    resetStore()
+end)
+
 t.test("_pickLauncherButtons: Cancel restores every key it found unset", function()
     local _canvas, dialog = openLauncherCanvas()
     findButton(dialog, "-10").callback()          -- move it off the default
@@ -638,5 +699,68 @@ t.test("_pickLauncherButtons: Cancel restores every key it found unset", functio
     eq(BookshelfSettings.read("reader_launcher_lift"), nil,
         "a key that was unset on open must be deleted again, not saved as 0")
 end)
+
+-- ── _pickListFontScale: a text-size control, like every other picker ───────
+--
+-- It stepped in ROWS for a while, because list_font_scale moved row height and
+-- font together and a percentage step either did nothing or crossed two row
+-- boundaries. The row count is its own setting now, so this key does one
+-- thing and this dialog is ordinary again.
+--
+--     "it should now control the size of text lines within the rows without
+--      changing the row height"
+
+t.test("_pickListFontScale: the four nudges match every other size picker",
+function()
+    -- "the nudge for list text size needs +/- 1/10 like we have for three
+    -- other text size nudge dialogs". A lone +/-5 read as a different kind of
+    -- control; consistency IS the spec here.
+    resetStore()
+    ui_calls = {}
+    Settings._bw, Settings._plugin = makeBw(), makePlugin()
+    local tm = makeTouchMenu()
+    Settings:_pickListFontScale(tm)
+    local dialog = ui_calls[#ui_calls].w
+
+    findButton(dialog, "+1").callback()
+    eq(BookshelfSettings.read("list_font_scale", 100), 101)
+    findButton(dialog, "+10").callback()
+    eq(BookshelfSettings.read("list_font_scale", 100), 111)
+    findButton(dialog, "-1").callback()
+    findButton(dialog, "-10").callback()
+    eq(BookshelfSettings.read("list_font_scale", 100), 100)
+    assert(Settings._bw.rebuild_count > 0, "the shelf must be rebuilt")
+    assert(tm.update_count > 0, "the touch menu must be refreshed")
+end)
+
+t.test("_pickListFontScale: it never asks the shelf about rows", function()
+    -- The regression that shipped: this dialog went on calling a widget method
+    -- that had been deleted with the density model, and the first + crashed
+    -- KOReader. Nothing here may reach for the row count at all.
+    resetStore()
+    ui_calls = {}
+    local bw = makeBw()
+    bw._listBandPlan = function()
+        error("the text-size dialog must not ask for the row plan")
+    end
+    bw._isListMode = function() return true end
+    Settings._bw, Settings._plugin = bw, makePlugin()
+    Settings:_pickListFontScale(makeTouchMenu())
+    local dialog = ui_calls[#ui_calls].w
+    findButton(dialog, "+10").callback()
+    eq(BookshelfSettings.read("list_font_scale", 100), 110)
+end)
+
+t.test("_pickListFontScale: the label is the percentage", function()
+    resetStore()
+    ui_calls = {}
+    Settings._bw, Settings._plugin = makeBw(), makePlugin()
+    Settings:_pickListFontScale(makeTouchMenu())
+    local label = nudgeLabel(ui_calls[#ui_calls].w)
+    eq(label, "100%")
+    assert(not label:find("row", 1, true),
+        "the row count belongs to the chip's shelf-style menu now, got " .. label)
+end)
+
 
 t.done()
