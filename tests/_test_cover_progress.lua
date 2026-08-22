@@ -216,6 +216,32 @@ test("nil book is defensive", function()
     setAll(true); local r = CP.decide(nil); eq(r.bar, false); eq(r.glyph, nil)
 end)
 
+-- Compact list-thumbnail projection -----------------------------------------
+test("statusOnly keeps finished tickbox but suppresses bar and pages", function()
+    setAll(true); S.progress_badge_style = "tickbox"
+    S.progress_page_count_enabled = true
+    local r = CP.statusOnly(book("finished", 1.0))
+    eq(r.glyph, "complete_tickbox")
+    eq(r.bar, false)
+    eq(r.page_count, false)
+end)
+
+test("statusOnly keeps in-progress glyph but suppresses progress bar", function()
+    setAll(true)
+    local r = CP.statusOnly(book("reading", 0.4))
+    eq(r.glyph, "in_progress")
+    eq(r.bar, false)
+    eq(r.bar_pct, 0)
+end)
+
+test("statusOnly keeps on-hold badge and fade cues", function()
+    setAll(true); S.on_hold_display = "both"
+    local r = CP.statusOnly(book("on_hold", 0.4))
+    eq(r.on_hold, true)
+    eq(r.on_hold_fade, true)
+    eq(r.bar, false)
+end)
+
 -- Page count -----------------------------------------------------------------
 test("EPUB page-count badge prefers DocSettings pages over BIM estimate", function()
     setAll(true)

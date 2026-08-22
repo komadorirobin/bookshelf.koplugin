@@ -711,6 +711,11 @@ local SpineWidget = InputContainer:extend{
     -- appear above/around overlay graphics. Opt-in from ShelfRow.
     show_progress       = false,
     suppress_badges     = false,
+    -- Compact list thumbnails need the same read-status cue as grid covers,
+    -- but the list already has its own progress bar and page text.  This mode
+    -- keeps only status glyphs/fades and suppresses progress, page, download,
+    -- and series badges.
+    status_only          = false,
     -- ShelfRow's expanded mode renders book titles BELOW each cover.
     -- The bookmark glyph at the bottom-left would clash with the title
     -- if it dangled; lift it fully inside the cover when titles are
@@ -906,9 +911,12 @@ end
 --     surprises.
 function SpineWidget:_renderShadowedCard(inner)
     local card_w, card_h = self:_cardDimensions()
-    local indicators     = (self.show_progress and not self.suppress_badges)
-        and CoverProgress.decide(self.book)
-        or  { bar = false, bar_pct = 0, glyph = nil }
+    local indicators = { bar = false, bar_pct = 0, glyph = nil }
+    if self.show_progress and not self.suppress_badges then
+        indicators = self.status_only
+            and CoverProgress.statusOnly(self.book)
+            or CoverProgress.decide(self.book)
+    end
 
     local children = {}
 
@@ -1274,7 +1282,8 @@ function SpineWidget:_renderShadowedCard(inner)
     --     SpineWidget with it off, and their card_w is the SLOT rather than the
     --     painted cover, so a right-anchored badge would hang off the artwork.
     local pill_owns_corner = indicators.page_count and self.book and self.book.page_count
-    if self.show_progress and self.book and self.book.downloaded
+    if self.show_progress and not self.status_only
+            and self.book and self.book.downloaded
             and not pill_owns_corner
             and not self.is_bulk_selected then
         -- 70% of the status-glyph size, matching the favourite glyph: the
@@ -1334,7 +1343,8 @@ function SpineWidget:_renderShadowedCard(inner)
     --      * self.show_progress -- grid-only surface (hero / folder /
     --        series stacks reuse SpineWidget but opt out).
     --      * Setting bookshelf_show_series_num (default ON).
-    if self.show_progress and not self.suppress_badges and _showSeriesNum(self.in_series)
+    if self.show_progress and not self.status_only and not self.suppress_badges
+            and _showSeriesNum(self.in_series)
             and self.book and self.book.series_num then
         local TextWidget     = require("ui/widget/textwidget")
         local colors        = CoverProgress.resolvedColors()
@@ -1972,7 +1982,8 @@ function SpineWidget:_renderFallback()
     -- rounded pill sits within the paper-tone bottom strip with the same
     -- breathing room above the bar as below it (bar_pad on each side).
     local inset_v_bottom = inset_v_top
-    if self.show_progress and CoverProgress.decide(self.book).bar then
+    if self.show_progress and not self.status_only
+            and CoverProgress.decide(self.book).bar then
         local needed = CARD_BORDER + 2 * _barBottomPadding() + _barHeight()
         if needed > inset_v_bottom then inset_v_bottom = needed end
     end

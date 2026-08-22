@@ -9522,7 +9522,14 @@ function BookshelfWidget:_collapsedGridSplit(hide_chip_bar, n_shelves, slot_h_na
     local total_pad = PAD + hero_chip_pad
                     + ((not hide_chip_bar) and PAD or 0)
                     + n_shelves * row_gap
-    local available   = self.height - chip_contrib - label_h - total_pad
+    -- _rebuild lays every Bookshelf surface out above SimpleUI's persistent
+    -- bottom dock.  The row-count helpers already use that reduced height, but
+    -- this collapsed cover-grid split used the full widget height.  Its rows
+    -- were therefore allocated into the dock band and folder cards could paint
+    -- through the pagination footer.  Keep the split on the same usable-height
+    -- basis as _rebuild, _maxRows and _maxShelfRows.
+    local usable_h    = self.height - self:_simpleUIReservedBottom()
+    local available   = usable_h - chip_contrib - label_h - total_pad
     local hero_target = math.floor(available * HERO_MIN_FRAC)
     local grid_title_block_h = 0
     if self:_shelfLabelMode() then

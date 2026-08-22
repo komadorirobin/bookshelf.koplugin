@@ -1866,6 +1866,13 @@ function ListRow.new(opts)
                 -- the size in SpineWidget -- the grid and the hero want their
                 -- chrome at every size they render at.
                 flat_thumb = true,
+                -- Reuse the cover renderer's configured read-state glyph and
+                -- fade treatment, but not its page/series badges or progress
+                -- bar: those are already represented by the list row itself.
+                show_progress = true,
+                status_only = true,
+                -- Keep bookmark-style glyphs wholly inside the thumbnail.
+                show_titles = true,
             }
             group[#group + 1] = CenterContainer:new{
                 dimen = Geom:new{ w = cover_w, h = content_h },

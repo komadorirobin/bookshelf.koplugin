@@ -237,6 +237,22 @@ function M.decide(book)
     return none
 end
 
+-- Status-only projection for compact surfaces such as list thumbnails.
+-- It deliberately preserves the selected read-state glyph and the on-hold /
+-- finished fade cues, while suppressing the progress bar and page-count pill
+-- that the list already presents as text and a full-width bar of its own.
+function M.statusOnly(book)
+    local full = M.decide(book)
+    return {
+        bar          = false,
+        bar_pct      = 0,
+        glyph        = full.glyph,
+        on_hold      = full.on_hold,
+        on_hold_fade = full.on_hold_fade,
+        page_count   = false,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Widget: ProgressBarWidget
 -- ---------------------------------------------------------------------------

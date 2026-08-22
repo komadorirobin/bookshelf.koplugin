@@ -202,6 +202,15 @@ test("_maxShelfRows: explicit rows reserve the SimpleUI dock", function()
         "embedded explicit rows must leave room for the dock")
 end)
 
+test("_collapsedGridSplit reserves the SimpleUI dock", function()
+    local standalone = bw(750, 1024, false)
+    local embedded = bw(750, 1024, false, 160)
+    local shelf_a, hero_a = standalone:_collapsedGridSplit(false, 1, 200)
+    local shelf_b, hero_b = embedded:_collapsedGridSplit(false, 1, 200)
+    eq((shelf_a + hero_a) - (shelf_b + hero_b), 160,
+        "collapsed cover grid must not allocate rows inside the dock")
+end)
+
 test("_nShelves: geometry helpers run once per decision", function()
     local base_calls, max_calls = 0, 0
     local widget = setmetatable({

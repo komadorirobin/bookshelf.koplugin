@@ -873,6 +873,9 @@ local function heroPair(o)
         _coverAspect   = function() return aspect end,
         _shelfLabelMode = function() return nil end,
         _listMinRowHeight = function() return row_h end,
+        _simpleUIReservedBottom = function()
+            return o.simpleui_reserved or 0
+        end,
     }
     local split = methodOf("_collapsedGridSplit", env)
     self._collapsedGridSplit = function(s, hide) return split(s, hide) end
@@ -1269,6 +1272,15 @@ t.test("the thumbnail stays flat", function()
         "the cover cell must pass flat_thumb = true to SpineWidget")
     assert(row_src:match("bare_placeholder%s*=%s*true"),
         "the no-cover placeholder must stay bare at thumbnail size")
+end)
+
+t.test("the thumbnail carries read status without duplicate progress", function()
+    assert(row_src:match("show_progress%s*=%s*true"),
+        "the list thumbnail must opt into the shared read-status renderer")
+    assert(row_src:match("status_only%s*=%s*true"),
+        "the list thumbnail must suppress duplicate progress and page badges")
+    assert(row_src:match("show_titles%s*=%s*true"),
+        "bookmark-style status glyphs must stay inside the thumbnail")
 end)
 
 -- ── The pinch changes the row count ────────────────────────────────────────
