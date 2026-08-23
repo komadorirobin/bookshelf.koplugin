@@ -41,6 +41,7 @@ function Editor._chipModeLabel(value)
     local v = ViewMode.chipOverride(value)
     if v == ViewMode.LIST   then return _("List")   end
     if v == ViewMode.COVERS then return _("Covers") end
+    if v == ViewMode.AUTO   then return _("Auto")   end
     return nil
 end
 
@@ -1311,18 +1312,14 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
         --     lands on "Auto" instead, so the way back to automatic still
         --     exists but costs no dialog height.
 
-        -- Show as: Auto / List / Covers, three across. "Auto" replaced
-        -- "Default" when the global list toggles went: there is nothing left
-        -- to follow, only the fixed policy -- covers collapsed, a list when
-        -- the shelf is expanded or inside folders and stacks
-        -- (lib/bookshelf_view_mode.lua). The maintainer named the option and
-        -- the policy in one breath: "show as 'list / covers / auto: list when
-        -- expanded or lists inside folders'".
+        -- Show as: Auto / List / Covers, three across. This fork keeps AUTO as
+        -- the unset default so existing profiles continue to become lists in
+        -- folders. All three values may still be stored explicitly.
         local mode = ViewMode.chipOverride(draft[ViewMode.CHIP_KEY])
         rows[#rows + 1] = header(_("Show as"))
         rows[#rows + 1] = {
-            radio(_("Auto"), mode == nil, pick(function()
-                draft[ViewMode.CHIP_KEY] = nil
+            radio(_("Auto"), mode == ViewMode.AUTO or mode == nil, pick(function()
+                draft[ViewMode.CHIP_KEY] = ViewMode.AUTO
             end)),
             radio(_("List"), mode == ViewMode.LIST, pick(function()
                 draft[ViewMode.CHIP_KEY] = ViewMode.LIST

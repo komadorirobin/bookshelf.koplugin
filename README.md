@@ -130,11 +130,13 @@ The full gesture reference is in [Gestures cheatsheet](#gestures-cheatsheet) bel
 
 ### List view
 
-Any shelf can be a text list instead of covers. Long-press the shelf's chip and pick **List** under Show as (or **Auto** to let each screen decide), or hold the page number in the footer to flip the shelf you are looking at. The same dialog sets how many **rows** (1 to 12) and **columns** (1 to 3) the list uses, and pinching the shelf fits one more or one fewer row.
+Any shelf can be a text list instead of covers. Long-press the shelf's chip and pick **List** under Show as, or hold the page number in the footer to flip the shelf you are looking at. This fork defaults to **Auto**, which switches a shelf to a list whenever it is expanded or drilled into a folder or stack, and back to covers on the two rows under the hero. Pick **Covers** to keep a shelf as covers everywhere. The same dialog sets how many **rows** (1 to 12) and **columns** (1 to 3) the list uses, and pinching the shelf fits one more or one fewer row.
+
+Search results keep their own view -- covers unless you say otherwise. Long-press the **Search results** pill (or hold the page number) while viewing results to pick Covers, List or Auto for them.
 
 Rows are built from the same editable lines as the hero card: up to six per row, each with its own template, font, size, weight, slant, case and alignment, edited under **menu > Settings > List view**. Tokens work in every line, so a row can carry a progress bar (`%bar`, or `%bar{rel}` to make its length reflect how long the book is), file size, dates, or anything else from the [Token cheatsheet](#token-cheatsheet). As rows get shorter, lines drop from the bottom up, so the title and author are the last to go.
 
-Series, authors and folders draw as a fan of their members' covers; OPDS subcatalogues become full-width buttons. There is also a setting to switch any shelf to a list automatically when you swipe up to expand it, and the list's text size lives under **Settings > Text size**.
+Series, authors and folders draw as a fan of their members' covers; OPDS subcatalogues become full-width buttons. The list's text size lives under **Settings > Text size**.
 
 ### Folder styles (how groups look)
 
@@ -401,7 +403,8 @@ What it adds:
 - Calibre's title, authors, series, tags, language and description win over the values embedded in the book file, so edits made in Calibre show up without reconverting books
 - Calibre's author sort ("Le Guin, Ursula K.") orders author shelves, including hand-edited sort values
 - A custom column of the **Series** type gives its books a second series shelf alongside the primary one
-- `%calibre{name}` shows any column in a token line: `%calibre{pubdate}` for the publication year, `%calibre{publisher}`, `%calibre{rating}`, or a custom column by its lookup name (`%calibre{#mycolumn}`; the `#` is optional). This works anywhere tokens do -- hero card sections, list view lines, and conditionals like `[if:calibre{pubdate}>1990]`. Date columns show as the year; long-text (comments-type) columns are not exposed.
+- **Any custom column you create in Calibre** can be shown in a token line via `%calibre{name}`, using the column's lookup name: a column `#mood` renders with `%calibre{mood}` (the `#` is optional). Text, fixed-value lists, numbers, dates, yes/no and multi-value columns all work; the one exception is long-text ("Comments"-type) columns, which are too big for a one-line token. This works anywhere tokens do -- hero card sections, list view lines, and conditionals like `[if:calibre{mood}="cosy"]`
+- Three standard Calibre fields are exposed the same way: `%calibre{pubdate}` (publication year), `%calibre{publisher}` and `%calibre{rating}`. Date columns -- standard or custom -- show as the year
 
 Two things worth knowing:
 
@@ -690,7 +693,7 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%size` | *2.2 MB* (file size) |
 | `%added` | Date the file was added to the library |
 | `%opened` | Date the book was last opened |
-| `%calibre{name}` | Any calibre column by lookup name: `%calibre{pubdate}` for the publication year, `%calibre{publisher}`, or a custom column like `%calibre{#mycolumn}`. Needs the [calibre metadata beta](#calibre-metadata-beta); dates show as the year. |
+| `%calibre{name}` | Any Calibre column by lookup name -- custom columns included: a column `#mood` renders with `%calibre{mood}`. Also `%calibre{pubdate}` (publication year) and `%calibre{publisher}`. Needs the [calibre metadata beta](#calibre-metadata-beta); dates show as the year; long-text columns excluded. |
 | `%filename` | *The_Great_Gatsby* |
 | `%format` | *EPUB* |
 | `%lang` | *en* |
@@ -805,6 +808,7 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 | `hardcover_use_metadata` | Use Hardcover's title/author/series/genres for linked books in place of their own. |
 | `hardcover_max_genres` | How many of a linked book's Hardcover genres to use (when `hardcover_use_metadata` is on). |
 | `calibre_metadata` | BETA. Read metadata from `metadata.calibre` if present. |
+| `search_view_mode` | How search results display: absent = covers, `"list"`, or `"auto"`. Set by long-pressing the Search results pill. |
 | `latest_walk_depth` | How deep the **Latest** source scans your library. |
 | `show_close_msg` | Show the centred "Closing book…" toast when exiting a book. |
 | `hot_park` | Instant book close: leave the book open in the background and finish closing it at the next quiet moment. Default on. |

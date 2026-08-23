@@ -5,10 +5,13 @@
 -- the whole decision is testable headless and there is exactly one place that
 -- answers "which mode am I in".
 --
--- ── THE MODEL: a chip pin, over one fixed Auto policy ──────────────────────
+-- ── THE MODEL: a chip pin, defaulting to AUTO ──────────────────────────────
 --
--- A chip is pinned to LIST, pinned to COVERS, or left on AUTO (no pin), and
--- Auto is not configurable:
+-- A chip is pinned to LIST, pinned to COVERS, or set to AUTO. In this fork,
+-- UNSET also means AUTO so existing profiles retain their established
+-- behaviour when upstream changes its default: covers at the top level and a
+-- list after drilling into a folder or stack. Auto may also be stored
+-- explicitly, and its policy is fixed:
 --
 --     expanded, or drilled into a folder / series / author / tag  ->  LIST
 --     collapsed at a chip's top level                             ->  COVERS
@@ -30,6 +33,7 @@ local ViewMode = {}
 
 ViewMode.COVERS = "covers"
 ViewMode.LIST   = "list"
+ViewMode.AUTO   = "auto"
 
 -- effective(expanded, in_folder) -> ViewMode.COVERS | ViewMode.LIST
 --
@@ -59,22 +63,25 @@ function ViewMode.isList(mode) return mode == ViewMode.LIST end
 -- every chip in every existing library -- group_display has shipped for
 -- several releases.
 --
--- UNSET is the third state and the default: Auto. It is absence rather than a
--- sentinel, so a chip written by a later release that grows new mode values
--- degrades to Auto here rather than to an error.
+-- UNSET is the fourth state and the fork default: AUTO. Absence rather than a
+-- sentinel keeps existing profiles on the automatic policy, while AUTO is
+-- also accepted as an explicit stored value alongside the other two.
 -- No labels here, and no gettext require: this file is a pure function of its
 -- arguments so the whole decision is testable headless, and pulling in i18n for
 -- three strings would end that. The chip editor owns the wording.
 ViewMode.CHIP_KEY = "view_mode"
 
--- chipOverride(value) -> COVERS | LIST | nil
+-- chipOverride(value) -> COVERS | LIST | AUTO | nil
 --
--- nil for anything this build does not recognise -- including the absence that
--- means Auto -- so a hand-edited chip, or one written by a later release,
--- falls back to the Auto policy rather than reaching a renderer as a mode it
--- has no branch for.
+-- nil for anything this build does not recognise -- including the absence
+-- that means the automatic default -- so a hand-edited chip, or one written
+-- by a later release, falls back safely rather than reaching a renderer as a
+-- mode it has no branch for.
 function ViewMode.chipOverride(value)
-    if value == ViewMode.LIST or value == ViewMode.COVERS then return value end
+    if value == ViewMode.LIST or value == ViewMode.COVERS
+            or value == ViewMode.AUTO then
+        return value
+    end
     return nil
 end
 

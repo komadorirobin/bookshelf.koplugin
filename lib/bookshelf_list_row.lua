@@ -1464,6 +1464,18 @@ function ListRow.textLine(record, line, width, pad, template, opts)
         -- bold nil and line.bold false that idiom yields nil, because `false
         -- or nil` is nil. Harmless here and a trap everywhere else.
         if bold == nil then bold = line.bold end
+        -- A template can carry a literal newline - issue 345's Line 1 had
+        -- one between the status icons and %title. A TextWidget drawn at
+        -- natural width shapes straight through it, but its max_width
+        -- truncation (xtext makeLine) STOPS at a newline: the title
+        -- rendered fine until the line needed truncating, then vanished
+        -- entirely, leaving icon + "…". One line means one line: collapse
+        -- newlines to spaces here, the funnel every one-line segment
+        -- passes through. Wrap boxes keep theirs - TextBoxWidget honours
+        -- them properly.
+        if type(s) == "string" and s:find("\n", 1, true) then
+            s = s:gsub("%s*\n%s*", " ")
+        end
         return TextWidget:new{
             text          = s,
             face          = face or line.face,
@@ -1519,6 +1531,13 @@ function ListRow.textLine(record, line, width, pad, template, opts)
         -- truncated at what is left and the runs after it are dropped, so at
         -- most one ellipsis appears -- the same rule the two SIDES of an
         -- elastic line already follow, one level down.
+        --
+        -- "Dropped" is decided by the TRUNCATION FLAG, not by the leftover
+        -- reaching zero: a truncated run always leaves a few pixels, and the
+        -- next run offered that sliver truncates too -- TextWidget will
+        -- happily turn a bare space into an ellipsis, which is how a
+        -- truncated title grew a second "…" (issue 345, follow-up report).
+        -- getSize() runs first: _is_truncated is computed lazily inside it.
         local built, remaining = {}, max_w
         for _i, run in ipairs(runs) do
             if remaining and remaining <= 0 then break end
@@ -1526,6 +1545,7 @@ function ListRow.textLine(record, line, width, pad, template, opts)
             local w = piece(run.text, face, bold, remaining, trunc_left)
             built[#built + 1] = w
             if remaining then remaining = remaining - w:getSize().w end
+            if w._is_truncated then break end
         end
         local max_h, max_base = 0, 0
         for _i, w in ipairs(built) do
