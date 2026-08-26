@@ -572,6 +572,88 @@ test("getBySource: fb2.zip groups under the FB2 format card with plain fb2", fun
     assert(total == 2, "expected 2 FB2 books (plain + zipped), got " .. tostring(total))
 end)
 
+test("folder labels flip a calibre-style trailing article (#341)", function()
+    -- "Locked Tomb, The" on disk displays as "The Locked Tomb"; sort still
+    -- keys off the on-disk name (that IS the article-insensitive ordering
+    -- the naming convention buys). Author-ish names stay untouched.
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 3 }
+    _G._test_bim_data = {
+        ["/lib/Locked Tomb, The/g1.epub"] = { title = "Gideon" },
+        ["/lib/Osman, Richard/t1.epub"]   = { title = "Thursday" },
+    }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    local DIRS = { ["/lib/Locked Tomb, The"] = true, ["/lib/Osman, Richard"] = true }
+    local LISTING = {
+        ["/lib"] = { ".", "..", "Locked Tomb, The", "Osman, Richard" },
+        ["/lib/Locked Tomb, The"] = { ".", "..", "g1.epub" },
+        ["/lib/Osman, Richard"]   = { ".", "..", "t1.epub" },
+    }
+    lfs_stub.dir = function(path)
+        local files = LISTING[path] or {}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(fp, key)
+        local mode = DIRS[fp] and "directory" or "file"
+        if key == "mode" then return mode end
+        if key == "modification" then return 0 end
+        if key == nil then return { mode = mode, modification = 0, size = 9 } end
+    end
+
+    local items = Repo.getAll(nil, 10, 0)
+    local labels = {}
+    for _i, it in ipairs(items or {}) do
+        if it.kind == "folder" then labels[#labels + 1] = it.label end
+    end
+    local joined = table.concat(labels, " | ")
+    assert(joined:find("The Locked Tomb", 1, true),
+        "trailing ', The' must flip to the front, got: " .. joined)
+    assert(joined:find("Osman, Richard", 1, true),
+        "an author-style name must stay untouched, got: " .. joined)
+
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    Repo.invalidateWalkCache()
+end)
+
+test("getBySource: a specific-author chip matches whatever the name format (#347)",
+function()
+    -- The chip's id is the author CARD's display name, which follows the
+    -- "Author name formatting" setting - under "Surname, First name" that is
+    -- "Osman, Richard" while every book stores "Richard Osman". The predicate
+    -- must canonicalise both sides, or the chip is empty in exactly that
+    -- setting (the reporter's family-wide repro).
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/lib/thursday.epub"] = { title = "The Thursday Murder Club",
+                                   authors = "Richard Osman" },
+        ["/lib/other.epub"]    = { title = "Other", authors = "Ann Leckie" },
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib")
+            and { ".", "..", "thursday.epub", "other.epub" } or {}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        return 0
+    end
+    -- The failing form: chip created while the display setting was
+    -- "Surname, First name".
+    local _list, total = Repo.getBySource(
+        { kind = "author", id = "Osman, Richard" }, nil, nil, 0, 10)
+    assert(total == 1,
+        "a last_first-formatted chip id must still match, got " .. tostring(total))
+    -- The raw form keeps working.
+    local _list2, total2 = Repo.getBySource(
+        { kind = "author", id = "Richard Osman" }, nil, nil, 0, 10)
+    assert(total2 == 1,
+        "the raw-name chip id must keep matching, got " .. tostring(total2))
+    Repo.invalidateWalkCache()
+end)
+
 -- ============================================================================
 -- Task 2.4: getFavorites + getSeriesGroups
 -- ============================================================================
@@ -893,6 +975,72 @@ test("countFinishedBooks: counts Finished sidecars across the walk", function()
     lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
     _G._test_settings = {}
     _G._test_docsettings_data = nil
+    Repo.invalidateWalkCache()
+end)
+
+-- KOReader's "Folders and files mixed" (collate_mixed) on the home view:
+-- OFF partitions folders before books, ON interleaves them by the sort key.
+test("getAll honours collate_mixed in both positions", function()
+    Repo.invalidateWalkCache()
+    _G._test_bim_data = {
+        ["/lib/alpha.epub"] = { title = "Alpha" },
+        ["/lib/omega.epub"] = { title = "Omega" },
+        ["/lib/Mystery/m1.epub"] = { title = "M One" },
+        ["/lib/Zebra/z1.epub"]   = { title = "Z One" },
+    }
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 3 }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    local DIRS = { ["/lib/Mystery"] = true, ["/lib/Zebra"] = true }
+    local LISTING = {
+        ["/lib"] = { ".", "..", "alpha.epub", "omega.epub", "Mystery", "Zebra" },
+        ["/lib/Mystery"] = { ".", "..", "m1.epub" },
+        ["/lib/Zebra"]   = { ".", "..", "z1.epub" },
+    }
+    lfs_stub.dir = function(path)
+        local files = LISTING[path] or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(fp, key)
+        local mode = DIRS[fp] and "directory" or "file"
+        if key == "mode" then return mode end
+        if key == "modification" then return 0 end
+        if key == nil then return { mode = mode, modification = 0, size = 9 } end
+    end
+
+    local function order(mixed, priority)
+        _G._test_settings.collate_mixed = mixed
+        Repo.invalidateWalkCache()   -- drops the getAll shape cache too
+        local items = Repo.getAll(nil, 10, 0, priority)
+        local out = {}
+        for _i, it in ipairs(items or {}) do
+            out[#out + 1] = (it.kind == "folder") and ("D:" .. (it.label or "?"))
+                            or ("B:" .. (it.title or "?"))
+        end
+        return table.concat(out, " ")
+    end
+
+    assert(order(false):match("^D:.* D:.* B:.* B:"),
+        "mixed OFF must partition folders first, got: " .. order(false))
+    local got = order(true)
+    assert(got:match("^B:Alpha D:Mystery B:Omega D:Zebra"),
+        "mixed ON must interleave by title, got: " .. got)
+
+    -- The DEFAULT home chip threads sort_priority = filename (tab model),
+    -- which is the configuration the report came from: the toggle must
+    -- hold under a per-chip priority too.
+    local PRIO = { { key = "filename", reverse = false } }
+    local off = order(false, PRIO)
+    assert(off:match("^D:.* D:.* B:.* B:"),
+        "mixed OFF under chip priority must partition folders first, got: " .. off)
+    local on = order(true, PRIO)
+    assert(on:match("^B:.* D:.* B:.* D:") or on:match("^B:.* B:.* D:.* D:") == nil
+           and on:match("D:") ~= nil and not on:match("^D:.* D:"),
+        "mixed ON under chip priority must interleave, got: " .. on)
+
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
     Repo.invalidateWalkCache()
 end)
 

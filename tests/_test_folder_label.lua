@@ -23,6 +23,13 @@ test("display: preserves an internal underscore without following space", functi
     eq(FolderLabel.display("Akira_6 Volumes"), "Akira_6 Volumes")
 end)
 
+test("display: restores calibre-style trailing English articles", function()
+    eq(FolderLabel.display("Locked Tomb, The"), "The Locked Tomb")
+    eq(FolderLabel.display("Somewhere, An"), "An Somewhere")
+    eq(FolderLabel.display("Beginning, A"), "A Beginning")
+    eq(FolderLabel.display("Smith, A."), "Smith, A.")
+end)
+
 test("display: preserves ordinary names and non-strings", function()
     eq(FolderLabel.display("Fiktion"), "Fiktion")
     eq(FolderLabel.display(nil), nil)
