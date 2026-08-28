@@ -132,5 +132,32 @@ test("extractTranslatorFromOpf: supports EPUB3 refined contributor role", functi
     eq(EpubMetadata.extractTranslatorFromOpf(opf), "Standard Translator")
 end)
 
+test("extractSeriesFromOpf: reads EPUB3 series collection and index", function()
+    local opf = [[
+        <metadata>
+            <meta property="belongs-to-collection" id="collection">Anthology</meta>
+            <meta refines="#collection" property="collection-type">collection</meta>
+            <meta property="belongs-to-collection" id="series">Attack on Titan</meta>
+            <meta property="group-position" refines="#series">27</meta>
+            <meta refines="#series" property="collection-type">series</meta>
+        </metadata>
+    ]]
+    local name, index = EpubMetadata.extractSeriesFromOpf(opf)
+    eq(name, "Attack on Titan")
+    eq(index, "27")
+end)
+
+test("extractSeriesFromOpf: supports Calibre fields in either attribute order", function()
+    local opf = [[
+        <metadata>
+            <meta content="Attack on Titan" name="calibre:series" />
+            <meta name="calibre:series_index" content="29.0" />
+        </metadata>
+    ]]
+    local name, index = EpubMetadata.extractSeriesFromOpf(opf)
+    eq(name, "Attack on Titan")
+    eq(index, "29.0")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

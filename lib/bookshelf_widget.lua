@@ -4792,7 +4792,7 @@ function BookshelfWidget:_isListMode()
     return ViewMode.isList(self:_viewMode())
 end
 
--- _flipViewMode() -- the footer-hold gesture: pin THIS CHIP to the other mode.
+-- _flipViewMode() -- pin THIS CHIP to the other mode.
 --
 -- It used to write the shelf-wide boolean for the current state (expanded or
 -- collapsed), because those globals were the model. They are gone -- the mode
@@ -5515,10 +5515,10 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         text_font_size = self:_paginationFooterTextSize(),
         width         = slot(SLOT_PAGE),
         callback      = function() bw:_openPageJump() end,
-        -- Long-press: flip covers <-> list. The only footer button that
-        -- reached this file without a hold -- prev/next already spend theirs
-        -- on skip-ten-pages.
-        hold_callback = function() bw:_flipViewMode() end,
+        -- The separate grid/list button already changes view mode. Use the
+        -- page label's long-press for the sort picker so sorting remains
+        -- reachable with the official footer enabled.
+        hold_callback = function() bw:_openSortMenu() end,
         margin        = bm("page"), bordersize = bs("page"), radius = br("page"),
         show_parent = self,
     }

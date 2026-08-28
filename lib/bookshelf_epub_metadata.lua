@@ -204,6 +204,59 @@ function EpubMetadata.extractTranslatorFromOpf(opf)
     })
 end
 
+-- KOReader's BookInfoManager understands the older Calibre series fields, but
+-- some BookOrbit exports contain only EPUB 3 collection refinements:
+--
+--   <meta id="s1" property="belongs-to-collection">Series name</meta>
+--   <meta refines="#s1" property="collection-type">series</meta>
+--   <meta refines="#s1" property="group-position">27</meta>
+--
+-- Keep the collection id association intact so an unrelated collection or
+-- anthology is never mistaken for the book's numbered series.
+function EpubMetadata.extractSeriesFromOpf(opf)
+    if type(opf) ~= "string" or opf == "" then return nil end
+
+    local collections, collection_order, collection_types, positions = {}, {}, {}, {}
+    for attrs, value in opf:gmatch(
+            "<%s*[%w_%-:]-meta%s+([^>]*)>(.-)</%s*[%w_%-:]-meta%s*>") do
+        local property = (_attr(attrs, "property") or ""):lower()
+        local refines = _attr(attrs, "refines")
+        local id = _attr(attrs, "id")
+        local cleaned = _cleanText(value)
+        if property == "belongs-to-collection" and id and cleaned ~= "" then
+            if not collections[id] then collection_order[#collection_order + 1] = id end
+            collections[id] = cleaned
+        elseif refines then
+            local target = refines:gsub("^#", "")
+            if property == "collection-type" then
+                collection_types[target] = cleaned:lower()
+            elseif property == "group-position" and cleaned ~= "" then
+                positions[target] = cleaned
+            end
+        end
+    end
+
+    for _, id in ipairs(collection_order) do
+        if collection_types[id] == "series" then
+            return collections[id], positions[id]
+        end
+    end
+
+    -- EPUB 2 / Calibre compatibility. Attribute order is deliberately ignored.
+    local calibre_name, calibre_index
+    for attrs in opf:gmatch("<%s*[%w_%-:]-meta%s+([^>]*)/?>") do
+        local name = (_attr(attrs, "name") or ""):lower()
+        if name == "calibre:series" then
+            local value = _cleanText(_attr(attrs, "content"))
+            if value ~= "" then calibre_name = value end
+        elseif name == "calibre:series_index" then
+            local value = _cleanText(_attr(attrs, "content"))
+            if value ~= "" then calibre_index = value end
+        end
+    end
+    return calibre_name, calibre_index
+end
+
 local function _readCommand(cmd, max_bytes)
     local ok, fh = pcall(io.popen, cmd, "r")
     if not ok or not fh then return nil end
@@ -273,6 +326,7 @@ local function _metadataForFile(filepath)
         entry.subtitle = EpubMetadata.extractSubtitleFromOpf(opf)
         entry.illustrator = EpubMetadata.extractIllustratorFromOpf(opf)
         entry.translator = EpubMetadata.extractTranslatorFromOpf(opf)
+        entry.series_name, entry.series_num = EpubMetadata.extractSeriesFromOpf(opf)
     end
     _cache[filepath] = entry
     return entry
@@ -305,6 +359,14 @@ function EpubMetadata.translatorForFile(filepath)
         return nil
     end
     return _metadataForFile(filepath).translator
+end
+
+function EpubMetadata.seriesForFile(filepath)
+    if type(filepath) ~= "string" or not filepath:lower():match("%.epub$") then
+        return nil
+    end
+    local metadata = _metadataForFile(filepath)
+    return metadata.series_name, metadata.series_num
 end
 
 function EpubMetadata.invalidate(filepath)

@@ -129,6 +129,38 @@ local function authorsFromInfo(filepath, info)
     return authors
 end
 
+-- BookInfoManager does not currently expose every valid EPUB 3 series
+-- encoding. Only inspect the OPF when either series component is missing; the
+-- EPUB helper caches by path + mtime/size, so this is a one-time fallback for
+-- affected books rather than extra work on every rebuild.
+local function looksLikeNumberedVolume(filepath, title_hint)
+    local text = (tostring(title_hint or "") .. " " .. tostring(filepath or "")):lower()
+    return text:match("%f[%a]vol%.?%s*%d") ~= nil
+        or text:match("%f[%a]volume%s*%d") ~= nil
+        or text:match("#%s*%d") ~= nil
+end
+
+local function seriesFromInfoOrEpub(filepath, series_name, series_num, title_hint)
+    if series_name and series_num then return series_name, series_num end
+    -- Avoid opening every standalone EPUB in a large library. A partial BIM
+    -- series record is sufficient reason to repair the missing component; if
+    -- both parts are absent, inspect only visibly numbered volumes.
+    if not series_name and not series_num
+            and not looksLikeNumberedVolume(filepath, title_hint) then
+        return series_name, series_num
+    end
+    local ok_mod, EpubMetadata = pcall(require, "lib/bookshelf_epub_metadata")
+    if not ok_mod or not EpubMetadata or not EpubMetadata.seriesForFile then
+        return series_name, series_num
+    end
+    local ok, epub_name, epub_num = pcall(EpubMetadata.seriesForFile, filepath)
+    if ok then
+        series_name = series_name or epub_name
+        series_num = series_num or epub_num
+    end
+    return series_name, series_num
+end
+
 local function shallowCopyRecord(record)
     local copy = {}
     for k, v in pairs(record or {}) do
@@ -1150,6 +1182,9 @@ function Repo.buildBookMeta(filepath, opts)
     elseif info.series and not series_num then
         series_num = info.series:match(" #(%d+)$")
     end
+    series_name, series_num = seriesFromInfoOrEpub(
+        filepath, series_name, series_num,
+        (cb and cb.title) or info.title)
 
     -- Authors
     local authors
@@ -1223,7 +1258,9 @@ function Repo.buildBookMeta(filepath, opts)
         -- consumers; reconstruct it from Calibre fields when needed.
         series      = info.series
                        or (cb_series and series_num and (cb_series .. " #" .. series_num))
-                       or cb_series,
+                       or cb_series
+                       or (series_name and series_num and (series_name .. " #" .. series_num))
+                       or series_name,
         series_name = series_name,
         series_num  = series_num,
         -- BIM-only: covers and page count are not in metadata.calibre.
@@ -1357,6 +1394,9 @@ local function _buildLightMetaFromInfo(fp, info)
     elseif info.series and not series_num then
         series_num = info.series:match(" #(%d+)$")
     end
+    series_name, series_num = seriesFromInfoOrEpub(
+        fp, series_name, series_num,
+        (cb and cb.title) or info.title)
 
     local authors
     if cb and type(cb.authors) == "table" and #cb.authors > 0 then

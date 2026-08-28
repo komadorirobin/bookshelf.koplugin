@@ -78,6 +78,11 @@ package.loaded["lib/bookshelf_epub_metadata"] = {
             (_G._test_epub_translator_call_count or 0) + 1
         return _G._test_epub_translators and _G._test_epub_translators[fp] or nil
     end,
+    seriesForFile = function(fp)
+        _G._test_epub_series_call_count = (_G._test_epub_series_call_count or 0) + 1
+        local rec = _G._test_epub_series and _G._test_epub_series[fp]
+        return rec and rec.name or nil, rec and rec.num or nil
+    end,
     invalidate = function() end,
 }
 package.loaded["docsettings"] = {
@@ -221,6 +226,28 @@ test("getCurrent: returns a book when lastfile is set", function()
     assert(b.page_count == 688, "expected page_count=688 got " .. tostring(b.page_count))
     assert(b.format == "EPUB", "expected format=EPUB got " .. tostring(b.format))
     assert(b.filename == "dune", "expected filename=dune got " .. tostring(b.filename))
+end)
+
+test("buildBookMeta: repairs numbered EPUB3 series metadata missing from BIM", function()
+    local fp = "/books/Attack on Titan, Vol. 27.epub"
+    _G._test_bim_data = { [fp] = { title = "Attack on Titan, Vol. 27" } }
+    _G._test_epub_series = { [fp] = { name = "Attack on Titan", num = "27" } }
+    _G._test_epub_series_call_count = 0
+    local b = Repo.buildBookMeta(fp)
+    _G._test_epub_series = nil
+    assert(b.series_name == "Attack on Titan", "expected EPUB3 series name")
+    assert(b.series_num == "27", "expected EPUB3 series index")
+    assert(b.series == "Attack on Titan #27", "expected reconstructed raw series")
+    assert(_G._test_epub_series_call_count == 1, "expected one EPUB3 series lookup")
+end)
+
+test("buildBookMeta: does not inspect OPF for an ordinary standalone EPUB", function()
+    local fp = "/books/Standalone novel.epub"
+    _G._test_bim_data = { [fp] = { title = "Standalone novel" } }
+    _G._test_epub_series_call_count = 0
+    local b = Repo.buildBookMeta(fp)
+    assert(b.series_name == nil and b.series_num == nil, "unexpected series metadata")
+    assert(_G._test_epub_series_call_count == 0, "standalone EPUB triggered OPF lookup")
 end)
 
 test("buildBook: hydrates EPUB3 subtitle for the hero", function()
