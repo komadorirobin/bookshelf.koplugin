@@ -62,5 +62,12 @@ test("scope: profile roots are exposed for repository scoping", function()
     assert(scope and scope.roots and #scope.roots == 3)
 end)
 
+test("profiles: both expose a short BookOrbit TBR chip", function()
+    local prose = Profiles.chip(Profiles.get("prose"), "bookorbit_tbr")
+    local comics = Profiles.chip(Profiles.get("comics"), "bookorbit_tbr")
+    assert(prose and prose.label == "TBR" and prose.kind == "bookorbit_want")
+    assert(comics and comics.label == "TBR" and comics.kind == "bookorbit_want")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

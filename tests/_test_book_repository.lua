@@ -121,7 +121,6 @@ package.loaded["libs/libkoreader-lfs"] = {
     end,
 }
 package.loaded["logger"] = { dbg = function() end, info = function() end, warn = function() end, err = function() end }
-
 -- ISO language name lookup used by bookshelf_lang (required by the repo at
 -- load). 3-letter code -> English name, with the real module's code fallback.
 package.loaded["ui/data/isolanguage"] = {
@@ -2588,6 +2587,23 @@ test("getBySource: collection kind returns books in the named collection", funct
     assert(#list == 1, "expected 1 book in wishlist, got " .. #list)
     assert(list[1].title == "Alpha", "expected Alpha, got " .. tostring(list[1].title))
     assert(total == 1, "expected total=1, got " .. tostring(total))
+end)
+
+test("getBySource: BookOrbit Want to Read paths stay inside the active profile scope", function()
+    _setupResolverLibrary()
+    local paths = {
+        "/lib/comics/alpha.epub",
+        "/lib/novels/charlie.epub",
+    }
+    local comics, comics_total = Repo.getBySource({
+        kind = "bookorbit_want", id = "test-rev", paths = paths,
+    }, nil, nil, 0, 10, { roots = { "/lib/comics" } })
+    local prose, prose_total = Repo.getBySource({
+        kind = "bookorbit_want", id = "test-rev", paths = paths,
+    }, nil, nil, 0, 10, { roots = { "/lib/novels" } })
+    _teardownResolverLibrary()
+    assert(comics_total == 1 and comics[1].title == "Alpha")
+    assert(prose_total == 1 and prose[1].title == "Charlie")
 end)
 
 test("getBySource: genre kind filters books via BIM keywords->genres mapping", function()

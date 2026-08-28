@@ -6044,6 +6044,7 @@ end
 --   { kind = "genre",      id = "genre_name" }
 --   { kind = "author",     id = "Author Name" }
 --   { kind = "status",     id = "unread"|"reading"|"on_hold"|"finished" }
+--   { kind = "bookorbit_want", paths = { "/local/book.epub", ... } }
 --
 -- For built-in kinds, this is a thin alias over the existing per-chip
 -- functions (they already apply sort + filter internally). For the new
@@ -6424,6 +6425,43 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             return matched
         end
 
+        -- Virtual sources that already carry exact local paths should not walk
+        -- the entire library merely to rediscover those same files. Hydrate
+        -- only their small path set with the shared light-metadata batch, while
+        -- still enforcing the active profile scope.
+        local function loadCandidatesFromPaths(paths)
+            local lfs = require("libs/libkoreader-lfs")
+            local home  = G_reader_settings:readSetting("home_dir") or "/"
+            local depth = BookshelfSettings.read("latest_walk_depth") or 3
+            local light_cache = _getLightMetaCache(home, depth)
+            local roots = _scopeRoots(scope)
+            local matched, seen = {}, {}
+            local function inScope(fp)
+                if not roots then return true end
+                for _, root in ipairs(roots) do
+                    if fp == root or fp:sub(1, #root + 1) == root .. "/" then
+                        return true
+                    end
+                end
+                return false
+            end
+            for _, fp in ipairs(paths or {}) do
+                if type(fp) == "string" and not seen[fp] and inScope(fp) then
+                    seen[fp] = true
+                    local attr = lfs.attributes(fp)
+                    if type(attr) == "table" and attr.mode == "file" then
+                        local b = _lightMetaForFp(light_cache, fp)
+                        if b then
+                            b.date_added = b.date_added or attr.modification or 0
+                            b.size = b.size or attr.size or 0
+                            matched[#matched + 1] = b
+                        end
+                    end
+                end
+            end
+            return matched
+        end
+
         if kind == "library" or kind == "all" or kind == "latest" then
             -- Library walk + tautological predicate. 'all' (Home folders)
             -- and 'latest' (Latest added) reach this branch only when a
@@ -6462,6 +6500,11 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             candidates = loadCandidatesByPredicate(function(b)
                 return set[b.filepath]
             end)
+        elseif kind == "bookorbit_want" then
+            -- SimpleUI has already resolved BookOrbit book IDs to local files.
+            -- Treat that persisted cache as a virtual collection and hydrate
+            -- those exact paths rather than walking thousands of library files.
+            candidates = loadCandidatesFromPaths(source.paths)
         elseif kind == "folder" then
             -- Reached only when a status filter is active (otherwise the
             -- early-return above sends folder chips to getAll for tree view).

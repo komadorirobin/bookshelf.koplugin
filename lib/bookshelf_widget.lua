@@ -3801,6 +3801,16 @@ function BookshelfWidget:_fetchChipItems(n, want_all)
     if profile_chip and profile_chip.kind == "next" then
         return Repo.getNextUnreadInSeries(LIMIT, offset, profile_scope)
     end
+    if profile_chip and profile_chip.kind == "bookorbit_want" then
+        local Source = require("lib/bookshelf_bookorbit_want_source")
+        local files, revision = Source.snapshot()
+        return Repo.getBySource({
+            kind = "bookorbit_want",
+            id = revision,
+            paths = files,
+        }, nil, Profiles.folderSortPriority(self.profile), offset, LIMIT,
+            profile_scope, fetch_opts)
+    end
     if profile_chip and profile_chip.kind == "latest" then
         return Repo.getLatest(LIMIT, offset, profile_scope, fetch_opts)
     end
