@@ -239,6 +239,7 @@ t.test("unpark splices the reader to the top and clears state", function()
     }
     UIManager._window_stack = { { widget = rui }, { widget = shelf } }
     assert(Park.park(makePlugin(rui)) == true)
+    fake_now = fake_now + 2
     local cb_rui = nil
     assert(Park.unpark(shelf, function(r) cb_rui = r end) == true)
     assert(UIManager._window_stack[2].widget == rui, "reader must be topmost")
@@ -247,6 +248,25 @@ t.test("unpark splices the reader to the top and clears state", function()
     assert(cb_rui == rui, "after_open_callback receives the ReaderUI")
     assert(Park.isParked() == false)
     assert(#dirty_calls == 1 and dirty_calls[1].w == rui)
+end)
+
+t.test("unpark blocks a same-cycle reopen after parking", function()
+    reset()
+    local rui = makeRui("/books/a.epub")
+    ReaderUI.instance = rui
+    local shelf = { _stopStatusTimer = function() end }
+    UIManager._window_stack = { { widget = rui }, { widget = shelf } }
+    assert(Park.park(makePlugin(rui)) == true)
+    assert(Park.reopenBlocked() == true)
+    assert(Park.unpark(shelf) == false,
+        "the gesture release must not reopen the just-parked book")
+    assert(Park.isParked() == true, "blocked reopen must preserve park state")
+    assert(UIManager._window_stack[2].widget == shelf,
+        "the shelf must remain above the parked reader")
+    fake_now = fake_now + 2
+    assert(Park.reopenBlocked() == false)
+    assert(Park.unpark(shelf) == true,
+        "an intentional reopen must work after the transition settles")
 end)
 
 t.test("unpark on a non-parked session is a false no-op", function()
@@ -357,6 +377,7 @@ end)
 t.test("unpark cancels the probe", function()
     reset()
     local rui, _plugin, shelf = parkFixture()
+    fake_now = fake_now + 2
     assert(Park.unpark(shelf) == true)
     assert(#scheduled == 0, "unpark must unschedule the probe")
     fake_now = fake_now + 60

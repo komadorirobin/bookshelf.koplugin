@@ -51,6 +51,11 @@ local Park = {}
 -- IDLE_FINISH_S + PROBE_EVERY_S after the last input.
 local IDLE_FINISH_S = 30
 local PROBE_EVERY_S = 10
+-- The gesture that raises Bookshelf can leave a final tap/release in KOReader's
+-- input pipeline. Because the reader remains alive under the shelf, letting
+-- that event reach the just-revealed current-book card would instantly unpark
+-- the same ReaderUI and look as if the closed book reopened by itself.
+local REOPEN_GUARD_S = 1.0
 
 -- The ReaderUI instance currently parked beneath the shelf, and the
 -- reader-context plugin instance that parked it (needed by the finish for
@@ -66,6 +71,7 @@ local _closing_to_fm = false
 -- check it to skip their own re-shows while the close sequence runs.
 local _pending_probe = nil
 local _finishing_close = false
+local _reopen_block_until = 0
 -- Wall-clock time of the last user input anywhere (stamped by the
 -- sendEvent wrap below).
 local _last_input = 0
@@ -86,6 +92,7 @@ function Park.isParked()
         -- The instance we parked is gone (a real close we didn't observe).
         _parked = nil
         _parked_plugin = nil
+        _reopen_block_until = 0
         return false
     end
     return true
@@ -108,6 +115,7 @@ end
 function Park.noteRealClose()
     _parked = nil
     _parked_plugin = nil
+    _reopen_block_until = 0
     _cancelPendingProbe()
 end
 
@@ -190,6 +198,7 @@ local function _finishCore(reason)
     -- CloseDocument normally cleared this through noteRealClose(); make the
     -- successful transition explicit for KOReader variants that do not emit it.
     _parked, _parked_plugin = nil, nil
+    _reopen_block_until = 0
     if rui.showFileManager then
         pcall(function() rui:showFileManager(file) end)
     end
@@ -280,6 +289,7 @@ function Park.park(plugin, widget)
     if not plugin:_raiseInPlace() then return false end
     _parked = rui
     _parked_plugin = plugin
+    _reopen_block_until = _gettime() + REOPEN_GUARD_S
     _installInputStamp()
     -- Parking itself is user input for idle purposes.
     _last_input = _gettime()
@@ -320,6 +330,13 @@ function Park.park(plugin, widget)
     return true
 end
 
+-- True only during the short input-settling window immediately after a park.
+-- Callers use this to distinguish an intentionally failed same-book reopen
+-- from a malformed window stack.
+function Park.reopenBlocked()
+    return Park.isParked() and _gettime() < _reopen_block_until
+end
+
 -- unpark(live_widget, after_open_callback) -> bool
 -- Splice the parked reader back above the shelf. live_widget is the
 -- BookshelfWidget singleton (its status timer and hero memo need the same
@@ -328,6 +345,10 @@ end
 -- document is already open.
 function Park.unpark(live_widget, after_open_callback)
     if not Park.isParked() then return false end
+    if Park.reopenBlocked() then
+        logger.dbg("[bookshelf] ignored same-cycle parked-reader reopen")
+        return false
+    end
     local rui = _parked
     local stack = UIManager._window_stack
     if not stack then return false end
@@ -344,6 +365,7 @@ function Park.unpark(live_widget, after_open_callback)
     -- allowing the caller to launch a duplicate ReaderUI.
     _parked = nil
     _parked_plugin = nil
+    _reopen_block_until = 0
     _cancelPendingProbe()
     if live_widget then
         if live_widget._stopStatusTimer then

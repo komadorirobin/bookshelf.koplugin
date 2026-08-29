@@ -4160,6 +4160,11 @@ function BookshelfWidget:_launchReader(open_path, after_open_callback)
     -- holds for them too.
     local Park = require("lib/bookshelf_reader_park")
     if Park.isParked() and Park.parkedFile() == open_path then
+        if Park.reopenBlocked and Park.reopenBlocked() then
+            logger.dbg("[bookshelf] suppressed transition tap for parked book: "
+                .. tostring(open_path))
+            return
+        end
         if Park.unpark(self, after_open_callback) then return end
         -- The parked ReaderUI is still live but could not be found in the
         -- current stack. Never fall through to showReader: that would create a

@@ -1557,6 +1557,13 @@ end
 
 function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     if not (profile_key and readerui and readerui.document) then return false end
+    -- A parked reader intentionally sits UNDER the visible shelf. A delayed
+    -- external prewarm must never reverse that stack order and expose the book
+    -- again after the user has just closed it.
+    if require("lib/bookshelf_reader_park").isParked() then
+        logger.dbg("[bookshelf] reader prewarm skipped: reader already parked")
+        return false
+    end
     opts = opts or {}
     local t0 = _gettime()
     local widget = _live_widget
@@ -1671,6 +1678,10 @@ function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override, opts
         logger.dbg("[bookshelf] reader prewarm skipped: instant close disabled")
         return
     end
+    if require("lib/bookshelf_reader_park").isParked() then
+        logger.dbg("[bookshelf] reader prewarm skipped: reader already parked")
+        return
+    end
 
     -- A book launched by Bookshelf already has its complete widget parked
     -- immediately below ReaderUI. Rebuilding or rebinding that live widget is
@@ -1713,6 +1724,7 @@ function Bookshelf:_scheduleReaderPrewarm(readerui_override, file_override, opts
         if _reader_prewarm_token ~= token then return end
         if not BookshelfSettings.nilOrTrue("reader_prewarm") then return end
         if not BookshelfSettings.nilOrTrue("hot_park") then return end
+        if require("lib/bookshelf_reader_park").isParked() then return end
         if not (readerui.document and readerui.document.file == file) then return end
         if not self:_isReaderShown(readerui) then
             logger.dbg("[bookshelf] reader prewarm waiting: reader not shown")
@@ -1779,6 +1791,10 @@ end
 function Bookshelf:onPrepareBookshelfReturn(payload, source)
     if not BookshelfSettings.nilOrTrue("reader_prewarm") then return false end
     if not BookshelfSettings.nilOrTrue("hot_park") then return false end
+    if require("lib/bookshelf_reader_park").isParked() then
+        logger.dbg("[bookshelf] explicit reader prewarm ignored while parked")
+        return false
+    end
 
     local requested_file
     local simpleui_bar_host
@@ -1796,6 +1812,7 @@ function Bookshelf:onPrepareBookshelfReturn(payload, source)
 
     local function probe(attempt)
         if _reader_prewarm_probe_token ~= token then return end
+        if require("lib/bookshelf_reader_park").isParked() then return end
         local ReaderUI = package.loaded["apps/reader/readerui"]
         if not ReaderUI then
             local ok_rui, mod = pcall(require, "apps/reader/readerui")
