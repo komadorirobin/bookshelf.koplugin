@@ -469,15 +469,24 @@ function BookshelfWidget:_dispatchSimpleUIBarAction(action_id)
         return true
     end
 
-    UIManager:close(self)
-    UIManager:nextTick(function()
+    local function dispatch(live_fm)
         local ok_fm, FM = pcall(require, "apps/filemanager/filemanager")
-        local live_fm = (ok_fm and FM and FM.instance) or fm
+        live_fm = live_fm or (ok_fm and FM and FM.instance) or fm
         local live_plugin = live_fm and live_fm._simpleui_plugin or plugin
         if live_plugin and live_plugin._onTabTap then
             live_plugin:_onTabTap(action_id, live_fm or fm)
         end
-    end)
+    end
+
+    -- Hot parking keeps ReaderUI immediately below this widget. Leaving the
+    -- shelf by closing it first would uncover the reader and reopen the book
+    -- visually (and often race the subsequent SimpleUI navigation). Real-close
+    -- it behind the shelf before removing the overlay.
+    local Park = require("lib/bookshelf_reader_park")
+    if Park.finishForShelfNavigation(self, dispatch) then return true end
+
+    UIManager:close(self)
+    UIManager:nextTick(dispatch)
     return true
 end
 

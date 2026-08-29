@@ -440,6 +440,38 @@ function Park.runInFileManager(action)
     return finished
 end
 
+-- finishForShelfNavigation(live_widget, action) -> bool
+-- A SimpleUI dock action is about to leave the shelf while ReaderUI is parked
+-- directly underneath it. Closing the shelf first would expose that reader and
+-- make the just-closed book appear to reopen. Finish the parked reader behind
+-- the still-visible shelf, wait one tick for the reborn FileManager/plugins to
+-- settle, then dismiss the shelf and run the navigation action.
+--
+-- Returns false only when there was no parked reader, so callers can use their
+-- ordinary non-parked navigation path. A failed real close is considered
+-- handled: the shelf remains visible and the action is deliberately suppressed
+-- rather than uncovering or duplicating the live ReaderUI.
+function Park.finishForShelfNavigation(live_widget, action)
+    if not Park.isParked() then return false end
+    if not _finishCore("shelf-navigation") then return true end
+
+    UIManager:nextTick(function()
+        local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
+        local fm = ok_fm and FileManager and FileManager.instance or nil
+        if live_widget then
+            pcall(function() UIManager:close(live_widget) end)
+        end
+        if action then
+            local ok_action, action_err = pcall(action, fm)
+            if not ok_action then
+                logger.err("[bookshelf] post-close shelf navigation failed: "
+                    .. tostring(action_err))
+            end
+        end
+    end)
+    return true
+end
+
 -- closeShelfToFileManager(live_widget) -> bool
 -- Explicit exit from a parked shelf to the raw FileManager ("Close
 -- Bookshelf", or the File-browser menu tab tapped while parked). Order

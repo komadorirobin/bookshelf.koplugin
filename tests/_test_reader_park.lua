@@ -456,6 +456,48 @@ t.test("action errors are contained (pcall'd) and still finish the park", functi
     package.loaded["apps/filemanager/filemanager"] = nil
 end)
 
+print("--- Park.finishForShelfNavigation ---")
+
+t.test("parked shelf navigation closes reader before revealing the destination", function()
+    reset()
+    local fake_fm = { _simpleui_plugin = {} }
+    package.loaded["apps/filemanager/filemanager"] = { instance = nil }
+    local rui, _plugin, shelf = parkFixture()
+    rui.showFileManager = function(_self, f)
+        rui.fm_file = f
+        package.loaded["apps/filemanager/filemanager"].instance = fake_fm
+    end
+    local action_fm
+    assert(Park.finishForShelfNavigation(shelf, function(fm) action_fm = fm end) == true)
+    assert(rui.close_calls == 1, "parked reader must real-close first")
+    assert(#closed_widgets == 0, "shelf must cover the reader through the close")
+    assert(action_fm == nil, "navigation must wait for the FileManager settle tick")
+    drainTicks()
+    assert(closed_widgets[1] == shelf, "shelf closes only after the reader is gone")
+    assert(action_fm == fake_fm, "navigation receives the reborn FileManager")
+    assert(Park.isParked() == false)
+    package.loaded["apps/filemanager/filemanager"] = nil
+end)
+
+t.test("failed parked shelf navigation keeps the shelf and reader recoverable", function()
+    reset()
+    local rui, _plugin, shelf = parkFixture()
+    rui.onClose = function() error("close failed") end
+    local ran = false
+    assert(Park.finishForShelfNavigation(shelf, function() ran = true end) == true)
+    drainTicks()
+    assert(Park.isParked() == true, "failed close must retain the park")
+    assert(#closed_widgets == 0, "failed close must not uncover the reader")
+    assert(ran == false, "navigation must not run over a failed reader close")
+end)
+
+t.test("non-parked shelf navigation falls through without running the action", function()
+    reset()
+    local ran = false
+    assert(Park.finishForShelfNavigation({}, function() ran = true end) == false)
+    assert(ran == false)
+end)
+
 print("--- Park.closeShelfToFileManager ---")
 
 t.test("not parked returns false", function()
