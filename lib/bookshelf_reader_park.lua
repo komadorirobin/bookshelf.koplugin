@@ -171,7 +171,7 @@ end
 -- throughout. Synchronous and BLOCKING (1-3s worst case): callers choose
 -- a moment the user isn't interacting.
 -- Returns true when the close actually ran.
-local function _finishCore(reason)
+local function _finishCore(reason, skip_shelf_refresh)
     if not Park.isParked() then return false end
     local rui, plugin = _parked, _parked_plugin
     _cancelPendingProbe()
@@ -203,12 +203,16 @@ local function _finishCore(reason)
         pcall(function() rui:showFileManager(file) end)
     end
     local t2 = _gettime()
-    -- showFileManager raised the fresh FM ABOVE the shelf; splice the
-    -- shelf back on top, then the warm show() restores rotation and
-    -- refreshes shelf data (same pairing _safeShow uses).
+    -- showFileManager raised the fresh FM ABOVE the shelf; splice the shelf
+    -- back on top. Most finish paths then refresh its data (same pairing
+    -- _safeShow uses). A dock navigation leaves the shelf on the next tick,
+    -- so rebuilding thousands of books there would be pure latency; that path
+    -- asks us to retain the already-painted shelf without refreshing it.
     if plugin then
         pcall(function() plugin:_raiseInPlace() end)
-        pcall(function() plugin:show() end)
+        if not skip_shelf_refresh then
+            pcall(function() plugin:show() end)
+        end
     end
     -- Keep the flag through the NEXT tick so the FM-side _takeOver
     -- (scheduled by the fresh plugin init inside showFileManager) sees it
@@ -453,7 +457,7 @@ end
 -- rather than uncovering or duplicating the live ReaderUI.
 function Park.finishForShelfNavigation(live_widget, action)
     if not Park.isParked() then return false end
-    if not _finishCore("shelf-navigation") then return true end
+    if not _finishCore("shelf-navigation", true) then return true end
 
     UIManager:nextTick(function()
         local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")

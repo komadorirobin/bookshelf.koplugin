@@ -458,11 +458,11 @@ end)
 
 print("--- Park.finishForShelfNavigation ---")
 
-t.test("parked shelf navigation closes reader before revealing the destination", function()
+t.test("parked shelf navigation closes reader without rebuilding the departing shelf", function()
     reset()
     local fake_fm = { _simpleui_plugin = {} }
     package.loaded["apps/filemanager/filemanager"] = { instance = nil }
-    local rui, _plugin, shelf = parkFixture()
+    local rui, plugin, shelf = parkFixture()
     rui.showFileManager = function(_self, f)
         rui.fm_file = f
         package.loaded["apps/filemanager/filemanager"].instance = fake_fm
@@ -470,6 +470,8 @@ t.test("parked shelf navigation closes reader before revealing the destination",
     local action_fm
     assert(Park.finishForShelfNavigation(shelf, function(fm) action_fm = fm end) == true)
     assert(rui.close_calls == 1, "parked reader must real-close first")
+    assert(plugin.raised == true, "the painted shelf must stay above the reborn FM")
+    assert(plugin.shown == false, "a shelf being left must not perform a full rebuild")
     assert(#closed_widgets == 0, "shelf must cover the reader through the close")
     assert(action_fm == nil, "navigation must wait for the FileManager settle tick")
     drainTicks()
