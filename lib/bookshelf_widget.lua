@@ -19540,6 +19540,21 @@ function BookshelfWidget:_openGroupMenu(group, kind)
                 end)
             end },
         })
+
+        -- Other plugins may add folder-specific actions without patching this
+        -- dialog. Provider failures are isolated by FolderActions.collect, so
+        -- an optional integration can never make the folder menu unusable.
+        local folder_actions = require("lib/bookshelf_folder_actions").collect(group)
+        for i = 1, #folder_actions do
+            local action = folder_actions[i]
+            table.insert(buttons, {
+                { text = action.text, enabled = action.enabled ~= false,
+                  callback = function()
+                    close_dialog()
+                    UIManager:nextTick(action.callback)
+                  end },
+            })
+        end
     end
 
     -- Custom-image row (#70). Folders take a filesystem path and may
