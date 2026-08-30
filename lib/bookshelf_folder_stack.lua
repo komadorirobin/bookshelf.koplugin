@@ -18,6 +18,7 @@ local SpineWidget    = require("lib/bookshelf_spine_widget")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local FolderCard     = require("lib/bookshelf_folder_card")
 local CountBadge     = require("lib/bookshelf_count_badge")
+local FolderBadges   = require("lib/bookshelf_folder_badges")
 local ImageSource    = require("lib/bookshelf_image_source")
 
 local FADED_FINISHED_FOLDER_AMOUNT = 0.5
@@ -359,6 +360,21 @@ function FolderStack:init()
         end
     end
 
+    local function addProviderBadge(children, cover_y)
+        -- The optional legacy unread badge owns this corner when present.
+        -- The normal read/total badge is top-right, so it coexists with the
+        -- provider badge on top-left without changing either layout.
+        if unread_count and unread_count > 0 then return end
+        local value = FolderBadges.resolve(self.folder)
+        local badge = value and CountBadge.renderText(value.text)
+        if not badge then return end
+        badge.overlap_offset = {
+            0,
+            (cover_y or 0) - FolderCard.SHADOW_OFFSET,
+        }
+        children[#children + 1] = badge
+    end
+
     -- Redundant-overlay case: a tap-resolving tile (OPDS nav) with no cover,
     -- or a kind set to Text (whose card IS the label). The placeholder card
     -- already shows the label as its title, so skip the cardboard tab and the
@@ -368,6 +384,7 @@ function FolderStack:init()
         local children = { book_widget }
         addFade(children, 0)
         addReadStatus(children, 0)
+        addProviderBadge(children, 0)
         children.dimen = self.dimen
         self[1] = OverlapGroup:new(children)
         self.ges_events = {
@@ -466,6 +483,7 @@ function FolderStack:init()
     end
 
     addReadStatus(children, card_y)
+    addProviderBadge(children, card_y)
 
     children.dimen = self.dimen
     self[1] = OverlapGroup:new(children)

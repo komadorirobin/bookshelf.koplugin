@@ -27,6 +27,33 @@ local CountBadge = {}
 -- call site below stays terse.
 local _badgeSize = CoverProgress.badgeSize
 
+-- renderText(text) -> FrameContainer | nil
+-- Shared by the built-in count badge and optional folder-level metadata
+-- providers. Keeping the rendering here guarantees identical typography,
+-- colours and scale without teaching FolderStack about a plugin's data.
+function CountBadge.renderText(text)
+    text = tostring(text or "")
+    if text == "" then return nil end
+    local colors = CoverProgress.resolvedColors()
+    local face, bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
+    return FrameContainer:new{
+        bordersize     = Size.border.thin,
+        background     = colors.badge_bg,
+        color          = colors.badge_fg,
+        radius         = Screen:scaleBySize(3),
+        padding_left   = Size.padding.default,
+        padding_right  = Size.padding.default,
+        padding_top    = Size.padding.small,
+        padding_bottom = Size.padding.small,
+        TextWidget:new{
+            text = text,
+            face = face,
+            bold = bold,
+            fgcolor = colors.badge_fg,
+        },
+    }
+end
+
 -- render(total, selected_count, finished_count, finished_total) → FrameContainer | nil
 --   total          : visible stack size (post-filter). N denominator for
 --                    ×N and K/N. nil/<=0 → no badge.
@@ -57,24 +84,7 @@ function CountBadge.render(total, selected_count, finished_count, finished_total
         -- "×N" (UTF-8 U+00D7 multiplication sign + hair + digits)
         text = "\xc3\x97" .. HAIR .. tostring(total)
     end
-    local colors = CoverProgress.resolvedColors()
-    local face, bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
-    return FrameContainer:new{
-        bordersize     = Size.border.thin,
-        background     = colors.badge_bg,
-        color          = colors.badge_fg,
-        radius         = Screen:scaleBySize(3),
-        padding_left   = Size.padding.default,
-        padding_right  = Size.padding.default,
-        padding_top    = Size.padding.small,
-        padding_bottom = Size.padding.small,
-        TextWidget:new{
-            text = text,
-            face = face,
-            bold = bold,
-            fgcolor = colors.badge_fg,
-        },
-    }
+    return CountBadge.renderText(text)
 end
 
 return CountBadge
