@@ -13,6 +13,11 @@ local _ = require("lib/bookshelf_i18n").gettext
 -- because everything that transforms or previews a template has to know which
 -- brackets are markup. Pure string code, no requires of its own, no cycle.
 local InlineStyle = require("lib/bookshelf_inline_style")
+-- The vendored parity module: the single source of truth for how a token VALUE
+-- formats, so a template copied to or from bookends renders the same string
+-- (#348). Byte-identical to bookends/token_semantics.lua; tools/check_token_parity.sh
+-- fails on drift.
+local Semantics = require("lib/token_semantics")
 
 local Tokens = {}
 
@@ -116,8 +121,20 @@ Tokens.CATALOGUE = {
     { category = "Device",   token = "%nightmode",        description = _("Night mode icon (moon/sun)") },
     { category = "Device",   token = "%light",            description = _("Frontlight intensity (raw)") },
     { category = "Device",   token = "%light_pct",        description = _("Frontlight intensity (0–100%)") },
+    { category = "Time",     token = "%total_read_time",  description = _("Lifetime reading time, all books") },
+    { category = "Progress", token = "%book_pct_read",    description = _("Percent of the book actually read") },
+    { category = "Progress", token = "%books_finished",   description = _("Books finished (bookends' name for %books_read)") },
+    { category = "Time",     token = "%pages_today",      description = _("Pages read today, all books") },
+    { category = "Time",     token = "%time_today",       description = _("Time read today, all books") },
+    { category = "Book",     token = "%avg_page_time",    description = _("Average time per page for this book") },
+    { category = "Book",     token = "%highlights",       description = _("Number of highlights") },
+    { category = "Book",     token = "%notes",            description = _("Number of notes") },
+    { category = "Book",     token = "%bookmarks",        description = _("Number of bookmarks") },
+    { category = "Book",     token = "%annotations",      description = _("Highlights + notes + bookmarks") },
     { category = "Device",   token = "%light_icon",       description = _("Frontlight icon") },
-    { category = "Device",   token = "%warmth",           description = _("Warmth value (natural-light only)") },
+    { category = "Device",   token = "%warmth",           description = _("Warmth on the device's own scale, 0-24 on Kindle (natural-light only)") },
+    { category = "Device",   token = "%warmth_pct",       description = _("Warmth as a percentage (natural-light only)") },
+    { category = "Device",   token = "%warmth_icon",      description = _("Warmth icon: cool / mid / warm (natural-light only)") },
     { category = "Device",   token = "%mem",              description = _("System memory used (%)") },
     { category = "Device",   token = "%sysused",          description = _("System memory used (MiB)") },
     { category = "Device",   token = "%ram",              description = _("KOReader RSS (MiB)") },
@@ -206,12 +223,12 @@ Tokens.expanders.authors_short = function(book)
         list = { book.author }
     end
     if not list or #list == 0 then return "" end
-    if #list == 1 then return _formatAuthor(list[1]) end
-    if #list == 2 then
-        return _formatAuthor(list[1]) .. _(" and ") .. _formatAuthor(list[2])
-    end
-    return _formatAuthor(list[1]) .. ", "
-        .. _formatAuthor(list[2]) .. _(", et al.")
+    -- Names are formatted first, then joined by the shared rule: the joining is
+    -- what has to match bookends, the per-name formatting is bookshelf's own
+    -- (surname handling it does not have).
+    local formatted = {}
+    for i, a in ipairs(list) do formatted[i] = _formatAuthor(a) end
+    return Semantics.authorsShort(formatted, _(" and "), _(", et al."))
 end
 
 -- Reading status, normalised to four canonical strings so
@@ -222,11 +239,9 @@ end
 --   "finished" — KOReader's "complete"
 Tokens.expanders.status = function(book)
     if not book then return "" end
-    local s = book.status or book._status or book.read_status
-    if s == "complete" then return "finished" end
-    if s == "abandoned" then return "on_hold" end
-    if s == "new" or s == nil or s == "" then return "unread" end
-    return s
+    -- Normalisation lives in token_semantics so bookends reports the same four
+    -- strings for the same book (#348).
+    return Semantics.status(book.status or book._status or book.read_status)
 end
 
 -- %status_label -> the same four states, as words a reader would recognise.
@@ -248,13 +263,10 @@ local STATUS_LABELS = {
     finished = function() return _("Finished") end,
 }
 Tokens.expanders.status_label = function(book)
-    local s = Tokens.expanders.status(book)
-    local label = STATUS_LABELS[s]
-    -- Unknown state: return the raw value rather than empty. A state this
-    -- build has not heard of is still information, and blanking it would look
-    -- like the token was broken.
-    if not label then return s end
-    return label()
+    -- The labels table is passed in rather than read inside the shared module,
+    -- which keeps token_semantics free of gettext. Unknown states fall back to
+    -- the raw value there, for the reason given above.
+    return Semantics.statusLabel(Tokens.expanders.status(book), STATUS_LABELS)
 end
 
 -- Rating as a plain number (1-5), empty when unrated. The existing
@@ -284,11 +296,7 @@ end
 -- Returns nil (not "") for a non-size, so a caller can tell "no value" from
 -- "zero bytes"; the expander below is what turns nil into the empty string.
 function Tokens.formatFileSize(bytes)
-    if type(bytes) ~= "number" or bytes < 0 then return nil end
-    if bytes < 1024 then return string.format("%d B", bytes) end
-    local kb = bytes / 1024
-    if kb < 1024 then return string.format("%d KB", math.floor(kb + 0.5)) end
-    return string.format("%.1f MB", kb / 1024)
+    return Semantics.fileSize(bytes)
 end
 
 -- ISO date from a unix epoch. A non-positive epoch is "no date" rather than
@@ -296,8 +304,7 @@ end
 -- 0 for "unknown", and the OPDS feed parser stamps a literal
 -- `modification = 0` on every catalogue record it builds.
 function Tokens.formatDate(epoch)
-    if type(epoch) ~= "number" or epoch <= 0 then return nil end
-    return os.date("%Y-%m-%d", epoch)
+    return Semantics.isoDate(epoch)
 end
 
 Tokens.expanders.size   = function(b)
@@ -326,12 +333,7 @@ Tokens.expanders.format      = metaToken("format")
 -- unrated/nil so [if:rating]…[/if] can gate the display.
 Tokens.expanders.rating = function(book)
     if not book or not book.rating then return "" end
-    local r = math.floor(tonumber(book.rating) or 0)
-    if r < 1 then return "" end
-    if r > 5 then r = 5 end
-    local filled = "\xE2\x98\x85"  -- ★ U+2605
-    local empty  = "\xE2\x98\x86"  -- ☆ U+2606
-    return filled:rep(r) .. empty:rep(5 - r)
+    return Semantics.stars(book.rating)
 end
 
 -- %favourite -> the favourite icon when this book is in the Favourites
@@ -421,100 +423,11 @@ Tokens.expanders.hardcover_stars = function(book)
     return Tokens.starString(book.hardcover_rating)
 end
 
-local function codepointToUtf8(n)
-    n = tonumber(n)
-    if not n or n < 0 then return "" end
-    if n < 0x80    then return string.char(n) end
-    if n < 0x800   then return string.char(0xC0 + math.floor(n / 0x40),
-                                           0x80 + n % 0x40) end
-    if n < 0x10000 then return string.char(0xE0 + math.floor(n / 0x1000),
-                                           0x80 + math.floor(n / 0x40) % 0x40,
-                                           0x80 + n % 0x40) end
-    return ""
-end
-
--- Named HTML entities common in <dc:description> blocks. Mirrors the table
--- in KOReader's util.lua HTML_ENTITIES_TO_UTF8 so we cover the smart-quote
--- and dash zoo most often seen in EPUBs (rsquo / ldquo / mdash etc.).
--- Inlined here rather than `require("util")` so tokens.lua keeps loading
--- in the pure-Lua test harness (which has no KOReader env).
--- &amp; must be applied LAST: any other entity may itself contain '&', and
--- decoding amp first would corrupt them.
-local HTML_NAMED_ENTITIES = {
-    { "&lt;",     "<"          },
-    { "&gt;",     ">"          },
-    { "&quot;",   '"'          },
-    { "&apos;",   "'"          },
-    { "&lsquo;",  "\xE2\x80\x98" }, -- U+2018
-    { "&rsquo;",  "\xE2\x80\x99" }, -- U+2019
-    { "&ldquo;",  "\xE2\x80\x9C" }, -- U+201C
-    { "&rdquo;",  "\xE2\x80\x9D" }, -- U+201D
-    { "&sbquo;",  "\xE2\x80\x9A" }, -- U+201A
-    { "&bdquo;",  "\xE2\x80\x9E" }, -- U+201E
-    { "&ndash;",  "\xE2\x80\x93" }, -- U+2013
-    { "&mdash;",  "\xE2\x80\x94" }, -- U+2014
-    { "&hellip;", "\xE2\x80\xA6" }, -- U+2026
-    { "&trade;",  "\xE2\x84\xA2" }, -- U+2122
-    { "&copy;",   "\xC2\xA9"     }, -- U+00A9
-    { "&reg;",    "\xC2\xAE"     }, -- U+00AE
-    { "&nbsp;",   "\xC2\xA0"     }, -- U+00A0
-    { "&amp;",    "&"            }, -- must be last
-}
-
-local function cleanDescription(raw)
-    if not raw or raw == "" then return "" end
-    local text = raw
-    -- Block-level tags become newlines BEFORE the generic strip pass.
-    -- Case-insensitive (some EPUBs uppercase tags). <div> is handled
-    -- alongside <p> because some publishers wrap each paragraph in a
-    -- <div> instead of a <p>.
-    text = text:gsub("<%s*[bB][rR]%s*/?>", "\n")
-    text = text:gsub("</%s*[pP]%s*>", "\n\n")
-    text = text:gsub("</%s*[dD][iI][vV]%s*>", "\n\n")
-    -- Generic strip for everything else (<p>, <span>, <i>, <b>, …).
-    text = text:gsub("<[^>]+>", "")
-    -- Named entities first.
-    for _i, pair in ipairs(HTML_NAMED_ENTITIES) do
-        text = text:gsub(pair[1], pair[2])
-    end
-    -- Numeric entities — both decimal (&#160;) and hex (&#xA0;).
-    text = text:gsub("&#(%d+);",      codepointToUtf8)
-    text = text:gsub("&#x(%x+);",     function(h) return codepointToUtf8(tonumber(h, 16)) end)
-    -- Collapse runs of 3+ newlines (publishers often have a literal
-    -- newline between </p> and the next <p>, which interacts with our
-    -- </p> → \n\n to produce 3 newlines = an extra blank line). Two
-    -- newlines = one blank line between paragraphs, which is what we
-    -- want.
-    text = text:gsub("\n\n\n+", "\n\n")
-    -- Drop empty/whitespace-only paragraphs. Publishers commonly emit
-    -- <p>&nbsp;</p> (or <p>&#xa0;</p>) as a vertical spacer between
-    -- real paragraphs. After </p> → \n\n + tag-strip + entity-decode,
-    -- those land here as " \xC2\xA0" sandwiched between \n\n delimiters
-    -- — the hero card's per-paragraph splitter would then render the
-    -- nbsp as its own paragraph (full line of whitespace) on top of the
-    -- intended paragraph gap. Filter them out so we get exactly one
-    -- paragraph break between content paragraphs.
-    do
-        local kept = {}
-        for para in (text .. "\n\n"):gmatch("(.-)\n\n") do
-            -- Pretty-printed source (<p>\n  Text\n</p>) leaves indentation
-            -- whitespace right after the </p> -> \n\n newlines we inserted;
-            -- the newline-collapse above only touches newlines, not the
-            -- spaces/tabs that follow them, so trim each paragraph's own
-            -- edges here rather than just the whole string's (issue #306).
-            local trimmed = (para:gsub("^%s+", ""):gsub("%s+$", ""))
-            -- nbsp (U+00A0 = 0xC2 0xA0 in UTF-8) isn't %s in Lua patterns;
-            -- coerce to a regular space before the whitespace strip.
-            local stripped = trimmed:gsub("\xC2\xA0", " "):gsub("%s+", "")
-            if stripped ~= "" then
-                kept[#kept + 1] = trimmed
-            end
-        end
-        text = table.concat(kept, "\n\n")
-    end
-    -- Trim leading/trailing whitespace + newlines.
-    return (text:gsub("^%s+", ""):gsub("%s+$", ""))
-end
+-- Description sanitising moved to the VENDORED token_semantics module. It used
+-- to live here as a local, which is exactly how bookends ended up with
+-- %description but not its sanitiser (85aa7c8) and rendered raw "<p>" tags on
+-- screen. One copy now, checked byte-identical by tools/check_token_parity.sh.
+local cleanDescription = Semantics.cleanDescription
 
 Tokens.cleanDescription = cleanDescription      -- exported for tests / ad-hoc use
 Tokens.expanders.description = function(book)
@@ -831,6 +744,20 @@ Tokens.expanders.books_started = function(_b, s)
     return (s and s.books_started) and tostring(s.books_started) or ""
 end
 
+-- %book_pct_read: how much of the book has actually been READ, as distinct
+-- from %book_pct which is where the reader currently IS. They differ whenever
+-- pages were skipped or revisited. Matches bookends.
+Tokens.expanders.book_pct_read = function(b)
+    return (b and b.book_pct_read) and (tostring(b.book_pct_read) .. "%") or ""
+end
+
+-- %books_finished: bookends' name for the count bookshelf already exposes as
+-- %books_read. An ALIAS rather than a rename, so existing bookshelf templates
+-- keep working while one copied from bookends stops rendering empty (#348).
+Tokens.expanders.books_finished = function(_b, s)
+    return (s and s.books_read) and tostring(s.books_read) or ""
+end
+
 Tokens.expanders.page_num   = function(b) return b and b.page_num and tostring(b.page_num) or "" end
 Tokens.expanders.page_count = function(b) return b and b.page_count and tostring(b.page_count) or "" end
 Tokens.expanders.book_pct       = function(b) return b and b.book_pct and pct(b.book_pct) or "" end
@@ -866,9 +793,38 @@ local function minutesToHM(m)
     return string.format(_("%dh %02dm"), h, mm)
 end
 
-Tokens.expanders.book_time_left   = function(b) return minutesToHM(b and b.book_time_left_minutes) end
-Tokens.expanders.book_read_time   = function(b)
-    return b and b.book_read_time_seconds and minutesToHM(math.floor(b.book_read_time_seconds / 60)) or ""
+-- Durations follow KOReader's own duration_format setting (Settings > Device >
+-- Time and date), matching bookends (#348). These used to hardcode "3h 05m",
+-- so a reader who had chosen "letters" or "modern" saw their choice honoured
+-- in the reader and ignored on the shelf. minutesToHM survives for
+-- %time_today and %avg_page_time, which have no bookends counterpart wired
+-- here yet and are handled in the surface-parity pass.
+local datetime_mod = nil
+local function datetimeModule()
+    if datetime_mod == nil then
+        local ok, m = pcall(require, "datetime")
+        datetime_mod = ok and m or false
+    end
+    return datetime_mod or nil
+end
+
+-- %total_read_time: lifetime reading time across every book. A device-state
+-- token like %books_read, and lazily resolved for the same reason.
+Tokens.expanders.total_read_time = function(_b, s)
+    local secs = s and s.total_read_time_seconds
+    if not secs or secs <= 0 then return "" end
+    return Semantics.duration(datetimeModule(), secs, s and s.duration_format)
+end
+
+Tokens.expanders.book_time_left = function(b, s)
+    local mins = b and b.book_time_left_minutes
+    return Semantics.duration(datetimeModule(), mins and mins * 60,
+                              s and s.duration_format)
+end
+Tokens.expanders.book_read_time = function(b, s)
+    return Semantics.duration(datetimeModule(),
+                              b and b.book_read_time_seconds,
+                              s and s.duration_format)
 end
 Tokens.expanders.pages_today      = function(_b, s) return s and s.pages_today and tostring(s.pages_today) or "" end
 Tokens.expanders.time_today       = function(_b, s) return minutesToHM(s and s.time_today_minutes) end
@@ -892,7 +848,16 @@ Tokens.expanders.annotations  = function(b)
     return total > 0 and tostring(total) or ""
 end
 
-Tokens.expanders.batt       = function(_b, s) return s and s.batt and (tostring(s.batt) .. "%") or "" end
+-- ── Device tokens ─────────────────────────────────────────────────────────
+-- All of these format via the vendored token_semantics module so a template
+-- copied to or from bookends renders the same string (#348). The raw values
+-- are fetched by _buildDeviceState in bookshelf_widget.lua and arrive on `s`;
+-- formatting deliberately does NOT happen there. Pre-formatting in the
+-- producer is how the drift hid: two plugins reading the same hardware through
+-- differently shaped caches have no single place where values can be compared.
+Tokens.expanders.batt = function(_b, s)
+    return Semantics.batt(s and s.batt)
+end
 -- Status-line icons use Nerd Font private-use-area codepoints. KOReader
 -- registers nerdfonts/symbols.ttf as a global font fallback (font.lua),
 -- so any TextWidget renders these without needing a special face.
@@ -900,16 +865,21 @@ Tokens.expanders.batt_icon = function(_b, s)
     if not s or not s.batt then return "" end
     local ok, PowerD = pcall(function() return require("device"):getPowerDevice() end)
     if not ok or not PowerD or not PowerD.getBatterySymbol then return "" end
-    return PowerD:getBatterySymbol(false, s.charging or false, s.batt) or ""
+    -- s.charged is passed through rather than hardcoded false, which is what
+    -- made the charged glyph unreachable on a full battery (#348).
+    return Semantics.battIcon(function(charged, charging, cap)
+        return PowerD:getBatterySymbol(charged, charging, cap)
+    end, s.charged, s.charging, s.batt)
 end
 Tokens.expanders.light_icon = function(_b, s)
-    if not s or not s.light then return "" end
-    return s.light > 0 and "\xee\xb7\xa6"   -- U+EDE6 lightbulb-on
-                       or  "\xee\xa8\xb5"   -- U+EA35 lightbulb-outline
+    return Semantics.lightIcon(s and s.light)
 end
+-- The glyph reflects a WORKING connection: radio on but unlinked shows
+-- wifi-off, because that is what the two-glyph font can honestly express and
+-- what "no connection" means to a reader. This used to key off the radio
+-- alone and so claimed a connection it did not have (#348).
 Tokens.expanders.wifi_icon = function(_b, s)
-    return (s and s.wifi == "on") and "\xee\xb2\xa8"   -- U+ECA8 wifi connected
-                                  or  "\xee\xb2\xa9"   -- U+ECA9 wifi-off
+    return Semantics.wifi(s and s.wifi == "on", s and s.connected == "yes")
 end
 Tokens.expanders.wifi = Tokens.expanders.wifi_icon
 -- Connection state for CONDITIONS (not a display glyph): "yes" only when Wi-Fi is
@@ -927,32 +897,61 @@ end
 Tokens.expanders.full_width = function(_b, s)
     return (s and s.full_width) and "yes" or ""
 end
--- Night mode glyph: moon when night mode is on, sun otherwise. Mirrors
--- bookends (bookends_tokens.lua:2110-2117) — driven by KOReader's
--- persistent "night_mode" setting, not a per-frame state read.
+-- Night mode glyph: moon when night mode is on, sun otherwise. Driven by
+-- KOReader's persistent "night_mode" setting, not a per-frame state read.
 Tokens.expanders.nightmode = function()
-    if G_reader_settings:isTrue("night_mode") then
-        return "\xee\xb2\x93" -- U+EC93 weather-night (moon)
-    end
-    return "\xee\xb2\x98"     -- U+EC98 weather-sunny (sun)
+    return Semantics.nightmode(G_reader_settings:isTrue("night_mode"))
 end
 -- %charging is now redundant — %batt_icon already shows a charging glyph
 -- when the device is plugged in. Kept as an alias to %batt_icon so any
 -- existing user templates still work.
 Tokens.expanders.charging = function(b, s) return Tokens.expanders.batt_icon(b, s) end
-Tokens.expanders.light = function(_b, s) return s and s.light or "" end
--- Frontlight intensity normalised to 0–100 via PowerD.fl_max.
--- Mirrors bookends's %light_pct. Includes the trailing "%" for parity
--- with %book_pct so users can drop it directly into a template.
-Tokens.expanders.light_pct = function(_b, s)
-    if not s or not s.light_pct then return "" end
-    return tostring(s.light_pct) .. "%"
+-- Zero renders as the word "OFF", not "0": a status line reading OFF states
+-- the light is off, where 0 reads as a low measurement (#348).
+Tokens.expanders.light = function(_b, s)
+    return Semantics.light(s and s.light)
 end
-Tokens.expanders.warmth= function(_b, s) return s and s.warmth and tostring(s.warmth) or "" end
-Tokens.expanders.mem   = function(_b, s) return s and s.mem and (tostring(s.mem) .. "%") or "" end
-Tokens.expanders.sysused = function(_b, s) return s and s.sysused_mib and (tostring(s.sysused_mib) .. " MiB") or "" end
-Tokens.expanders.ram   = function(_b, s) return s and s.ram_mib and (tostring(s.ram_mib) .. " MiB") or "" end
-Tokens.expanders.disk  = function(_b, s) return s and s.disk_free or "" end
+Tokens.expanders.light_pct = function(_b, s)
+    return Semantics.lightPct(s and s.light, s and s.fl_max)
+end
+-- Condition-only value overrides (#348). A handful of tokens deliberately
+-- render a WORD where a condition needs the raw measurement. %light is the
+-- one that bites: it shows "OFF" at zero so the strip states the light is off
+-- rather than reading as a low measurement, but "OFF" is a non-empty string,
+-- so [if:light] fired with the light OFF and the shipped default status
+-- template ("[if:light]  %light_icon%light_pct[/if]") drew a lit bulb glyph
+-- and "0%". Conditions resolve through here first; the %token keeps its
+-- wording. Raw 0 is already in evaluateAtom's falsy set, so nothing else
+-- needs to change, and [if:light>10] still compares on the native scale.
+Tokens.condition_values = {
+    light = function(_b, s) return s and s.light end,
+}
+-- %warmth is the device's NATIVE scale (0-24 on a PW5), matching bookends.
+-- CHANGED in the #348 sweep: this used to print the 0-100 percentage, so any
+-- [if:warmth>50] conditional written against the old scale will no longer
+-- fire on a Kindle, where the native maximum is 24. %warmth_pct is the
+-- replacement for those.
+Tokens.expanders.warmth = function(_b, s)
+    return Semantics.warmth(s and s.warmth_native, s and s.has_natural_light)
+end
+Tokens.expanders.warmth_pct = function(_b, s)
+    return Semantics.warmthPct(s and s.warmth_pct, s and s.has_natural_light)
+end
+Tokens.expanders.warmth_icon = function(_b, s)
+    return Semantics.warmthIcon(s and s.warmth_pct, s and s.has_natural_light)
+end
+Tokens.expanders.mem = function(_b, s)
+    return Semantics.mem(s and s.mem_total, s and s.mem_available)
+end
+Tokens.expanders.sysused = function(_b, s)
+    return Semantics.sysused(s and s.sysused_bytes)
+end
+Tokens.expanders.ram = function(_b, s)
+    return Semantics.ram(s and s.ram_kb)
+end
+Tokens.expanders.disk = function(_b, s)
+    return Semantics.disk(s and s.disk_bytes)
+end
 
 -- %bar and %spacer are intentionally NOT in the expander table. The
 -- hero card's elastic-line renderer (buildLine in hero_card.lua) detects
@@ -1077,7 +1076,9 @@ local function valueForCondition(name, book, state)
         if v == "" then return nil end
         return v
     end
-    local exp = Tokens.expanders[name]
+    -- Overrides first, then the expanders, so e.g. "book_pct" in a condition
+    -- matches the %book_pct token unless it is listed above as diverging.
+    local exp = Tokens.condition_values[name] or Tokens.expanders[name]
     if not exp then return nil end
     local v = exp(book, state)
     if v == nil or v == "" then return nil end
@@ -1222,6 +1223,31 @@ local function expandDatetimeBraces(format, state)
     end))
 end
 
+-- %<token> delimited wrapping (ported from bookends #92 for #348 parity).
+--
+-- The expander loop below matches literal names longest-first with NO word
+-- boundary, so a letter written straight after a token can be absorbed into a
+-- longer name: "%author" plus a literal "s" reads as "%authors" and prints
+-- every author instead. Angle brackets mark where the name ends.
+--
+-- Rewritten to the plain %token followed by a \4 boundary sentinel rather than
+-- handled per token: \4 is not a word character, so every downstream pass
+-- (conditionals, datetime braces, calibre braces, the name loop) stops the
+-- identifier there exactly as a space would, and nothing else needs to know
+-- this feature exists. The sentinel is stripped just before the value is
+-- returned.
+--
+-- Runs FIRST so a delimited token carrying a brace - %<datetime{%H:%M}>,
+-- %<calibre{mood}> - is already in canonical form by the time the brace passes
+-- look for it. An unclosed "%<name" or a non-identifier start is left untouched
+-- as literal text, matching bookends (probed, not assumed).
+local WRAP_SENTINEL = "\4"
+
+local function expandWrappedTokens(format)
+    if not format:find("%<", 1, true) then return format end
+    return (format:gsub("%%<([%a_][^>]*)>", "%%%1" .. WRAP_SENTINEL))
+end
+
 function Tokens.expand(format, book, state)
     if not format or format == "" then return "" end
     -- Plain-text templates (no %tokens, no [tags], no {datetime}) are
@@ -1229,7 +1255,8 @@ function Tokens.expand(format, book, state)
     -- single :find pays off vs the full conditional + datetime + 30-
     -- token gsub pipeline below. Cheap (~0.5µs) when there ARE tokens.
     if not format:find("[%%[{]") then return format end
-    local result = expandDatetimeBraces(format, state)
+    local result = expandWrappedTokens(format)
+    result = expandDatetimeBraces(result, state)
     result = expandConditionals(result, book, state)
     result = Tokens.expandCalibreBraces(result, book)
     local names = tokenNamesByLengthDesc()
@@ -1238,6 +1265,11 @@ function Tokens.expand(format, book, state)
         result = result:gsub("%%" .. name, function()
             return tostring(expander(book, state) or "")
         end)
+    end
+    -- Drop the wrapping sentinels now every pass has had its chance to stop an
+    -- identifier on them.
+    if result:find(WRAP_SENTINEL, 1, true) then
+        result = result:gsub(WRAP_SENTINEL, "")
     end
     return result
 end
@@ -1272,6 +1304,11 @@ function Tokens.menuPreview(format, book, state)
     -- and leaves a literal "{x4}" stranded in the middle of the preview.
     local src = Tokens.expandCalibreBraces(format or "", book)
     src = src:gsub("(%%[%a_]+){[%w_,]*}", "%1")
+    -- The same strip for the delimited %<token> form. The pattern above only
+    -- matches a bare name, so "%<description>{x4}" expanded the blurb and left
+    -- a literal "{x4}" stranded in the menu row -- the leak this exists to
+    -- stop, reintroduced by a syntax added after it.
+    src = src:gsub("(%%<[%a_][^>]*>){[%w_,]*}", "%1")
     local ok, text = pcall(Tokens.expand, src, book, state)
     if not ok or not text then return "" end
     -- The style tags. Most of them ARE rendered now -- a list line turns them

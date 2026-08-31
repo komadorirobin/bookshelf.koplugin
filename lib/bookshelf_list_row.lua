@@ -22,6 +22,7 @@ local VerticalSpan    = require("ui/widget/verticalspan")
 local LineWidget      = require("ui/widget/linewidget")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
 local RightContainer  = require("ui/widget/container/rightcontainer")
+local TopContainer    = require("ui/widget/container/topcontainer")
 local TextWidget      = require("ui/widget/textwidget")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local RenderText      = require("ui/rendertext")
@@ -39,6 +40,9 @@ local Lines           = require("lib/bookshelf_list_lines")
 local ListGroup       = require("lib/bookshelf_list_group")
 local CoverProgress   = require("lib/bookshelf_cover_progress")
 local Tokens          = require("lib/bookshelf_tokens")
+-- Safe at module scope: bookshelf_text_fit defers its own heavy requires
+-- (RenderText, the font kit) into its functions, so loading it pulls nothing.
+local TextFit         = require("lib/bookshelf_text_fit")
 local TextSegments    = require("lib/bookshelf_text_segments")
 local InlineStyle     = require("lib/bookshelf_inline_style")
 local ListGeom        = require("lib/bookshelf_list_geom")
@@ -615,6 +619,69 @@ local TICK_FILL = 0.75
 -- unchanged and the checkbox reads on it exactly as it does on paper. (An
 -- inverted row was the other candidate and would have needed one, along with a
 -- recoloured copy of every line.)
+-- topCell(child, width, height) -> a cell of that size holding `child` at its
+-- TOP.
+--
+-- The cell reserves the whole content box it is given; the thing inside it sits
+-- at the top of that box.
+--
+-- The two are the same height in every ordinary row, so none of this is
+-- normally visible. ListGeom.thumbSize sizes the thumbnail from the ROW height,
+-- then caps its WIDTH against ListGeom.artBudget and re-derives the height from
+-- the capped width -- so the moment that cap bites the cover keeps its aspect
+-- and comes out SHORTER than the row it spans. A listing configured for one or
+-- two rows a page, whose description runs to twenty lines, is deep into that:
+-- the cover is a fraction of the row's height.
+--
+-- Centred there, which is what this was, the picture floated in the middle of
+-- the row with a hand's width of blank paper above it, level with nothing,
+-- while the title it belongs to sat at the top. Top-aligned it starts where the
+-- first line starts, which is the only edge in the row it has anything to line
+-- up with.
+--
+-- align = "top" rather than a bare TopContainer, which would paint at the
+-- slot's left edge: the horizontal centring is what CenterContainer was doing
+-- here, and it is what should happen if a picture ever measures narrower than
+-- the slot it was given.
+--
+-- THREE CALLERS, all of them the same problem: a book's thumbnail, a group's
+-- fanned deck of member covers (or the tile that stands in for it), and the
+-- disclosure arrow that has to stay lined up with that deck. The deck did not
+-- even have a container -- it was appended straight into the row's
+-- HorizontalGroup, whose align = "center" centres every child vertically -- so
+-- the same symptom had two entirely different causes.
+function ListRow.topCell(child, width, height)
+    return TopContainer:new{
+        dimen = Geom:new{ w = width, h = height },
+        align = "top",
+        child,
+    }
+end
+
+-- chevronBand(art_h, glyph_h, content_h) -> the height the disclosure arrow
+-- centres itself in.
+--
+-- The arrow belongs to the STACK, not to the row: it is the way in to what the
+-- deck is showing, and an arrow floating level with nothing reads as a stray
+-- mark. So the band is the deck's own height, and the arrow's cell is topped in
+-- the row exactly as the deck's is -- the two then move together whatever the
+-- art budget does to the fan.
+--
+-- `art_h` is content_h when there is nothing in the slot (no deck, no fallback
+-- tile), and then this returns the row, which is the documented behaviour for
+-- that case and deliberately unchanged.
+--
+-- The glyph floor is not cosmetic. Group.chevron centres through
+-- CenterContainer, which offsets by floor((h - glyph)/2) and goes NEGATIVE for a
+-- glyph taller than its box; with the cell pinned to the TOP of the row that
+-- paints the arrow outside the row altogether. A deck can legitimately be
+-- shorter than an arrow sized off a large first line.
+function ListRow.chevronBand(art_h, glyph_h, content_h)
+    local band = math.max(art_h or content_h or 0, glyph_h or 0)
+    if content_h and band > content_h then band = content_h end
+    return band
+end
+
 function ListRow.tickCell(width, height, on)
     local glyph = CoverProgress.buildGlyphWidget(
         on and ListRow.TICK_ON or ListRow.TICK_OFF,
@@ -1117,6 +1184,19 @@ end
 -- costs a truncation where a wrap was possible, or one box built for a line
 -- that turned out to fit. Neither is visible; measuring each run separately to
 -- avoid it would cost more than it saves.
+-- ListRow.textWidth(line, flat, max_w) -> rendered width, clamped to max_w.
+--
+-- The same probe fitsOneLine uses, asked for the number instead of the verdict.
+-- Clamping is fine for every caller: a side wider than the line it is measured
+-- against has already lost whatever comparison asked.
+function ListRow.textWidth(line, flat, max_w)
+    if flat == "" then return 0 end
+    local ok, size = pcall(RenderText.sizeUtf8Text, RenderText, 0, max_w,
+                           line.face, flat, true, line.bold)
+    if not ok or type(size) ~= "table" then return 0 end
+    return size.x or 0
+end
+
 function ListRow.fitsOneLine(line, flat, width)
     if flat == "" then return true end
     local ok, size = pcall(RenderText.sizeUtf8Text, RenderText, 0, width,
@@ -1273,6 +1353,30 @@ local function canEllipsis(face, inner_w)
     return inner_w > ell
 end
 
+-- The first line's text, evened out across the lines it will wrap to.
+--
+-- Greedy wrapping leaves a widow -- "The Blue Castle: a / novel", "The
+-- Invisible Life of Addie / LaRue" -- which the hero has balanced since it
+-- gained a wrapping title. A list row's first line is the same thing at a
+-- smaller size, where a lone trailing word is more noticeable, not less.
+--
+-- FIRST LINE ONLY, and deliberately: balanceLines gives up above three lines
+-- because the search space explodes, so on a wrapped description it is a
+-- no-op that still costs a per-word measurement pass on every row of the page.
+--
+-- Measured in the BOX's face, not the line's. They differ when a [font=] tag
+-- took the whole box, and balancing in the wrong face puts the breaks in the
+-- wrong places. lineText has already applied the line's uppercase by here, so
+-- the string measured is the string that renders -- which is the ordering
+-- balanceLines' own render verify depends on.
+local function balancedFirstLine(i, line, flat, box_w)
+    if i ~= 1 then return flat end
+    local ok, out = pcall(TextFit.balanceForBox, flat,
+        line.box_face or line.face, box_w,
+        (line.box_bold ~= nil) and line.box_bold or line.bold)
+    return (ok and type(out) == "string" and out ~= "") and out or flat
+end
+
 local function wrapBox(line, flat, inner_w, height)
     return TextBoxWidget:new{
         text      = flat,
@@ -1311,6 +1415,16 @@ end
 -- below, which is how a wrapping description knocked the progress bar out
 -- of a four-row page while the five-row page (one-line blurbs, no wrap
 -- path) looked fine.
+-- How many rendered lines the box actually laid out, in ITS pitch. The
+-- companion to boxHeight, and the honest answer to "did this wrap?" - `unit`
+-- cannot answer it, being a TextWidget probe that carries padding the box does
+-- not use.
+local function boxLines(box)
+    local total = #(box.vertical_string_list or {})
+    local shown = box.lines_per_page or total
+    return math.max(1, math.min(total, shown))
+end
+
 local function boxHeight(box)
     local total = #(box.vertical_string_list or {})
     local shown = box.lines_per_page or total
@@ -1338,10 +1452,21 @@ function ListRow.packRow(record, L, group_templates, text_w)
     -- ListGeom.textBands owns the split it refines: a renderer with its own
     -- opinion about how a row's height is divided is how the budget and the
     -- render drift apart. What lives here is the LAYOUT it calls back for.
-    local boxes = {}
+    local boxes, tails = {}, {}
+    -- Which lines will render nothing, so the reservation below does not hold
+    -- space open for them. The SAME test measure applies as its first act, and
+    -- it is pure text -- no widget is built to answer it, which is the whole
+    -- reason fillRow asks the caller rather than probing measure.
+    local function lineEmpty(i)
+        local t = texts[i]
+        if findElastic(t) ~= nil then return false end
+        return ListRow.plain(t):match("^%s*$") ~= nil
+    end
+
     local share = ListGeom.fillRow{
         n      = n,
         unit   = unit,
+        empty  = lineEmpty,
         lead   = L.band_lead or 0,
         height = math.max(0, (L.content_h or 0)
                              - (L.band_top or 0) - (L.band_bottom or 0)),
@@ -1355,10 +1480,63 @@ function ListRow.packRow(record, L, group_templates, text_w)
             if not elastic and ListRow.plain(text):match("^%s*$") then
                 return 0
             end
-            -- A line with %spacer or %bar is a single line BY NATURE: the
-            -- token is a request for left and right halves, which is a
-            -- one-line idea. It truncates rather than wrapping.
-            if elastic then return math.min(unit[i], offer) end
+            -- %bar is a single line BY NATURE: a graphic with text either
+            -- side, so there is nothing to wrap. %spacer is different -- it is
+            -- only a gap, and the DEFAULT template puts one between the title
+            -- and the rating, so the old blanket rule truncated titles over a
+            -- row of empty space. The left side now wraps into whatever the
+            -- right-hand tail leaves; see ListGeom.elasticWrapPlan for the two
+            -- guards that send it back to one line.
+            if elastic then
+                local kind, e_start, e_stop = findElastic(text)
+                local before, after
+                if kind == "spacer" then
+                    before = stripElastic(text:sub(1, e_start - 1)):gsub("^%s+", "")
+                    after  = stripElastic(text:sub(e_stop + 1)):gsub("%s+$", "")
+                end
+                if kind ~= "spacer" or before == "" then
+                    return math.min(unit[i], offer)
+                end
+                -- The gap is the truncating path's, so a wrapped line and a
+                -- truncated one hold their tail at the same distance.
+                local gap    = (after ~= "") and Size.padding.large or 0
+                local tail_w = ListRow.textWidth(line,
+                                   ListRow.flatten(after), inner_w)
+                local plan = ListGeom.elasticWrapPlan{
+                    inner_w = inner_w, tail_w = tail_w, gap = gap,
+                    offer   = offer,   unit   = unit[i],
+                }
+                local flat = ListRow.flatten(before)
+                if not plan.wrap
+                        or ListRow.fitsOneLine(line, flat, plan.box_w) then
+                    return math.min(unit[i], offer)
+                end
+                -- Built once at the largest height it could get, then rebuilt
+                -- if it comes in short -- the same two-step the plain wrapping
+                -- path below uses, and for the same reason.
+                flat = balancedFirstLine(i, line, flat, plan.box_w)
+                boxes[i] = wrapBox(line, flat, plan.box_w, offer)
+                -- elasticWrapPlan cleared this on `unit`, which is a TextWidget
+                -- probe carrying padding the box does not use, so an offer can
+                -- pass `>= unit * 2` and still buy only ONE line of the box's
+                -- own pitch. Balancing has then traded width on line 1 for a
+                -- line 2 that does not exist, and the single line it renders
+                -- shows LESS text than a plain truncation would. Abandon and
+                -- let the ordinary one-line path run at the full width.
+                if boxLines(boxes[i]) < 2 then
+                    boxes[i]:free()
+                    boxes[i] = nil
+                    return math.min(unit[i], offer)
+                end
+                local used = boxHeight(boxes[i])
+                if used < 1 then used = unit[i] end
+                if used < offer then
+                    boxes[i]:free()
+                    boxes[i] = wrapBox(line, flat, plan.box_w, used)
+                end
+                tails[i] = { text = after, box_w = plan.box_w, gap = gap }
+                return used
+            end
             -- Fits as it is, or there is only room for one line anyway.
             -- Flattened ONCE, here: the probe and the box read the same
             -- string, and flattening per question doubled a per-line cost.
@@ -1370,6 +1548,7 @@ function ListRow.packRow(record, L, group_templates, text_w)
             -- It wraps. Built ONCE at the largest height it could be granted,
             -- and the box that answers is the box that gets drawn -- except
             -- when it comes in short, which is the only case that pays twice.
+            flat = balancedFirstLine(i, line, flat, inner_w)
             boxes[i] = wrapBox(line, flat, inner_w, offer)
             local used = boxHeight(boxes[i])
             if used < 1 then used = unit[i] end
@@ -1388,6 +1567,7 @@ function ListRow.packRow(record, L, group_templates, text_w)
         if band then
             entries[#entries + 1] = { line = lines[i], text = texts[i],
                                       band_h = band, box = boxes[i],
+                                      tail = tails[i],
                                       template = group_templates
                                                  and group_templates[i] }
         elseif boxes[i] then
@@ -1443,20 +1623,6 @@ function ListRow.textLine(record, line, width, pad, template, opts)
     -- %bar split a line into left and right halves, which is a single-line
     -- idea. Wrapping wins because it is the more specific request -- a reader
     -- who wrote {x4} wants the paragraph.
-    if opts and opts.box then
-        -- packRow built it, at the height it granted, because laying the box
-        -- out IS how it measured the line. Its presence is what says this line
-        -- wrapped: there is no wrap COUNT any more, only what the row had room
-        -- for.
-        local box = opts.box
-        return HorizontalGroup:new{
-            align = "center",
-            HorizontalSpan:new{ width = pad },
-            box,
-            HorizontalSpan:new{ width = pad },
-        }
-    end
-
     -- One TextWidget, in a stated face. The face is a parameter rather than
     -- always line.face because an inline run brings its own.
     local function piece(s, face, bold, max_w, trunc_left)
@@ -1560,6 +1726,41 @@ function ListRow.textLine(record, line, width, pad, template, opts)
             w.forced_baseline = max_base
             hg[#hg + 1] = w
         end
+        return hg
+    end
+
+    -- ── The wrapping path, continued ───────────────────────────────────────
+    --
+    -- Placed AFTER seg so a wrapped line's right-hand tail is built the same
+    -- way every other side is, inline runs included.
+    if opts and opts.box then
+        -- packRow built it, at the height it granted, because laying the box
+        -- out IS how it measured the line. Its presence is what says this line
+        -- wrapped: there is no wrap COUNT any more, only what the row had room
+        -- for.
+        local box  = opts.box
+        local tail = opts.tail
+        if not (tail and tail.text and tail.text ~= "") then
+            return HorizontalGroup:new{
+                align = "center",
+                HorizontalSpan:new{ width = pad },
+                box,
+                HorizontalSpan:new{ width = pad },
+            }
+        end
+        -- A wrapped %spacer line: the left side is the box, the tail sits at
+        -- the right of the FIRST line. align = "top" is what puts it there --
+        -- centred against a three-line box it would float to the middle line,
+        -- which reads as a stray value rather than a heading's companion.
+        local a_widget = seg(tail.text, math.max(1, inner_w - tail.box_w))
+        local a_w      = a_widget:getSize().w
+        local slack    = math.max(0, inner_w - tail.box_w - a_w)
+        local hg = HorizontalGroup:new{ align = "top" }
+        hg[#hg + 1] = HorizontalSpan:new{ width = pad }
+        hg[#hg + 1] = box
+        if slack > 0 then hg[#hg + 1] = HorizontalSpan:new{ width = slack } end
+        hg[#hg + 1] = a_widget
+        hg[#hg + 1] = HorizontalSpan:new{ width = pad }
         return hg
     end
 
@@ -1894,10 +2095,8 @@ function ListRow.new(opts)
                 -- Keep bookmark-style glyphs wholly inside the thumbnail.
                 show_titles = true,
             }
-            group[#group + 1] = CenterContainer:new{
-                dimen = Geom:new{ w = cover_w, h = content_h },
-                spine_widget,
-            }
+            group[#group + 1] = ListRow.topCell(spine_widget, cover_w,
+                                               content_h)
             group[#group + 1] = HorizontalSpan:new{ width = gap }
         end
         -- A little breathing room where the tramline used to be, so the text
@@ -1910,6 +2109,10 @@ function ListRow.new(opts)
         -- let a long folder name run underneath, which looks fine on every
         -- folder in the test library and breaks on someone's.
         local deck, deck_w, chevron, chev_w
+        -- How tall whatever ends up in the picture slot actually is. content_h
+        -- while nothing is in it, and then the arrow keeps the whole row -- see
+        -- ListRow.chevronBand.
+        local art_h = content_h
         local text_w = L.text_w
         if group_templates then
             -- The cover cell's width comes back to the row: a group does not
@@ -1927,9 +2130,13 @@ function ListRow.new(opts)
                     math.min(L.lines[1] and L.lines[1].band_h or content_h,
                              content_h)))
             if cover_w > 0 then
-                deck, deck_w = ListGroup.deck(
+                local deck_h
+                deck, deck_w, deck_h = ListGroup.deck(
                     ListGroup.deckBooks(item), content_h,
                     { front = ListGroup.DECK_FRONT, max_w = art_budget })
+                if deck then
+                    art_h = math.min(deck_h or content_h, content_h)
+                end
                 -- Nothing to fan: fall back to the tile the cover grid would
                 -- have drawn for this group, in the same slot, so the column
                 -- of objects down the right-hand side is unbroken. Only on a
@@ -1941,8 +2148,8 @@ function ListRow.new(opts)
                     -- width.
                     local tile_h
                     deck_w, tile_h = ListGroup.slotWidth(content_h, art_budget)
-                    deck = ListGroup.tile(item, deck_w,
-                                          math.min(tile_h, content_h), {
+                    tile_h = math.min(tile_h, content_h)
+                    deck = ListGroup.tile(item, deck_w, tile_h, {
                         group_display = opts.group_display,
                         -- The ROW's own handlers: both tile widgets return
                         -- true from onTap whatever happens, so a tile without
@@ -1963,24 +2170,30 @@ function ListRow.new(opts)
                         on_tap  = tap_cb  and function() return tap_cb(item)  end,
                         on_hold = hold_cb and function() return hold_cb(item) end,
                     })
-                    if not deck then deck_w = nil end
+                    if deck then art_h = tile_h else deck_w = nil end
                 end
             end
-            -- CENTRED in the row again. It was briefly aligned with the first
+            -- CENTRED ON THE STACK. It was briefly aligned with the first
             -- line, because on a bare OPDS row the name sat at the top with
             -- the arrow floating below it pointing at nothing -- but the arrow
             -- was never the problem there. The problem was an empty slot
             -- beside it, and the tile above fills it: "that cover/card is what
             -- keeps everything aligned and looking good in other tabs like
             -- series." With an object in the slot, centre is where the arrow
-            -- belongs.
+            -- belongs -- centre of THAT OBJECT, which is the row only for as
+            -- long as the object fills it. See ListRow.chevronBand.
             --
             -- Sized against the first LINE, not the row, so it tracks the type
             -- it sits beside -- the rule the bulk-select tick already follows.
+            -- Its size and the band it sits in are two separate questions.
             local first_band = L.lines[1] and L.lines[1].band_h or content_h
             first_band = math.min(first_band, content_h)
             chev_w  = ListGroup.chevronWidth(first_band)
-            chevron = ListGroup.chevron(chev_w, content_h, first_band)
+            chevron = ListRow.topCell(
+                ListGroup.chevron(chev_w,
+                                  ListRow.chevronBand(art_h, chev_w, content_h),
+                                  first_band),
+                chev_w, content_h)
             text_w = text_w - chev_w - gap
             if deck then text_w = text_w - deck_w - gap end
             text_w = math.max(1, text_w)
@@ -2024,7 +2237,8 @@ function ListRow.new(opts)
             -- table rather than being written into it.
             text_col[#text_col + 1] = ListRow.textLine(
                 record, e.line, text_w, pad, e.template,
-                { text = e.text, band_h = e.band_h, box = e.box })
+                { text = e.text, band_h = e.band_h, box = e.box,
+                  tail = e.tail })
         end
         -- The other half of packRow's remainder: below the lines rather than
         -- above the last one, for a row whose bottom line had nothing to say.
@@ -2043,7 +2257,9 @@ function ListRow.new(opts)
         group[#group + 1] = text_col
         if deck then
             group[#group + 1] = HorizontalSpan:new{ width = gap }
-            group[#group + 1] = deck
+            -- The deck had no cell of its own and was centred by the row's
+            -- HorizontalGroup. See ListRow.topCell.
+            group[#group + 1] = ListRow.topCell(deck, deck_w, content_h)
         end
         if chevron then
             group[#group + 1] = HorizontalSpan:new{ width = gap }

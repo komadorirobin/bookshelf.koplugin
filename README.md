@@ -181,7 +181,7 @@ Each item can be:
 
 **Position.** Under **Bookshelf settings -> Start menu** you can put the button on the **left**, the **right**, or turn it **off**, and set a **Minimum start menu width** if the popup feels cramped. It works with touch and with physical-button (D-pad) devices.
 
-**While reading.** Turn on **menu -> Settings -> Start menu -> Show launcher button while reading** to keep a small launcher button in the reader's bottom corner. Tapping it opens the same start menu over your book, so you can jump to a shelf, a collection, or another plugin and tap straight back in. If you use full-screen [micro-modules](#micro-modules-on-the-home-screen), the grid button appears in the reader too -- **Launcher buttons** in the same settings section chooses which of the two buttons show. **Launcher button position and size…** opens a live canvas for placing them: pick the side, the screen edge they sit against, how far along it, and how big -- so they can hide in whichever corner your books' margins leave free. The start menu and module view open from wherever the buttons actually are. By default each menu item shows both on the home screen and while reading; use **show in** (above) to limit one to the reader or the home screen -- handy for keeping the reading menu short.
+**While reading.** Under **menu -> Settings -> Advanced -> While reading**, turn on **Show menu button** to keep a small launcher button in the reader's bottom corner. Tapping it opens the same start menu over your book, so you can jump to a shelf, a collection, or another plugin and tap straight back in. **Show micro-modules button** adds the full-screen grid button to the reader too. **Launcher button position and size…** opens a live canvas for placing them: pick the side, the screen edge they sit against, how far along it, and how big -- so they can hide in whichever corner your books' margins leave free. The start menu and module view open from wherever the buttons actually are. By default each menu item shows both on the home screen and while reading; use **show in** (above) to limit one to the reader or the home screen -- handy for keeping the reading menu short.
 
 **By gesture (no button needed).** Prefer not to show a button? KOReader's **Gesture manager** (wrench -> Taps and gestures -> Gesture manager) lists Bookshelf's assignable actions, including **Bookshelf: open start menu**, **Bookshelf: open micro-modules**, and **Bookshelf: go to home screen** (drop whatever you're doing and land on your home chip). Bind any of them to a gesture -- a corner tap, a swipe, a multiswipe -- and it works in the reader (or the library) whether or not the launcher buttons are shown. Because a bound gesture is a deliberate request, the start-menu and micro-module actions work even when those features are set to **Off**.
 
@@ -396,7 +396,7 @@ Long-press an image-set folder or stack and tap *Clear … image* to revert to t
 
 ## Calibre metadata (beta)
 
-For libraries managed by Calibre. Turn on **menu > Settings > Advanced > BETA: Read calibre metadata.calibre** and Bookshelf reads the `metadata.calibre` file Calibre writes into the library folder, alongside each book's embedded metadata.
+For libraries managed by Calibre. Turn on **menu > Settings > Advanced > BETA: Read calibre metadata.calibre** and Bookshelf reads the `metadata.calibre` file Calibre writes when it syncs books to a device or manages a folder. The file must sit **directly in your KOReader home folder** (the folder Bookshelf scans for books), so point Calibre's device sync at that folder, or set your home folder to wherever Calibre already syncs. Its fields are read alongside each book's embedded metadata.
 
 What it adds:
 
@@ -426,6 +426,8 @@ Whichever you choose, variant spellings of the same author are merged into one e
 ## Customising the hero card
 
 Open **menu -> Settings -> Edit book detail view** to toggle each of the book's sections on or off; tap a section's row to open its **line editor**. The status line (the strip of device and reading info at the very top) is configured the same way from its own **Status line** entry just above, and the hero card's overall text size lives under **Settings -> Text size -> Hero card**.
+
+**Show status line.** Bookshelf can put this same line across the top of the reader, so it does not change as you move between the shelf and a book. The switch lives under **menu -> Settings -> Advanced -> While reading**, alongside the other things Bookshelf can draw into the reader; the line itself is still edited here, and the reader follows. It is drawn by the same code that draws it on the shelf, so the two are identical by construction. This works on its own; if you also use [Bookends](https://github.com/AndyHazz/bookends.koplugin), its top row and any top-anchored progress bar move down to make space.
 
 The **Tags** section is an interactive pill strip rather than a line of text, so instead of the line editor its row opens a small submenu: turn the line on or off, choose which pill categories to show (**Author**, **Series**, **Collections**, **Genres**, **Folder**), and set the **Font size** and **Alignment**. Turning off Author and Series, for instance, leaves a line of just the real tags. The **Rating** section is interactive too and is a simple on/off toggle.
 
@@ -483,7 +485,7 @@ Open **menu -> Updates** to keep Bookshelf current. Once any check has found a n
 - **Notify on wake when update available** -- opt-in. Once an hour after a Wi-Fi-connected wake, Bookshelf checks the GitHub releases page and posts a quiet notification if a new version is out. Off by default; nothing is ever fetched without your permission.
 - **Developer updates** (advanced) -- type a development branch name (e.g. `feat/foo`) to install the tip of that branch. Use **Reset to latest stable release** to clear the dev branch and pull the latest published release.
 
-The whole download, unpack, and restart sequence runs over Wi-Fi only and needs no extra plugins.
+The whole download, unpack, and restart sequence runs over Wi-Fi only and needs no extra plugins. If Wi-Fi is off, Bookshelf offers to turn it on and carries on once it connects; if it's already connected, it just proceeds, including on networks where a connectivity check would fail (a Pi-hole blocking Microsoft's test domain, for instance).
 
 ---
 
@@ -698,6 +700,12 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%format` | *EPUB* |
 | `%lang` | *en* |
 | `%description` | Book blurb (HTML stripped, entities decoded) |
+| `%total_read_time` | Lifetime reading time across every book | *142h 30m* |
+| `%books_finished` | Books finished; the same count as `%books_read`, under bookends' name | *24* |
+| `%pages_today` / `%time_today` | Pages and time read today, across all books (needs the statistics plugin) | *34* / *1h 12m* |
+| `%avg_page_time` | Average time per page for this book | *42s* |
+| `%highlights` / `%notes` / `%bookmarks` | Counts from the book's own annotations | *12* / *3* / *2* |
+| `%annotations` | All three added together | *17* |
 | `%quote` | A random highlight from this book, in quotation marks (a fresh one each time you select the book; empty if the book has no highlights). Handy in the Description section in place of the blurb. |
 | `%quote_source` | The book and author for `%quote` |
 
@@ -708,6 +716,7 @@ Tokens are placeholders prefixed with `%`. Conditional logic uses `[if:cond]…[
 | `%page_num` / `%page_count` | *42* / *218* |
 | `%pages_left` | *176* |
 | `%book_pct` / `%book_pct_left` | *19%* / *81%* |
+| `%book_pct_read` | *44%* (how much you have actually read, not where you are) |
 | `%bar` | Inline progress-bar widget (Progress section only) |
 | `%bar{rel}` | Same bar, but its length reflects how long the book is |
 | `%spacer` | Elastic gap that pushes content left/right. `Reading%spacer47%` renders *Reading* on the left and *47%* on the right. |
@@ -750,10 +759,11 @@ These are library-wide rather than per-book, so they suit the hero status line a
 |-------|---------|
 | `%batt` / `%batt_icon` | *73%* / charge-aware glyph |
 | `%wifi_icon` | Wi-Fi icon (connected / disconnected) |
-| `%light` / `%light_pct` / `%light_icon` | *18* / *75%* / lightbulb glyph |
-| `%warmth` | Frontlight warmth (natural-light only) |
+| `%light` / `%light_pct` / `%light_icon` | *18* (or *OFF*) / *75%* / lightbulb glyph |
+| `%warmth` | Frontlight warmth on the device's own scale, *12* (0-24 on Kindle, varies by device; natural-light only) |
+| `%warmth_pct` / `%warmth_icon` | *50%* / thermometer glyph, three steps (natural-light only) |
 | `%nightmode` | Moon glyph when night mode is on, sun otherwise |
-| `%mem` / `%ram` | System memory (%) / KOReader RSS (MiB) |
+| `%mem` / `%ram` | System memory (%) / KOReader RSS, *84M* |
 | `%sysused` | System memory used (MiB) |
 | `%disk` | Free space on the books partition (GB) |
 
@@ -769,6 +779,17 @@ These are library-wide rather than per-book, so they suit the hero status line a
 ```
 
 Comparisons: `=` `!=` `<` `>` `<=` `>=`. Boolean: `and`, `or`, `not`. Numeric tokens compare numerically; string tokens compare by string equality. The `connected` condition is true only while actually online, so `[if:connected]%wifi_icon[/if]` shows the Wi-Fi glyph just when connected. The `full_width` condition is true only in the wide status line of the micro-module and full-screen views (not the narrow cover-view status), so you can surface extra content -- a date, say -- only where there's room for it.
+
+#### Delimited tokens
+
+A token name runs until the next non-letter, so text placed straight after it is read as part of the name -- `%author` followed by an `s` becomes `%authors` and prints every author. Wrap the name in angle brackets to butt text directly against it:
+
+```
+%<author>s book        ->  Frank Herberts book
+%<page_num>/%<page_count>  ->  42/500
+```
+
+This matches [Bookends](https://github.com/AndyHazz/bookends.koplugin), so a line written for one works in the other.
 
 </details>
 
@@ -829,7 +850,7 @@ Existing v1 settings migrate automatically on first launch -- legacy keys are re
 
 - **`%bar` styling lives in the Progress section.** Inserting `%bar` in another section still renders the widget, but uses the bordered default style and 100% height since the Bar style / Bar height buttons only appear in the Progress section's editor.
 - **Italic** is reachable only via the font picker (by selecting an italic family). The line editor has no italic toggle because `TextBoxWidget` doesn't synthesise italic from upright fonts.
-- **Inline format tags** `[b]`, `[i]`, `[u]` in templates are stripped before display. Use the per-section Bold button instead.
+- **Inline format tags** render in **list view** lines only: `[b]`, `[i]`, `[font=NAME]` and `[size=N]` (also `[size=+N]` / `[size=-N]`, relative to the enclosing run). `[u]` is accepted but draws nothing. Hero card sections strip all of them, so use that section's own Bold button there.
 - **Page count for EPUBs** requires opening the book at least once. The count comes from KOReader's pagemap or reading statistics, both of which are populated only after the first paginate.
 
 </details>

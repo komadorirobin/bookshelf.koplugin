@@ -265,6 +265,8 @@ end
 local STATS_FIELDS = {
     "book_read_time_seconds", "book_pages_read", "days_reading_book",
     "pages_per_day", "speed_pph", "book_time_left_minutes",
+    -- %avg_page_time (#348): one more field off the same single lookup.
+    "avg_page_time_seconds", "book_pct_read",
 }
 
 local function fillStats(rec)
@@ -287,6 +289,91 @@ end
 
 for _i, k in ipairs(STATS_FIELDS) do
     RESOLVERS[k] = fillStats
+end
+
+-- ── Annotation counts (#348) ───────────────────────────────────────────────
+--
+-- %highlights, %notes, %bookmarks and %annotations were CONSUMERS with no
+-- producer: the expanders existed, copied across from bookends, and every one
+-- answered empty forever. Documenting them would have been worse than leaving
+-- them out, so they are wired here instead.
+--
+-- A resolver rather than buildBookMeta, for the reason this whole file exists:
+-- the counts come from the DocSettings sidecar, which buildBookMeta
+-- deliberately does not read. Putting them there would put a sidecar read back
+-- on every shelf rebuild.
+--
+-- The counting rule is the vendored one, which is KOReader's own, so the shelf
+-- and the reader cannot disagree about what counts as a note. Required lazily
+-- like every other dependency in this file, which has no top-level requires so
+-- it stays loadable bare.
+--- TTL-memoised, not memoised for the session. Annotations are the one field
+--- here that the USER changes between two looks at the same shelf: highlight
+--- something, close the book, come back, and a session-long memo would still
+--- be showing the old count. It also caches the negative, so a book whose
+--- sidecar appears mid-session would have stayed at nothing.
+---
+--- The whole table expires at once rather than per entry: it keeps the check
+--- to one comparison on the hot path and bounds the table's growth, which is
+--- the same shape the shelf's device-state cache uses. This file's own note on
+--- date_added is the rule being followed here -- a module-level memo with no
+--- invalidation hook is worse than the read it saves.
+local ANNOTATION_TTL = 30
+local _annotation_memo = {}
+local _annotation_memo_expires_at = 0
+
+local function annotationCountsFor(rec)
+    local fp = localPath(rec)
+    if not fp then return nil end
+    local now = os.time()
+    if now >= _annotation_memo_expires_at then
+        _annotation_memo = {}
+        _annotation_memo_expires_at = now + ANNOTATION_TTL
+    end
+    local memo = _annotation_memo[fp]
+    if memo ~= nil then return memo or nil end
+
+    local ok_sem, Semantics = pcall(require, "lib/token_semantics")
+    local ok_ds, DocSettings = pcall(require, "docsettings")
+    if not (ok_sem and Semantics and ok_ds and DocSettings) then
+        _annotation_memo[fp] = false
+        return nil
+    end
+    -- hasSidecarFile FIRST: opening settings for a book that has never been
+    -- read would create one, and a shelf render must not write to disk.
+    local ok_has, has = pcall(function() return DocSettings:hasSidecarFile(fp) end)
+    if not ok_has or not has then
+        _annotation_memo[fp] = false
+        return nil
+    end
+    local ok, counts = pcall(function()
+        local ds = DocSettings:open(fp)
+        return Semantics.annotationCounts(ds and ds:readSetting("annotations"))
+    end)
+    if not ok or type(counts) ~= "table" then
+        _annotation_memo[fp] = false
+        return nil
+    end
+    _annotation_memo[fp] = counts
+    return counts
+end
+
+-- %annotations is deliberately absent from this list: its expander sums the
+-- other three itself, so resolving a total here would be a second source for
+-- the same number.
+local ANNOTATION_FIELDS = { "highlights", "notes", "bookmarks" }
+
+local function fillAnnotations(rec)
+    local out = {}
+    local counts = annotationCountsFor(rec)
+    for _idx, k in ipairs(ANNOTATION_FIELDS) do
+        out[k] = counts and counts[k] or NONE
+    end
+    return out
+end
+
+for _idx, k in ipairs(ANNOTATION_FIELDS) do
+    RESOLVERS[k] = fillAnnotations
 end
 
 RESOLVERS.last_opened = function(rec)

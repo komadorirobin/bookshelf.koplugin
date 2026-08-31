@@ -8,8 +8,12 @@ package.loaded["device"] = {
     hasNaturalLight = function() return false end,
     home_dir = "/",
 }
+-- Signature matches KOReader's real datetime: (format, seconds, withoutSeconds).
+-- Durations route through Semantics.duration now (#348), which passes the
+-- reader's duration_format first; a single-argument stub silently received the
+-- format string where it expected seconds.
 package.loaded["datetime"] = {
-    secondsToClockDuration = function(s)
+    secondsToClockDuration = function(_fmt, s)
         if not s or s <= 0 then return "" end
         local h = math.floor(s / 3600)
         local m = math.floor((s % 3600) / 60)
@@ -277,8 +281,16 @@ end)
 test("device: %wifi off → wifi-off Nerd Font glyph", function()
     eq(Tokens.expand("%wifi", bookFixture(), { wifi = "off" }), "\xee\xb2\xa9")
 end)
-test("device: %wifi on → wifi Nerd Font glyph", function()
-    eq(Tokens.expand("%wifi", bookFixture(), { wifi = "on" }), "\xee\xb2\xa8")
+test("device: %wifi on AND linked → wifi Nerd Font glyph", function()
+    eq(Tokens.expand("%wifi", bookFixture(),
+                     { wifi = "on", connected = "yes" }), "\xee\xb2\xa8")
+end)
+-- Radio up but no link is NOT a connection: the two-glyph font cannot express
+-- a third state, and "no working connection" is what the reader needs to know.
+-- This keyed off the radio alone before the parity sweep (#348).
+test("device: %wifi on but unlinked → wifi-off glyph", function()
+    eq(Tokens.expand("%wifi", bookFixture(),
+                     { wifi = "on", connected = "no" }), "\xee\xb2\xa9")
 end)
 
 test("if: token-truthy", function()
@@ -317,6 +329,19 @@ test("device: [if:connected] gates the Wi-Fi icon on actual link (issue 181)", f
     -- bookends-style explicit comparison works too
     eq(Tokens.expand("[if:connected=yes]ON[/if]", bookFixture(), { connected = "yes" }), "ON")
     eq(Tokens.expand("[if:connected=yes]ON[/if]", bookFixture(), { connected = "no"  }), "")
+end)
+
+test("device: [if:light] collapses when the frontlight is OFF (#348)", function()
+    -- %light renders 0 as the word "OFF" so the strip reads as a statement
+    -- rather than a measurement. The condition must NOT follow it there: the
+    -- shipped default status template is "[if:light] %light_icon%light_pct[/if]",
+    -- so a truthy "OFF" puts a lit bulb glyph on screen with the light off.
+    eq(Tokens.expand("[if:light]ON[/if]", bookFixture(), { light = 0,  fl_max = 24 }), "")
+    eq(Tokens.expand("[if:light]ON[/if]", bookFixture(), { light = 12, fl_max = 24 }), "ON")
+    -- No frontlight at all stays collapsed, as before.
+    eq(Tokens.expand("[if:light]ON[/if]", bookFixture(), {}), "")
+    -- The display token itself is unchanged: still the word, not the number.
+    eq(Tokens.expand("%light", bookFixture(), { light = 0, fl_max = 24 }), "OFF")
 end)
 
 test("inline: [b]bold[/b] tags survive expansion", function()
@@ -897,8 +922,10 @@ test("%books_read reads the state, like every device token", function()
                      { books_read = 42 }), "read: 42")
     -- %sysused (PR 343): same device-state contract as %mem/%ram.
     eq(Tokens.expand("%sysused", bookFixture()), "")
-    eq(Tokens.expand("%sysused", bookFixture(), { sysused_mib = 187 }),
-       "187 MiB")
+    -- Bytes, not MiB: the state carries raw values and token_semantics
+    -- formats them, so the two plugins cannot round differently (#348).
+    eq(Tokens.expand("%sysused", bookFixture(),
+                     { sysused_bytes = 187 * 1024 * 1024 }), "187 MiB")
     -- The stats-plugin twin follows the same contract.
     eq(Tokens.expand("%books_started", bookFixture()), "")
     eq(Tokens.expand("started: %books_started", bookFixture(),
@@ -926,6 +953,23 @@ test("%calibre{field}: works in conditionals, truthy and compared", function()
        "hit")
     eq(Tokens.expand("[if:calibre{pubdate}>1980]late[else]early[/if]", book),
        "early")
+end)
+
+test("menuPreview strips modifiers off the delimited %<token> form too", function()
+    -- The strip predates %<token> wrapping and only matches a BARE name, so
+    -- %<description>{x4} expanded the blurb and left a literal "{x4}" stranded
+    -- in the middle of the menu row -- the exact leak the strip exists to stop.
+    local book = bookFixture()
+    book.description = "A blurb."
+    local preview = Tokens.menuPreview("%<description>{x4}", book)
+    assert(preview:find("A blurb", 1, true),
+        "the preview must still show the expanded text, got: " .. preview)
+    assert(not preview:find("{x4}", 1, true),
+        "the modifier leaked into the preview: " .. preview)
+    -- and the widget-shaped ones keep their preview glyphs through the form
+    local bar = Tokens.menuPreview("%<bar>{rel}", book)
+    assert(not bar:find("{rel}", 1, true), "modifier leaked: " .. bar)
+    assert(bar:find(Tokens.BAR_PREVIEW, 1, true), "bar lost its preview: " .. bar)
 end)
 
 test("%calibre{field}: survives menuPreview's modifier strip", function()

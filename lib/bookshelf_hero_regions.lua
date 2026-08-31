@@ -12,15 +12,19 @@ Regions.SETTINGS_KEY = "bookshelf_hero_regions"
 Regions.ORDER = { "status", "rating", "title", "subtitle", "author", "metadata", "description", "tags", "progress" }
 
 Regions.DEFAULTS = {
-    status = {
-        template  = "\xef\x82\xa0 %disk[if:batt]  %batt_icon%batt[/if]"
-                 .. "[if:light]  %light_icon%light_pct[/if]  %wifi_icon  %time_12h",
-        font_face = nil,
-        font_size = 14,
-        bold      = false,
-        uppercase = false,
-        alignment = "right",
-    },
+    -- Sourced from the vendored status_line module rather than written out
+    -- here, because bookends mirrors this exact region (#348) and needs the
+    -- SAME defaults: bookshelf only writes the settings key once a user edits
+    -- a region, so on a default install the mirror has nothing to read and
+    -- must fall back to precisely what this renders. One definition, both
+    -- plugins. Copied rather than aliased: this table is handed to the line
+    -- editor as its `defaults`, and a shared mutable table reaching across a
+    -- vendored boundary is a trap waiting to be sprung.
+    status = (function()
+        local out = {}
+        for k, v in pairs(require("lib/status_line").DEFAULTS) do out[k] = v end
+        return out
+    end)(),
     title = {
         template  = "%title",
         font_face = nil,

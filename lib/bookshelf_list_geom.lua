@@ -499,6 +499,54 @@ function ListGeom.linePriority(n)
     return out
 end
 
+-- ListGeom.elasticWrapPlan(opts) -> { wrap = boolean, box_w = number }
+--
+-- Whether a line carrying %spacer may WRAP, and how wide its left side gets.
+--
+-- These lines used to be single-line by rule: %spacer asks for a left and a
+-- right half, which reads as a one-line idea, so the measure callback handed
+-- one line back and the left side truncated. The rule met the DEFAULT list
+-- template -- "%title %spacer %rating %favourite" -- and produced a truncated
+-- title with a row of empty space beneath it, which is what a reader reports
+-- as a bug rather than as a design.
+--
+-- The plan reserves the right-hand tail on EVERY line and wraps the left into
+-- what is left, putting the tail on the first line. The alternative was to
+-- wrap at full width and rebuild the last line with the tail beside it, which
+-- means slicing a TextBoxWidget at its own wrapped-line boundaries -- reading
+-- vertical_string_list, which has already caused one bug in this file's
+-- neighbourhood, and which xtext shaping makes worse for CJK.
+--
+-- Two guards, both of which fall back to the old single truncated line:
+--
+--   * offer < unit * 2 -- the row has room for one line, so there is nothing
+--     to wrap into. Same test the non-elastic path already applies.
+--   * box_w < inner_w * MIN_BOX_FRAC -- reserving the tail costs width on
+--     every line, and past a point the trade stops paying: a title wrapped
+--     into a sliver reads worse than a truncated one. Half the column is the
+--     floor, and it is a floor rather than a target -- exactly half still
+--     wraps.
+--
+-- %bar is not a caller. A bar is a graphic with text either side, so one line
+-- is the whole idea of it.
+ListGeom.MIN_BOX_FRAC = 0.5
+
+function ListGeom.elasticWrapPlan(opts)
+    opts = opts or {}
+    local inner_w = opts.inner_w or 0
+    local tail_w  = opts.tail_w or 0
+    local gap     = opts.gap or 0
+    local offer   = opts.offer or 0
+    local unit    = opts.unit or 0
+    -- Floored at 1: a zero or negative width is not a narrower box, it is a
+    -- crash in TextBoxWidget.
+    local box_w = math.max(1, inner_w - tail_w - gap)
+    local wrap  = unit > 0
+              and offer >= unit * 2
+              and box_w >= inner_w * (opts.min_box_frac or ListGeom.MIN_BOX_FRAC)
+    return { wrap = wrap, box_w = box_w }
+end
+
 -- ListGeom.fillRow(opts) -> { bands, extra_lead, extra_bottom }
 --
 --   opts.n          how many lines the layout configures
@@ -570,6 +618,10 @@ function ListGeom.fillRow(opts)
     local lead    = opts.lead or 0
     local height  = opts.height or 0
     local measure = opts.measure
+    -- opts.empty(i) -> true when line i will render nothing. Optional: with it
+    -- absent every line reserves, which is correct but leaves a group row's
+    -- unused lines holding space open.
+    local empty   = opts.empty
     if n < 1 or not measure then return nil end
 
     local bands, placed, spent = {}, 0, 0
@@ -584,17 +636,32 @@ function ListGeom.fillRow(opts)
         -- One line's worth for everything still to come: what this line may
         -- WRAP into is the space beyond that. The reservation yields to the
         -- line holding it (never offered less than its own single line), so
-        -- tight rows still drop bottom-up. Line 1 reserves nothing -- the
-        -- heading expands first, even at the bottom lines' expense.
-        local offer = avail
-        if idx > 1 then
-            local reserve = 0
-            for j = idx + 1, n do
+        -- tight rows still drop bottom-up.
+        --
+        -- EVERY line reserves, line 1 included. Line 1 used to be exempt, on
+        -- the reasoning that a heading should expand first even at the bottom
+        -- lines' expense. That was harmless while a first line could only ever
+        -- be one line tall, and became a bug the moment it could WRAP: a book
+        -- with a long title lost its author, the book under it kept one, and a
+        -- page of rows stopped having a shape. Some books showing a progress
+        -- bar and others not is a worse outcome than any amount of truncation.
+        --
+        -- So the rule is: every line that fits RENDERS, truncating if it must,
+        -- and only room left over after that buys a wrap. Line 1 gets first
+        -- call on the spare because linePriority reaches it first.
+        -- A line with nothing to SAY reserves nothing: it never holds a band
+        -- open, so the room it gives up belongs to the lines that remain. The
+        -- caller answers this because it is the only side that can -- emptiness
+        -- is a property of the expanded text, and asking `measure` would mean
+        -- building the very widgets the reservation exists to budget for.
+        local reserve = 0
+        for j = idx + 1, n do
+            if not (empty and empty(j)) then
                 reserve = reserve + (unit[j] or 0) + lead
             end
-            offer = math.max(unit[idx] or 0, avail - reserve)
-            if offer > avail then offer = avail end
         end
+        local offer = math.max(unit[idx] or 0, avail - reserve)
+        if offer > avail then offer = avail end
         local used = measure(idx, offer) or 0
         if used > 0 then
             bands[idx] = used

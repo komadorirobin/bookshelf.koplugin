@@ -529,6 +529,7 @@ end)
 local function fill(unit, wants, lead, height)
     local got = ListGeom.fillRow{
         n = #unit, unit = unit, lead = lead, height = height,
+        empty = function(i) return ((wants and wants[i]) or 1) == 0 end,
         measure = function(i, offer)
             local want = (wants and wants[i]) or 1
             if want == 0 then return 0 end          -- nothing to say
@@ -577,15 +578,59 @@ t.test("five lines degrade 12345 -> 1234 -> 123 -> 12 -> 1", function()
     end
 end)
 
-t.test("a long first line pushes the BOTTOM line out: 123 becomes 112",
+t.test("every line that fits RENDERS; wrapping is only for spare room",
 function()
-    -- The heading still expands first; what it displaces is whatever sits at
-    -- the bottom of the row, not a neighbour picked by an anchor rule.
+    -- REVERSED 2026-08-31, on the maintainer's rule and for their reason:
+    --
+    --   "always truncate if there's no room to wrap - this would ensure every
+    --    book always gets the same number of lines, and we don't end up e.g.
+    --    some books having a progress bar and some not. So, we show all lines,
+    --    truncating if we must, when there's space to do so. If there's more
+    --    space than we need for truncated lines, we allow to wrap starting
+    --    with the first line."
+    --
+    -- This file used to assert the opposite -- "a title long enough to fill
+    -- the row is allowed to" -- so a long heading displaced the bottom lines.
+    -- The cost only became visible once line 1 could actually WRAP (cccc024):
+    -- a book with a long title lost its author, the book under it kept one,
+    -- and the page stopped having a shape. Uniformity across books beats
+    -- letting one book's heading win.
+    --
+    -- So line 1 now reserves for the lines below it, exactly as lines 2..n
+    -- already did. What a line WANTS cannot change how many lines the row
+    -- shows -- only the row's height can.
     local unit = { 10, 10, 10, 10, 10 }
     eq(fill(unit, nil, 0, 30), "123")                 -- short title
-    eq(fill(unit, { 2 }, 0, 30), "112")               -- title wants two
-    eq(fill(unit, { 3 }, 0, 30), "111",
-        "a title long enough to fill the row is allowed to")
+    eq(fill(unit, { 2 }, 0, 30), "123",
+        "a title wanting two lines does not cost line 3 its place")
+    eq(fill(unit, { 3 }, 0, 30), "123",
+        "nor does one wanting three")
+end)
+
+t.test("slack goes to the first line, and only slack", function()
+    -- Two lines, one unit each. At exactly two units both render and neither
+    -- wraps; give the row a third unit and line 1 spends it.
+    local unit = { 10, 10 }
+    eq(fill(unit, { 2 }, 0, 20), "12",
+        "no spare room: line 1 truncates so line 2 keeps its place")
+    eq(fill(unit, { 2 }, 0, 30), "112",
+        "one unit spare: line 1 wraps into it")
+    eq(fill(unit, { 3 }, 0, 30), "112",
+        "and takes only the spare, however much it wants")
+end)
+
+t.test("the author no longer vanishes in the dead band", function()
+    -- The reported case, in its real units: a title line probed at 33px over
+    -- an author line at 29px. Heights 66..95 used to render the title twice
+    -- and drop the author entirely, so the same book showed two lines at one
+    -- row height and one line plus an author at another.
+    local unit = { 33, 29 }
+    for _, h in ipairs({ 63, 70, 80, 95 }) do
+        eq(fill(unit, { 2 }, 1, h), "12",
+            "height " .. h .. " must still show the author")
+    end
+    eq(fill(unit, { 2 }, 1, 96), "112",
+        "at 96 there is genuinely room for both, so the title wraps")
 end)
 
 t.test("a missing middle line never lets a lower one climb past it", function()
@@ -624,13 +669,17 @@ function()
     eq(fill(unit, { 1, 1, 9, 1 }, 0, 60), "123334")
 end)
 
-t.test("line 1 keeps its expand-first privilege, at the bottom's expense",
+t.test("line 1 has no expand-first privilege: a dropped line hurts more",
 function()
-    -- A truncated title hurts more than a dropped bar: the heading reserves
-    -- nothing and may take the whole row.
+    -- REVERSED with the rule above. A truncated title was judged to hurt more
+    -- than a dropped bottom line, so the heading reserved nothing and could
+    -- take the whole row. Once line 1 could wrap that meant one book showing a
+    -- progress bar and the next not, which is worse than either book's title
+    -- being cut short -- a page of rows has to have a shape.
     local unit = { 10, 10, 10 }
-    eq(fill(unit, { 9 }, 0, 30), "111")
-    eq(fill(unit, { 2 }, 0, 30), "112")
+    eq(fill(unit, { 9 }, 0, 30), "123",
+        "a title wanting the whole row gets one line, and the row keeps three")
+    eq(fill(unit, { 2 }, 0, 30), "123")
 end)
 
 t.test("the leading between lines is paid for out of the same height",
@@ -1122,6 +1171,162 @@ t.test("shareBands is deleted, not merely unused", function()
     assert(ListGeom.shareBands == nil,
         "two allocators in the tree is how the budget and the render come "
         .. "to disagree; fillRow is the only one now")
+end)
+
+-- ── Elastic lines may wrap (the %spacer title) ─────────────────────────────
+--
+-- A line carrying %spacer used to be single-line BY NATURE: the token asks for
+-- a left and a right half, which reads as a one-line idea, so the measure
+-- callback handed it exactly one line and the left side truncated. That rule
+-- met the DEFAULT list template, "%title %spacer %rating %favourite", and the
+-- result was a truncated title with a row of empty space under it - reported
+-- from a screenshot, reproduced on the maintainer's own PW5.
+--
+-- The fix reserves the right-hand tail's width on every line and lets the left
+-- side wrap into what remains, with the tail on the first line. That keeps one
+-- box at one width, rather than slicing a TextBoxWidget at its own wrapped
+-- line boundaries -- the reading of vertical_string_list that has already
+-- caused one bug in this area.
+--
+-- %bar is deliberately NOT included: a bar is a graphic with text either side,
+-- so one line is the whole idea and there is nothing to wrap.
+
+t.test("a tail leaves the left side the rest of the width to wrap into", function()
+    local plan = ListGeom.elasticWrapPlan{
+        inner_w = 600, tail_w = 100, gap = 20, offer = 120, unit = 40,
+    }
+    eq(plan.wrap, true)
+    eq(plan.box_w, 480, "600 - 100 tail - 20 gap")
+end)
+
+t.test("one line's worth of room means no wrapping, as before", function()
+    -- Unchanged behaviour: the row is too short to wrap into, so the caller
+    -- keeps its single truncated line.
+    local plan = ListGeom.elasticWrapPlan{
+        inner_w = 600, tail_w = 100, gap = 20, offer = 40, unit = 40,
+    }
+    eq(plan.wrap, false)
+end)
+
+t.test("a tail that would squeeze the left side too hard keeps one line", function()
+    -- Reserving the tail on EVERY line is what makes this cheap, and the cost
+    -- is width. Past half the column the trade stops being worth it: a title
+    -- wrapped into a sliver reads worse than a truncated one.
+    local plan = ListGeom.elasticWrapPlan{
+        inner_w = 600, tail_w = 400, gap = 20, offer = 200, unit = 40,
+    }
+    eq(plan.wrap, false, "180px of 600 is too little to wrap a title into")
+    local ok = ListGeom.elasticWrapPlan{
+        inner_w = 600, tail_w = 280, gap = 20, offer = 200, unit = 40,
+    }
+    eq(ok.wrap, true, "300px of 600 is exactly the floor and still wraps")
+end)
+
+t.test("no tail at all still wraps, at the full width", function()
+    -- "%title %spacer" with nothing after it: the spacer just pushes to the
+    -- right edge, so there is nothing to reserve.
+    local plan = ListGeom.elasticWrapPlan{
+        inner_w = 600, tail_w = 0, gap = 0, offer = 120, unit = 40,
+    }
+    eq(plan.wrap, true)
+    eq(plan.box_w, 600)
+end)
+
+t.test("the plan never returns a width below 1", function()
+    local plan = ListGeom.elasticWrapPlan{
+        inner_w = 40, tail_w = 900, gap = 20, offer = 200, unit = 40,
+    }
+    eq(plan.wrap, false)
+    assert(plan.box_w >= 1, "a zero or negative width would crash TextBoxWidget")
+end)
+
+-- ── The cover cell sits at the TOP of a tall row ───────────────────────────
+--
+-- ListGeom.thumbSize derives the thumbnail from the ROW height, then caps its
+-- WIDTH against ListGeom.artBudget and re-derives the height from the capped
+-- width. So cover_h == content_h in every ordinary row, and the two only
+-- diverge once that cap bites -- a listing configured for one or two rows a
+-- page, whose description runs to twenty lines, gets a cover a fraction of the
+-- row's height.
+--
+-- It was wrapped in a CenterContainer of the full content box, so in exactly
+-- that case the picture floated in the middle of the row with a hand's width of
+-- blank paper above it, level with nothing, while the title it belongs to sat
+-- at the top. Seen on a PW5, 2026-08-31.
+--
+-- What is asserted is the DECLARATION, because the declaration is the whole
+-- contract with KOReader: which container class, and what alignment it asks
+-- for. Re-implementing WidgetContainer:paintTo here to measure a y offset would
+-- only prove the copy agrees with itself.
+
+t.test("the art cell reserves the row but tops the picture in it", function()
+    local cells = {}
+    local function recorder(kind)
+        return { new = function(_self, o) o.kind = kind
+                                         cells[#cells + 1] = o
+                                         return o end }
+    end
+    local cell = localFn2("ListRow.topCell", {
+        TopContainer    = recorder("top"),
+        CenterContainer = recorder("center"),
+        Geom            = { new = function(_self, o) return o end },
+    })
+
+    local cover = { name = "the thumbnail" }
+    -- A cover well short of the row: the tall-row case, and the only case in
+    -- which any of this is visible.
+    local built = cell(cover, 90, 700)
+
+    eq(built.kind, "top", "the picture must not be centred in a tall row")
+    eq(built.align, "top")
+    eq(built[1], cover, "the cell must hold the cover it was handed")
+    -- The row's height is NOT the picture's height: the cell still spans the
+    -- whole content box, or every tall row would collapse to its thumbnail and
+    -- the pinned density table would move.
+    eq(built.dimen.w, 90)
+    eq(built.dimen.h, 700)
+end)
+
+-- ── The chevron centres on the STACK, not on the row ───────────────────────
+--
+-- A folder row's right-hand end is the fanned deck of member covers, then the
+-- disclosure arrow. Both were centred in the row, which agreed for as long as
+-- the deck filled it. It does not once ListGeom.artBudget caps the fan's width:
+-- the cards keep the book aspect by losing height, so on a very tall row the
+-- fan is a fraction of it. The deck is now topped like a book's cover, and the
+-- arrow has to follow it or it points at blank paper.
+--
+-- chevronBand answers ONE question -- how tall is the box the arrow centres in
+-- -- so the row is left with a lookup rather than four-way arithmetic inline.
+
+local chevronBand = localFn2("ListRow.chevronBand", {})
+
+t.test("the arrow centres on a stack shorter than the row", function()
+    eq(chevronBand(180, 30, 600), 180)
+end)
+
+t.test("with nothing in the slot the arrow keeps the whole row", function()
+    -- No deck and no fallback tile: there is no stack to point at, and the row
+    -- is the only band left. This is the documented behaviour and must not move
+    -- -- see the note above the chevron in bookshelf_list_group.lua.
+    eq(chevronBand(600, 30, 600), 600)
+end)
+
+t.test("a stack shorter than the arrow still holds the whole arrow", function()
+    -- CenterContainer offsets by floor((h - glyph)/2), which goes NEGATIVE for
+    -- a glyph taller than its box: the arrow would paint above the cell, and
+    -- the cell is now at the very top of the row, so it would paint outside the
+    -- row altogether.
+    eq(chevronBand(20, 30, 600), 30)
+end)
+
+t.test("the band never outgrows the row", function()
+    eq(chevronBand(900, 30, 600), 600)
+    eq(chevronBand(900, 4000, 600), 600)
+end)
+
+t.test("a missing measurement falls back to the row", function()
+    eq(chevronBand(nil, nil, 600), 600)
 end)
 
 t.done()
