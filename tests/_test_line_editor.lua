@@ -29,11 +29,28 @@ package.loaded["device"] = { screen = {
 } }
 
 local shown = {}
-package.loaded["ui/uimanager"] = {
-    show     = function(_self, w) shown[#shown + 1] = w end,
-    close    = function(_self, w) w._closed = true end,
+-- _window_stack is maintained for real: the stray-tap guard (issue #364) asks
+-- UIManager who is on top, so a stub that only recorded shows could not tell
+-- "the dialog is the top widget" from "a picker is stacked over it" -- which
+-- is the entire distinction under test.
+local UI
+UI = {
+    _window_stack = {},
+    show     = function(_self, w)
+        shown[#shown + 1] = w
+        UI._window_stack[#UI._window_stack + 1] = { widget = w }
+    end,
+    close    = function(_self, w)
+        w._closed = true
+        for i = #UI._window_stack, 1, -1 do
+            if UI._window_stack[i].widget == w then
+                table.remove(UI._window_stack, i)
+            end
+        end
+    end,
     setDirty = function() end,
 }
+package.loaded["ui/uimanager"] = UI
 package.loaded["ui/widget/buttondialog"] = {
     new = function(_self, t) return t end,
 }
@@ -46,10 +63,23 @@ package.loaded["ui/widget/inputdialog"] = {
     new = function(_self, t)
         t.reinits, t.closed_keyboard = 0, 0
         t._text = t.input or ""
+        t.taps_reaching_dialog = 0
         function t:getInputText() return self._text end
         function t:setInputText(s) self._text = s end
         function t:reinit() self.reinits = self.reinits + 1 end
         function t:onCloseKeyboard() self.closed_keyboard = self.closed_keyboard + 1 end
+        -- Stands in for KOReader's InputDialog:onTap with the keyboard already
+        -- hidden: a tap outside the frame becomes onCloseDialog, which fires
+        -- the button carrying id="close" (inputdialog.lua:737-744). The
+        -- editor's Cancel carries that id, so reaching here IS the bug.
+        function t:onTap()
+            self.taps_reaching_dialog = self.taps_reaching_dialog + 1
+            for _r, row in ipairs(self.buttons or {}) do
+                for _c, b in ipairs(row) do
+                    if b.id == "close" then b.callback(); return true end
+                end
+            end
+        end
         LAST = t
         return t
     end,
@@ -367,6 +397,62 @@ function()
     eq(small.text_height, 80, "the cap must bound the field on a short panel")
     assert(small.text_height >= 60,
         "never below the two lines the editor shipped with")
+end)
+
+-- ── Stray taps while a picker is stacked on top (issue #364) ───────────────
+
+t.test("a tap the dialog owns still reaches it", function()
+    -- The guard must not disarm the dialog's own tap handling, or tapping
+    -- outside an editor with no picker open would stop closing it.
+    local dialog, _getSaved, getCancelled = open{ line = { template = "x" } }
+    dialog:onTap(nil, {})
+    eq(dialog.taps_reaching_dialog, 1)
+    eq(getCancelled(), 1, "an owned tap should still cancel the editor")
+end)
+
+t.test("a tap declined by a picker above does not cancel the editor", function()
+    -- The reported sequence: Tokens… / Icons… opens a modal, an imprecise tap
+    -- lands inside that modal but on no row, LibraryModal returns false, and
+    -- KOReader's always-active walk hands it to the editor underneath -- which
+    -- reads it as "tap outside my frame" and fires Cancel. The editor then
+    -- vanishes behind the picker, restoreMenu puts the top menu back, and every
+    -- later pick previews but can never be saved.
+    local dialog, getSaved, getCancelled = open{ line = { template = "x" } }
+    local picker = { name = "picker" }
+    UI:show(picker)
+
+    dialog:onTap(nil, {})
+    eq(dialog.taps_reaching_dialog, 0, "the tap belonged to the picker")
+    eq(getCancelled(), 0, "a stray tap cancelled the editor")
+    assert(not dialog._closed, "a stray tap closed the editor")
+
+    -- Picking a token after the stray tap must still be savable.
+    UI:close(picker)
+    dialog:setInputText("x%file_size")
+    press(dialog, "Save")
+    eq(getSaved().template, "x%file_size")
+end)
+
+t.test("the dialog's own keyboard on top does not disarm the guard", function()
+    -- InputDialog is flagged is_always_active precisely so a tap that misses a
+    -- key on its OWN keyboard -- a separate window above it -- still reaches
+    -- it. The guard has to let that through or the board stops hiding.
+    local dialog = open{ line = { template = "x" } }
+    local keyboard = { name = "keyboard" }
+    dialog._input_widget = { keyboard = keyboard }
+    UI:show(keyboard)
+    dialog:onTap(nil, {})
+    eq(dialog.taps_reaching_dialog, 1, "the dialog's own keyboard blocked its taps")
+end)
+
+t.test("a toast above the dialog is looked past", function()
+    -- Toasts sit on top by contract and never own an event, so a Notification
+    -- must not make every tap look like it belongs to somebody else.
+    local dialog, _getSaved, getCancelled = open{ line = { template = "x" } }
+    UI:show({ name = "toast", toast = true })
+    dialog:onTap(nil, {})
+    eq(dialog.taps_reaching_dialog, 1, "a toast swallowed the dialog's taps")
+    eq(getCancelled(), 1)
 end)
 
 t.done()
