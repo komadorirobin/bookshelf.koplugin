@@ -80,23 +80,40 @@ end
 -- catalogue (defined in tokens.lua). Each row inserts its token at the
 -- cursor of the open `dialog` and dismisses the picker; the parent dialog
 -- stays open so the user can continue editing.
--- Public entry point: try the bookends LibraryModal for a richer picker
--- when the bookends plugin is installed; otherwise fall back to a Menu.
+-- Public entry point. Uses OUR OWN LibraryModal, not bookends's.
+--
+-- This used to `require("menu.library_modal")` -- bookends's copy -- because
+-- back then bookshelf had no shell of its own. It does now
+-- (lib/bookshelf_library_modal.lua, ported from that same file), and every
+-- other picker in the plugin already uses it: the icons library, the folder
+-- picker, the module picker, the chip editor.
+--
+-- Leaving this one call site pointed at bookends meant the token picker got a
+-- DIFFERENT shell depending on whether bookends happened to be installed --
+-- and the two have since diverged. Our port gained swipe-to-page and grid
+-- dpad navigation; bookends's has neither. So swipe paging worked in the icon
+-- picker and silently did nothing in the token picker, on exactly the machines
+-- that have both plugins. Same shell for everyone removes the whole class.
+--
+-- The Menu fallback below is now only reachable if the bundled module fails to
+-- load at all, i.e. a broken install; it is kept as a safety net rather than
+-- as a supported path.
 function Settings:_pickToken(dialog)
-    local ok, LibraryModal = pcall(require, "menu.library_modal")
+    local ok, LibraryModal = pcall(require, "lib/bookshelf_library_modal")
     if ok and LibraryModal then
         return self:_pickTokenViaLibraryModal(LibraryModal, dialog)
     end
     return self:_pickTokenFallback(dialog)
 end
 
--- Bookends-soft-dependency picker. Reuses bookends's LibraryModal shell
--- (chip strip, search, paginated list, footer actions) but feeds it OUR
--- bookshelf-scoped catalogue and renders rows with a live preview using
--- our own Tokens.expand. Bookends's TokensLibrary can't be reused
--- directly because its row renderer calls bookends's Tokens engine
--- (different signature), and its catalogue includes Reader-context
--- tokens we deliberately exclude.
+-- Renders the catalogue into the shared LibraryModal shell (chip strip,
+-- search, paginated list, footer actions), feeding it OUR bookshelf-scoped
+-- catalogue and rows with a live preview from our own Tokens.expand.
+-- Bookends's TokensLibrary can't be reused directly even when that plugin IS
+-- installed: its row renderer calls bookends's Tokens engine (different
+-- signature), and its catalogue includes Reader-context tokens we
+-- deliberately exclude. Takes the shell as an argument so the fallback path
+-- and the tests can hand it a different one.
 function Settings:_pickTokenViaLibraryModal(LibraryModal, dialog)
     local Tokens          = require("lib/bookshelf_tokens")
     local Font            = require("ui/font")
