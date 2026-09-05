@@ -2668,6 +2668,443 @@ test("getBySource: unknown kind returns empty list and zero total", function()
     assert(total == 0, "expected total=0, got " .. tostring(total))
 end)
 
+-- ─── kindle kind (issue #355) ────────────────────────────────────────────────
+-- Records come from the Kindle catalogue bridge, not from the filesystem or
+-- BIM, so the dispatch's job is: ask the source, sort with the shelf's own
+-- SortEngine (the point of the exercise -- the Kindle plugin's own list has one
+-- hardcoded title order), paginate, and stay inert when there is no Kindle.
+local function _fakeKindleSource(books, available)
+    local by_path = {}
+    for _i, b in ipairs(books or {}) do
+        by_path[b.filepath] = b
+        if b.kindle_source_path then by_path[b.kindle_source_path] = b end
+    end
+    local fake = {
+        isAvailable = function() return available ~= false end,
+        listBooks = function() return books or {} end,
+        recordFor = function(path) return by_path[path] end,
+        _calls = 0,
+    }
+    package.loaded["lib/bookshelf_kindle_source"] = fake
+    return fake
+end
+local function _kindleBook(title, pct)
+    return {
+        filepath = "/mnt/us/documents/" .. title .. ".kfx",
+        filename = title .. ".kfx",
+        title = title, display_title = title,
+        format = "kfx", book_pct = pct, is_kindle = true,
+        attr = { mode = "file", size = 1000, modification = 0 },
+    }
+end
+
+test("getBySource: kindle kind lists the catalogue bridge's books", function()
+    _fakeKindleSource({ _kindleBook("Mort"), _kindleBook("Equal Rites") })
+    local list, total = Repo.getBySource({ kind = "kindle" }, nil, nil, 0, 10)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#list == 2, "expected 2 Kindle books, got " .. #list)
+    assert(total == 2, "expected total=2, got " .. tostring(total))
+    assert(list[1].is_kindle == true, "records keep their Kindle marker")
+end)
+
+test("getBySource: kindle kind sorts with the shelf's sort_priority", function()
+    _fakeKindleSource({ _kindleBook("Mort"), _kindleBook("Equal Rites"), _kindleBook("Sourcery") })
+    local list = Repo.getBySource({ kind = "kindle" }, nil,
+        { { key = "title", reverse = false } }, 0, 10)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(list[1].title == "Equal Rites",
+        "expected title sort, got " .. tostring(list[1].title))
+    assert(list[3].title == "Sourcery", "expected Sourcery last, got " .. tostring(list[3].title))
+end)
+
+test("getBySource: kindle kind paginates and still reports the full total", function()
+    _fakeKindleSource({ _kindleBook("A"), _kindleBook("B"), _kindleBook("C"), _kindleBook("D") })
+    local list, total = Repo.getBySource({ kind = "kindle" }, nil,
+        { { key = "title", reverse = false } }, 2, 2)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#list == 2, "expected a 2-book page, got " .. #list)
+    assert(total == 4, "total must be the whole shelf, got " .. tostring(total))
+    assert(list[1].title == "C", "expected the third book first, got " .. tostring(list[1].title))
+end)
+
+test("buildBook: re-attaches the Kindle identity when rehydrating from a path", function()
+    -- The hero and the tap-preview rebuild a record from its filepath alone (six
+    -- call sites in the widget). A Kindle record that lost is_kindle on the way
+    -- through would then be handed to ReaderUI as a raw .kfx, which it cannot
+    -- read: the book would just fail to open. Re-attaching here fixes every one
+    -- of those sites at once.
+    local kfx = "/mnt/us/documents/The Goal.kfx"
+    _fakeKindleSource({ {
+        filepath = kfx, kindle_source_path = kfx,
+        title = "The Goal", author = "Goldratt, Eliyahu M.",
+        cover_image_path = "/mnt/us/system/thumbnails/thumbnail_B002LHRM2O_EBOK_portrait.jpg",
+        book_pct = 0.886, status = "reading", is_kindle = true,
+        kindle_book_id = "cc:abc",
+    } })
+    local b = Repo.buildBook(kfx)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(b ~= nil, "buildBook returned nil for a Kindle path")
+    assert(b.is_kindle == true, "is_kindle must survive rehydration")
+    assert(b.kindle_book_id == "cc:abc", "the catalogue id must survive")
+    -- BIM knows nothing about a .kfx, so the catalogue's presentation data is
+    -- all there is; without it the hero shows a bare filename.
+    assert(b.title == "The Goal", "title fell back to the catalogue, got " .. tostring(b.title))
+    assert(b.cover_image_path ~= nil, "cover path must survive")
+end)
+
+test("buildBookMeta: re-attaches the Kindle identity, cover and catalogue title", function()
+    -- buildBookMeta, not buildBook, is the funnel that matters: three sites in
+    -- the widget rebuild ONE spine through it and write the result straight back
+    -- into _page_items (see find_and_swap and the selection repaint). A Kindle
+    -- record replaced there loses its cover and its title, and because the page
+    -- array itself is overwritten the damage survives every later rebuild --
+    -- which is exactly the "tapped cover turns into a placeholder" bug.
+    local kfx = "/mnt/us/documents/Goldratt/The Goal.kfx"
+    local thumb = "/mnt/us/system/thumbnails/thumbnail_B002LHRM2O_EBOK_portrait.jpg"
+    _fakeKindleSource({ {
+        filepath = kfx, kindle_source_path = kfx,
+        title = "The Goal: A Process of Ongoing Improvement",
+        display_title = "The Goal: A Process of Ongoing Improvement",
+        author = "Goldratt, Eliyahu M.", cover_image_path = thumb,
+        is_kindle = true, kindle_book_id = "cc:abc",
+    } })
+    local b = Repo.buildBookMeta(kfx)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(b ~= nil, "buildBookMeta returned nil")
+    assert(b.is_kindle == true, "is_kindle must survive")
+    assert(b.cover_image_path == thumb, "cover path must survive, got " .. tostring(b.cover_image_path))
+    -- BIM knows nothing about a .kfx, so buildBookMeta falls back to the
+    -- filename as a title. The catalogue's title is strictly better and must win.
+    assert(b.title == "The Goal: A Process of Ongoing Improvement",
+        "catalogue title must beat the filename fallback, got " .. tostring(b.title))
+end)
+
+test("buildBookMeta: keeps the flags the OPEN path needs, not just the visible ones", function()
+    -- Opening a book rehydrates its record first (the per-book spine swap writes
+    -- the buildBookMeta result straight back into _page_items), so every field
+    -- the open path reads has to survive that -- not only the ones you can see.
+    --
+    -- Both of these were lost, with consequences: without kindle_needs_prepare a
+    -- tap skips the "this takes a few minutes" confirm and drops the user into an
+    -- uncancellable conversion; without kindle_block_reason a blocked book falls
+    -- back to "drm" and is refused with the wrong explanation.
+    local kfx = "/mnt/us/documents/Campaign.kfx"
+    _fakeKindleSource({ {
+        filepath = kfx, kindle_source_path = kfx, title = "Campaign",
+        is_kindle = true, kindle_needs_prepare = true,
+    } })
+    local b = Repo.buildBookMeta(kfx)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(b.kindle_needs_prepare == true,
+        "kindle_needs_prepare must survive rehydration (the prepare confirm)")
+
+    local azw3 = "/mnt/us/documents/Unreadable.azw3"
+    _fakeKindleSource({ {
+        filepath = azw3, kindle_source_path = azw3, title = "Unreadable",
+        is_kindle = true, kindle_blocked = true, kindle_block_reason = "unsupported",
+    } })
+    local blocked = Repo.buildBookMeta(azw3)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(blocked.kindle_blocked == true, "still blocked")
+    assert(blocked.kindle_block_reason == "unsupported",
+        "the reason must survive, or the wrong refusal message is shown; got "
+        .. tostring(blocked.kindle_block_reason))
+end)
+
+test("buildBookMeta: a real embedded title still beats the catalogue's", function()
+    -- Once a book has been converted, the EPUB's own metadata is what the reader
+    -- shows, so it wins -- the catalogue only fills a gap.
+    local epub = "/cache/kindle.koplugin/cc_abc.epub"
+    _G._test_bim_data = { [epub] = { title = "The Goal", authors = "Eliyahu M. Goldratt" } }
+    _fakeKindleSource({ {
+        filepath = epub, kindle_source_path = "/mnt/us/documents/The Goal.kfx",
+        title = "Catalogue Title That Should Lose", is_kindle = true,
+    } })
+    local b = Repo.buildBookMeta(epub)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_bim_data = nil
+    assert(b.title == "The Goal", "embedded title must win, got " .. tostring(b.title))
+    assert(b.is_kindle == true, "identity still re-attached")
+end)
+
+test("buildBook: leaves an ordinary book untouched when a Kindle library exists", function()
+    -- The overlay must be strictly scoped to paths the Kindle source knows.
+    _fakeKindleSource({ { filepath = "/mnt/us/documents/Kindle.kfx", is_kindle = true } })
+    _G._test_bim_data = { ["/books/normal.epub"] = { title = "Normal Book" } }
+    local b = Repo.buildBook("/books/normal.epub")
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_bim_data = nil
+    assert(b.is_kindle == nil, "an ordinary book must not be marked as Kindle")
+    assert(b.title == "Normal Book", "title unchanged, got " .. tostring(b.title))
+end)
+
+test("getBySource: kindle shelf honours a Hardcover cover, not just the hero", function()
+    -- Kindle records come from the catalogue bridge, so they never pass through
+    -- buildBookMeta -- which is where the two cover overrides live (a picked
+    -- custom cover, then Hardcover for a linked use_cover book). Without them
+    -- the shelf keeps showing Amazon's thumbnail while the hero shows the
+    -- Hardcover art, and a per-book repaint makes the shelf cover flicker to the
+    -- Hardcover one and back.
+    local kfx = "/mnt/us/documents/Linked.kfx"
+    local thumb = "/mnt/us/system/thumbnails/thumbnail_LINKED_EBOK_portrait.jpg"
+    _G._test_settings = {
+        bookshelf_hardcover_links = {
+            [kfx] = { book_id = 777, title = "Linked", use_cover = true },
+        },
+    }
+    hccache.clear()
+    hccache.seed("enrich", "777", { cover_path = "/tmp/hardcover-linked.jpg" })
+    local Hardcover = require("lib/bookshelf_hardcover")
+    Hardcover.invalidate()
+
+    _fakeKindleSource({ {
+        filepath = kfx, kindle_source_path = kfx, title = "Linked",
+        cover_image_path = thumb, is_kindle = true,
+    } })
+    local list = Repo.getBySource({ kind = "kindle" }, nil, nil, 0, 10)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    hccache.clear()
+    Hardcover.invalidate()
+    assert(list[1].cover_image_path == "/tmp/hardcover-linked.jpg",
+        "shelf must use the Hardcover cover, got " .. tostring(list[1].cover_image_path))
+end)
+
+test("getBySource: an unlinked Kindle book keeps its catalogue thumbnail", function()
+    local kfx = "/mnt/us/documents/Plain.kfx"
+    local thumb = "/mnt/us/system/thumbnails/thumbnail_PLAIN_EBOK_portrait.jpg"
+    _fakeKindleSource({ {
+        filepath = kfx, kindle_source_path = kfx, title = "Plain",
+        cover_image_path = thumb, is_kindle = true,
+    } })
+    local list = Repo.getBySource({ kind = "kindle" }, nil, nil, 0, 10)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(list[1].cover_image_path == thumb,
+        "no override -> Amazon's thumbnail, got " .. tostring(list[1].cover_image_path))
+end)
+
+-- ─── Kindle books in local search (issue #355) ───────────────────────────────
+-- Search is where "do I already have this?" gets asked, and until now the answer
+-- ignored the Kindle library entirely -- you had to be standing on the Kindle
+-- chip. The chip is the opt-in signal: having made one means those books are part
+-- of the library you think of as yours, so search covers them.
+local function _kindleChipConfigured(yes)
+    _G._test_settings = _G._test_settings or {}
+    _G._test_settings["bookshelf_tabs"] = yes
+        and { { id = "all", label = "Home", source = { kind = "all" } },
+              { id = "kindle-1", label = "Kindle", source = { kind = "kindle" } } }
+        or  { { id = "all", label = "Home", source = { kind = "all" } } }
+end
+
+test("searchBooks: finds a Kindle book when a Kindle chip is configured", function()
+    _kindleChipConfigured(true)
+    _fakeKindleSource({ {
+        filepath = "/mnt/us/documents/Mort.kfx", kindle_source_path = "/mnt/us/documents/Mort.kfx",
+        title = "Mort", author = "Terry Pratchett", is_kindle = true,
+    } })
+    local hits = Repo.searchBooks("pratchett", 20)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    local found
+    for _i, b in ipairs(hits) do if b.title == "Mort" then found = b end end
+    assert(found ~= nil, "Kindle book missing from search results")
+    assert(found.is_kindle == true, "and it keeps its Kindle identity")
+end)
+
+test("searchBooks: ignores the Kindle library when no Kindle chip is configured", function()
+    _kindleChipConfigured(false)
+    _fakeKindleSource({ {
+        filepath = "/mnt/us/documents/Mort.kfx", title = "Mort",
+        author = "Terry Pratchett", is_kindle = true,
+    } })
+    local hits = Repo.searchBooks("pratchett", 20)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    for _i, b in ipairs(hits) do
+        assert(b.title ~= "Mort", "Kindle book leaked into search without a Kindle chip")
+    end
+end)
+
+test("searchBooks: ignores the Kindle library when it isn't available", function()
+    -- Non-Kindle device, or the plugin gone: a chip may still be configured from
+    -- a previous device, and must not produce results.
+    _kindleChipConfigured(true)
+    _fakeKindleSource({ { filepath = "/x/Mort.kfx", title = "Mort", is_kindle = true } }, false)
+    local hits = Repo.searchBooks("mort", 20)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    for _i, b in ipairs(hits) do
+        assert(b.title ~= "Mort", "unavailable Kindle library produced results")
+    end
+end)
+
+test("searchBooks: a Kindle book must match every query word, like any other", function()
+    _kindleChipConfigured(true)
+    _fakeKindleSource({ {
+        filepath = "/mnt/us/documents/Mort.kfx", title = "Mort",
+        author = "Terry Pratchett", is_kindle = true,
+    } })
+    local both = Repo.searchBooks("mort pratchett", 20)
+    local wrong = Repo.searchBooks("mort tolkien", 20)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    local hit_both, hit_wrong = false, false
+    for _i, b in ipairs(both)  do if b.title == "Mort" then hit_both  = true end end
+    for _i, b in ipairs(wrong) do if b.title == "Mort" then hit_wrong = true end end
+    assert(hit_both, "title + author should match")
+    assert(not hit_wrong, "a word matching nothing must exclude the book")
+end)
+
+test("searchAll: surfaces Kindle books through the books section", function()
+    _kindleChipConfigured(true)
+    _fakeKindleSource({ {
+        filepath = "/mnt/us/documents/Mort.kfx", title = "Mort",
+        author = "Terry Pratchett", is_kindle = true,
+    } })
+    local res = Repo.searchAll("pratchett")
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = nil
+    local found = false
+    for _i, b in ipairs(res.books or {}) do if b.title == "Mort" then found = true end end
+    assert(found, "searchAll should inherit searchBooks' Kindle results")
+end)
+
+-- ─── The shelf-wide tallies count the Kindle library too ────────────────────
+-- countByStatus feeds the Shelf size module, countFinishedBooks feeds
+-- %books_read. Both asked getAllFilepaths -- the WALKED library -- so a user
+-- with a Kindle chip was shown a shelf size that left their Kindle books out.
+-- Measured on a PW5: 247 reported, 353 actually on the shelf, and 14 finished
+-- against 18. Same opt-in as search: no Kindle chip, no change.
+local _walk_prev
+local function _setupWalk(files, statuses, kindle_chip)
+    Repo.invalidateWalkCache()
+    Repo.invalidateProgressCache()
+    _G._test_bim_data = {}
+    for _i, name in ipairs(files) do
+        _G._test_bim_data["/lib/" .. name] = { title = name }
+    end
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _kindleChipConfigured(kindle_chip)
+    _G._test_docsettings_data = {}
+    for name, st in pairs(statuses or {}) do
+        _G._test_docsettings_data["/lib/" .. name] = { summary = { status = st } }
+    end
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    _walk_prev = { dir = lfs_stub.dir, attributes = lfs_stub.attributes,
+                   sidecar = package.loaded["docsettings"].hasSidecarFile }
+    lfs_stub.dir = function(path)
+        local entries = { ".", ".." }
+        if path == "/lib" then
+            for _i, name in ipairs(files) do entries[#entries + 1] = name end
+        end
+        local i = 0
+        return function() i = i + 1; return entries[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+    end
+    package.loaded["docsettings"].hasSidecarFile = function(_self, fp)
+        return _G._test_docsettings_data[fp] ~= nil
+    end
+end
+
+local function _teardownWalk()
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    lfs_stub.dir, lfs_stub.attributes = _walk_prev.dir, _walk_prev.attributes
+    package.loaded["docsettings"].hasSidecarFile = _walk_prev.sidecar
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _G._test_settings = {}
+    _G._test_docsettings_data = nil
+    Repo.invalidateWalkCache()
+    Repo.invalidateProgressCache()
+end
+
+test("countByStatus: Kindle books count towards the shelf's size", function()
+    _setupWalk({ "done.epub", "reading.epub" },
+               { ["done.epub"] = "complete", ["reading.epub"] = "reading" }, true)
+    _fakeKindleSource({
+        { filepath = "/k/a.kfx", title = "A", _status = "finished" },
+        { filepath = "/k/b.kfx", title = "B", _status = "reading"  },
+        { filepath = "/k/c.kfx", title = "C", _status = "unread"   },
+    })
+    local total, counts = Repo.countByStatus()
+    _teardownWalk()
+    assert(total == 5, "2 walked + 3 Kindle = 5, got " .. tostring(total))
+    assert(counts.finished == 2, "finished should be 1 + 1, got " .. tostring(counts.finished))
+    assert(counts.reading  == 2, "reading should be 1 + 1, got "  .. tostring(counts.reading))
+    assert(counts.unread   == 1, "unread should be 0 + 1, got "   .. tostring(counts.unread))
+end)
+
+test("countByStatus: no Kindle chip leaves the tally exactly as it was", function()
+    -- The opt-in. A user who has never made a Kindle chip must see the same
+    -- number as before, even on a Kindle with a readable catalogue.
+    _setupWalk({ "done.epub", "reading.epub" },
+               { ["done.epub"] = "complete", ["reading.epub"] = "reading" }, false)
+    _fakeKindleSource({
+        { filepath = "/k/a.kfx", title = "A", _status = "finished" },
+        { filepath = "/k/b.kfx", title = "B", _status = "unread"   },
+    })
+    local total, counts = Repo.countByStatus()
+    _teardownWalk()
+    assert(total == 2, "walked library only, got " .. tostring(total))
+    assert(counts.finished == 1, "got " .. tostring(counts.finished))
+    assert(counts.unread == 0, "the Kindle unread must not leak in, got " .. tostring(counts.unread))
+end)
+
+test("countByStatus: an unreadable Kindle library leaves the tally alone", function()
+    -- A chip carried over from another device, on hardware with no catalogue.
+    _setupWalk({ "done.epub" }, { ["done.epub"] = "complete" }, true)
+    _fakeKindleSource({ { filepath = "/k/a.kfx", title = "A", _status = "finished" } }, false)
+    local total = Repo.countByStatus()
+    _teardownWalk()
+    assert(total == 1, "unavailable source must contribute nothing, got " .. tostring(total))
+end)
+
+test("countFinishedBooks: a book finished on the Kindle counts as finished", function()
+    -- Both spellings, because normalisation lives elsewhere and a change there
+    -- must not silently drop Kindle books out of %books_read.
+    _setupWalk({ "done.epub" }, { ["done.epub"] = "complete" }, true)
+    _fakeKindleSource({
+        { filepath = "/k/a.kfx", title = "A", _status = "finished" },
+        { filepath = "/k/b.kfx", title = "B", _status = "complete" },
+        { filepath = "/k/c.kfx", title = "C", _status = "reading"  },
+    })
+    local n = Repo.countFinishedBooks()
+    _teardownWalk()
+    assert(n == 3, "1 walked + 2 Kindle finished = 3, got " .. tostring(n))
+end)
+
+test("countFinishedBooks: the Kindle share is added per call, never cached", function()
+    -- The walked count is persisted for 24h and is correct only because every
+    -- local mutation drops it. NOTHING drops it when a Kindle status changes,
+    -- so folding the Kindle share into the stored value would serve a stale
+    -- number for up to a day. Here the walk cache is deliberately left warm:
+    -- the answer must still move when the catalogue does.
+    _setupWalk({ "done.epub" }, { ["done.epub"] = "complete" }, true)
+    _fakeKindleSource({ { filepath = "/k/a.kfx", title = "A", _status = "finished" } })
+    assert(Repo.countFinishedBooks() == 2, "1 walked + 1 Kindle")
+    -- Same walk, same caches, one more finished Kindle book.
+    _fakeKindleSource({
+        { filepath = "/k/a.kfx", title = "A", _status = "finished" },
+        { filepath = "/k/b.kfx", title = "B", _status = "finished" },
+    })
+    local n = Repo.countFinishedBooks()
+    _teardownWalk()
+    assert(n == 3,
+        "the Kindle share must be recomputed per call, got " .. tostring(n)
+        .. " -- a cached total would still read 2")
+end)
+
+test("getBySource: kindle kind is empty when there is no Kindle library", function()
+    -- Every non-Kindle device: no catalogue, or the plugin absent.
+    _fakeKindleSource({ _kindleBook("Mort") }, false)
+    local list, total = Repo.getBySource({ kind = "kindle" }, nil, nil, 0, 10)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#list == 0, "expected no books when unavailable, got " .. #list)
+    assert(total == 0, "expected total=0, got " .. tostring(total))
+end)
+
 test("getBySource: folder honours sort_priority via getAll override", function()
     -- Specific-folder chips thread their sort_priority into Repo.getAll
     -- (which routes through SortEngine.chainedComparator). A title-desc
@@ -5062,6 +5499,509 @@ test("fileSizeFor stats once and memoizes, and forgets on a walk invalidate", fu
 
     package.loaded["libs/libkoreader-lfs"].attributes = prev_attr
     Repo.invalidateWalkCache()
+end)
+
+-- ============================================================================
+-- Device-library sources (Kindle / Kobo) must honour the chip's FILTER.
+--
+-- They used to skip it entirely: list, sort, slice, return. So a filter set on
+-- a Kindle chip did nothing -- a rating filter excluding 1-star books still
+-- showed them, which is how this was reported. Verified on a PW5 before the
+-- fix: 106 books with the 1-star title present, 105 with it gone after.
+--
+-- The count matters as much as the membership: `total` drives pagination, so
+-- filtering after the slice would leave a page short and the page count wrong.
+
+local function stub_kindle_source(books)
+    package.loaded["lib/bookshelf_kindle_source"] = {
+        isAvailable = function() return true end,
+        listBooks = function()
+            local out = {}
+            for i, b in ipairs(books) do out[i] = b end
+            return out
+        end,
+    }
+end
+
+local KINDLE_BOOKS = {
+    { title = "One Star",  filepath = "/k/one.kfx",  rating = 1, _status = "reading" },
+    { title = "Four Star", filepath = "/k/four.kfx", rating = 4, _status = "reading" },
+    { title = "Unrated",   filepath = "/k/none.kfx", rating = nil, _status = "reading" },
+}
+
+test("getBySource(kindle): a rating filter excludes the rated-out books", function()
+    stub_kindle_source(KINDLE_BOOKS)
+    local list, total = Repo.getBySource({ kind = "kindle" },
+        { ratings = { ["2"] = true, ["3"] = true, ["4"] = true, ["5"] = true, unrated = true } },
+        nil, 0, 100)
+    local seen = {}
+    for _i, b in ipairs(list) do seen[b.title] = true end
+    assert(not seen["One Star"], "the 1-star book must be filtered out")
+    assert(seen["Four Star"], "the 4-star book must remain")
+    assert(seen["Unrated"], "unrated was selected, so it must remain")
+    assert(#list == 2, "expected 2 books, got " .. #list)
+    assert(total == 2, "total must be the FILTERED count (it drives pagination), got "
+        .. tostring(total))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+end)
+
+test("getBySource(kindle): no filter returns everything", function()
+    stub_kindle_source(KINDLE_BOOKS)
+    local list, total = Repo.getBySource({ kind = "kindle" }, nil, nil, 0, 100)
+    assert(#list == 3 and total == 3,
+        "an inactive filter must not drop anything, got " .. #list .. "/" .. tostring(total))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+end)
+
+test("getBySource(kindle): an empty filter table is inactive, not exclude-all", function()
+    stub_kindle_source(KINDLE_BOOKS)
+    local list = Repo.getBySource({ kind = "kindle" }, {}, nil, 0, 100)
+    assert(#list == 3, "an empty filter must behave as no filter, got " .. #list)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+end)
+
+test("getBySource(kobo): the same filter gap is closed", function()
+    package.loaded["lib/bookshelf_kobo_source"] = {
+        isAvailable = function() return true end,
+        -- the branch decodes a cover per visible record; nothing to decode here
+        coverBB = function() return nil end,
+        listBooks = function()
+            return {
+                { title = "Kobo One",  filepath = "/kb/a.epub", rating = 1, _status = "reading" },
+                { title = "Kobo Four", filepath = "/kb/b.epub", rating = 4, _status = "reading" },
+            }
+        end,
+    }
+    local list, total = Repo.getBySource({ kind = "kobo" },
+        { ratings = { ["4"] = true } }, nil, 0, 100)
+    assert(#list == 1 and total == 1, "expected only the 4-star Kobo book, got " .. #list)
+    assert(list[1].title == "Kobo Four", "wrong book kept: " .. tostring(list[1].title))
+    package.loaded["lib/bookshelf_kobo_source"] = nil
+end)
+
+test("getBySource(kindle): a genre filter sees Hardcover genres, not just sidecar ones", function()
+    -- Genres on a Kindle record come from Hardcover enrichment, which is
+    -- normally applied to the visible slice only -- AFTER the filter would
+    -- have run. So a genre filter used to exclude a book that does have the
+    -- genre, which is the case the reporter hit after adding genres via
+    -- Hardcover.
+    stub_kindle_source({
+        { title = "Enriched", filepath = "/k/e.kfx", _status = "reading" },
+        { title = "Plain",    filepath = "/k/p.kfx", _status = "reading" },
+    })
+    -- The repo MEMOISES the Hardcover module (getHardcover caches it), so
+    -- swapping package.loaded after the first call is not seen. Patch the
+    -- memoised table itself.
+    local HC = require("lib/bookshelf_hardcover")
+    local prev_apply, prev_avail = HC.applyMetadata, HC.isAvailable
+    HC.isAvailable = function() return true end
+    HC.applyMetadata = function(book)
+        if book.filepath == "/k/e.kfx" then book.genres = { "Fantasy" } end
+    end
+    local list, total = Repo.getBySource({ kind = "kindle" },
+        { genres = { ["Fantasy"] = true } }, nil, 0, 100)
+    HC.applyMetadata, HC.isAvailable = prev_apply, prev_avail
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#list == 1 and total == 1,
+        "expected only the Hardcover-enriched book, got " .. #list)
+    assert(list[1].title == "Enriched",
+        "wrong book kept: " .. tostring(list[1].title))
+end)
+
+test("getBySource(kindle): a rating-only filter does NOT pay for enrichment", function()
+    -- The enrichment pass is gated on the filter constraining genres, so a
+    -- rating filter over a large catalogue keeps costing one page.
+    stub_kindle_source(KINDLE_BOOKS)
+    local calls = 0
+    local HC = require("lib/bookshelf_hardcover")
+    local prev_apply, prev_avail = HC.applyMetadata, HC.isAvailable
+    HC.isAvailable = function() return true end
+    HC.applyMetadata = function() calls = calls + 1 end
+    Repo.getBySource({ kind = "kindle" }, { ratings = { ["4"] = true } }, nil, 0, 100)
+    HC.applyMetadata, HC.isAvailable = prev_apply, prev_avail
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(calls == 0, "a rating filter must not enrich the whole list, got " .. calls .. " calls")
+end)
+
+test("kindleFilepaths: lists the catalogue, and is EMPTY without a Kindle library", function()
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#Repo.kindleFilepaths() == 0, "no Kindle source must yield no paths")
+
+    package.loaded["lib/bookshelf_kindle_source"] = {
+        isAvailable = function() return false end,
+        listBooks = function() error("must not be called when unavailable") end,
+    }
+    assert(#Repo.kindleFilepaths() == 0, "an unavailable source must yield no paths")
+
+    stub_kindle_source({
+        { title = "A", filepath = "/k/a.kfx" },
+        { title = "B", filepath = "/k/b.kfx" },
+        { title = "No path" },
+    })
+    local paths = Repo.kindleFilepaths()
+    table.sort(paths)
+    assert(#paths == 2 and paths[1] == "/k/a.kfx" and paths[2] == "/k/b.kfx",
+        "expected the two real paths, got " .. table.concat(paths, ","))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+end)
+
+-- ─── A chip's filter picker describes that chip's source ────────────────────
+-- Both halves of the picker -- the value list and the faceted counts -- used to
+-- come from the walked library, so editing a Kindle or Kobo chip's filter
+-- offered the local library's genres and counted local books against them:
+-- values that match nothing on the chip they belong to. Harmless while those
+-- chips ignored their filters, misleading once they applied them.
+local function _valueSet(choices)
+    local set = {}
+    for _i, c in ipairs(choices or {}) do set[c.value] = c.count or 0 end
+    return set
+end
+
+-- Genres on a catalogue record come from Hardcover, which the repo MEMOISES,
+-- so the live module table is patched rather than package.loaded.
+local function _withHardcoverGenres(by_path, fn)
+    local HC = require("lib/bookshelf_hardcover")
+    local prev_apply, prev_avail = HC.applyMetadata, HC.isAvailable
+    HC.isAvailable = function() return true end
+    HC.applyMetadata = function(book)
+        local g = by_path[book.filepath]
+        if g then book.genres = g end
+    end
+    local ok, err = pcall(fn)
+    HC.applyMetadata, HC.isAvailable = prev_apply, prev_avail
+    if not ok then error(err, 0) end
+end
+
+test("distinctFilterValues(genres): a Kindle chip offers ITS genres, not the library's", function()
+    _setupResolverLibrary()   -- walked library: genres manga + sci-fi
+    stub_kindle_source({
+        { title = "Enriched", filepath = "/k/e.kfx", _status = "reading" },
+        { title = "Plain",    filepath = "/k/p.kfx", _status = "reading" },
+    })
+    local scoped, unscoped
+    _withHardcoverGenres({ ["/k/e.kfx"] = { "Fantasy" } }, function()
+        scoped   = _valueSet(Repo.distinctFilterValues("genres", { kind = "kindle" }))
+        unscoped = _valueSet(Repo.distinctFilterValues("genres"))
+    end)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(scoped["Fantasy"] == 1,
+        "the Kindle chip must offer its own genre, got count " .. tostring(scoped["Fantasy"]))
+    assert(scoped["manga"] == nil,
+        "a library genre must NOT be offered on a Kindle chip -- it matches nothing there")
+    -- The other direction, or a change that simply returned the catalogue for
+    -- every chip would pass the assertions above.
+    assert(unscoped["manga"] == 2, "the library picker must be unchanged, got "
+        .. tostring(unscoped["manga"]))
+    assert(unscoped["Fantasy"] == nil, "Kindle genres must not leak into the library picker")
+end)
+
+test("distinctFilterValues: the picker's value actually matches its book", function()
+    -- The point of reusing _buildGroups: a value the picker stores has to land
+    -- in the same key space Filter.matches compares against. Emitting raw
+    -- record fields would look right in the list and then match nothing.
+    stub_kindle_source({ { title = "E", filepath = "/k/e.kfx", _status = "reading" } })
+    local value
+    _withHardcoverGenres({ ["/k/e.kfx"] = { "sci-fi" } }, function()
+        local choices = Repo.distinctFilterValues("genres", { kind = "kindle" })
+        value = choices[1] and choices[1].value
+    end)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(value, "expected a genre choice")
+    local Filter = require("lib/bookshelf_filter")
+    local compiled = Filter.compile({ genres = { [value] = true } }, Repo.filterOpts())
+    assert(Filter.matches({ genres = { "sci-fi" } }, compiled),
+        "the offered value " .. tostring(value) .. " must match the book it came from")
+end)
+
+test("distinctFilterValues(formats): a Kindle chip offers KFX, not the library's EPUB", function()
+    _setupResolverLibrary()
+    stub_kindle_source({ { title = "E", filepath = "/k/e.kfx", _status = "reading" } })
+    local scoped = _valueSet(Repo.distinctFilterValues("formats", { kind = "kindle" }))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(scoped["KFX"] == 1, "expected the catalogue's own format, got "
+        .. tostring(scoped["KFX"]))
+    assert(scoped["EPUB"] == nil, "the library's format must not be offered")
+end)
+
+test("distinctFilterValues(langs): a Kindle chip shows friendly language names", function()
+    -- Languages are where the group cache's key and its LABEL differ: it keys
+    -- on the canonical code and displays "English". Building the picker from
+    -- raw record fields would put "en" in front of the user, which is the
+    -- regression reusing _buildGroups exists to prevent.
+    stub_kindle_source({ { title = "E", filepath = "/k/e.kfx", lang = "en" } })
+    local choices = Repo.distinctFilterValues("langs", { kind = "kindle" })
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#choices == 1, "expected one language group, got " .. #choices)
+    assert(choices[1].label == "English",
+        "expected the friendly name the library picker shows, got "
+        .. tostring(choices[1].label))
+end)
+
+test("distinctFilterValues(formats): the record's own format wins over its path", function()
+    -- The case a converted Kindle book creates: the record still reports KFX
+    -- (the format the user owns) while its filepath is now the converted EPUB.
+    -- Filter.matches compares record.format, so a picker keyed on the PATH
+    -- would offer "EPUB" for a book the filter only ever sees as "KFX" -- an
+    -- option that silently matches nothing.
+    stub_kindle_source({ {
+        title = "Converted", format = "KFX",
+        filepath = "/mnt/us/koreader/cache/kindle.koplugin/cc_x.epub",
+        _status = "reading",
+    } })
+    local choices = Repo.distinctFilterValues("formats", { kind = "kindle" })
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(#choices == 1, "expected one format group, got " .. #choices)
+    assert(choices[1].value == "KFX",
+        "the picker must offer the format the filter compares, got "
+        .. tostring(choices[1].value))
+    -- The property that actually matters: the offered value matches the book.
+    local Filter = require("lib/bookshelf_filter")
+    local compiled = Filter.compile({ formats = { [choices[1].value] = true } },
+        Repo.filterOpts())
+    assert(Filter.matches({ format = "KFX" }, compiled),
+        "the offered value must match the record it came from")
+end)
+
+test("filter: a Format value matches whatever case it was saved in", function()
+    -- A saved filter outlives the code that wrote it. A chip holding "kfx"
+    -- against records reporting "KFX" excludes every book and is indis-
+    -- tinguishable on screen from an empty library, so the match normalises
+    -- both sides rather than trusting every producer to agree. Seen for real:
+    -- a chip created while a half-updated plugin was running stored the old
+    -- lowercase token and showed nothing after the restart.
+    local Filter = require("lib/bookshelf_filter")
+    for _, saved in ipairs({ "kfx", "KFX", "Kfx" }) do
+        local compiled = Filter.compile({ formats = { [saved] = true } },
+            Repo.filterOpts())
+        assert(Filter.matches({ format = "KFX" }, compiled),
+            ("a filter saved as %q must match a KFX record"):format(saved))
+    end
+    -- The mirror image, and the half a one-sided fix misses: the RECORD is the
+    -- stale one. Normalising only where the filter is built passes every
+    -- assertion above and still fails here.
+    for _, reported in ipairs({ "kfx", "KFX", "Kfx" }) do
+        local c = Filter.compile({ formats = { KFX = true } }, Repo.filterOpts())
+        assert(Filter.matches({ format = reported }, c),
+            ("a record reporting %q must match a KFX filter"):format(reported))
+    end
+    -- And it must still EXCLUDE, or "case-insensitive" would just mean
+    -- "matches everything".
+    local compiled = Filter.compile({ formats = { kfx = true } }, Repo.filterOpts())
+    assert(not Filter.matches({ format = "EPUB" }, compiled),
+        "a KFX filter must still exclude an EPUB book")
+    assert(not Filter.matches({ format = nil }, compiled),
+        "a record with no format must not slip through")
+end)
+
+test("distinctFilterValues: a walk-backed chip still gets the library", function()
+    -- Only catalogue sources are redirected; every other chip keeps the group
+    -- cache, which is faster than rebuilding per record.
+    _setupResolverLibrary()
+    -- A catalogue is live and available: if the whitelist were dropped, this
+    -- chip would silently start describing it instead of the library.
+    stub_kindle_source({ { title = "K", filepath = "/k/k.kfx", lang = "en" } })
+    local all = _valueSet(Repo.distinctFilterValues("genres", { kind = "all" }))
+    local langs = _valueSet(Repo.distinctFilterValues("langs", { kind = "all" }))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(langs["English"] == nil,
+        "the Kindle catalogue must not be consulted for a Home chip")
+    assert(all["manga"] == 2, "a Home chip must still describe the library, got "
+        .. tostring(all["manga"]))
+end)
+
+test("distinctFilterValues: an OPDS chip is never redirected", function()
+    -- Deliberate: answering "which genres are there?" for a remote catalogue
+    -- means a network fetch, and opening a filter picker must not reach the
+    -- network. OPDS keeps the library-wide list.
+    _setupResolverLibrary()
+    -- Same guard as the Home chip: a live catalogue must not be substituted
+    -- for the remote one just because it is the cheap thing to reach for.
+    stub_kindle_source({ { title = "K", filepath = "/k/k.kfx", lang = "en" } })
+    local opds = _valueSet(Repo.distinctFilterValues("genres",
+        { kind = "opds", id = "https://example.invalid/feed" }))
+    local opds_langs = _valueSet(Repo.distinctFilterValues("langs",
+        { kind = "opds", id = "https://example.invalid/feed" }))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(opds_langs["English"] == nil,
+        "an OPDS chip must not be served another source's catalogue")
+    assert(opds["manga"] == 2,
+        "an OPDS chip must fall back to the library rather than fetch, got "
+        .. tostring(opds["manga"]))
+end)
+
+test("distinctFilterValues: an unavailable Kindle library falls back", function()
+    -- A chip carried over from another device: better the library's values than
+    -- an empty picker with no way to build a filter at all.
+    _setupResolverLibrary()
+    package.loaded["lib/bookshelf_kindle_source"] = {
+        isAvailable = function() return false end,
+        listBooks = function() return { { title = "X", filepath = "/k/x.kfx" } } end,
+    }
+    local scoped = _valueSet(Repo.distinctFilterValues("genres", { kind = "kindle" }))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(scoped["manga"] == 2, "expected the library fallback, got "
+        .. tostring(scoped["manga"]))
+end)
+
+test("distinctFilterValues(collections): only collections holding this source's books", function()
+    _setupResolverLibrary()
+    package.loaded["readcollection"] = {
+        coll = {
+            favorites        = {},
+            ["Library only"] = { ["/lib/comics/alpha.epub"] = true },
+            ["Kindle shelf"] = { ["/k/e.kfx"] = true },
+        },
+        default_collection_name = "favorites",
+    }
+    stub_kindle_source({ { title = "E", filepath = "/k/e.kfx", _status = "reading" } })
+    local scoped = _valueSet(Repo.distinctFilterValues("collections", { kind = "kindle" }))
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(scoped["Kindle shelf"] == 1,
+        "a collection holding this chip's book must be offered, got "
+        .. tostring(scoped["Kindle shelf"]))
+    assert(scoped["Library only"] == nil,
+        "a collection holding none of this chip's books filters to nothing, "
+        .. "so it must not be offered")
+end)
+
+test("filterValueCounts: a Kindle chip's facet counts come from its catalogue", function()
+    -- The counts overlay only runs when ANOTHER dimension is active, so the
+    -- status filter here is what makes this reachable at all.
+    _setupResolverLibrary()
+    stub_kindle_source({
+        { title = "A", filepath = "/k/a.kfx", _status = "reading"  },
+        { title = "B", filepath = "/k/b.kfx", _status = "reading"  },
+        { title = "C", filepath = "/k/c.kfx", _status = "finished" },
+    })
+    local counts
+    _withHardcoverGenres({
+        ["/k/a.kfx"] = { "Fantasy" },
+        ["/k/b.kfx"] = { "Fantasy" },
+        ["/k/c.kfx"] = { "Fantasy" },
+    }, function()
+        counts = Repo.filterValueCounts("genres",
+            { statuses = { reading = true } }, { kind = "kindle" })
+    end)
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(counts, "expected scoped counts")
+    assert(counts["Fantasy"] == 2,
+        "only the two Reading Kindle books should count, got " .. tostring(counts["Fantasy"]))
+    assert(counts["manga"] == nil, "library genres must not appear in a Kindle chip's counts")
+end)
+
+test("filterValueCounts(ratings): buckets come from the catalogue's own books", function()
+    _setupResolverLibrary()
+    stub_kindle_source({
+        { title = "A", filepath = "/k/a.kfx", rating = 4, _status = "reading" },
+        { title = "B", filepath = "/k/b.kfx", rating = 4, _status = "reading" },
+        { title = "C", filepath = "/k/c.kfx", rating = 1, _status = "finished" },
+    })
+    local counts = Repo.filterValueCounts("ratings",
+        { statuses = { reading = true } }, { kind = "kindle" })
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    _teardownResolverLibrary()
+    assert(counts, "expected scoped rating counts")
+    assert(counts["4"] == 2, "two Reading 4-star Kindle books, got " .. tostring(counts["4"]))
+    assert(counts["1"] == 0, "the 1-star book is Finished, so excluded, got "
+        .. tostring(counts["1"]))
+end)
+
+test("filterValueCounts: a Kobo chip is scoped the same way", function()
+    -- Same treatment, so the two virtual libraries cannot drift apart.
+    _setupResolverLibrary()
+    package.loaded["lib/bookshelf_kobo_source"] = {
+        isAvailable = function() return true end,
+        coverBB = function() return nil end,
+        listBooks = function()
+            return {
+                { title = "K1", filepath = "/kb/a.epub", rating = 4, _status = "reading" },
+                { title = "K2", filepath = "/kb/b.epub", rating = 4, _status = "finished" },
+            }
+        end,
+    }
+    local counts = Repo.filterValueCounts("ratings",
+        { statuses = { reading = true } }, { kind = "kobo" })
+    package.loaded["lib/bookshelf_kobo_source"] = nil
+    _teardownResolverLibrary()
+    assert(counts and counts["4"] == 1,
+        "expected the single Reading Kobo book, got " .. tostring(counts and counts["4"]))
+end)
+
+-- ─── Marking a Kindle book finished has to reach the catalogue cache ────────
+-- The catalogue bakes each record's status in at build time and keeps that
+-- build for 60s. Marking a Kindle book finished wrote the sidecar but left the
+-- cached record alone, so a rebuild inside that window served the OLD status
+-- back: on a PW5 three books were marked finished with identical sidecars and
+-- only one showed the Finished tick, all three appearing after a restart.
+local function _kindleCacheSpy(paths)
+    local calls = { invalidate = 0 }
+    local by_path = {}
+    for _i, fp in ipairs(paths) do by_path[fp] = true end
+    package.loaded["lib/bookshelf_kindle_source"] = {
+        isAvailable = function() return true end,
+        listBooks = function() return {} end,
+        isKindlePath = function(fp) return by_path[fp] == true end,
+        invalidate = function() calls.invalidate = calls.invalidate + 1 end,
+    }
+    return calls
+end
+
+test("invalidateProgressCache: a Kindle book drops the catalogue cache", function()
+    local calls = _kindleCacheSpy({ "/mnt/us/documents/A.kfx" })
+    Repo.invalidateProgressCache("/mnt/us/documents/A.kfx")
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(calls.invalidate == 1,
+        "marking a Kindle book must drop the catalogue cache, got "
+        .. calls.invalidate .. " calls")
+end)
+
+test("invalidateProgressCache: a local book leaves the catalogue alone", function()
+    -- Scoped deliberately: every local status change dropping the catalogue
+    -- would make the next Kindle shelf re-query SQLite for nothing.
+    local calls = _kindleCacheSpy({ "/mnt/us/documents/A.kfx" })
+    Repo.invalidateProgressCache("/lib/local.epub")
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(calls.invalidate == 0,
+        "a local book must not drop the Kindle catalogue, got "
+        .. calls.invalidate .. " calls")
+end)
+
+test("invalidateProgressCache: a whole-library invalidation drops it too", function()
+    local calls = _kindleCacheSpy({ "/mnt/us/documents/A.kfx" })
+    Repo.invalidateProgressCache()
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    assert(calls.invalidate == 1,
+        "an unscoped invalidation must include the catalogue, got "
+        .. calls.invalidate .. " calls")
+end)
+
+test("invalidateProgressCache: no Kindle source loaded is not an error", function()
+    -- Every non-Kindle device: the module must not be pulled in just to ask.
+    package.loaded["lib/bookshelf_kindle_source"] = nil
+    local ok = pcall(Repo.invalidateProgressCache, "/lib/local.epub")
+    assert(ok, "invalidation must survive there being no Kindle source")
+    assert(package.loaded["lib/bookshelf_kindle_source"] == nil,
+        "asking must not LOAD the Kindle source on a device that has none")
+end)
+
+test("kindleFilepaths is NOT folded into getAllFilepaths", function()
+    -- getAllFilepaths means "the walked library", and callers rely on that:
+    -- folder listings, walk-cache keying. countByStatus DOES count Kindle books
+    -- (the Shelf size module should show the whole shelf), but it adds them
+    -- itself, behind the Kindle-chip gate -- it does not get them from here.
+    stub_kindle_source({ { title = "K", filepath = "/k/only.kfx" } })
+    local walked = Repo.getAllFilepaths() or {}
+    for _i, fp in ipairs(walked) do
+        assert(fp ~= "/k/only.kfx", "a Kindle path leaked into the walked library")
+    end
+    package.loaded["lib/bookshelf_kindle_source"] = nil
 end)
 
 -- ============================================================================

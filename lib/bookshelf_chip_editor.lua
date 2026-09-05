@@ -149,6 +149,11 @@ local SOURCE_SORT_DEFAULTS = {
     -- until books are actually fetched. Empty list means "no sort levels",
     -- not "fall through to an engine default" -- see _applySourceDefaults.
     opds          = {},
+    -- Kindle library: title, not filename. The catalogue's titles are what the
+    -- shelf shows, while the source files are named things like
+    -- "01. The Colour of Magic - Terry Pratchett_127FE891….kfx", so a filename
+    -- sort would look arbitrary next to the titles on screen.
+    kindle        = { { key = "title",            reverse = false } },
 }
 
 -- _resolveOpdsTitle(id): the configured title for an OPDS server key, or nil
@@ -165,6 +170,46 @@ local function _resolveOpdsTitle(id)
     return nil
 end
 
+-- The formats a new Kindle chip should start out showing: those holding at
+-- least one book KOReader can actually open.
+--
+-- Derived from the catalogue rather than hardcoded, because openability is a
+-- per-BOOK question and not a per-format one -- bookshelf_kindle_source weighs
+-- DRM and the file's own magic bytes as well as the extension. A format earns
+-- its place if any book in it is openable, which in practice keeps KFX (always
+-- converted before KOReader sees it) and EPUB, and drops AZW3, which KOReader
+-- registers no provider for.
+--
+-- Worth knowing where this stops: a format holding both openable and DRM-locked
+-- books stays, and the locked ones stay with it. The Format dimension is an
+-- include list of formats, so it cannot say "the unlocked ones" -- only a
+-- per-book test could. The chip's Filters show exactly what was chosen and the
+-- user can change it.
+local function _kindleOpenableFormats()
+    local ok, KindleSource = pcall(require, "lib/bookshelf_kindle_source")
+    if not (ok and type(KindleSource) == "table" and KindleSource.listBooks) then
+        return nil
+    end
+    local ok_list, books = pcall(KindleSource.listBooks)
+    if not (ok_list and type(books) == "table") then return nil end
+    local allowed, openable, blocked = {}, false, false
+    for _i, b in ipairs(books) do
+        local fmt = b.format
+        if fmt and fmt ~= "" then
+            if b.kindle_blocked then
+                blocked = true
+            else
+                allowed[fmt] = true
+                openable = true
+            end
+        end
+    end
+    -- Nothing is blocked: leave the chip unfiltered rather than pinning it to
+    -- the formats owned today, which would hide one bought later.
+    if not (openable and blocked) then return nil end
+    return allowed
+end
+
 local function _applySourceDefaults(draft)
     local kind = draft.source and draft.source.kind
     local defaults = kind and SOURCE_SORT_DEFAULTS[kind]
@@ -176,6 +221,17 @@ local function _applySourceDefaults(draft)
             copy[i] = { key = level.key, reverse = level.reverse }
         end
         draft.sort_priority = copy
+    end
+    -- A new Kindle chip starts with the formats KOReader cannot open filtered
+    -- out, so the shelf is not padded with books that can only refuse. Applied
+    -- only to a chip carrying no filter of its own, so re-picking the source
+    -- never discards one the user set.
+    if kind == "kindle" and not Filter.isActive(draft.filter) then
+        local formats = _kindleOpenableFormats()
+        if formats then
+            draft.filter = draft.filter or {}
+            draft.filter.formats = formats
+        end
     end
     -- QoL: if the chip's label is still the default "New chip" (i.e.
     -- the user hasn't customised it), rename it to match the picked
@@ -248,7 +304,7 @@ SOURCE_LABEL = {
     formats       = function() return _("Formats")            end,
     ratings       = function() return _("Ratings")            end,
     languages     = function() return _("Languages")          end,
-    favorites     = function() return _("Favourites")         end,
+    favorites     = function() return _("Favorites")          end,
     -- "Specific X" kinds carry an id; the resolver appends it.
     folder        = function() return _("Folder")             end,
     folder_flat   = function() return _("Folder (flattened)")  end,
@@ -265,6 +321,9 @@ SOURCE_LABEL = {
     -- generic fallback. Once an id is present _resolveSourceLabel takes
     -- the "OPDS: <title>" branch instead of this one.
     opds          = function() return _("OPDS catalog")       end,
+    -- The Kindle's own library (issue #355). Only offered on a Kindle with
+    -- kindle.koplugin installed; see the picker row's availability gate.
+    kindle        = function() return _("Kindle Virtual Library") end,
 }
 
 -- _resolveSourceLabel(source): display string for "Source: <label>".
@@ -959,7 +1018,12 @@ function Editor:editTab(tab_id, opts)
                         elseif opts.on_change then
                             opts.on_change()
                         end
-                        Editor:editTab(new_id, opts)
+                        -- Copied rather than mutated: opts belongs to the
+                        -- editor we were opened from and outlives this call.
+                        local new_opts = {}
+                        for k, v in pairs(opts) do new_opts[k] = v end
+                        new_opts.pick_source_first = true
+                        Editor:editTab(new_id, new_opts)
                     end,
                 },
             },
@@ -1104,6 +1168,20 @@ function Editor:editTab(tab_id, opts)
     }
 
     UIManager:show(dialog, function() return "partial", frame.dimen end)
+
+    -- A chip that has just been created has no source the user chose: it holds
+    -- the placeholder every new chip starts from. Picking one is the first
+    -- thing to do and it is also what names the chip (_applySourceDefaults
+    -- renames a label still reading "New chip"), so the editor would otherwise
+    -- open on a chip presenting a Home (folders) source and a generic name as
+    -- though they had been decided.
+    --
+    -- Shown AFTER the editor so the picker sits on top of it: cancelling
+    -- returns to the editor rather than to nothing, and the placeholder source
+    -- stands as the fallback exactly as it did before.
+    if opts.pick_source_first then
+        Editor:_pickSource(draft, function() applyLivePreview(true); rebuild() end)
+    end
 end
 
 -- _pickSource -- full picker. Top-level ButtonDialog choosing a source kind;
@@ -1965,7 +2043,7 @@ function Editor:_pickSource(draft, on_close)
         {
             btn("recent",    _("Recently read")),
             btn("latest",    _("Latest added")),
-            btn("favorites", _("\xE2\x98\x85 Favourites")),  -- ★ Favourites
+            btn("favorites", _("\xE2\x98\x85 Favorites")),  -- ★ Favourites
         },
         -- Home pair: folders (tree view) on the left, flattened (every book,
         -- no subfolder cards) on the right.
@@ -2031,6 +2109,16 @@ function Editor:_pickSource(draft, on_close)
             { text = _("Cancel"), callback = function() UIManager:close(d); on_close() end },
         },
     }
+
+    -- Kindle library row (issue #355). Unlike the OPDS row above this one is
+    -- gated: it needs a Kindle whose catalogue we can read AND
+    -- kindle.koplugin installed to open the books. Everyone else must never see
+    -- a source they cannot use, so the row is inserted only when both hold --
+    -- above Cancel, so it reads as the last real source.
+    local ok_kindle, KindleSource = pcall(require, "lib/bookshelf_kindle_source")
+    if ok_kindle and KindleSource and KindleSource.isAvailable() then
+        table.insert(rows, #rows, { btn("kindle", _("Kindle Virtual Library")) })
+    end
     d = ButtonDialog:new{ title = _("Chip source"), buttons = rows }
     UIManager:show(d)
 end
@@ -2210,7 +2298,7 @@ function Editor:_pickMultiFilter(draft, dim_key, on_close)
             choices[#choices + 1] = { value = v.value, label = v.label }
         end
     else
-        choices = Repo.distinctFilterValues(dim_key) or {}
+        choices = Repo.distinctFilterValues(dim_key, draft.source) or {}
     end
 
     -- Overlay faceted counts: replace static library totals with counts
@@ -2218,7 +2306,10 @@ function Editor:_pickMultiFilter(draft, dim_key, on_close)
     -- Computed once here (picker open); stable while the user toggles within
     -- this dimension because those selections are excluded. nil return means
     -- no other dim is active so static counts already reflect reality.
-    local facet = Repo.filterValueCounts(dim_key, draft.filter)
+    --
+    -- draft.source scopes both halves to the chip's own source, so a Kindle or
+    -- Kobo chip offers and counts ITS books rather than the walked library's.
+    local facet = Repo.filterValueCounts(dim_key, draft.filter, draft.source)
     if facet then
         for _i, c in ipairs(choices) do c.count = facet[c.value] or 0 end
     end

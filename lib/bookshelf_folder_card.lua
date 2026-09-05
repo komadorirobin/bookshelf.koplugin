@@ -6,7 +6,7 @@
 -- the bottom portion of a book SpineWidget while the book peeks above.
 --
 -- API:
---   FolderCard.build{ width, height, label } → folder_widget, label_widget
+--   FolderCard.build{ width, height, label, shadow_reserve } → folder_widget, label_widget
 --
 -- Both returned widgets are FrameContainers sized to the slot dimen.
 -- Caller composes them into its own OverlapGroup at z-order:
@@ -100,7 +100,6 @@ function FolderPolygon:paintTo(bb, x, y)
     local tr    = self.tab_radius or 0
     if tr > th then tr = th end
     if tr * 2 > tw then tr = math.floor(tw / 2) end
-    local tr_sq = tr * tr
 
     -- Use paintRectRGB32 unconditionally for the fill. paintRect strips
     -- ColorRGB→Color8 via getColor8() before fill (blitbuffer.lua:1677),
@@ -125,27 +124,33 @@ function FolderPolygon:paintTo(bb, x, y)
         bb:paintRectRGB32(rx, ry, rw, rh, edge)
     end
 
-    -- Tab fill: small rectangle in the top-left, with rounded top corners
-    -- when tab_radius > 0. Bulk fillRect for the part below the corner
-    -- band, then row-by-row clipping in the band itself. Same (i+1)² arc
-    -- convention as the body bottom corners.
+    -- Tab: the SAME native primitives the body and the book covers use
+    -- (paintRoundedRect fill + anti-aliased paintBorder), so its top corners
+    -- are anti-aliased and match theirs. It was the last hand-stepped arc in
+    -- this file, and it had both faults the stepping causes: a jagged edge, and
+    -- an outline that broke wherever the arc's inset jumped more than a pixel
+    -- between rows, letting the page through.
+    --
+    -- These primitives round all FOUR corners, so the BOTTOM is squared off
+    -- afterwards -- the mirror of what the body does to its top, for the same
+    -- reason: the tab runs into the body and the two must meet on a straight
+    -- line with no seam.
     if tw > 0 and th > 0 then
-        if th > tr then
-            fillRect(x, y + tr, tw, th - tr)
+        local suppress = Device:isAndroid() and bb.getInverse and bb:getInverse() == 1
+        if suppress then bb:setInverse(0) end
+        bb:paintRoundedRectRGB32(x, y, tw, th, fill, tr)
+        if edge then
+            bb:paintBorderRGB32(x, y, tw, th, CARD_BORDER, edge, tr, true)
         end
-        if tr > 0 then
-            for dy = 0, tr - 1 do
-                local i      = tr - 1 - dy
-                local i_sq   = (i + 1) * (i + 1)
-                local cutoff = 0
-                while cutoff < tr and (tr - cutoff) * (tr - cutoff) + i_sq > tr_sq do
-                    cutoff = cutoff + 1
-                end
-                local row_left  = cutoff
-                local row_right = tw - cutoff
-                if row_right > row_left then
-                    fillRect(x + row_left, y + dy, row_right - row_left, 1)
-                end
+        if suppress then bb:setInverse(1) end
+        -- At least the border thickness, never just the radius: with a square
+        -- tab there is no arc to clear but there is still a bottom border.
+        local tclear = tr > CARD_BORDER and tr or CARD_BORDER
+        if th > tclear then
+            fillRect(x, y + th - tclear, tw, tclear)
+            if edge then
+                edgeRect(x, y + th - tclear, CARD_BORDER, tclear)
+                edgeRect(x + tw - CARD_BORDER, y + th - tclear, CARD_BORDER, tclear)
             end
         end
     end
@@ -173,41 +178,32 @@ function FolderPolygon:paintTo(bb, x, y)
             bb:paintBorderRGB32(x, y + body_top, w, body_h, CARD_BORDER, edge, r, true)
         end
         if suppress then bb:setInverse(1) end
-        -- Square the top: overpaint the top r rows, clearing the native
-        -- rounded top corners + top edge (both fill and border) so the body
-        -- meets the tab / peeking book on a straight line.
-        if r > 0 then
-            fillRect(x, y + body_top, w, r)
-        end
+        -- Square the top: overpaint the top rows, clearing the native rounded
+        -- top corners AND the top edge (both fill and border) so the body meets
+        -- the tab / peeking book on a straight line.
+        --
+        -- At least the border thickness, never just the radius. With square
+        -- corners there is no arc to clear but there is still a top BORDER,
+        -- and leaving it drew a line straight across the join -- the tab read
+        -- as a separate box sitting on the card rather than one continuous
+        -- piece of cardboard.
+        local clear_h = r > CARD_BORDER and r or CARD_BORDER
+        fillRect(x, y + body_top, w, clear_h)
     end
 
     if edge then
         local b = CARD_BORDER
-        edgeRect(x, y + tr, b, th - tr)               -- tab left wall
-        edgeRect(x + tr, y, tw - 2 * tr, b)           -- tab top
-        edgeRect(x + tw - b, y + tr, b, th - tr)      -- tab right wall
+        -- The tab's own outline (walls, top and both corners) comes from the
+        -- native border above; only the folder's top edge BESIDE the tab is
+        -- left to draw here.
         edgeRect(x + tw, y + th, w - tw, b)           -- body top right of tab
-        -- Squared-top wall stubs: the overpaint above cleared the top r rows,
-        -- so redraw the straight left/right walls there, running unbroken into
-        -- the native rounded bottom corners. (The left stub sits under the tab.)
-        if r > 0 then
-            edgeRect(x, y + body_top, b, r)           -- body left wall (top)
-            edgeRect(x + w - b, y + body_top, b, r)   -- body right wall (top)
-        end
-        -- Tab top rounded corners: unchanged hand-rolled arc. Small and at the
-        -- top, and not part of the reported bottom-corner issue.
-        if tr > 0 then
-            for i = 0, tr - 1 do
-                local dy   = tr - 1 - i
-                local i_sq = (i + 1) * (i + 1)
-                local cutoff = 0
-                while cutoff < tr and (tr - cutoff) * (tr - cutoff) + i_sq > tr_sq do
-                    cutoff = cutoff + 1
-                end
-                edgeRect(x + cutoff, y + dy, b, b)
-                edgeRect(x + tw - cutoff - b, y + dy, b, b)
-            end
-        end
+        -- Squared-top wall stubs: the overpaint above cleared the top rows, so
+        -- redraw the straight left/right walls there, running unbroken into the
+        -- native rounded bottom corners. (The left stub sits under the tab.)
+        -- Same height the overpaint cleared, or the walls come up short.
+        local clear_h = r > CARD_BORDER and r or CARD_BORDER
+        edgeRect(x, y + body_top, b, clear_h)           -- body left wall (top)
+        edgeRect(x + w - b, y + body_top, b, clear_h)   -- body right wall (top)
     end
 end
 
@@ -253,7 +249,16 @@ function FolderCard.build(opts)
     -- text on a manilla fill).
     local label_fg   = indicator_colors.folder_fg or constantInNight(Blitbuffer.COLOR_BLACK)
 
-    local card_w        = slot_w - SHADOW_OFFSET
+    -- The cover's reservation, handed in rather than assumed. SpineWidget
+    -- stopped reserving unconditionally when "No cover drop shadow" arrived:
+    -- _cardDimensions gives the cover the whole slot in that case, so a
+    -- cardboard that still subtracted SHADOW_OFFSET ended up narrower than the
+    -- cover it is supposed to share a right and bottom edge with, and sat
+    -- inset over it. The caller knows whether the cover reserved (the Text
+    -- style deliberately keeps the reservation even with shadows off) so it
+    -- passes the number rather than this file guessing.
+    local reserve       = opts.shadow_reserve or SHADOW_OFFSET
+    local card_w        = slot_w - reserve
     -- Stack & folder label scale (issue #60): users with long Genre /
     -- Tag / Series names that get cut off can dial the cardboard-card
     -- font down to fit more text. Same store as the other text-size
@@ -263,6 +268,7 @@ function FolderCard.build(opts)
     -- load reintroduces the require cycle bookshelf_widget already
     -- guards against (see CoverProgress lazy-require below).
     local BookshelfSettings = require("lib/bookshelf_settings_store")
+    local square_corners = BookshelfSettings.read("cover_square_corners", false) == true
     local label_scale = BookshelfSettings.read("stack_label_font_scale", 100) or 100
     local face_size   = math.max(8, math.floor(16 * label_scale / 100))
     local face, bold  = BFont:getFace("infofont", face_size, { bold = true })
@@ -302,7 +308,7 @@ function FolderCard.build(opts)
     local tab_w = math.floor(card_w * TAB_WIDTH_FRAC)
 
     local card_h   = tab_h + label_pad + label_h + label_pad
-    local v_offset = slot_h - card_h - SHADOW_OFFSET
+    local v_offset = slot_h - card_h - reserve
     if v_offset < 0 then v_offset = 0 end
 
     local folder = FolderPolygon:new{
@@ -312,7 +318,12 @@ function FolderCard.build(opts)
         tab_h      = tab_h,
         fill_color = fill_color,
         edge_color = edge_color,
-        radius     = CARD_RADIUS,
+        -- Bottom corners of the body match the cover's: the cardboard shares
+        -- the cover's bottom edge, so a rounded card under a square cover
+        -- leaves two mismatched corners exactly where the eye is drawn. The
+        -- tab keeps its own rounding -- it is the cardboard's own shape and
+        -- sits nowhere near the cover's outline.
+        radius     = square_corners and 0 or CARD_RADIUS,
         tab_radius = CARD_RADIUS,
     }
     local folder_positioned = FrameContainer:new{

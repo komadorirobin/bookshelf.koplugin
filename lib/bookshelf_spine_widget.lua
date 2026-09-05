@@ -322,15 +322,22 @@ end
 -- A simple Widget subclass that paints a rounded rectangle in a fixed grey.
 -- Used as the shadow layer behind every cover. Has its own dimen so
 -- OverlapGroup positioning containers can size it correctly.
+-- The card's drop shadow. Its corners have to match the CARD's, not a
+-- constant: the shadow sits directly under the card and offset down-right, so
+-- a rounded shadow under a square cover pulls away at every corner and leaves
+-- a light notch exactly where the two outlines should coincide. Defaults to
+-- the rounded radius for callers that do not care.
 local ShadowRect = Widget:extend{
     width  = nil,
     height = nil,
+    radius = nil,
 }
 function ShadowRect:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
 end
 function ShadowRect:paintTo(bb, x, y)
-    bb:paintRoundedRect(x, y, self.width, self.height, _shadowGray(), CARD_RADIUS)
+    local radius = self.radius or CARD_RADIUS
+    bb:paintRoundedRect(x, y, self.width, self.height, _shadowGray(), radius)
 end
 
 -- Paints a shorter-than-box image top-anchored within a fixed
@@ -639,6 +646,12 @@ local SpineWidget = InputContainer:extend{
     -- are what make the standard placeholder read as a book, and on a folder
     -- tile they say the wrong thing.
     flat_card = false,
+    -- force_shadow: keep the card's shadow AND its reservation even when the
+    -- reader has turned drop shadows off globally. Set by the stack folder
+    -- styles (#362): inside a pile the grey is not a shadow cast on the page,
+    -- it is what separates the front book from the ones behind it, and without
+    -- it the tile reads as a stack of blank sheets with a chipped corner.
+    force_shadow = false,
     book        = nil,
     width       = nil,
     height      = nil,
@@ -773,7 +786,31 @@ local SpineWidget = InputContainer:extend{
 -- flag through ShelfRow / HeroCard. Deferred builders (in-place page swap,
 -- book-menu preview) run outside that window and correctly see false.
 local _draft_mode = false
-function SpineWidget.setDraftMode(on) _draft_mode = on and true or false end
+
+-- Draft quality tally, reset whenever draft mode is raised.
+--
+-- A draft render has three outcomes: a placeholder (no cached bitmap), a Lua
+-- nearest-neighbour upscale (visibly soft), or -- when the cached bitmap is
+-- already at least the slot size -- an ImageWidget built with byte-identical
+-- arguments to the normal cache-first path, which is not a downgrade at all.
+-- When EVERY cover took that third route the settle rebuild would repaint
+-- identical pixels, so it can be skipped along with its full-screen refresh.
+--
+-- Counted as "full out of total" rather than as a downgrade blacklist, so any
+-- render path added later is missing from _draft_full and therefore counts as
+-- a downgrade. The safe direction is to run the settle unnecessarily.
+local _draft_total, _draft_full = 0, 0
+function SpineWidget.setDraftMode(on)
+    _draft_mode = on and true or false
+    if _draft_mode then _draft_total, _draft_full = 0, 0 end
+end
+
+--- Did the draft just rendered come out pixel-identical to a full rebuild?
+--- False when nothing was drafted, so a caller can never mistake "no covers
+--- involved" for "nothing to upgrade".
+function SpineWidget.draftWasLossless()
+    return _draft_total > 0 and _draft_full == _draft_total
+end
 
 -- Gate the "#N" series-number badge. Three-state setting:
 --   "always" / true / nil  -> show on every cover with a series_num
@@ -930,7 +967,7 @@ function SpineWidget:_renderShadowedCard(inner)
             width     = card_w,
             height    = card_h,
             thickness = SELECTED_BORDER,
-            radius    = self.flat_thumb and 0 or CARD_RADIUS,
+            radius    = self:_squareCorners() and 0 or CARD_RADIUS,
         }
     elseif self.flat_thumb then
         -- No shadow, and _cardDimensions already gave the reserved pixels back
@@ -939,13 +976,21 @@ function SpineWidget:_renderShadowedCard(inner)
         -- A button does not cast a shadow. Suppressed here rather than by
         -- skipping the wrapper, so selection borders, badges and glyphs all
         -- still work on a flat tile.
+    elseif self:_noShadow() and not self.force_shadow then
+        -- #353: the reader asked for a flat grid. Checked after flat_card so
+        -- that tile keeps its own reservation (see _cardDimensions).
+        -- force_shadow opts a stack's front cover back in (#362).
     elseif not (indicators.on_hold_fade and not self.is_bulk_selected) then
         children[#children + 1] = FrameContainer:new{
             bordersize   = 0,
             padding      = 0,
             padding_top  = SHADOW_OFFSET,
             padding_left = SHADOW_OFFSET,
-            ShadowRect:new{ width = card_w, height = card_h },
+            ShadowRect:new{
+                width  = card_w,
+                height = card_h,
+                radius = self:_squareCorners() and 0 or CARD_RADIUS,
+            },
         }
     end
 
@@ -1523,12 +1568,39 @@ end
 -- account. Both _renderCover and _renderFallback must use this when
 -- sizing their inner card widget so the card doesn't overlap the
 -- dangle zone that _renderShadowedCard reserves on the bottom edge.
+-- #353. The grid and hero draw covers as cards: rounded corners and a drop
+-- shadow. Some readers want a flatter, crisper grid, so the two are settable
+-- separately -- square corners with the shadow kept is a coherent look, and so
+-- is the reverse. Resolved here rather than passed in because SpineWidget is
+-- built from six call sites (shelf rows, hero, folder and series stacks, list
+-- group, cover picker) and threading two more flags through all of them would
+-- be a lot of wiring for a preference the widget can just read, exactly as it
+-- already reads show_series_num and show_fav_badge.
+--
+-- flat_thumb still forces both: a list view's cover column is a table cell and
+-- has no room for chrome, whatever the user prefers elsewhere.
+function SpineWidget:_squareCorners()
+    if self.flat_thumb then return true end
+    return BookshelfSettings.read("cover_square_corners", false) == true
+end
+
+function SpineWidget:_noShadow()
+    if self.flat_thumb then return true end
+    return BookshelfSettings.read("cover_no_shadow", false) == true
+end
+
 function SpineWidget:_cardDimensions()
     -- Flat thumbnails cast no shadow, so there is nothing to reserve for and
     -- the card takes the whole slot. The reservation is the layout half of the
     -- shadow -- leaving it in would keep charging a list row for chrome it
     -- asked not to have.
-    if self.flat_thumb then return self.width, self.height end
+    -- flat_card is excluded on purpose: it suppresses the shadow but KEEPS the
+    -- reservation so a Text-style folder tile stays aligned with the cardboard
+    -- drawn around it. A global no-shadow preference must not move those.
+    if self.flat_thumb
+            or (self:_noShadow() and not self.flat_card and not self.force_shadow) then
+        return self.width, self.height
+    end
     -- Glyph is now fully INSIDE the card (no dangle), so no extra
     -- bottom-margin reservation needed.
     return self.width - SHADOW_OFFSET, self.height - SHADOW_OFFSET
@@ -1556,16 +1628,63 @@ function SpineWidget:_renderCover(bb)
     local external_cover = self.book and self.book.cover_image_path
 
     if external_cover then
+        -- Cache the scaled result, keyed on the SOURCE FILE's identity rather
+        -- than the book's path. Without this the image was decoded from disk on
+        -- every single render: measured on a PW5, the hero cover of a book with
+        -- a picked cover cost 361ms of a 496ms hero build, paid again on every
+        -- rebuild, chip switch and book close, because this branch sits above
+        -- the cache-first block below and never put anything back.
+        --
+        -- Why path+mtime+size instead of the book's filepath, which is what the
+        -- rest of the cache is keyed on: an external cover can be REPLACED at
+        -- any time (the cover picker, a Hardcover download), and nothing today
+        -- drops the cover cache when that happens -- it did not have to, since
+        -- this path never cached. Keying on the file's identity means a
+        -- replacement simply misses, instead of every writer having to remember
+        -- to invalidate and one that forgets showing the old cover forever now
+        -- that the cache is on disk. Costs one stat against a full decode.
+        local ck = SpineWidget.externalCoverKey(external_cover)
+        -- Same contract as the embedded cache-first path: usable only when the
+        -- cached bb covers the slot in both axes, and painted through
+        -- width/height so ImageWidget downscales (Kindle-safe direction).
+        if ck then
+            local cached = ScaledCoverCache:get(ck)
+            if cached
+                    and cached:getWidth()  >= img_w
+                    and cached:getHeight() >= img_h then
+                local img_args = {
+                    image            = cached,
+                    image_disposable = false,
+                    width            = img_w,
+                    height           = img_h,
+                }
+                if not self.cover_fill then img_args.scale_factor = 0 end
+                return self:_wrapCoverInCard(
+                    ImageWidget:new(img_args), card_w, card_h, border)
+            end
+        end
         local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
         local external_bb = ok_img and ImageSource.loadImage(external_cover, img_w, img_h) or nil
         if external_bb then
+            local paint_bb = external_bb
+            if ck then paint_bb = ScaledCoverCache:put(ck, external_bb) end
+            local img_args = {
+                image            = paint_bb,
+                image_disposable = false,
+            }
+            if paint_bb == external_bb then
+                -- Ours, loaded at exactly this slot's size.
+                img_args.scale_factor = 1
+            else
+                -- put() kept a bigger entry (a hero render seeded it). It is
+                -- not this slot's size, so it has to be fitted like a cache hit
+                -- rather than painted 1:1.
+                img_args.width  = img_w
+                img_args.height = img_h
+                if not self.cover_fill then img_args.scale_factor = 0 end
+            end
             return self:_wrapCoverInCard(
-                ImageWidget:new{
-                    image            = external_bb,
-                    image_disposable = false,
-                    scale_factor     = 1,
-                },
-                card_w, card_h, border)
+                ImageWidget:new(img_args), card_w, card_h, border)
         end
     end
 
@@ -1777,9 +1896,12 @@ function SpineWidget:_renderDraftCover(fp, img_w, img_h, card_w, card_h, border)
     -- cover_bb -- freeing that under a fetch-skip-reused record was the earlier
     -- segfault. No cached bitmap for this book -> placeholder. Correct-size
     -- covers land on the settle rebuild.
+    _draft_total = _draft_total + 1
     local src = fp and ScaledCoverCache:get(fp)
     if not src then return self:_renderFallback() end
     if src:getWidth() >= img_w and src:getHeight() >= img_h then
+        -- Identical to the non-draft cache-first path, so not a downgrade.
+        _draft_full = _draft_full + 1
         -- Cached bitmap is big enough: let ImageWidget MuPDF-downscale it at
         -- paint (fast C path; downscale is the Kindle-safe direction). The
         -- cache owns the bb and never frees it, and we add no free of our own,
@@ -1842,6 +1964,8 @@ function SpineWidget:_renderCoverAlignTop(card_w, card_h, border, img_w, img_h)
             -- Draft regrid: no decode. Align-top (folder/series) covers aren't
             -- in ScaledCoverCache, so with no in-hand cover_bb there's nothing
             -- to rescale -- show a placeholder; the settle rebuild decodes it.
+            -- Counted but never full: this one always needs the settle.
+            _draft_total = _draft_total + 1
             return self:_renderFallback()
         else
             bb, owned = fp and _getRepo().getCoverBB(fp), true
@@ -1885,7 +2009,7 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         inner       = cover_inner,
         width       = card_w,
         height      = card_h,
-        radius      = self.flat_thumb and 0 or CARD_RADIUS,
+        radius      = self:_squareCorners() and 0 or CARD_RADIUS,
         border_size = border,
     }
     if on_hold_fade then
@@ -1931,11 +2055,19 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         -- the mask color to match the backdrop so the corner squares
         -- merge seamlessly with the surrounding black.
         cover_args.bg_color = Blitbuffer.COLOR_BLACK
-    elseif self.flat_thumb then
+    elseif self:_squareCorners() or (self:_noShadow() and not self.force_shadow) then
         -- Square corners mean no corner mask runs at all, so there are no
-        -- masked pixels for a shadow to show through -- and no shadow behind
-        -- this card to restore anyway. Left explicit rather than relying on
-        -- radius == 0 making the shadow_* fields inert downstream.
+        -- masked pixels for a shadow to show through; no shadow means there is
+        -- nothing behind the card to restore. Either alone makes the shadow_*
+        -- fields inert, and both are left explicit rather than relying on
+        -- radius == 0 making them inert downstream.
+        --
+        -- force_shadow excepted (#362): a stack's front cover DOES have a
+        -- shadow behind it even with the global setting off, so its masked
+        -- corner has to restore that grey. Left out here, the mask painted the
+        -- corner page-white over the pile behind it -- the chipped corner the
+        -- issue reported. This is the branch that actually produced the white
+        -- pixels; the reservation and the arc were only what made room.
     else
         -- The card sits at (0, 0) in the OverlapGroup; the shadow paints
         -- at (SHADOW_OFFSET, SHADOW_OFFSET) with the same w/h and same
@@ -2015,7 +2147,7 @@ function SpineWidget:_renderFallback()
         local plain = ColorSafeFrame:new{
             bordersize = border,
             color      = colors.border,
-            radius     = self.flat_thumb and 0 or CARD_RADIUS,
+            radius     = self:_squareCorners() and 0 or CARD_RADIUS,
             padding    = 0,
             background = outer_bg,
             Widget:new{ dimen = Geom:new{
@@ -2296,7 +2428,7 @@ function SpineWidget:_renderFallback()
     local card = ColorSafeFrame:new{
         bordersize = border,
         color      = colors.border,
-        radius     = self.flat_thumb and 0 or CARD_RADIUS,
+        radius     = self:_squareCorners() and 0 or CARD_RADIUS,
         padding    = 0,
         background = outer_bg,
         VerticalGroup:new{
@@ -2423,6 +2555,28 @@ function SpineWidget.downloadedTickOffset(card_w, card_h, glyph_w, widget_h, hal
     if x < CARD_BORDER then x = CARD_BORDER end
     if y < CARD_BORDER then y = CARD_BORDER end
     return x, y
+end
+
+-- SpineWidget.externalCoverKey(path) -- ScaledCoverCache key for an external
+-- cover FILE (a cover the user picked, or one an enricher downloaded), or nil
+-- when there is no such file to key on.
+--
+-- Deliberately not the book's filepath, which is what every other entry in
+-- that cache is keyed on. An external cover can be replaced at any time and
+-- nothing drops the cover cache when it is -- which was harmless while this
+-- path never cached, and would not be now that the cache reaches disk: one
+-- writer forgetting to invalidate would pin the old cover across restarts.
+-- Folding the file's mtime and size into the key means a replaced cover
+-- MISSES rather than needing anyone to remember. The old entry is left to
+-- ordinary LRU eviction and the disk sweep.
+function SpineWidget.externalCoverKey(path)
+    if type(path) ~= "string" or path == "" then return nil end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not (ok_lfs and lfs) then return nil end
+    local a = lfs.attributes(path)
+    if type(a) ~= "table" then return nil end
+    return string.format("ext:%s:%s:%s", path,
+        tostring(a.modification or 0), tostring(a.size or 0))
 end
 
 -- SpineWidget.bookAspect(book) -- height/width ratio from BIM's cover_sizetag

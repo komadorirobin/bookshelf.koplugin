@@ -546,13 +546,13 @@ function Settings:_tagsRegionSubItems()
         {
             text_func = function()
                 local a = Regions.read().tags.alignment or "left"
-                local labels = { left = _("Left"), center = _("Centre"), right = _("Right") }
+                local labels = { left = _("Left"), center = _("Center"), right = _("Right") }
                 return _("Alignment") .. ": " .. (labels[a] or labels.left)
             end,
             keep_menu_open = true,
             sub_item_table = {
                 alignmentRow("left",   _("Left")),
-                alignmentRow("center", _("Centre")),
+                alignmentRow("center", _("Center")),
                 alignmentRow("right",  _("Right")),
             },
         },
@@ -714,6 +714,40 @@ function Settings:_coverDisplaySubItems()
             callback = function()
                 BookshelfSettings.save("true_cover_aspect",
                     not BookshelfSettings.isTrue("true_cover_aspect"))
+                BookshelfSettings.flush()
+                markDirty()
+            end,
+        },
+        {
+            text = _("Square cover corners"),
+            help_text = _("Draw covers with square corners instead of the "
+                .. "rounded card shape. Independent of the drop shadow, so a "
+                .. "flatter look can keep the shadow or drop it separately. "
+                .. "Off by default (rounded)."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("cover_square_corners")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                BookshelfSettings.save("cover_square_corners",
+                    not BookshelfSettings.isTrue("cover_square_corners"))
+                BookshelfSettings.flush()
+                markDirty()
+            end,
+        },
+        {
+            text = _("No cover drop shadow"),
+            help_text = _("Draw covers flat against the page instead of "
+                .. "raised off it. The pixels the shadow reserved go back to "
+                .. "the cover, so covers get slightly larger. Off by default "
+                .. "(shadow shown)."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("cover_no_shadow")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                BookshelfSettings.save("cover_no_shadow",
+                    not BookshelfSettings.isTrue("cover_no_shadow"))
                 BookshelfSettings.flush()
                 markDirty()
             end,
@@ -959,7 +993,7 @@ function Settings:_coverDisplaySubItems()
             end
             return {
                 text_func = function()
-                    return _("Favourite icon") .. ": " .. labels[readIcon()]
+                    return _("Favorite icon") .. ": " .. labels[readIcon()]
                 end,
                 sub_item_table_func = function()
                     return {
@@ -1613,7 +1647,7 @@ function Settings:_colorsSubItems()
             -- value, picker, reset) at that icon's own colour key.
             text_func = function()
                 local is_heart = require("lib/bookshelf_cover_progress").favoriteIcon() == "heart"
-                local label   = is_heart and _("Favourite heart color") or _("Favourite star color")
+                local label   = is_heart and _("Favorite heart color") or _("Favorite star color")
                 return label .. ": " .. valueLabel(is_heart and "favorite_heart" or "favorite_star")
             end,
             keep_menu_open = true,
@@ -1621,10 +1655,10 @@ function Settings:_colorsSubItems()
                 local is_heart = require("lib/bookshelf_cover_progress").favoriteIcon() == "heart"
                 if is_heart then
                     pickColor("favorite_heart_color", "favorite_heart", 15,
-                        _("Favourite heart color (% black)"), touchmenu_instance)
+                        _("Favorite heart color (% black)"), touchmenu_instance)
                 else
                     pickColor("favorite_star_color", "favorite_star", 15,
-                        _("Favourite star color (% black)"), touchmenu_instance)
+                        _("Favorite star color (% black)"), touchmenu_instance)
                 end
             end,
             hold_callback = function(touchmenu_instance)
@@ -2156,6 +2190,19 @@ function Settings:_hardcoverSubItems()
         end
         local Repo = require("lib/bookshelf_book_repository")
         local candidates = Repo.getAllFilepaths() or {}
+        -- Kindle library books are NOT on the filesystem walk (a .kfx is not in
+        -- SUPPORTED_EXT and they live outside home_dir), so a bulk auto-link
+        -- skipped every one of them -- even though linking a Kindle book
+        -- one at a time works fine. Deduped, since a converted file can land
+        -- inside home_dir and be walked as well as listed.
+        local seen = {}
+        for _i, fp in ipairs(candidates) do seen[fp] = true end
+        for _i, fp in ipairs(Repo.kindleFilepaths() or {}) do
+            if not seen[fp] then
+                seen[fp] = true
+                candidates[#candidates + 1] = fp
+            end
+        end
         local total = #candidates
         if total == 0 then
             notify(_("No books to scan."))
@@ -2666,7 +2713,7 @@ function Settings:_performanceSubItems()
                 .. "preloading -- at the cost of RAM. Default 24 MB. Lower it if "
                 .. "memory is tight; raise it on a device with plenty of RAM. "
                 .. "(How many covers that holds depends on their size: roughly "
-                .. "200-400 small grayscale covers, fewer large or colour ones.)"),
+                .. "200-400 small grayscale covers, fewer large or color ones.)"),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 self:_pickCoverCacheBudget(touchmenu_instance)
@@ -2674,12 +2721,11 @@ function Settings:_performanceSubItems()
         },
         {
             text = _("Clear cover cache"),
-            help_text = _("Drop all cached scaled covers from memory. "
+            help_text = _("Drop all cached scaled covers, in memory and on disk. "
                 .. "Use this when a book's cover has been updated outside "
                 .. "KOReader (e.g. a metadata-enrichment tool rewrote the "
                 .. "EPUB) and the old cover is still showing on the shelf. "
-                .. "The next render fetches fresh covers from the EPUBs. "
-                .. "Restarting KOReader has the same effect."),
+                .. "The next render fetches fresh covers from the EPUBs."),
             keep_menu_open = true,
             callback = function()
                 local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
@@ -3296,7 +3342,7 @@ function Settings:_advancedSubItems()
                 .. "shown, their order, their labels and icons, their "
                 .. "sources and filters and sorts) and restores the "
                 .. "fresh-install chip set: Home / Recent / Series / "
-                .. "Favourites enabled, the rest available to toggle on. "
+                .. "Favorites enabled, the rest available to toggle on. "
                 .. "Also returns the active chip to Home and the page "
                 .. "indicator to 1. Other settings (hero text, fonts, "
                 .. "colors) are unaffected."),
@@ -5293,7 +5339,12 @@ function Settings:_tabsMenuItems()
             fresh[#fresh + 1] = new_tab
             TabModel.save(fresh)
             hideParentMenu(touchmenu_instance)
-            Editor:editTab(new_id, { on_change = function() rebuild() end })
+            -- Same as the editor's own "+": choose the source first, since it
+            -- is what the chip is FOR and what gives it its name.
+            Editor:editTab(new_id, {
+                on_change = function() rebuild() end,
+                pick_source_first = true,
+            })
         end,
     }
 

@@ -274,11 +274,45 @@ local function _cleanLegacyLayout()
     end
 end
 
+-- Tell the reader when a big metadata.calibre is being read.
+--
+-- The parse is synchronous and, on a PW5, costs roughly 100ms per MB, so a
+-- large library stalls the shelf for a second or more with nothing on screen
+-- to explain it. calibre_metadata calls this above its own size threshold; it
+-- stays UI-free itself because that file is vendored byte-identical into
+-- bookends (see CalibreMeta.notify).
+--
+-- forceRePaint is the point of the exercise: the parse blocks the event loop
+-- the moment this returns, so without painting here the message would only
+-- appear after the wait it is meant to explain.
+local function _installCalibreNotice()
+    local ok, CalibreMeta = pcall(require, "lib/calibre_metadata")
+    if not (ok and CalibreMeta) then return end
+    if CalibreMeta.notify then return end          -- already installed
+    local shown
+    CalibreMeta.notify = function(state)
+        if state == "start" then
+            if shown then return end
+            local ok_im, InfoMessage = pcall(require, "ui/widget/infomessage")
+            if not ok_im then return end
+            shown = InfoMessage:new{ text = _("Importing calibre metadata\xE2\x80\xA6") }
+            pcall(function()
+                UIManager:show(shown)
+                UIManager:forceRePaint()
+            end)
+        elseif shown then
+            pcall(function() UIManager:close(shown) end)
+            shown = nil
+        end
+    end
+end
+
 function Bookshelf:init()
     _installBroadcastTag()
     -- Run once per init -- no settings flag needed because the clean is
     -- idempotent and cheap (one lfs.dir scan over the plugin root).
     _cleanLegacyLayout()
+    _installCalibreNotice()
     -- Bundled fonts: install (best-effort, for pickers) and seed fresh-install
     -- defaults exactly once. Must run before any other settings write so the
     -- "settings file present" fresh-install signal is accurate.
@@ -1938,14 +1972,41 @@ function Bookshelf:_scheduleReaderButtonResetup()
     end)
 end
 
+-- Relayout the open shelf after the screen geometry changes under it.
+--
+-- The shelf is a TOP-LEVEL widget on the UIManager stack, not a child of the
+-- `ui` (FileManager / ReaderUI) the plugin hangs off. DeviceListener dispatches
+-- rotation with `self.ui:handleEvent(Event:new("SetRotationMode", ...))`, which
+-- walks only that tree -- so the shelf never hears it, stays laid out for the
+-- old geometry, and the screen appears not to rotate until something else
+-- happens to force a repaint. Reported for "Toggle orientation" invoked from a
+-- start-menu system action, where the menu closes first and leaves the shelf
+-- as the only thing on screen with nothing to trigger that repaint.
+--
+-- Routed through the widget's own onScreenResize rather than its
+-- onSetRotationMode: by the time this fires, `ui` has already applied the new
+-- mode, so the widget's rotation handler would compare mode against the
+-- current one, find them equal and do nothing. onScreenResize compares
+-- GEOMETRY, which really has changed, and already coalesces onto nextTick so a
+-- desktop resize storm rebuilds once.
+function Bookshelf:_relayoutLiveShelf()
+    local bw = _live_widget
+    if not bw or not bw.onScreenResize then return end
+    if not UIManager:isWidgetShown(bw) then return end
+    local ok, err = pcall(function() bw:onScreenResize() end)
+    if not ok then logger.warn("[bookshelf] shelf relayout failed:", err) end
+end
+
 -- NOTE: these must NOT return true -- the events also drive ReaderView's own
 -- rotation/resize handling, so we observe and let them propagate.
 function Bookshelf:onSetRotationMode()
     self:_scheduleReaderButtonResetup()
+    self:_relayoutLiveShelf()
 end
 
 function Bookshelf:onScreenResize()
     self:_scheduleReaderButtonResetup()
+    self:_relayoutLiveShelf()
 end
 
 -- Open the full-screen micro-module overlay from the reader (v1). No bookshelf

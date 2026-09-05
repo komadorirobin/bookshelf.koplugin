@@ -3022,14 +3022,27 @@ function BookshelfWidget:_rebuild()
     local _perf_t4 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: assemble=%.0fms",
         (_perf_t4 - _perf_t3) * 1000))
+    -- Cover accounting rides along on the TOTAL line: which covers were served
+    -- from RAM, read back off disk, or scaled from scratch is the single
+    -- biggest lever on how long a rebuild takes, and reading it from the same
+    -- line as the phase split saves correlating two log entries.
+    local _perf_cc = require("lib/bookshelf_scaled_cover_cache")
     logger.dbg(string.format(
         "[bookshelf perf] _rebuild: TOTAL=%.0fms chip=%s page=%d/%d items=%d"
-        .. " (hero=%.0f fetch=%.0f shelves=%.0f assemble=%.0f)",
+        .. " (hero=%.0f fetch=%.0f shelves=%.0f assemble=%.0f)"
+        .. " covers(ram=%d disk=%d scaled=%d written=%d)",
         (_perf_t4 - _perf_t0) * 1000, _perf_chip, _perf_page, total_pages, total,
         (_perf_t1 - _perf_t0) * 1000,
         (_perf_t2 - _perf_t1) * 1000,
         (_perf_t3 - _perf_t2) * 1000,
-        (_perf_t4 - _perf_t3) * 1000))
+        (_perf_t4 - _perf_t3) * 1000,
+        _perf_cc._hits or 0, _perf_cc._disk_hits or 0,
+        -- _puts counts INSTALLS, and a cover hydrated from disk is installed
+        -- through put() like any other, so puts alone would report a disk hit
+        -- as a fresh scale. The covers actually built from scratch are the
+        -- installs that did not come from disk.
+        (_perf_cc._puts or 0) - (_perf_cc._disk_hits or 0),
+        _perf_cc._disk_writes or 0))
     local _perf_persist_t0 = _gettime()
     self:_persistNavState()
     logger.dbg(string.format("[bookshelf perf] _rebuild: persist=%.0fms",
@@ -3916,6 +3929,42 @@ local _device_slow_cache       = nil   -- raw: mem_total/mem_available, ram_kb, 
 local _device_slow_expires_at  = 0
 local DEVICE_SLOW_TTL          = 60    -- seconds — disk + memory
 
+-- Free space on `path`, in bytes, without forking.
+--
+-- util.diskUsage shells out to `df -kP | awk` through io.popen, which forks
+-- the entire KOReader process. Measured on a PW5: **27.5ms**, against 0.42ms
+-- for the statvfs call df itself is a wrapper around. It sits on the hero's
+-- 60s slow tier, so the cost does not amortise into invisibility -- it lands
+-- in full on whichever interaction happens to cross the TTL boundary, which
+-- is one explanation for the spread in otherwise identical hero rebuilds.
+--
+-- f_bavail * f_frsize is precisely what df's "Available" column reports.
+-- ffi/util.df is NOT equivalent: it returns f_bfree * f_bsize, and f_bfree
+-- counts the root-reserved blocks, so it reads high on a filesystem with a
+-- reserve (ext4 keeps 5% by default; vfat and this device's fuse.fsp mount
+-- have none). Verified byte-identical to util.diskUsage on the PW5.
+--
+-- Falls back to the fork if statvfs is unavailable, so a platform whose
+-- posix_h lacks the struct keeps working rather than losing %disk.
+local function _diskAvailable(path)
+    local ok, bytes = pcall(function()
+        local ffi = require("ffi")
+        require("ffi/posix_h")
+        local st = ffi.new("struct statvfs")
+        if ffi.C.statvfs(path, st) ~= 0 then return nil end
+        return tonumber(st.f_bavail) * tonumber(st.f_frsize)
+    end)
+    if ok and type(bytes) == "number" and bytes > 0 then return bytes end
+    local ok_u, util_mod = pcall(require, "util")
+    if ok_u and util_mod and util_mod.diskUsage then
+        local ok_du, usage = pcall(util_mod.diskUsage, path)
+        if ok_du and usage and type(usage.available) == "number" then
+            return usage.available
+        end
+    end
+    return nil
+end
+
 local function _readSlowState(now)
     if _device_slow_cache and _device_slow_expires_at > now then
         return _device_slow_cache
@@ -3946,14 +3995,12 @@ local function _readSlowState(now)
         -- VmRSS is already in kB, which is what Semantics.ram takes.
         if kb then out.ram_kb = tonumber(kb) end
     end
-    if ok_util and util and util.diskUsage then
+    do
         local ok_dev, Device = pcall(require, "device")
         if ok_dev and Device then
             local drive = Device.home_dir or "/"
-            local ok_du, usage = pcall(util.diskUsage, drive)
-            if ok_du and usage and type(usage.available) == "number" then
-                out.disk_bytes = usage.available
-            end
+            local bytes = _diskAvailable(drive)
+            if type(bytes) == "number" then out.disk_bytes = bytes end
         end
     end
     _device_slow_cache      = out
@@ -4196,6 +4243,121 @@ function BookshelfWidget:_openBook(book, after_open_callback)
         -- another, come back" dance. Wait until it has a size -- polling ~1s up
         -- to 5s behind a notice -- then open, or show a clear try-again message.
         self:_openKoboWhenReady(real, after_open_callback)
+        return
+    elseif book.is_kindle then
+        -- Kindle library record (issue #355). The filepath is real -- either the
+        -- Kindle's own .kfx/.azw3 or kindle.koplugin's converted EPUB -- but a
+        -- KFX still has to be converted (and usually decrypted) before KOReader
+        -- can read it, and Bookshelf calls ReaderUI:showReader directly, so it
+        -- never passes through the plugin's own openFile patch. Resolve it here
+        -- instead.
+        --
+        -- A book that still needs converting blocks everything for minutes (4m40s
+        -- for a 1.5MB book on a PW5), and the plugin inhibits input while it
+        -- works, so the screen sits there dead. Unwarned, that reads as a crash
+        -- -- it did to the maintainer, on this exact book. Ask first, so the wait
+        -- is a decision rather than a mystery, and so a mis-tap can be undone.
+        -- Only ever asked once per book: after this the EPUB is cached and the
+        -- open is instant.
+        if book.kindle_needs_prepare and not book._kindle_prepare_ok then
+            -- Names the plugin doing the work, deliberately. A multi-minute
+            -- freeze on a book tap needs an obvious owner: without one it reads
+            -- as Bookshelf being broken, and a user who wants to understand or
+            -- report it has nothing to go on. "Kindle Virtual Library" is the
+            -- name that appears in KOReader's own plugin list, so it is the name
+            -- that leads somewhere.
+            UIManager:show(require("ui/widget/confirmbox"):new{
+                text = _("This Kindle book has to be converted before KOReader can read it.\n\n"
+                    .. "The Kindle Virtual Library plugin does the conversion. It can take "
+                    .. "a few minutes, it can't be stopped once started, and the screen "
+                    .. "won't respond while it works.\n\n"
+                    .. "It only happens the first time you open a book."),
+                ok_text = _("Convert"),
+                ok_callback = function()
+                    -- Re-enter with the question answered, but NOT from inside
+                    -- this callback: ConfirmBox runs ok_callback and only then
+                    -- closes itself (confirmbox.lua -- ok_callback(), then
+                    -- UIManager:close). The conversion blocks for minutes and
+                    -- paints its own "Preparing…" progress, so running it here
+                    -- draws that progress on top of a dialog still on screen.
+                    -- Next tick, once the close has actually happened.
+                    book._kindle_prepare_ok = true
+                    UIManager:nextTick(function()
+                        self:_openBook(book, after_open_callback)
+                    end)
+                end,
+            })
+            return
+        end
+        -- Tap feedback, but only when the open can actually be quick. A cover
+        -- squeeze says "your book is opening now": ahead of a multi-minute
+        -- conversion that is a lie, and it would be a second thing painting over
+        -- the plugin's own progress message. A blocked book is about to refuse,
+        -- so it gets no animation either.
+        if not (book.kindle_blocked or book.kindle_needs_prepare) then
+            UIManager:forceRePaint()
+            pcall(function() self:_paintOpeningEffect(book.filepath) end)
+        end
+        local ok_kindle, KindleSource = pcall(require, "lib/bookshelf_kindle_source")
+        local real, reason
+        if ok_kindle and KindleSource then
+            real, reason = KindleSource.realPathForOpen(book)
+        end
+        if not real then
+            -- Two kinds of reason: a short key we phrase ourselves, or a
+            -- sentence the plugin already phrased for the reader (which knows
+            -- far more about why a particular book would not open).
+            -- Name the format and say what DOES work. Two reasons users need
+            -- this: it makes clear the limit is the Kindle plugin's converter
+            -- rather than Bookshelf, and it tells them the rest of their library
+            -- may well be fine -- worth knowing if the first book they try is
+            -- one of the handful that can't work.
+            local fmt = (book.format or ""):upper()
+            local text, brief
+            if reason == "drm" then
+                text = T(_("This is a protected %1 file, which can't be opened.\n\n"
+                    .. "The Kindle plugin can only unlock KFX books. Protected MOBI "
+                    .. "and AZW books can't be converted by any KOReader plugin, so "
+                    .. "those have to be read in the Kindle app.\n\n"
+                    .. "Your KFX books should open normally."), fmt ~= "" and fmt or "Kindle")
+            elseif reason == "unsupported" then
+                -- KOReader registers no provider for this extension (.azw3 has
+                -- none, so even an unprotected one is refused). Nothing here can
+                -- change that, but say so rather than letting ReaderUI bounce the
+                -- user out to the file browser.
+                text = T(_("KOReader can't read %1 files.\n\n"
+                    .. "It reads KFX books (prepared by the Kindle plugin) and "
+                    .. "unprotected MOBI and AZW books.\n\n"
+                    .. "Your other Kindle books should open normally."), fmt ~= "" and fmt or "these")
+            elseif reason == "unavailable" or reason == nil then
+                text = _("The Kindle library isn't available right now.")
+                brief = true
+            else
+                -- The plugin's own sentence. It knows far more about why this
+                -- particular book would not open, and some of its reasons run to
+                -- two sentences with an instruction in them.
+                text = tostring(reason)
+            end
+            -- Only a one-liner gets the short timeout. These explanations run to
+            -- three paragraphs -- what the format is, what the converter can do,
+            -- and the reassurance that the rest of the library is fine -- and
+            -- four seconds is not enough to read that, let alone take it in.
+            --
+            -- Untimed relies on the reader being able to dismiss it: InfoMessage
+            -- binds a whole-screen tap on a touch device and any key on a keyed
+            -- one. Generic device defaults both capabilities to "no" and each
+            -- device opts in, so a device declaring neither -- or one that has
+            -- been misdetected -- would be stuck with a message nothing clears.
+            -- Fall back to a long timeout there rather than a short one: still
+            -- readable, still self-clearing.
+            local can_dismiss = Device:isTouchDevice() or Device:hasKeys()
+            UIManager:show(require("ui/widget/infomessage"):new{
+                text    = text,
+                timeout = brief and 4 or (can_dismiss and nil or 20),
+            })
+            return
+        end
+        self:_launchReader(real, after_open_callback)
         return
     else
         -- Stale records (Send-to-Kindle moved/removed the file after BIM cached
@@ -6647,11 +6809,24 @@ function BookshelfWidget:_swapShelvesInPlace()
         local ry = math.max(0, shelf_top - (d and d.PAD or 0))
         local region = Geom:new{ x = 0, y = ry, w = self.width, h = self.height - ry }
         wiped = pcall(function()
-            local old_bb = Screen.bb:copy()
-            self:paintTo(Screen.bb, 0, 0)
-            local new_bb = Screen.bb:copy()
-            PageWipe.run(Screen, old_bb, new_bb, region, _wipe_dir > 0, anim_steps)
-            old_bb:free()
+            -- Paint the new page OFFSCREEN and leave the screen showing the old
+            -- one, so the wipe can reveal over it. Painting into the
+            -- framebuffer instead would destroy the outgoing page and force it
+            -- to be copied out first, and the incoming one copied back -- two
+            -- framebuffer reads at ~30MB/s, right inside the gap between the
+            -- swipe and the first pixel moving.
+            --
+            -- Same coordinates as a normal paint, so every widget's .dimen --
+            -- which is what gesture hit-testing reads -- comes out unchanged,
+            -- and a source coordinate equals its destination. Verified
+            -- byte-identical to painting into the framebuffer.
+            -- Allocated per turn, deliberately: a reused screen-sized scratch
+            -- buffer was tried and measured no faster (413ms against 408ms,
+            -- and noisier), so it was 2MB held for nothing.
+            local new_bb = Blitbuffer.new(Screen.bb:getWidth(), Screen.bb:getHeight(),
+                                          Screen.bb:getType())
+            self:paintTo(new_bb, 0, 0)
+            PageWipe.run(Screen, new_bb, region, _wipe_dir > 0, anim_steps)
             new_bb:free()
         end)
     end
@@ -7321,7 +7496,14 @@ function BookshelfWidget:_paintOpeningEffect(fp)
         -- gone, those pixels read as square black corners on the flexed
         -- cover. Convert the outside-arc corner pixels to page white with
         -- the same monotonic arc scan the mask painter uses.
-        local r = Screen:scaleBySize(4) -- mirrors CARD_RADIUS
+        --
+        -- Skipped for a square-cornered cover: no mask ran, so there are no
+        -- black pixels to undo, and the scan would white out the cover's own
+        -- corners and round off the very shape the reader asked for. Asked of
+        -- the spine rather than the setting so flat_thumb still wins for a
+        -- list-view thumbnail, which is flat whatever the grid prefers.
+        local r = (not spine:_squareCorners())
+            and Screen:scaleBySize(4) or 0 -- mirrors CARD_RADIUS
         local r_sq = r * r
         for dy = 0, r - 1 do
             local dx = 0
@@ -7353,10 +7535,14 @@ function BookshelfWidget:_paintOpeningEffect(fp)
     -- cover survives, pixel-identical to a non-selected cover (rounded corners,
     -- no square edges, no manual corner math). Non-selected / popup opens keep
     -- their own real shadow untouched, so every path stays consistent.
-    if ringed and Screen.bb then
+    -- ...unless the reader turned the shadow off, in which case the cover
+    -- never had one and putting one back on open would be the flat grid
+    -- flashing its old look at the moment of the tap.
+    if ringed and Screen.bb and not spine:_noShadow() then
         local sbb  = Screen.bb
         local SO   = SpineWidget.SHADOW_OFFSET or Screen:scaleBySize(4)
-        local rad  = SpineWidget.CARD_RADIUS or Screen:scaleBySize(4)
+        local rad  = spine:_squareCorners() and 0
+            or (SpineWidget.CARD_RADIUS or Screen:scaleBySize(4))
         local gray = SpineWidget.shadowGray and SpineWidget.shadowGray()
         if gray then
             pcall(function()
@@ -9540,6 +9726,13 @@ function BookshelfWidget:paintTo(bb, x, y)
     -- silent.
     if not self._diag_first_paint_done then
         self._diag_first_paint_done = true
+        -- Behavioural, not diagnostic: _schedulePreload holds the first
+        -- rebuild's preload back until the shelf is actually on screen.
+        self._first_paint_done = true
+        -- Via a method, NOT PRELOAD_START_DELAY_S directly: that local is
+        -- declared a thousand lines below this one, so naming it here reads a
+        -- nil global and scheduleIn asserts.
+        self:_armPendingPreload()
         local _diag_paint_t0 = _gettime()
         InputContainer.paintTo(self, bb, x, y)
         self:_clearHeroMarker()
@@ -10610,6 +10803,7 @@ function BookshelfWidget:_applyCoverCacheBudget()
 end
 
 function BookshelfWidget:_cancelPreload()
+    self._preload_pending = nil
     if self._preload_fn then
         UIManager:unschedule(self._preload_fn)
         self._preload_fn = nil
@@ -11153,12 +11347,34 @@ end
 -- -1 (prev). Re-syncs the cache capacity, then schedules the next-page cover
 -- warm-up. Always on as of v2.3.0 (previously gated behind an experimental
 -- setting that's now removed).
+-- Start the preload the first paint was holding back, if there is one.
+-- Separate from _schedulePreload so the paint path, which is defined above
+-- PRELOAD_START_DELAY_S, can reach the delay through a runtime method lookup.
+function BookshelfWidget:_armPendingPreload()
+    if not (self._preload_pending and self._preload_fn) then return end
+    self._preload_pending = nil
+    UIManager:scheduleIn(PRELOAD_START_DELAY_S, self._preload_fn)
+end
+
 function BookshelfWidget:_schedulePreload(direction)
     self:_cancelPreload()
     self:_applyCoverCacheBudget()
     if _androidSafeModeEnabled() then return end
     self._preload_dir = direction
     self._preload_fn = function() self:_preloadStep() end
+    -- The delay exists to let the CURRENT page's EPDC flush drain before the
+    -- preload starts decoding. On the first rebuild there is no current page:
+    -- nothing has been painted, so the delay lands in FRONT of the first paint
+    -- and the shelf appears that much later -- measured at 230-340ms on a PW5,
+    -- with the two distributions not overlapping across six runs each.
+    --
+    -- Arm from the paint instead, which is the event the delay was always
+    -- really about. Page turns are unaffected: by then the first paint has
+    -- happened and this takes the normal path.
+    if not self._first_paint_done then
+        self._preload_pending = true
+        return
+    end
     UIManager:scheduleIn(PRELOAD_START_DELAY_S, self._preload_fn)
 end
 
@@ -11698,7 +11914,16 @@ function BookshelfWidget:_nudgeListRows(delta)
     -- sharpens them once the pinching stops, exactly as the grid does.
     self:_draftRebuild()
     UIManager:setDirty(self, "ui")
-    self:_scheduleCoverSettle()
+    -- ...and skipped on the same terms, for the same reason. List rows build
+    -- SpineWidget thumbnails like grid tiles do, so the draft tally applies
+    -- unchanged. Measured on a PW5: a row-density step drafts in ~221-232ms
+    -- and the settle behind it costs another ~229-246ms plus a second
+    -- full-screen refresh -- and in list mode the draft comes out lossless
+    -- more often than in the grid, because a row thumbnail is small enough
+    -- that the cached bitmap almost always already covers it.
+    if not SpineWidget.draftWasLossless() then
+        self:_scheduleCoverSettle()
+    end
     return true
 end
 
@@ -11727,7 +11952,17 @@ function BookshelfWidget:_nudgeColumns(delta)
     -- cache, not re-decoded); the settle timer sharpens them once you stop.
     self:_draftRebuild()
     UIManager:setDirty(self, "ui")
-    self:_scheduleCoverSettle()
+    -- ...unless there was nothing to sharpen. When every drafted cover came
+    -- from a cached bitmap already at least the slot size, the draft built its
+    -- ImageWidgets with the same arguments a full rebuild would, so the settle
+    -- would repaint identical pixels -- a whole extra _rebuild (measured at
+    -- 181-420ms on a PW5) plus a second full-screen e-ink refresh, for nothing.
+    -- Skipping is safe for the ITEMS too: the draft slices from
+    -- _draft_items_cache, which holds the complete fetch rather than one
+    -- page's worth, so the book set is already what a fresh fetch would give.
+    if not SpineWidget.draftWasLossless() then
+        self:_scheduleCoverSettle()
+    end
     return true
 end
 
@@ -13819,6 +14054,11 @@ function BookshelfWidget:_opdsOpenSearchDialog(tab, prefill)
                 and _("This catalog does not offer search.")
                 or  _("Load the catalog first, then search it."),
         })
+        -- Don't dead-end. The user asked to search; this catalog can't be
+        -- searched, but their own library always can -- and that is very often
+        -- what they were after anyway. Same fall-through the split submit button
+        -- below offers when the catalog CAN be searched.
+        self:_openSearchDialog(prefill)
         return
     end
     -- Named for the CATALOG, not the drilled feed: the search runs against the
@@ -13829,8 +14069,27 @@ function BookshelfWidget:_opdsOpenSearchDialog(tab, prefill)
     local who = server.title or tab.label or ""
     local InputDialog = require("ui/widget/inputdialog")
     local dlg
+    -- Two submit buttons, because from an OPDS chip there are two reasonable
+    -- things to search and only one of them used to be reachable. Wanting to
+    -- check your own shelves while browsing a catalog is entirely normal ("do I
+    -- already own this?"), and it used to mean: notice the dialog only searches
+    -- the catalog, close it, switch chip, search again.
+    --
+    -- The catalog keeps the Enter key, so nothing changes for anyone who doesn't
+    -- want the new path. The title says only "Search": with two scopes on offer,
+    -- naming one of them in the title would misdescribe the dialog -- each
+    -- button names its own scope instead.
+    local function submit(fn)
+        return function()
+            -- Trimmed before it becomes a url: a trailing space percent-encodes
+            -- to %20 and several catalogs answer that with zero results.
+            local query = (dlg:getInputText() or ""):match("^%s*(.-)%s*$")
+            UIManager:close(dlg)
+            if query ~= "" then fn(query) end
+        end
+    end
     dlg = InputDialog:new{
-        title = T(_("Search %1"), who),
+        title = _("Search"),
         input = prefill or "",
         buttons = {
             {
@@ -13840,19 +14099,17 @@ function BookshelfWidget:_opdsOpenSearchDialog(tab, prefill)
                     callback = function() UIManager:close(dlg) end,
                 },
                 {
-                    text             = _("Search"),
+                    text = _("Search my library"),
+                    callback = submit(function(query) self:_searchAndDrill(query) end),
+                },
+            },
+            {
+                {
+                    text             = T(_("Search %1"), who),
                     is_enter_default = true,
-                    callback = function()
-                        local query = dlg:getInputText() or ""
-                        UIManager:close(dlg)
-                        -- Trimmed before it becomes a url: a trailing space
-                        -- percent-encodes to %20 and several catalogs answer
-                        -- that with zero results.
-                        query = query:match("^%s*(.-)%s*$")
-                        if query ~= "" then
-                            self:_opdsSearch(tab, server, src, query)
-                        end
-                    end,
+                    callback = submit(function(query)
+                        self:_opdsSearch(tab, server, src, query)
+                    end),
                 },
             },
         },
@@ -14927,6 +15184,47 @@ end
 -- a one-time-use bb -- ImageWidget frees it after first paint, which
 -- means the bb in `book` itself (potentially shared with other UI) is
 -- never touched. Same disposable-bb invariant as the hero card.
+-- Pick the book-detail header's thumbnail, and say WHO OWNS IT.
+--
+-- Returns (bb, disposable). `disposable = true` means the caller owns the bb
+-- and is responsible for freeing it exactly once; `false` means some cache
+-- owns it, and freeing it would corrupt every later paint of that cover.
+-- Getting that pair wrong is silent until a cover turns to garbage, which is
+-- why the choice lives in one named place instead of inline in the header.
+--
+-- Sources, in cost order:
+--   1. external cover (Hardcover / user-picked)  -- ImageSource cache owns it
+--   2. fresh.cover_bb                            -- one-shot, caller owns it
+--   3. the scaled-cover cache                    -- the cache owns it
+--   4. a fresh decode                            -- caller owns it
+--
+-- 3 exists because buildBookMeta asks BIM for the cover blob only when the
+-- scaled-cover cache does NOT already hold the book. That skip is deliberate
+-- (the shelf renders from that cache anyway), but it is true for every book
+-- currently on screen -- which is every book this header can be opened from --
+-- so source 2 is normally nil and without 3/4 the header lost its thumbnail
+-- entirely.
+--
+-- 3 is guarded on width: a narrower cached bb would have to be UPSCALED, and
+-- MuPDF upscale corrupts on Kindle.
+local function _headerThumbBB(filepath, fresh, thumb_w)
+    local ext_cover = fresh and fresh.cover_image_path
+    if ext_cover then
+        local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
+        local bb = ok_img and ImageSource.loadImageNative(ext_cover) or nil
+        if bb then return bb, false end
+    end
+    if fresh and fresh.cover_bb then return fresh.cover_bb, true end
+    if not filepath then return nil end
+    local ok_scc, SCC = pcall(require, "lib/bookshelf_scaled_cover_cache")
+    local cached = ok_scc and SCC and SCC.get and SCC:get(filepath) or nil
+    local cw = cached and (cached.w or (cached.getWidth and cached:getWidth()))
+    if cached and cw and thumb_w and cw >= thumb_w then return cached, false end
+    local ok_bb, bb = pcall(Repo.getCoverBB, filepath)
+    if ok_bb and bb then return bb, true end
+    return nil
+end
+
 function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs, bookmark_action, opts)
     if not book or not book.filepath then return nil end
     -- rich = the book-detail popup's header: +2pt detail fonts, a page count,
@@ -14980,28 +15278,9 @@ function BookshelfWidget:_buildBookMenuHeader(book, override_width, pill_specs, 
     local fresh = Repo.buildBookMeta(book.filepath) or book
     local thumb_widget
 
-    -- Prefer the external (Hardcover/custom) cover whenever enrichBook set
-    -- cover_image_path on the rebuilt record -- otherwise the header keeps
-    -- showing the embedded cover even after "Use Hardcover image" is on, so
-    -- the menu thumbnail disagrees with the shelf. The external bb is owned
-    -- by ImageSource's cache (keyed by path+mtime+size), so paint it with
-    -- image_disposable=false; freeing it would corrupt the shared cache.
-    local ext_cover = fresh.cover_image_path
-    local thumb_bb, thumb_disposable
-    if ext_cover then
-        -- Native (true-aspect) load: the box below is derived from the bb's own
-        -- dimensions, so a non-2:3 Hardcover cover isn't stretched tall/narrow
-        -- the way a fixed w*h resize would. The cache owns the bb.
-        local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
-        thumb_bb = ok_img and ImageSource.loadImageNative(ext_cover) or nil
-        thumb_disposable = false
-    end
-    if not thumb_bb and fresh.cover_bb then
-        -- Fallback: the embedded cover_bb is one-shot (ImageWidget frees it
-        -- after first paint) per feedback_image_disposable_shared_book.
-        thumb_bb = fresh.cover_bb
-        thumb_disposable = true
-    end
+    -- Which bb, and who owns it: see _headerThumbBB. External and cached
+    -- covers come back non-disposable and must NOT reach owned_cover_bb below.
+    local thumb_bb, thumb_disposable = _headerThumbBB(book.filepath, fresh, thumb_w)
 
     -- The rich (popup) header is CACHED + repainted across every _assemble, so a
     -- one-shot disposable bb would be freed after the first paint and the next
@@ -15670,7 +15949,7 @@ function BookshelfWidget:_buildPillSpecs(book, collection_set, close_cb, filter)
     end
     table.sort(coll_names, function(a, b) return a:lower() < b:lower() end)
     for _i, coll_name in ipairs(_show("collections") and coll_names or {}) do
-        local display = (coll_name == default_coll_name) and _("Favourites") or coll_name
+        local display = (coll_name == default_coll_name) and _("Favorites") or coll_name
         pill_specs[#pill_specs + 1] = {
             cat    = "collections",
             label  = display,
@@ -15707,7 +15986,7 @@ function BookshelfWidget:_buildPillSpecs(book, collection_set, close_cb, filter)
             _seen[coll_name:lower()] = true
             -- Localised display too -- "Favourites" UI label could collide
             -- with a same-named genre.
-            local display = (coll_name == default_coll_name) and _("Favourites") or coll_name
+            local display = (coll_name == default_coll_name) and _("Favorites") or coll_name
             _seen[display:lower()] = true
         end
         for _i, genre_name in ipairs(book.genres) do
@@ -16709,6 +16988,14 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
         { show_info, refresh_btn, select_btn },
         { move_btn, reset_btn, delete_btn },
     }
+    -- A record from a device library (Kindle #355, Kobo) is not a file the user
+    -- put on the device: its path is the reader's own library entry, or a
+    -- generated conversion of one. Delete would really remove the book from the
+    -- Kindle, and Move would break the catalogue's idea of where it lives, so
+    -- the whole destructive row goes rather than being offered and failing.
+    if book.is_kindle or book.is_kobo then
+        file_rows = { { show_info, refresh_btn, select_btn } }
+    end
 
     -- This is our own widget tree (not a ButtonDialog), so the body is a
     -- VerticalGroup we compose freely. Section headings are a full-width BLACK
@@ -16869,7 +17156,7 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
                 return HorizontalGroup:new{ align = "center",
                     TextWidget:new{ text = glyph, face = check_face, fgcolor = Blitbuffer.COLOR_BLACK },
                     HorizontalSpan:new{ width = Screen:scaleBySize(10) },
-                    TextWidget:new{ text = _("Favourite"), face = row_face, bold = true },
+                    TextWidget:new{ text = _("Favorite"), face = row_face, bold = true },
                 }
             end
             local remove_label = TextWidget:new{ text = _("Remove from history"),
@@ -17170,6 +17457,14 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
 
     -- Full width first; if the body overflows the tab height it will scroll, so
     -- rebuild scrollbar-width narrower to leave the bar its own strip.
+    --
+    -- Measured on a PW5 before changing this: the two builds are NOT equal
+    -- cost. The first is ~112ms and the second only ~17ms, because the font
+    -- faces and text measurements are cached by then. So the "wasted" build is
+    -- 17ms, not 112ms, and building narrow-first to avoid it merely swaps
+    -- which case pays: this tab FITS here (939px into 1089px), so wide-first
+    -- is the single-build path and inverting it made the common case slower.
+    -- Leave it alone.
     local body, focus_tables = buildBody(avail_w)
     if body:getSize().h + pad_top + pad_bottom > avail_h then
         body, focus_tables = buildBody(avail_w - sb)
@@ -20029,11 +20324,27 @@ end
 -- fallback logic then re-pointed them at their first tab. Easier and
 -- correct to never switch: drilling is path-level, not chip-level.
 
+-- Every group kind whose stack the shelf row dispatches by name (author,
+-- genre, tag, language) has its own _expand. Format and Rating groups have no
+-- branch there, so they fall through to the generic "has a .books array" case
+-- wired to on_series_tap and arrive HERE on a touch tap. The keyboard path
+-- dispatches on kind and gets it right, which is why this only ever bit touch.
+--
+-- Recording those as kind = "series" saved the drill under a kind findGroup
+-- could never resolve -- it looked for a SERIES named "EPUB" -- so reopening
+-- silently dropped the frame and put the reader back at the top of the chip.
+-- It also mislabelled the breadcrumb: the pill read "Series" on a Formats or
+-- Ratings chip, because the label override keys off the drilled kind.
+--
+-- Take the kind off the group. Series records are the one kind with no `kind`
+-- field (they predate it), which is what the fallback is for -- and any kind
+-- added later that falls through the same way is recorded correctly by
+-- default rather than silently becoming a series.
 function BookshelfWidget:_expandSeries(series)
     if not series or not series.series_name then return end
     self:_applyWithinGroupSort(series)
     self:_drillInto{
-        kind    = "series",
+        kind    = series.kind or "series",
         label   = series.series_name,
         payload = series,
     }

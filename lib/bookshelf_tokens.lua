@@ -75,6 +75,8 @@ Tokens.CATALOGUE = {
     { category = "Authors",  token = "%author_count",     description = _("Number of authors (numeric)") },
     { category = "Authors",  token = "%authors",          description = _("All authors, comma-separated") },
     { category = "Authors",  token = "%authors_short",    description = _("First author, or 'A and B', or 'A, B, et al.' for 3+") },
+    { category = "Book",     token = "%genres",           description = _("All genres, comma-separated") },
+    { category = "Book",     token = "%genre",            description = _("First genre") },
     { category = "Book",     token = "%series_name",      description = _("Series name") },
     { category = "Book",     token = "%series_num",       description = _("Series number") },
     { category = "Book",     token = "%rating",           description = _("Star rating (★★★☆☆), empty when unrated") },
@@ -83,7 +85,7 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%hardcover_stars",  description = _("Cached Hardcover rating as stars") },
     { category = "Book",     token = "%status",           description = _("Reading status, raw value for conditionals (unread / reading / on_hold / finished)") },
     { category = "Book",     token = "%status_label",     description = _("Reading status as a readable label (Unread / Reading / On hold / Finished)") },
-    { category = "Book",     token = "%favourite",        description = _("Favourite icon, empty when not a favourite") },
+    { category = "Book",     token = "%favourite",        description = _("Favorite icon, empty when not a favorite") },
     { category = "Book",     token = "%filename",         description = _("File name") },
     { category = "Book",     token = "%format",           description = _("Format (EPUB/PDF/…)") },
     { category = "Book",     token = "%calibre{name}",     description = _("A calibre column by name, like %calibre{pubdate} or a custom column; dates show the year (needs the calibre beta)") },
@@ -315,6 +317,27 @@ Tokens.expanders.added  = function(b)
 end
 Tokens.expanders.opened = function(b)
     return b and Tokens.formatDate(b.last_opened) or ""
+end
+
+-- book.genres is a list, stamped by Repo.buildBookMeta, and is what the hero
+-- draws as pills. Non-string and empty entries are skipped rather than joined,
+-- so a stray value cannot put a dangling separator in a list line. Empty for a
+-- book with no genres, so [if:genres]...[/if] gates the same way %rating does.
+local function _genreList(book)
+    local out = {}
+    if book and type(book.genres) == "table" then
+        for _i = 1, #book.genres do
+            local g = book.genres[_i]
+            if type(g) == "string" and g ~= "" then out[#out + 1] = g end
+        end
+    end
+    return out
+end
+Tokens.expanders.genres = function(book)
+    return table.concat(_genreList(book), ", ")
+end
+Tokens.expanders.genre  = function(book)
+    return _genreList(book)[1] or ""
 end
 
 Tokens.expanders.series      = metaToken("series")
@@ -1261,10 +1284,22 @@ function Tokens.expand(format, book, state)
     result = Tokens.expandCalibreBraces(result, book)
     local names = tokenNamesByLengthDesc()
     for _i, name in ipairs(names) do
-        local expander = Tokens.expanders[name]
-        result = result:gsub("%%" .. name, function()
-            return tostring(expander(book, state) or "")
-        end)
+        -- Only rewrite the string for a token the template actually contains.
+        -- Without this the loop runs a full gsub for every REGISTERED token --
+        -- 78 of them -- so a four-token status line paid for 78 passes over
+        -- the result. On a PW5 that was ~630ms of a single hero build; a plain
+        -- find costs a fraction of a gsub and skips almost all of them.
+        --
+        -- Tested against the CURRENT result rather than the original format, so
+        -- a token introduced by an earlier expansion is still picked up, exactly
+        -- as the unconditional loop did. Length-descending order is unchanged,
+        -- so %authors still resolves before %author.
+        if result:find("%" .. name, 1, true) then
+            local expander = Tokens.expanders[name]
+            result = result:gsub("%%" .. name, function()
+                return tostring(expander(book, state) or "")
+            end)
+        end
     end
     -- Drop the wrapping sentinels now every pass has had its chance to stop an
     -- identifier on them.
