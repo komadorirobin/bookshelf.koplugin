@@ -259,6 +259,62 @@ local function hideParentMenu(touchmenu_instance)
     end
 end
 
+-- ─── Stray taps while a picker is on top (issue #364) ──────────────────────
+--
+-- KOReader flags InputDialog is_always_active (inputdialog.lua:124) so that a
+-- tap which misses a key on its OWN virtual keyboard -- the keyboard is a
+-- separate window ABOVE the dialog -- still reaches the dialog and hides the
+-- board. UIManager's always-active walk (uimanager.lua:928-945) does not
+-- distinguish "my keyboard is above me" from "somebody else's modal is above
+-- me", so the dialog keeps receiving taps that belong to the Tokens / Icons
+-- picker stacked over it.
+--
+-- That is the whole bug. LibraryModal returns FALSE for a tap that lands
+-- inside its frame but hits no child (bookshelf_library_modal.lua:332) -- the
+-- padding around a row, the gap beside a chip, i.e. exactly an imprecise tap.
+-- The unconsumed tap walks down to us; InputDialog:onTap sees the keyboard is
+-- already hidden (the Tokens… / Icons… callbacks close it before opening the
+-- picker) and reads "outside my frame" as "close me", firing the button with
+-- id="close" -- our Cancel. The editor vanishes behind the picker, restoreMenu
+-- brings the KOReader top menu back (behind the picker, as reported), and
+-- every later pick still
+-- previews (addTextToInput fires edited_callback on the orphaned dialog) but
+-- can never be saved.
+--
+-- The invariant being violated is simply: a tap belongs to the topmost widget.
+-- Enforcing that here fixes every picker at once -- tokens, icons, the font
+-- menu, the size nudge, the colour palette, and whatever is added next --
+-- rather than requiring each one to hand the flag back on every close route.
+-- (bookshelf_chip_editor.lua:570 solves the same problem for its label dialog
+-- with KOReader's deny_keyboard_hiding, set before the picker and cleared in
+-- the selection callback; that needs the picker's cooperation and leaks the
+-- flag when the user dismisses the picker without picking.)
+--
+-- Consuming the tap rather than declining it is deliberate: the widget on top
+-- has already been offered it and passed, so a tap on nothing should do
+-- nothing, not fall through to whatever is painted behind the modal.
+local function guardStrayTaps(dialog)
+    if not (dialog and dialog.onTap) then return end
+    local inherited = dialog.onTap
+    dialog.onTap = function(self, arg, ges)
+        local stack = UIManager._window_stack
+        if stack then
+            for i = #stack, 1, -1 do
+                local w = stack[i] and stack[i].widget
+                -- Toasts sit above everything by contract and never own an
+                -- event (uimanager.lua:887-902), so look past them for the
+                -- widget that does.
+                if w and not w.toast then
+                    local kb = self._input_widget and self._input_widget.keyboard
+                    if w ~= self and w ~= kb then return true end
+                    break
+                end
+            end
+        end
+        return inherited(self, arg, ges)
+    end
+end
+
 -- Returns true iff the current dialog text contains the %bar token.
 local function hasBarToken(dialog)
     if not dialog then return false end
@@ -573,6 +629,7 @@ function LineEditor.edit(spec)
         end,
         buttons = buildButtons(),
     }
+    guardStrayTaps(dialog)
     UIManager:show(dialog)
     return dialog
 end
@@ -582,6 +639,7 @@ end
 LineEditor.showFontPicker = showFontPicker
 LineEditor.showSizeNudge  = showSizeNudge
 LineEditor.hideParentMenu = hideParentMenu
+LineEditor.guardStrayTaps = guardStrayTaps
 LineEditor.cycleNext      = cycleNext
 LineEditor.ALIGN_LABELS   = ALIGN_LABELS
 LineEditor.ALIGN_CYCLE    = ALIGN_CYCLE

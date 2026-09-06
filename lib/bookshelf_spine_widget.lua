@@ -213,6 +213,24 @@ local function _glyphTopLift(show_titles)
     return GLYPH_TOP_LIFT_REGULAR
 end
 
+--- How far a status badge hangs below the COVER on a list thumbnail, as a
+--- fraction of the badge's own height.
+---
+--- Not zero, and the first attempt at this was. Tucking the badges fully
+--- inside read as wrong -- the overhang is what makes them look like marks
+--- ON the book rather than part of its artwork -- and it also HID the
+--- in-progress bookmark outright, because that glyph paints UNDER the cover
+--- image (see _renderShadowedCard) and the grid only ever shows you the part
+--- hanging past the edge.
+---
+--- Small, and clamped by the slack that actually exists: a list card is a
+--- fixed box and its bottom edge lines up with the row divider, so the only
+--- room to hang into is whatever the artwork left empty (nine pixels for a
+--- 1.50 cover on a PW5, and NONE at all for one at the aspect cap, which
+--- fills its card). Clamping rather than picking a pixel count is what keeps
+--- a cap-filling cover from putting its badge on the divider.
+local LIST_BADGE_DANGLE = 0.15
+
 -- When the Cover badge size enlarges a bottom-anchored bookmark glyph,
 -- this fraction of the EXTRA height extends the visible dangle downward;
 -- the remainder grows inward (up, under the cover/progress bar). The
@@ -723,12 +741,18 @@ local SpineWidget = InputContainer:extend{
     -- underlying cover but should NOT show indicators -- they'd
     -- appear above/around overlay graphics. Opt-in from ShelfRow.
     show_progress       = false,
+    -- The list view's thumbnails want the READ-STATUS cues -- pause badge,
+    -- recessed fade, completed bookmark / tickbox -- without the rest of the
+    -- grid's chrome (issue #365). Splitting them off rather than reusing
+    -- show_progress is the whole point: that flag is one switch over five
+    -- things, and the top-edge bar, the page-count pill, the series-number
+    -- pill and the OPDS downloaded mark are all unreadable at the ~30x45 a
+    -- list row gives a cover -- and the row's own token lines already say
+    -- what the bar and the page count would. show_progress implies this.
+    show_status         = false,
+    -- Folder and stack covers have their own overlays. Keep the fork's
+    -- explicit escape hatch even when a caller happens to enable status.
     suppress_badges     = false,
-    -- Compact list thumbnails need the same read-status cue as grid covers,
-    -- but the list already has its own progress bar and page text.  This mode
-    -- keeps only status glyphs/fades and suppresses progress, page, download,
-    -- and series badges.
-    status_only          = false,
     -- ShelfRow's expanded mode renders book titles BELOW each cover.
     -- The bookmark glyph at the bottom-left would clash with the title
     -- if it dangled; lift it fully inside the cover when titles are
@@ -946,14 +970,69 @@ end
 --   * FrameContainer's padding directly shifts the inner widget's paint
 --     position by exactly the padding amount — straightforward, no centering
 --     surprises.
+-- What read-status chrome this surface is entitled to.
+--
+--   show_progress -- the full grid treatment (bar, page-count pill, badges,
+--                    fade). The series-number pill and the OPDS downloaded
+--                    mark have their own show_progress gates elsewhere.
+--   show_status   -- badges and fade only (list-view thumbnails, #365).
+--   neither       -- the hero card, folder stacks and series stacks, which
+--                    paint their own overlays and must stay clean.
+--
+-- decide() is asked once and the unwanted fields are zeroed, rather than
+-- calling it twice with different arguments: it is the single source of
+-- truth for how a status maps to chrome, and a second entry point would be
+-- a second place for the on-hold cue rules (issue #121) to drift.
+-- How far a list badge is pulled UP from where the grid would put it, so its
+-- bottom edge clears the row.
+--
+-- The grid hangs its badges off the card and lets them overhang: the card has
+-- room below it and the overhang is what makes a badge read as a mark ON the
+-- book. A list card's bottom edge is the row's, so the same placement puts the
+-- badge's last pixels on the divider -- on a PW5 the completed tickbox lost
+-- its entire bottom border that way, which is what issue #365's follow-up
+-- reported.
+--
+-- Taken off the BADGE'S OWN HEIGHT rather than off the cover. The obvious fix
+-- is to anchor to where the artwork ends instead of where the card does, and
+-- it does not work: the only cheap source for that is bookAspect's
+-- cover_sizetag, which disagrees with what the renderer actually draws.
+-- Measured on a PW5, Katabasis reports ~1.38 and renders at ~1.50, so an
+-- artwork-derived anchor put the badge 19px too high and it stopped hanging
+-- below the cover at all. The badge's height is a number we already have and
+-- can trust, it scales with the Cover badge size dialog and with DPI, and the
+-- overhang survives.
+--
+-- Deliberately SMALL. The grid's placement was very nearly right already --
+-- the badge hung a few pixels past the cover and only its last row or two
+-- were lost -- so this takes back just enough for the bottom border and its
+-- halo, and leaves the rest of the overhang alone. Floored at 3px so it never
+-- rounds down to less than the border plus halo it exists to rescue.
+local LIST_BADGE_CLEARANCE = 0.12
+function SpineWidget:_listBadgeClearance(badge_h)
+    return math.max(3, math.floor((badge_h or 0) * LIST_BADGE_CLEARANCE + 0.5))
+end
+
+function SpineWidget:_statusIndicators()
+    if self.suppress_badges or not (self.show_progress or self.show_status) then
+        return { bar = false, bar_pct = 0, glyph = nil }
+    end
+    local ind = CoverProgress.decide(self.book)
+    if self.show_progress then return ind end
+    return {
+        bar          = false,
+        bar_pct      = 0,
+        glyph        = ind.glyph,
+        on_hold      = ind.on_hold,
+        on_hold_fade = ind.on_hold_fade,
+        page_count   = false,
+    }
+end
+
 function SpineWidget:_renderShadowedCard(inner)
     local card_w, card_h = self:_cardDimensions()
-    local indicators = { bar = false, bar_pct = 0, glyph = nil }
-    if self.show_progress and not self.suppress_badges then
-        indicators = self.status_only
-            and CoverProgress.statusOnly(self.book)
-            or CoverProgress.decide(self.book)
-    end
+    local indicators     = self:_statusIndicators()
+    local list_badges    = self.show_status and not self.show_progress
 
     local children = {}
 
@@ -1032,6 +1111,9 @@ function SpineWidget:_renderShadowedCard(inner)
                 + GLYPH_DANGLE_GROWTH_SHARE * (widget_h - base_widget_h)
             local y_offset = card_h
                 + math.floor(dangle_h * (1 - lift) + 0.5) - widget_h
+            if list_badges then
+                y_offset = y_offset - self:_listBadgeClearance(widget_h)
+            end
             local glyph_frame = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
@@ -1123,6 +1205,9 @@ function SpineWidget:_renderShadowedCard(inner)
                 + GLYPH_DANGLE_GROWTH_SHARE * (widget_h - base_widget_h)
             local y_offset = card_h
                 + math.floor(dangle_h * (1 - lift) + 0.5) - widget_h
+            if list_badges then
+                y_offset = y_offset - self:_listBadgeClearance(widget_h)
+            end
             local glyph_frame = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
@@ -1201,7 +1286,10 @@ function SpineWidget:_renderShadowedCard(inner)
         local pill_h   = sz.h
         local bar_pad  = _barBottomPadding()
         local side     = _barSideMargin()
-        local pill_y   = card_h - CARD_BORDER - bar_pad - pill_h
+        local pill_y = card_h - CARD_BORDER - bar_pad - pill_h
+        if list_badges then
+            pill_y = pill_y - self:_listBadgeClearance(pill_h)
+        end
         local pill_x   = CARD_BORDER + side
         if pill_y < CARD_BORDER then pill_y = CARD_BORDER end
         children[#children + 1] = FrameContainer:new{
@@ -1327,7 +1415,7 @@ function SpineWidget:_renderShadowedCard(inner)
     --     SpineWidget with it off, and their card_w is the SLOT rather than the
     --     painted cover, so a right-anchored badge would hang off the artwork.
     local pill_owns_corner = indicators.page_count and self.book and self.book.page_count
-    if self.show_progress and not self.status_only
+    if self.show_progress
             and self.book and self.book.downloaded
             and not pill_owns_corner
             and not self.is_bulk_selected then
@@ -1388,7 +1476,7 @@ function SpineWidget:_renderShadowedCard(inner)
     --      * self.show_progress -- grid-only surface (hero / folder /
     --        series stacks reuse SpineWidget but opt out).
     --      * Setting bookshelf_show_series_num (default ON).
-    if self.show_progress and not self.status_only and not self.suppress_badges
+    if self.show_progress and not self.suppress_badges
             and _showSeriesNum(self.in_series)
             and self.book and self.book.series_num then
         local TextWidget     = require("ui/widget/textwidget")
@@ -1998,13 +2086,13 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
     -- background, no border, and no drop shadow (the shadow is skipped in
     -- the same condition in _renderShadowedCard). Gated on on_hold_fade,
     -- not the pause badge -- on_hold_display = "pause" keeps normal cover
-    -- chrome (issue #121). show_progress is set only on grid covers (the
-    -- hero / folder / series stacks reuse SpineWidget but clear it), so this
-    -- is grid-only by construction. Excluded while selected (current-book
-    -- ring) or bulk-selected, which own their cover chrome.
-    local on_hold_fade = self.show_progress
-        and not self.is_selected and not self.is_bulk_selected
-        and CoverProgress.decide(self.book).on_hold_fade or false
+    -- chrome (issue #121). _statusIndicators keeps this to the grid and the
+    -- list row (#365) -- the hero / folder / series stacks reuse SpineWidget
+    -- but set neither flag, so they stay clean by construction. Excluded
+    -- while selected (current-book ring) or bulk-selected, which own their
+    -- cover chrome.
+    local on_hold_fade = not self.is_selected and not self.is_bulk_selected
+        and self:_statusIndicators().on_hold_fade or false
     local cover_args = {
         inner       = cover_inner,
         width       = card_w,
@@ -2114,7 +2202,7 @@ function SpineWidget:_renderFallback()
     -- rounded pill sits within the paper-tone bottom strip with the same
     -- breathing room above the bar as below it (bar_pad on each side).
     local inset_v_bottom = inset_v_top
-    if self.show_progress and not self.status_only
+    if self.show_progress
             and CoverProgress.decide(self.book).bar then
         local needed = CARD_BORDER + 2 * _barBottomPadding() + _barHeight()
         if needed > inset_v_bottom then inset_v_bottom = needed end

@@ -2079,6 +2079,17 @@ function ListRow.new(opts)
                 -- title column two pixels to its right. The grid keeps its
                 -- lettered placeholder; only this caller opts out.
                 bare_placeholder = true,
+                -- Read-status cues only: the pause badge, the recessed fade
+                -- and the completed bookmark / tickbox, all following the
+                -- SAME settings the grid reads (issue #365). No new toggle,
+                -- because the favourite badge already behaves this way --
+                -- it is gated on show_fav_badge alone, which is why it has
+                -- always shown up here and the status cues never did. That
+                -- asymmetry was an accident of which flag each one hung off,
+                -- not a decision. show_progress stays off: the top-edge bar
+                -- and the page-count pill are illegible at thumbnail size,
+                -- and the row's own token lines already carry both.
+                show_status = true,
                 -- Square corners, no drop shadow, and no shadow reservation
                 -- eating the row's height. A table cell is not a card: the
                 -- radius and the shadow are what make a grid tile read as an
@@ -2087,11 +2098,6 @@ function ListRow.new(opts)
                 -- the size in SpineWidget -- the grid and the hero want their
                 -- chrome at every size they render at.
                 flat_thumb = true,
-                -- Reuse the cover renderer's configured read-state glyph and
-                -- fade treatment, but not its page/series badges or progress
-                -- bar: those are already represented by the list row itself.
-                show_progress = true,
-                status_only = true,
                 -- Keep bookmark-style glyphs wholly inside the thumbnail.
                 show_titles = true,
             }

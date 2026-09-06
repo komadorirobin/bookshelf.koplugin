@@ -1289,9 +1289,9 @@ t.test("the thumbnail stays flat", function()
 end)
 
 t.test("the thumbnail carries read status without duplicate progress", function()
-    assert(row_src:match("show_progress%s*=%s*true"),
+    assert(row_src:match("show_status%s*=%s*true"),
         "the list thumbnail must opt into the shared read-status renderer")
-    assert(row_src:match("status_only%s*=%s*true"),
+    assert(not row_src:match("show_progress%s*=%s*true"),
         "the list thumbnail must suppress duplicate progress and page badges")
     assert(row_src:match("show_titles%s*=%s*true"),
         "bookmark-style status glyphs must stay inside the thumbnail")
