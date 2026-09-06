@@ -6355,6 +6355,7 @@ function BookshelfWidget:_repaintSelectionHighlight(old_fp, new_fp)
             is_selected      = want_selected,
             is_bulk_selected = old_spine.is_bulk_selected or false,
             show_progress = old_spine.show_progress,
+            show_status   = old_spine.show_status,
             show_titles   = old_spine.show_titles,
             in_series     = old_spine.in_series,
         }
@@ -6507,6 +6508,7 @@ function BookshelfWidget:_refreshSpineInPlace(fp)
                     is_selected      = old_spine.is_selected or false,
                     is_bulk_selected = old_spine.is_bulk_selected or false,
                     show_progress = old_spine.show_progress,
+                    show_status   = old_spine.show_status,
                     show_titles   = old_spine.show_titles,
                     in_series     = old_spine.in_series,
                 }
