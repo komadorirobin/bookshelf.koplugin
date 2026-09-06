@@ -189,17 +189,18 @@ local RESOLVERS = {}
 -- strings with "unread" as the floor.
 local function fillProgress(rec)
     local out = { book_pct = NONE, status = NONE,
-                  rating = NONE, page_count = NONE }
+                  rating = NONE, page_count = NONE, page_num = NONE }
     local fp = localPath(rec)
     if not fp then return out end
     local R = repo()
     if not R or type(R.progressFor) ~= "function" then return out end
-    local ok, pct, status, rating, pages = pcall(R.progressFor, fp)
+    local ok, pct, status, rating, pages, _opened, page_num = pcall(R.progressFor, fp)
     if not ok then return out end
-    if pct    ~= nil then out.book_pct   = pct    end
-    if status ~= nil then out.status     = status end
-    if rating ~= nil then out.rating     = rating end
-    if pages  ~= nil then out.page_count = pages  end
+    if pct      ~= nil then out.book_pct   = pct      end
+    if status   ~= nil then out.status     = status   end
+    if rating   ~= nil then out.rating     = rating   end
+    if pages    ~= nil then out.page_count = pages    end
+    if page_num ~= nil then out.page_num   = page_num end
     return out
 end
 
@@ -207,6 +208,15 @@ RESOLVERS.book_pct   = fillProgress
 RESOLVERS.status     = fillProgress
 RESOLVERS.rating     = fillProgress
 RESOLVERS.page_count = fillProgress
+-- %page_num had no resolver at all, so it rendered empty on every shelf row
+-- while working in the hero -- which builds its ONE book through
+-- Repo.buildBook, the expensive DocSettings path. Reported via Reddit.
+--
+-- It rides fillProgress rather than getting its own reader because the sidecar
+-- is already open there: five fields for one DocSettings parse. Its precedence
+-- lives with the others in readProgress so the shelf and the hero cannot
+-- disagree about where the reader is in the same book.
+RESOLVERS.page_num   = fillProgress
 
 -- Repo.fileSizeFor: one lfs stat, memoised for the session and dropped by
 -- invalidateWalkCache (a sideload is the only thing that changes a file's

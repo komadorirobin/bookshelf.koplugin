@@ -620,12 +620,14 @@ t.test("every resolved field is one a shelf record really lacks", function()
             "%s is on the shelf record already; its resolver is unreachable", k))
     end
     -- 13 originally; +3 annotation counts, +avg_page_time_seconds and
-    -- +book_pct_read as the orphaned and missing tokens were wired (#348). The
-    -- count is asserted deliberately: a resolver appearing without someone
-    -- noticing is how this file grows a field buildBookMeta already sets,
-    -- which would then be unreachable.
-    assert(#TokenRecord.RESOLVED_FIELDS == 18, string.format(
-        "expected 18 resolved fields, found %d (%s)",
+    -- +book_pct_read as the orphaned and missing tokens were wired (#348), and
+    -- +page_num, which had no resolver at all and so rendered empty on every
+    -- shelf row while working in the hero (Reddit report). The count is
+    -- asserted deliberately: a resolver appearing without someone noticing is
+    -- how this file grows a field buildBookMeta already sets, which would then
+    -- be unreachable.
+    assert(#TokenRecord.RESOLVED_FIELDS == 19, string.format(
+        "expected 19 resolved fields, found %d (%s)",
         #TokenRecord.RESOLVED_FIELDS,
         table.concat(TokenRecord.RESOLVED_FIELDS, ", ")))
 end)

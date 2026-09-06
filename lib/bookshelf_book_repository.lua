@@ -2038,9 +2038,10 @@ function Repo.readProgress(filepath)
     local now = os.time()
     local cached = _progress_cache[filepath]
     if cached then
-        return cached.pct, cached.status, cached.rating, cached.page_count
+        return cached.pct, cached.status, cached.rating, cached.page_count,
+               cached.page_num
     end
-    local pct, status, rating, page_count
+    local pct, status, rating, page_count, page_num
     local ok_ds, ds = pcall(function() return getDocSettings():open(filepath) end)
     if ok_ds and ds then
         local ok_pct, p = pcall(ds.readSetting, ds, "percent_finished")
@@ -2058,6 +2059,19 @@ function Repo.readProgress(filepath)
                 page_count = tonumber(stats.pages)
             end
         end
+        -- CURRENT page, in buildBook's own precedence, so a shelf row and the
+        -- hero never disagree about where the reader is in the same book: the
+        -- stable pagemap label first, then last_page (set for PDF / CBZ). The
+        -- percentage-derived third rung is applied below, once page_count is
+        -- settled. Read from the handle already open here -- %page_num had no
+        -- resolver at all before, so it rendered empty everywhere except the
+        -- hero, which builds its one book the expensive way.
+        local ok_lbl, label = pcall(ds.readSetting, ds, "pagemap_current_page_label")
+        if ok_lbl and label then page_num = tonumber(label) end
+        if not page_num then
+            local ok_lp, last_page = pcall(ds.readSetting, ds, "last_page")
+            if ok_lp then page_num = tonumber(last_page) end
+        end
     end
     -- #159: last-resort filename fallback (see pageCountFromFilename), matching
     -- buildBook's progress-cache seed so the sort key / badge agree.
@@ -2072,17 +2086,26 @@ function Repo.readProgress(filepath)
     if     status == "complete"  then status = "finished"
     elseif status == "abandoned" then status = "on_hold"
     end
+    -- Third rung, mirroring buildBook: synthesise the page from how far in the
+    -- reader is. Approximate for a reflowable book, and the honest answer when
+    -- neither exact source exists -- an EPUB without stable page numbers has no
+    -- "current page" of its own to report.
+    if not page_num and pct and page_count then
+        local n = math.floor(pct * page_count)
+        if n >= 1 then page_num = n end
+    end
     _progress_cache[filepath] = {
         pct        = pct,
         status     = status,
         rating     = rating,
         page_count = page_count,
+        page_num   = page_num,
         expires_at = now + PROGRESS_CACHE_TTL,
     }
-    return pct, status, rating, page_count
+    return pct, status, rating, page_count, page_num
 end
 
--- Repo.progressFor(filepath) -> pct, status, rating, page_count, opened
+-- Repo.progressFor(filepath) -> pct, status, rating, page_count, opened, page_num
 --
 -- readProgress with the cheap gate in front of it, given a name so the render
 -- side does not have to reproduce the pairing.
@@ -2119,15 +2142,17 @@ end
 function Repo.progressFor(filepath)
     if not filepath then return nil, nil, nil, nil, false end
     if _hasSidecar(filepath) then
-        local pct, status, rating, pages = Repo.readProgress(filepath)
-        return pct, status, rating, pages, true
+        local pct, status, rating, pages, page_num = Repo.readProgress(filepath)
+        return pct, status, rating, pages, true, page_num
     end
     -- No sidecar means never opened: no percentage, status or rating exists to
     -- read. A page count still can -- pageCountFromFilename (#159) is a match
     -- on the name with no file touched, and readProgress would have returned
     -- it -- so hand it back, and the Pages column agrees with the page_count
     -- sort key instead of going blank exactly where the sort has a value.
-    return nil, nil, nil, pageCountFromFilename(filepath), false
+    -- No sidecar means never opened, so there is no current page either --
+    -- page_num stays nil rather than being synthesised as page 1.
+    return nil, nil, nil, pageCountFromFilename(filepath), false, nil
 end
 
 -- Repo.fileSizeFor(filepath) -> bytes, or nil.
