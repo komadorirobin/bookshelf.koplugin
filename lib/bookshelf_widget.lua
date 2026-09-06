@@ -2085,6 +2085,8 @@ function BookshelfWidget:_rebuild()
     local rows
     if self:_isListMode() then
         rows = self:_buildListRows(items, content_w, shelf_h, book_gap, n_shelves)
+    elseif self:_isSpineMode() then
+        rows = self:_buildSpineRows(items, content_w, shelf_h, book_gap, n_shelves)
     else
         rows = self:_buildShelfRows(items, content_w, shelf_h, book_gap, n_shelves)
     end
@@ -2110,6 +2112,13 @@ function BookshelfWidget:_rebuild()
         local ListGeom = require("lib/bookshelf_list_geom")
         local ListRow  = require("lib/bookshelf_list_row")
         slot_w, slot_h = ListGeom.thumbSize(shelf_h, ListRow.RING)
+    elseif self:_isSpineMode() then
+        -- Spine mode paints covers only for face-out favourites, at spine
+        -- height; extraction still supplies titles/aspect for everyone, so
+        -- size any cover it pulls at that face-out footprint rather than
+        -- the n_cols grid slot (n_cols doesn't describe this layout).
+        slot_h = shelf_h
+        slot_w = math.floor(shelf_h / 1.5)
     end
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_cover_w, hero_cover_h)
 
@@ -4309,6 +4318,10 @@ function BookshelfWidget:_isListMode()
     return ViewMode.isList(self:_viewMode())
 end
 
+function BookshelfWidget:_isSpineMode()
+    return ViewMode.isSpines(self:_viewMode())
+end
+
 -- _flipViewMode() -- the footer-hold gesture: pin THIS CHIP to the other mode.
 --
 -- It used to write the shelf-wide boolean for the current state (expanded or
@@ -4885,6 +4898,74 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
     return rows
 end
 
+-- _buildSpineRows — the "spines" style row builder. Same contract as the
+-- other two: exactly n_rows uniform-height widgets. Books pack greedily
+-- left-to-right at their page-count widths, so the per-page count is only
+-- known here; it is stashed on the widget (_spine_shown) for the footer's
+-- "first-last of total" range and the pager's step size.
+function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
+    local SpineShelf = require("lib/bookshelf_spine_shelf")
+    local shared = self:_shelfCallbacks()
+    local gap = Screen:scaleBySize(SpineShelf.BOOK_GAP_DP)
+    local plan = SpineShelf.plan(items, {
+        content_w  = content_w,
+        row_h      = shelf_h,
+        gap        = gap,
+        group_gap  = Screen:scaleBySize(SpineShelf.GROUP_GAP_DP),
+        n_rows     = n_rows,
+        face_out   = BookshelfSettings.nilOrTrue("spine_face_out"),
+        height_pct = BookshelfSettings.read("spine_shelf_height_pct", 100),
+    })
+    self._spine_shown = plan.shown
+    -- Page history is per chip: stepping back retraces the pages the reader
+    -- actually saw. A chip switch invalidates it.
+    if self._spine_hist_chip ~= self.chip then
+        self._spine_hist = {}
+        self._spine_hist_chip = self.chip
+    end
+    local rows = {}
+    for r = 1, n_rows do
+        rows[r] = SpineShelf.rowWidget{
+            plan      = plan,
+            row       = plan.rows[r],
+            width     = content_w,
+            height    = shelf_h,
+            gap       = gap,
+            callbacks = shared,
+        }
+    end
+    -- Preloader hint: covers are only painted face-out, at spine height.
+    rows[1].cover_w = math.floor(shelf_h / 1.5)
+    rows[1].cover_h = shelf_h
+    return rows
+end
+
+-- _spineStep — spine mode's chevron step. Forward advances by the number of
+-- books the current page actually shows (variable), remembering where it
+-- came from; backward pops that history so the reader retraces the exact
+-- pages, falling back to a capacity-sized step when there is no history
+-- (e.g. after a jump).
+function BookshelfWidget:_spineStep(direction)
+    self._spine_hist = self._spine_hist or {}
+    local shown = self._spine_shown or 0
+    if shown <= 0 then shown = self:_viewSize() end
+    if direction > 0 then
+        local total = self._total_items or 0
+        local nxt = self._cursor + shown
+        if total > 0 and nxt > total then return end
+        table.insert(self._spine_hist, self._cursor)
+        self._cursor = nxt
+    else
+        local prev = table.remove(self._spine_hist)
+        if prev and prev < self._cursor then
+            self._cursor = prev
+        else
+            self._cursor = self._cursor - shown
+        end
+    end
+    if self._cursor < 1 then self._cursor = 1 end
+end
+
 -- _buildPaginationFooter — chevron nav (or series-back label when expanded).
 -- Extracted so _swapShelvesInPlace can construct a fresh footer reflecting
 -- the new page's button-enabled states.
@@ -4947,7 +5028,11 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         -- this still steps cleanly by the current view's full size.
         return function()
             bw:_markOpdsNav()
-            bw:_advanceCursor(direction)
+            if bw:_isSpineMode() then
+                bw:_spineStep(direction)
+            else
+                bw:_advanceCursor(direction)
+            end
             bw:_syncPageFromCursor()
             bw:_swapShelvesInPlace()
         end
@@ -4995,6 +5080,12 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     -- tap and d-pad users would be gone. The tap itself is safe: step(1) arms
     -- before _advanceCursor, so the headroom is there when it is acted on.
     local can_step_forward = self._cursor < max_cursor_now or open_ended
+    -- Spine pages hold a variable count: forward is live exactly while the
+    -- last book shown isn't the last book there is.
+    if self:_isSpineMode() and not open_ended then
+        local shown = self._spine_shown or view_size_now
+        can_step_forward = (self._cursor + shown - 1) < (self._total_items or 0)
+    end
     local first = Button:new{
         icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
         width      = slot(SLOT_EDGE),
@@ -5010,11 +5101,23 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         margin        = bm("prev"), bordersize = bs("prev"), radius = br("prev"),
         enabled       = can_step_back, show_parent = self,
     }
+    -- Spine mode: pages hold a variable number of books, so "Page 3 of 27"
+    -- would be a fiction. The label reads as a position instead: which books
+    -- of how many are on the shelf right now.
+    local spine_label
+    if self:_isSpineMode() and not open_ended then
+        local first = self._cursor or 1
+        local total = self._total_items or 0
+        local shown = self._spine_shown or 0
+        local last = shown > 0 and math.min(first + shown - 1, total) or first
+        spine_label = T(_("%1-%2 of %3"), first, last, total)
+    end
     local page_text = Button:new{
         -- "Page %1 of %2+" is the SAME source string bookshelf_pagination.lua
         -- uses for its open-ended nav, so the two share one POT entry.
-        text = open_ended and T(_("Page %1 of %2+"), self.page, total_pages)
-                           or string.format(_("Page %d of %d"), self.page, total_pages),
+        text = spine_label
+               or (open_ended and T(_("Page %1 of %2+"), self.page, total_pages)
+                               or string.format(_("Page %d of %d"), self.page, total_pages)),
         -- Adopt the Bookshelf UI font (a FontList-resolvable face), like the
         -- rest of the chrome; falls back to cfont in follow mode. Button
         -- resolves text_font_face via Font:getFace, and the UI-font setting
@@ -5799,6 +5902,8 @@ function BookshelfWidget:_swapShelvesInPlace()
     local rows
     if self:_isListMode() then
         rows = self:_buildListRows(items, d.content_w, d.shelf_h, d.book_gap or d.PAD, n_shelves)
+    elseif self:_isSpineMode() then
+        rows = self:_buildSpineRows(items, d.content_w, d.shelf_h, d.book_gap or d.PAD, n_shelves)
     else
         rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.book_gap or d.PAD, n_shelves)
     end
@@ -5834,6 +5939,10 @@ function BookshelfWidget:_swapShelvesInPlace()
         local ListGeom = require("lib/bookshelf_list_geom")
         local ListRow  = require("lib/bookshelf_list_row")
         slot_w, slot_h = ListGeom.thumbSize(d.shelf_h, ListRow.RING)
+    elseif self:_isSpineMode() then
+        -- Same substitution as _rebuild's extraction site: face-out size.
+        slot_h = d.shelf_h
+        slot_w = math.floor(d.shelf_h / 1.5)
     end
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, d.hero_cover_w, d.hero_cover_h)
 
@@ -9621,6 +9730,7 @@ function BookshelfWidget:_pageSize()
     -- column) and must use it — a fixed 5 against a view showing fewer rows
     -- skips books nothing can then reach, and against more rows repeats the
     -- overlap the cursor rework removed.
+    if self:_isSpineMode() then return self:_viewSize() end
     if self:_isLandscape() and not self:_isListMode() then return 5 end
     return self:_nShelves() * self:_nCols()
 end
@@ -9755,7 +9865,25 @@ function BookshelfWidget:_draftCacheServes(cached, view_size)
 end
 
 function BookshelfWidget:_viewSize()
+    if self:_isSpineMode() then return self:_spineViewCapacity() end
     return self:_nShelves() * self:_nCols()
+end
+
+-- _spineViewCapacity() — spine mode's stand-in for rows × cols: the MOST
+-- books a page could possibly hold (every spine at minimum width). Spine
+-- widths vary per book, so the real per-page count is only known after
+-- layout (_spine_shown); this ceiling is what the fetch window and the
+-- cursor clamps size themselves by, so a page can never come up short of
+-- books it could have shown. Pagination display doesn't use it — the
+-- footer shows a "first-last of total" range in spine mode.
+function BookshelfWidget:_spineViewCapacity()
+    local SpineLayout = require("lib/bookshelf_spine_layout")
+    local SpineShelf  = require("lib/bookshelf_spine_shelf")
+    local min_w = Screen:scaleBySize(SpineLayout.MIN_W_DP + SpineShelf.BOOK_GAP_DP)
+    if min_w < 1 then min_w = 1 end
+    local width = self.width or Screen:getWidth()
+    local per_row = math.max(1, math.floor(width / min_w))
+    return per_row * self:_nShelves()
 end
 
 -- _selectedFilepath() — the single "selected book" across expand/collapse, so

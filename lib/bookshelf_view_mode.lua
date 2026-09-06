@@ -36,6 +36,10 @@ local ViewMode = {}
 ViewMode.COVERS = "covers"
 ViewMode.LIST   = "list"
 ViewMode.AUTO   = "auto"
+-- The third presentation: books edge-on, like a real bookcase. Never chosen
+-- by the Auto policy -- it is a deliberate, per-chip aesthetic (the opposite
+-- of the utilitarian list), so it exists only as an explicit pin.
+ViewMode.SPINES = "spines"
 
 -- effective(expanded, in_folder) -> ViewMode.COVERS | ViewMode.LIST
 --
@@ -48,6 +52,7 @@ function ViewMode.effective(expanded, in_folder)
 end
 
 function ViewMode.isList(mode) return mode == ViewMode.LIST end
+function ViewMode.isSpines(mode) return mode == ViewMode.SPINES end
 
 -- ── THE PER-CHIP OVERRIDE ──────────────────────────────────────────────────
 --
@@ -83,7 +88,7 @@ ViewMode.CHIP_KEY = "view_mode"
 -- as a mode it has no branch for.
 function ViewMode.chipOverride(value)
     if value == ViewMode.LIST or value == ViewMode.COVERS
-            or value == ViewMode.AUTO then
+            or value == ViewMode.AUTO or value == ViewMode.SPINES then
         return value
     end
     return nil

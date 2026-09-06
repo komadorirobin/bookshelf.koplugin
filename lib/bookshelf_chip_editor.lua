@@ -42,6 +42,7 @@ function Editor._chipModeLabel(value)
     if v == ViewMode.LIST   then return _("List")   end
     if v == ViewMode.COVERS then return _("Covers") end
     if v == ViewMode.AUTO   then return _("Auto")   end
+    if v == ViewMode.SPINES then return _("Spines") end
     return nil
 end
 
@@ -1410,6 +1411,11 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
             radio(_("Covers"), mode == ViewMode.COVERS or mode == nil,
             pick(function()
                 draft[ViewMode.CHIP_KEY] = nil
+            end)),
+            -- Spines: books edge-on, a real bookcase. Never chosen by Auto;
+            -- an explicit pin only, like the others but purely for fun.
+            radio(_("Spines"), mode == ViewMode.SPINES, pick(function()
+                draft[ViewMode.CHIP_KEY] = ViewMode.SPINES
             end)),
         }
 
