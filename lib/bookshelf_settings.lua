@@ -735,6 +735,55 @@ function Settings:_coverDisplaySubItems()
                 markDirty()
             end,
         },
+        -- Issue #330: how tall a cover may get before it is trimmed. Presets
+        -- rather than a free number, which is what the reporter asked for -- the
+        -- useful range is narrow and the arithmetic behind it (how many rows
+        -- still fit) is not something to hand a reader a spinner for.
+        --
+        -- Enabled only alongside True cover aspect ratio: with uniform covers
+        -- every one is 1.5 by definition and a cap has nothing to act on.
+        (function()
+            local CAPS = { 1.4, 1.5, 1.55, 1.65, 1.8 }
+            local function capRow(v)
+                return {
+                    text_func = function()
+                        local label = string.format("%.2f", v):gsub("0$", "")
+                        if v == 1.55 then label = label .. " " .. _("(default)") end
+                        return label
+                    end,
+                    checked_func = function()
+                        local SpineWidget = require("lib/bookshelf_spine_widget")
+                        return math.abs(SpineWidget.coverAspectCap() - v) < 0.001
+                    end,
+                    radio = true,
+                    keep_menu_open = true,
+                    callback = function()
+                        BookshelfSettings.save("cover_aspect_cap", v)
+                        BookshelfSettings.flush()
+                        markDirty()
+                    end,
+                }
+            end
+            local rows = {}
+            for _i = 1, #CAPS do rows[#rows + 1] = capRow(CAPS[_i]) end
+            return {
+                text_func = function()
+                    local SpineWidget = require("lib/bookshelf_spine_widget")
+                    return _("Tallest cover shape") .. ": "
+                        .. (string.format("%.2f", SpineWidget.coverAspectCap()):gsub("0$", ""))
+                end,
+                help_text = _("How tall a cover may be, relative to its width,"
+                    .. " before the extra height is trimmed. Taller values show"
+                    .. " more of an unusually tall cover; they also make every"
+                    .. " row taller, so fewer rows fit on the shelf. Only"
+                    .. " applies with True cover aspect ratio on."),
+                enabled_func = function()
+                    return BookshelfSettings.isTrue("true_cover_aspect")
+                end,
+                keep_menu_open = true,
+                sub_item_table = rows,
+            }
+        end)(),
         {
             text = _("Square cover corners"),
             help_text = _("Draw covers with square corners instead of the "

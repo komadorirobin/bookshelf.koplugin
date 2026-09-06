@@ -2536,6 +2536,31 @@ SpineWidget.COVER_CHROME = SHADOW_OFFSET + 2 * CARD_BORDER
 -- height -- a few pixels of crop -- to gain a whole row of shelf.
 SpineWidget.COVER_ASPECT_CAP = 1.55
 
+-- SpineWidget.coverAspectCap() -- the cap actually in force.
+--
+-- Settable since issue #330: a reader whose covers are genuinely taller than
+-- 1.55 sees them cropped, and the right cap depends on their column count and
+-- screen, which is exactly the arithmetic above. The constant stays as the
+-- DEFAULT, so it keeps documenting where 1.55 came from.
+--
+-- Read through here rather than off the field, because every caller has to
+-- agree: the row-count maths reserves height at this number and shelf_row
+-- sizes slots with it, and the two disagreeing is what made a previous retune
+-- shrink the covers without giving back the row it was tightened for.
+--
+-- Memoised on the settings generation because bookAspect calls this per cover
+-- per render. Clamped to a range that still produces a usable shelf: below
+-- ~1.2 covers stop looking like books, and above ~2.0 a row eats the screen.
+local _cap_cache, _cap_gen
+function SpineWidget.coverAspectCap()
+    local gen = BookshelfSettings.generation()
+    if _cap_cache and _cap_gen == gen then return _cap_cache end
+    local v = tonumber(BookshelfSettings.read("cover_aspect_cap"))
+    if not v or v < 1.2 or v > 2.0 then v = SpineWidget.COVER_ASPECT_CAP end
+    _cap_cache, _cap_gen = v, gen
+    return v
+end
+
 -- SpineWidget.downloadedTickOffset(card_w, card_h, glyph_w, widget_h, halo_w)
 -- -> x, y
 --
@@ -2594,7 +2619,8 @@ function SpineWidget.bookAspect(book)
         w, h = tonumber(w), tonumber(h)
         if w and h and w > 0 and h > 0 then
             local a = h / w
-            if a > SpineWidget.COVER_ASPECT_CAP then a = SpineWidget.COVER_ASPECT_CAP end
+            local cap = SpineWidget.coverAspectCap()
+            if a > cap then a = cap end
             if a < 0.5 then a = 0.5 end
             return a
         end

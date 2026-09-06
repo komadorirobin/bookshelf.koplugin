@@ -78,6 +78,9 @@ package.preload["lib/bookshelf_settings_store"] = function()
             return v
         end,
         isTrue = function(k) return _G.__test_settings[k] == true end,
+        -- coverAspectCap memoises on this (issue #330); resolvedColors has
+        -- always used it, so a stub without it is the incomplete half.
+        generation = function() return _G.__test_settings_generation or 1 end,
     }
 end
 package.preload["lib/bookshelf_scaled_cover_cache"] = function()
