@@ -91,6 +91,8 @@ Tokens.CATALOGUE = {
     { category = "Book",     token = "%description",      description = _("Book blurb (HTML stripped)") },
     { category = "Book",     token = "%quote",            description = _("A random highlight from this book") },
     { category = "Book",     token = "%quote_source",     description = _("The book and author for %quote") },
+    { category = "Book",     token = "%quote_page",       description = _("Page the %quote highlight is on") },
+    { category = "Book",     token = "%quote_chapter",    description = _("Chapter the %quote highlight is in") },
     { category = "Book",     token = "%lang",             description = _("Language") },
     { category = "Progress", token = "%book_pct",         description = _("Percent read") },
     { category = "Progress", token = "%book_pct_left",    description = _("Percent left") },
@@ -134,6 +136,8 @@ Tokens.CATALOGUE = {
     { category = "Device",   token = "%warmth",           description = _("Warmth on the device's own scale, 0-24 on Kindle (natural-light only)") },
     { category = "Device",   token = "%warmth_pct",       description = _("Warmth as a percentage (natural-light only)") },
     { category = "Device",   token = "%warmth_icon",      description = _("Warmth icon: cool / mid / warm (natural-light only)") },
+    { category = "Device",   token = "%ssh_icon",         description = _("SSH icon, shown only while the SSH server is running") },
+    { category = "Device",   token = "[if:ssh]%ssh_icon[/if]", description = _("Same, wrapped so a whole section hides when SSH is off") },
     { category = "Device",   token = "%mem",              description = _("System memory used (%)") },
     { category = "Device",   token = "%sysused",          description = _("System memory used (MiB)") },
     { category = "Device",   token = "%ram",              description = _("KOReader RSS (MiB)") },
@@ -478,6 +482,31 @@ Tokens.expanders.quote_source = function(book)
     return attribution
 end
 
+-- Page and chapter of the SAME highlight %quote picked.
+--
+-- Quotes.forBook memoises its random pick per (filepath, nonce), so all four
+-- quote tokens describe one highlight rather than each re-rolling -- a template
+-- reading "%quote -- %quote_chapter, p%quote_page" would otherwise attribute
+-- one quote to another's location.
+--
+-- Chapter comes from the annotation, where KOReader already records it. Legacy
+-- pre-annotations sidecars carry no chapter and yield empty, which [if:] gates
+-- cleanly.
+Tokens.expanders.quote_page = function(book)
+    if not (book and book.filepath) then return "" end
+    local ok, Quotes = pcall(require, "lib/bookshelf_quotes")
+    if not ok then return "" end
+    local q = Quotes.forBook(book.filepath)
+    return (q and q.page ~= nil) and tostring(q.page) or ""
+end
+Tokens.expanders.quote_chapter = function(book)
+    if not (book and book.filepath) then return "" end
+    local ok, Quotes = pcall(require, "lib/bookshelf_quotes")
+    if not ok then return "" end
+    local q = Quotes.forBook(book.filepath)
+    return (q and type(q.chapter) == "string") and q.chapter or ""
+end
+
 -- HTML escape for text we inject into the reviews-modal markup (book title,
 -- reviewer names, meta). Order matters: & first so we don't double-escape.
 local function _escHtml(s)
@@ -757,6 +786,14 @@ end
 
 Tokens.expanders.page_num   = function(b) return b and b.page_num and tostring(b.page_num) or "" end
 Tokens.expanders.page_count = function(b) return b and b.page_count and tostring(b.page_count) or "" end
+-- The publisher count a `p(123)` filename token carries, reported straight
+-- rather than through book.page_count.
+--
+-- Not the same number. page_count prefers a real rendered or stable count and
+-- only falls back to the filename, so the filename figure silently disappears
+-- from %page_count the moment KOReader has counted the book itself. This token
+-- keeps naming the publisher's figure, which is the one a reader who adopted
+-- the naming convention put there on purpose.
 Tokens.expanders.book_pct       = function(b) return b and b.book_pct and pct(b.book_pct) or "" end
 Tokens.expanders.book_pct_left  = function(b) return b and b.book_pct and pct(1 - b.book_pct) or "" end
 Tokens.expanders.pages_left     = function(b)
@@ -875,6 +912,56 @@ end
 -- wifi-off, because that is what the two-glyph font can honestly express and
 -- what "no connection" means to a reader. This used to key off the radio
 -- alone and so claimed a connection it did not have (#348).
+-- Is KOReader's own SSH server up?
+--
+-- Asked of the SSH plugin rather than by stat-ing its pid file, so the check
+-- follows upstream if that path ever moves; a device where the plugin is not
+-- loaded has no server, which is the same answer either way. isRunning is a
+-- single path check, so this resolves per render and deliberately does NOT go
+-- through _buildDeviceState -- a shelf whose templates never mention SSH
+-- should not pay for it on every rebuild.
+--
+-- filebrowserplus was requested alongside this and is deliberately absent: the
+-- plugin has been retired, so a status token for it could only ever read empty.
+local function _sshRunning()
+    local ok_pl, PluginLoader = pcall(require, "pluginloader")
+    if not (ok_pl and PluginLoader and PluginLoader.enabled_plugins) then
+        return false
+    end
+    for _i, plugin in ipairs(PluginLoader.enabled_plugins) do
+        if plugin.name == "SSH" and type(plugin.isRunning) == "function" then
+            local ok, running = pcall(plugin.isRunning, plugin)
+            return (ok and running) and true or false
+        end
+    end
+    return false
+end
+
+-- The glyph lives here rather than in Semantics.GLYPHS, which is VENDORED
+-- byte-identical into bookends (tools/check_token_parity.sh enforces it) so a
+-- template copied between the two plugins renders the same string. %ssh_icon
+-- is bookshelf-only, so adding it there would break that contract to no end:
+-- bookends has no such token, and a template using it would render the literal
+-- either way. U+E88C is inside the bundled symbols font's PUA range, which is
+-- the only range that font covers -- a non-PUA codepoint has segfaulted this
+-- plugin before.
+local SSH_GLYPH = "\xEE\xA2\x8C"   -- U+E88C console
+
+-- Shown only while the server is up, and EMPTY otherwise rather than an "off"
+-- glyph. The Wi-Fi pair carries two symbols because both states are worth
+-- seeing; a server that is not running is the normal state and does not earn
+-- permanent chrome on the shelf. Empty also makes the token self-hiding, so it
+-- drops into a status line without an [if:] wrapper -- though [if:ssh] is there
+-- for gating a whole section, matching [if:connected] for Wi-Fi.
+Tokens.expanders.ssh_icon = function()
+    return _sshRunning() and SSH_GLYPH or ""
+end
+-- Condition form, mirroring `connected` for Wi-Fi: "yes" while the server is
+-- up, empty otherwise, so `[if:ssh]...[/if]` gates a whole section.
+Tokens.expanders.ssh = function()
+    return _sshRunning() and "yes" or ""
+end
+
 Tokens.expanders.wifi_icon = function(_b, s)
     return Semantics.wifi(s and s.wifi == "on", s and s.connected == "yes")
 end
