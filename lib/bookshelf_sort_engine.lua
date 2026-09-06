@@ -190,6 +190,52 @@ end
 -- record onto the two field names read above before calling in.
 SortEngine.effectivePercent = effective_percent
 
+-- The author a GROUP sorts under, taken from its MEMBERS.
+--
+-- A series stack carries its books but no author of its own, so the fallback
+-- chain below used to reach b.series_name -- the SERIES TITLE -- and hand it
+-- to surnameSortKey, which duly parsed the last word of the title as a
+-- person's surname. "Sort by author surname" on a series shelf therefore
+-- ordered by the last word of each series name (issue #351).
+--
+-- The MODAL author, not the first. A series with a guest collaborator on one
+-- volume should still sort under whoever wrote the rest, and taking books[1]
+-- would make the answer depend on the order the members happen to be in.
+-- First-seen wins a tie, so the result is stable rather than pairs()-dependent.
+--
+-- Author cards are unaffected in practice: every member shares the author the
+-- card is named after, so the modal IS that author -- and reading it from
+-- metadata is sturdier than parsing the display label. Genre and collection
+-- cards change from "the genre name parsed as a surname" to "the modal author
+-- of its books", which is a different arbitrary answer to a question that has
+-- no meaningful one; neither orders genres usefully.
+local function groupAuthor(b)
+    local books = b.books
+    if type(books) ~= "table" or #books == 0 then return nil end
+    local counts, order = {}, {}
+    for i = 1, #books do
+        local m = books[i]
+        -- One field per member, in the same preference order the record-level
+        -- chain uses, so a library that carries author_sort everywhere does not
+        -- split one author across two spellings of the same name.
+        local a = type(m) == "table"
+                  and (m.author_sort or m.author or m.authors) or nil
+        if type(a) == "string" and a ~= "" then
+            if counts[a] == nil then
+                counts[a] = 0
+                order[#order + 1] = a
+            end
+            counts[a] = counts[a] + 1
+        end
+    end
+    local best, best_n = nil, 0
+    for i = 1, #order do
+        local a = order[i]
+        if counts[a] > best_n then best, best_n = a, counts[a] end
+    end
+    return best
+end
+
 -- Memoized surname / given lookup. Caches on the record so a sort over
 -- 3000 books does 3000 parses, not ~35000 (one per comparison pair).
 --
@@ -207,8 +253,11 @@ SortEngine.effectivePercent = effective_percent
 --                                 author_sort covers, but it's all we
 --                                 have for non-Calibre libraries.
 --   3. b.author_surname        -- pre-parsed surname (rarely set)
---   4. b.series_name           -- group shape (Authors / Genres tab)
---   5. b.name                  -- lfs entry (Home folder cards, where the
+--   4. groupAuthor(b)          -- a GROUP's modal member author. Above
+--                                 series_name because a series stack's name
+--                                 is a TITLE, not a person (issue #351).
+--   5. b.series_name           -- group shape (Authors / Genres tab)
+--   6. b.name                  -- lfs entry (Home folder cards, where the
 --                                 folder name IS the author identifier)
 --
 -- Parent-folder name is NOT a fallback for book files: the flat library
@@ -230,6 +279,7 @@ local function cachedSurname(b)
         end
     end
     local raw = b.author or b.authors or b.author_surname
+             or groupAuthor(b)
              or b.series_name or b.name or ""
     if type(raw) ~= "string" then raw = "" end
     -- surnameSortKey strips leading particles ("de Maupassant" sorts
@@ -254,6 +304,7 @@ local function cachedGiven(b)
     ensureEpoch(b)
     if b._given_cache ~= nil then return b._given_cache end
     local raw = b.author or b.authors or b.author_name
+             or groupAuthor(b)
              or b.series_name or b.name or ""
     if type(raw) ~= "string" then raw = "" end
     local s = AuthorName and AuthorName.givenOf(raw) or raw
