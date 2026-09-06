@@ -1230,6 +1230,31 @@ end
 -- to exist before that function body is compiled.
 local _progress_cache, PROGRESS_CACHE_TTL
 
+-- _writeProgressCache(filepath, pct, status, rating, page_count, page_num)
+--
+-- ONE writer for the progress cache, because there are two callers and they
+-- must agree on the whole field set: readProgress fills it from the sidecar,
+-- and buildBook seeds it from the handle it already has open so a readProgress
+-- that follows is a table lookup rather than a second parse.
+--
+-- They diverged the moment page_num was added to one of them (it went into
+-- readProgress only). Every reader takes the cached entry wholesale, so a tap
+-- -- which builds the hero's book through buildBook -- overwrote a complete
+-- entry with one missing that field, and %page_num vanished from the shelf row
+-- it had just been working on. The comment above buildBook's seed already
+-- demanded the two mirror each other; this makes it structural rather than a
+-- promise.
+local function _writeProgressCache(filepath, pct, status, rating, page_count, page_num)
+    _progress_cache[filepath] = {
+        pct        = pct,
+        status     = status,
+        rating     = rating,
+        page_count = page_count,
+        page_num   = page_num,
+        expires_at = os.time() + PROGRESS_CACHE_TTL,
+    }
+end
+
 -- #159: a "p(<n>)" token in a filename (e.g. "Caliban's War - p(624).epub")
 -- gives a publisher/preferred page count for books KOReader can't page-count
 -- until they're rendered — unopened reflowable formats, which have no BIM,
@@ -1253,7 +1278,9 @@ function Repo.buildBook(filepath, opts)
     local book = Repo.buildBookMeta(filepath, opts)
     if not book then return nil end
     local ds = getDocSettings():open(filepath)
-    book.page_num = ds:readSetting("last_page")
+    -- HELD, not assigned: the pagemap label outranks it. See the precedence
+    -- block further down, which is the one place that decides.
+    local ds_last_page = ds:readSetting("last_page")
     book.book_pct = ds:readSetting("percent_finished")
     book.last_xp  = ds:readSetting("last_xpointer")
     -- summary.status feeds the cover-progress indicators in
@@ -1330,16 +1357,33 @@ function Repo.buildBook(filepath, opts)
     --   1. pagemap_current_page_label — the stable label at the user's
     --      current position. May be non-numeric for front-matter (Roman
     --      numerals "i", "ii"); tonumber-guarded so those fall through.
-    --   2. last_page — set for PDF/CBZ (already read above).
-    --   3. floor(percent_finished * page_count) — synthesised approximation
+    --   2. last_page — set for PDF/CBZ (read above, applied here).
+    --   3. round(percent_finished * page_count) — synthesised approximation
     --      so the hero's "page N of M" template works for EPUBs the reader
     --      hasn't given us a stable label for.
+    --
+    -- The label OUTRANKS last_page, and that order is load-bearing rather than
+    -- arbitrary. page_count prefers pagemap_doc_pages, the stable publisher
+    -- pagination; last_page is crengine's rendered page index at the reader's
+    -- current font size. They are DIFFERENT SCALES for the same book -- the
+    -- hazard this file already documents for pages-left (#38, "231 publisher
+    -- labels" against "317 internal pages"). Taking last_page first put the
+    -- hero one scale and the count another, and a finished book reported page
+    -- 568 OF 567.
+    --
+    -- last_page was assigned unconditionally before this block, so it silently
+    -- won; readProgress had always preferred the label, so the shelf row and
+    -- the hero disagreed about the same book the moment %page_num started
+    -- rendering on rows.
     if not book.page_num then
         local label = ds:readSetting("pagemap_current_page_label")
         if label then
             local n = tonumber(label)
             if n then book.page_num = n end
         end
+    end
+    if not book.page_num then
+        book.page_num = tonumber(ds_last_page)
     end
     if not book.page_num and book.book_pct and book.page_count then
         book.page_num = math.floor(book.book_pct * book.page_count + 0.5)
@@ -1352,13 +1396,15 @@ function Repo.buildBook(filepath, opts)
     -- normalisation (applied above), and ds_page_count rather than
     -- book.page_count, which may carry BIM's count that readProgress
     -- never sees.
-    _progress_cache[filepath] = {
-        pct        = tonumber(book.book_pct),
-        status     = book.status,
-        rating     = book.rating,
-        page_count = fallback_page_count,
-        expires_at = os.time() + PROGRESS_CACHE_TTL,
-    }
+    -- page_num is book.page_num, derived just above. The two functions now
+    -- share an order -- label, then last_page, then the rounded fraction --
+    -- which they did NOT before: buildBook took last_page first, and that is
+    -- what made a finished book read 568 of 567. Its third rung still divides
+    -- by book.page_count rather than fallback_page_count, and those differ
+    -- only for a book BIM counted, which is fixed-layout and reaches an exact
+    -- rung long before the division.
+    _writeProgressCache(filepath, tonumber(book.book_pct), book.status,
+                        book.rating, fallback_page_count, book.page_num)
     return book
 end
 
@@ -2091,17 +2137,14 @@ function Repo.readProgress(filepath)
     -- neither exact source exists -- an EPUB without stable page numbers has no
     -- "current page" of its own to report.
     if not page_num and pct and page_count then
-        local n = math.floor(pct * page_count)
-        if n >= 1 then page_num = n end
+        -- Rounded, not truncated, matching buildBook: a book 99.9% read is on
+        -- its last page, not the one before it. The two must agree to the page
+        -- or the shelf and the hero differ by one on the same book.
+        local n = math.floor(pct * page_count + 0.5)
+        if n < 1 then n = 1 end
+        page_num = n
     end
-    _progress_cache[filepath] = {
-        pct        = pct,
-        status     = status,
-        rating     = rating,
-        page_count = page_count,
-        page_num   = page_num,
-        expires_at = now + PROGRESS_CACHE_TTL,
-    }
+    _writeProgressCache(filepath, pct, status, rating, page_count, page_num)
     return pct, status, rating, page_count, page_num
 end
 

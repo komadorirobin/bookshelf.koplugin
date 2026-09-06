@@ -632,6 +632,74 @@ t.test("every resolved field is one a shelf record really lacks", function()
         table.concat(TokenRecord.RESOLVED_FIELDS, ", ")))
 end)
 
+t.test("every field an expander reads is one something provides", function()
+    -- THE REVERSE GUARD. Its sibling above checks that no resolver is DEAD --
+    -- that none exists for a field buildBookMeta already sets, which would make
+    -- it unreachable. Nothing checked the other direction, and that is the gap
+    -- %page_num fell through: an expander read book.page_num, no resolver
+    -- filled it, and buildBookMeta does not set it. The token worked in the
+    -- hero -- which builds its one book the expensive way, through
+    -- Repo.buildBook -- and rendered empty on every shelf row, with nothing to
+    -- say why. It reached users and came back as a Reddit report.
+    --
+    -- So: every field an expander reads off its book must be resolved, or
+    -- present on a shelf record, and the second case has to be DECLARED. A new
+    -- expander reaching for a new field fails here until someone decides which
+    -- it is.
+    local src = {}
+    for line in io.lines("lib/bookshelf_tokens.lua") do
+        -- Comments stripped: this file explains at length which fields it does
+        -- and does not reach for, and the prose would match.
+        if not line:match("^%s*%-%-") then src[#src + 1] = line end
+    end
+    src = table.concat(src, "\n")
+
+    -- Carried by every buildBookMeta record, so no resolver is wanted.
+    local ON_SHELF_RECORD = {
+        filepath = "the identity of the record; always set",
+        author   = "BookInfoManager metadata",
+        authors  = "BookInfoManager metadata",
+        description = "BookInfoManager / calibre metadata",
+        -- The one that fooled a static audit of this exact question: it is not
+        -- assigned in buildBookMeta's own body, it is written by
+        -- Hardcover.enrichBook, which buildBookMeta CALLS
+        -- (bookshelf_book_repository.lua:905). A field can arrive via a callee
+        -- that mutates the record.
+        hardcover_rating = "set by Hardcover.enrichBook, called from buildBookMeta",
+        -- Not fields at all: the fallback chain inside %status reads three
+        -- spellings so a record from any producer answers.
+        _status     = "fallback alias inside %status",
+        read_status = "fallback alias inside %status",
+    }
+
+    local resolved = {}
+    for _i, k in ipairs(TokenRecord.RESOLVED_FIELDS) do resolved[k] = true end
+
+    -- Deduped: a field read several times in one expander is one problem, and
+    -- this message is the whole value of the test.
+    local missing, seen = {}, {}
+    for name, param, body in src:gmatch(
+            "Tokens%.expanders%.([%w_]+)%s*=%s*function%((%w*)[^)]*%)(.-)\nend") do
+        -- An expander whose first parameter is _-prefixed does not take the
+        -- book at all (device-state ones), so its field reads are not book
+        -- fields.
+        if param ~= "" and not param:match("^_") then
+            for f in body:gmatch(param:gsub("%p", "%%%0") .. "%.([%w_]+)") do
+                local key = f .. "|" .. name
+                if not resolved[f] and not ON_SHELF_RECORD[f] and not seen[key] then
+                    seen[key] = true
+                    missing[#missing + 1] = f .. " (read by %" .. name .. ")"
+                end
+            end
+        end
+    end
+    assert(#missing == 0, "a token expander reads a field nothing provides, so "
+        .. "it will render empty on every shelf row while working in the hero: "
+        .. table.concat(missing, ", ")
+        .. " -- add a RESOLVER for it, or declare it in ON_SHELF_RECORD above "
+        .. "with the reason it is already there")
+end)
+
 t.test("annotation counts are re-read after the memo window, not pinned forever", function()
     -- The memo had no TTL and no invalidation hook, unlike every other cache
     -- in this file -- whose own comment says an uninvalidated module-level
