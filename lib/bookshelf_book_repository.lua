@@ -4217,6 +4217,8 @@ local function _seriesReadout(group_shapes, standalone_shapes, filter,
                         series_num  = m.series_num,
                         genres      = m.genres,
                         lang        = m.lang,
+                        author      = m.author,
+                        author_sort = m.author_sort,
                         latest      = s.latest,
                         book_count  = 1,
                     })
@@ -4420,6 +4422,14 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, filter, opt
                 series_name = group.series_name,
                 genres      = b.genres,
                 lang        = b.lang,
+                -- The author, so a shelf of series can be SORTED by it
+                -- (#351). THIS is the structure the comparator sees: the
+                -- shape cached here is what _groupShapeCmp sorts, not the
+                -- group.books it was built from. Adding the author to that
+                -- one alone left this rebuild dropping it again, and the
+                -- sort went on reading the series TITLE as a person's name.
+                author      = b.author,
+                author_sort = b.author_sort,
             }
         end
         shapes[#shapes + 1] = {

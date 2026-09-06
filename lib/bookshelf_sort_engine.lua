@@ -210,7 +210,11 @@ SortEngine.effectivePercent = effective_percent
 -- of its books", which is a different arbitrary answer to a question that has
 -- no meaningful one; neither orders genres usefully.
 local function groupAuthor(b)
-    local books = b.books
+    -- BOTH member field names. A live group carries `books`; the SERIES shape
+    -- that is cached and handed to the comparator carries `books_meta`, which
+    -- is a different rebuild of the same list. Reading only `books` meant this
+    -- returned nil for exactly the shelf the issue was about.
+    local books = b.books or b.books_meta
     if type(books) ~= "table" or #books == 0 then return nil end
     local counts, order = {}, {}
     for i = 1, #books do

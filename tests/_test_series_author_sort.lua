@@ -130,4 +130,50 @@ t.test("a series stack's members carry an author", function()
         .. "author across two spellings of the same name")
 end)
 
+t.test("the CACHED shape the comparator sees carries an author too", function()
+    -- Third attempt at this issue, and the second time the fix shipped doing
+    -- nothing, for the same reason both times: the record the comparator
+    -- receives is not the one that was fixed.
+    --
+    -- getSeriesGroups builds group.books, then REBUILDS it into a cached shape
+    -- { series_name, filepaths, books_meta, latest }. books_meta is a
+    -- different field name AND a narrower field set, and _groupShapeCmp sorts
+    -- THAT. Adding the author to group.books alone left this rebuild dropping
+    -- it, so the sort went on reading the series title as a person's name.
+    --
+    -- Trace what the comparator receives, not what the producer emits.
+    local src = {}
+    for line in io.lines("lib/bookshelf_book_repository.lua") do
+        if not line:match("^%s*%-%-") then src[#src + 1] = line end
+    end
+    src = table.concat(src, "\n")
+    local meta = src:match("books_meta%[#books_meta %+ 1%] = {(.-)}")
+    assert(meta, "the cached series member shape moved or was renamed")
+    assert(meta:match("author%s*="),
+        "books_meta carries no author, so sorting a series shelf by author "
+        .. "falls back to parsing the series TITLE -- the bug this file has "
+        .. "now claimed to fix twice")
+    assert(meta:match("author_sort%s*="), "books_meta drops author_sort")
+end)
+
+t.test("groupAuthor reads both member field names", function()
+    -- A live group has `books`; the cached shape has `books_meta`. Reading one
+    -- name only is what made the fix a no-op on the shelf it was written for.
+    local sesrc = io.open("lib/bookshelf_sort_engine.lua"):read("a")
+    assert(sesrc:match("b%.books or b%.books_meta"),
+        "groupAuthor no longer accepts the cached shape's member list")
+end)
+
+t.test("a group carrying books_meta sorts by its author", function()
+    -- Behavioural, against the shape the comparator really gets.
+    local function shaped(name, authors)
+        local bm = {}
+        for i, a in ipairs(authors) do bm[i] = { author = a } end
+        return { series_name = name, books_meta = bm }
+    end
+    eq(surname(shaped("Artemis Awakened", { "Jane Lindskold" })), "lindskold",
+        "the series title was parsed as an author name")
+    eq(surname(shaped("Culture", { "Iain M. Banks", "Iain M. Banks" })), "banks")
+end)
+
 t.done()
