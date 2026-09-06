@@ -1107,12 +1107,19 @@ function HeroCard:_renderFull()
     -- outside, so the top and left edges of the selection border got
     -- clipped (reporter on the test branch).
     --
-    -- Reserve the SHADOW_OFFSET on top + left by wrapping the
+    -- Reserve the SHADOW_OFFSET on ALL FOUR sides by wrapping the
     -- SpineWidget in a FrameContainer that pushes the cover down-right
-    -- by SHADOW_OFFSET. The BorderOverlay's outward paint then lands
-    -- inside the wrapper's bounds. Shrink the SpineWidget by
-    -- SHADOW_OFFSET in each dimension so the outer cover footprint
-    -- stays unchanged (the hero layout was sized for cover_w x cover_h).
+    -- by SHADOW_OFFSET and shrinking it by TWICE that in each dimension.
+    -- The outer cover footprint stays unchanged either way (the hero layout
+    -- was sized for cover_w x cover_h).
+    --
+    -- It reserved top and left ONLY, which fixed the two edges that were
+    -- reported and left the other two clipped: shrinking by one offset while
+    -- pushing by one puts the spine's right and bottom edges exactly on the
+    -- wrapper's, so the ring's outward paint had nowhere to land. The border
+    -- ran round the top, left and part of the sides, and stopped at the bottom
+    -- edge. Costs the cover another SHADOW_OFFSET in each dimension, which is
+    -- the price of a ring that closes.
     local SHADOW_OFFSET = Screen:scaleBySize(4)
 
     -- True-aspect: render the hero cover at the book's OWN aspect, TOP-anchored
@@ -1124,8 +1131,8 @@ function HeroCard:_renderFull()
     --     so it (and only it) is narrowed just enough to fit the height,
     --     undistorted. Ordinary 2:3 covers stay full-size, matching the shelf.
     -- Off = the historical full-height 2:3 box.
-    local sw_w = self.cover_w - SHADOW_OFFSET
-    local sw_h = cover_h - SHADOW_OFFSET
+    local sw_w = self.cover_w - 2 * SHADOW_OFFSET
+    local sw_h = cover_h - 2 * SHADOW_OFFSET
     if BookshelfSettings.isTrue("true_cover_aspect") then
         local fit_h = SpineWidget.trueAspectBoxHeight(sw_w, self.book)
         if fit_h <= sw_h then
@@ -1134,12 +1141,12 @@ function HeroCard:_renderFull()
             sw_w = SpineWidget.trueAspectBoxWidth(sw_h, self.book)  -- too tall: narrow to fit height
         end
     end
-    -- Cover footprint width (SpineWidget + the SHADOW_OFFSET left padding of its
-    -- wrapper). When true-aspect narrows a tall cover this shrinks, so recompute
-    -- the right column from it rather than the full reserved cover_w -- the text
-    -- gains the freed width instead of a gap (and right_w only ever grows, so
-    -- the #87 max_width<=0 guard is never at risk).
-    local cover_footprint_w = sw_w + SHADOW_OFFSET
+    -- Cover footprint width (SpineWidget + the SHADOW_OFFSET reserved on BOTH
+    -- sides by its wrapper). When true-aspect narrows a tall cover this
+    -- shrinks, so recompute the right column from it rather than the full
+    -- reserved cover_w -- the text gains the freed width instead of a gap (and
+    -- right_w only ever grows, so the #87 max_width<=0 guard is never at risk).
+    local cover_footprint_w = sw_w + 2 * SHADOW_OFFSET
 
     local _perf_cover_t0 = _gettime()
     local cover = SpineWidget:new{
