@@ -710,6 +710,16 @@ function ReviewsModal:_makeScrollHtml()
     local o = self._scroller_opts
     if not o then return nil end
     o.html_body = self:_activeHtml()
+    -- ...and the size to render it AT. _scroller_opts was captured in init,
+    -- when the size belonged to whichever tab opened first -- which on the
+    -- long-press route into this popup is the EDIT tab, not the description
+    -- (issue #363). Refreshing only html_body built the description's scroller
+    -- at the Edit tab's size: the store held the right number, _switchTab had
+    -- already loaded it into self.font_size, and the text still came out at the
+    -- other tab's size, because nothing had told the scroller. Invisible
+    -- whenever the two sizes happen to match, which is why it took a reporter
+    -- with edit=18 and description=26 to surface it.
+    o.default_font_size = Screen:scaleBySize(self.font_size)
     local _t = _gettime()
     local w = self:_scroller(o)
     logger.dbg(string.format("[bookshelf perf] ReviewsModal: scroller built lazily in %.0fms",
