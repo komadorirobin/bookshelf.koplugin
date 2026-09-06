@@ -1720,12 +1720,16 @@ function BookshelfWidget:_rebuild()
     -- "Page X of Y" accurately for any reasonable user.
     local MAX_FETCH  = 400
     local all_items, _total_hint
-    if self._draft_regrid and self._draft_items_cache then
-        -- Draft regrid: only the grid geometry changed, not the book set, so
-        -- reuse the last full fetch and let the slicing below reflow it to the
-        -- new page size. Skips _fetchChipItems (the library/sort read). The
-        -- cache is repopulated by every normal (non-draft) rebuild, so it can't
-        -- go stale across a chip switch or library refresh.
+    -- Draft regrid: only the geometry changed, not the book set, so reuse the
+    -- last fetch and skip _fetchChipItems (the library/sort read). The cache is
+    -- repopulated by every normal (non-draft) rebuild, so it can't go stale
+    -- across a chip switch or a library refresh.
+    --
+    -- ...but only when it still HOLDS a page this size. A pinch that adds rows
+    -- grows VIEW_SIZE, and for a window-fetched source the cached page was cut
+    -- to the old one -- see _draftCacheServes.
+    if self._draft_regrid and self:_draftCacheServes(self._draft_items_cache,
+                                                     VIEW_SIZE) then
         all_items   = self._draft_items_cache.all_items
         _total_hint = self._draft_items_cache.total_hint
     else
@@ -9710,6 +9714,35 @@ end
 -- Landscape normal: 5, landscape expanded: 10.
 -- Expanded pages overlap _pageSize by one row so paging forward reveals
 -- one new row at the bottom while the top rows stay fixed.
+-- _draftCacheServes(cached, view_size) -- can a draft regrid reuse this fetch,
+-- or does it have to go back to the library?
+--
+-- _fetchChipItems splits its sources two ways. Most return the WHOLE list and
+-- _rebuild slices a page out of it, so one cache serves any page size. Home,
+-- folder and group drills, search, OPDS -- and every plain chip that falls
+-- through to Repo.getBySource, which is most of them -- are WINDOW-fetched:
+-- LIMIT is self:_viewSize() at fetch time, and they return that one page plus
+-- the total. _rebuild then uses that page VERBATIM (`items = all_items`, the
+-- _total_hint branch); there is no reflow to stretch it with.
+--
+-- So a pinch that adds rows was leaving the shelf half empty: total_pages came
+-- from the new VIEW_SIZE while the page itself still held only as many books
+-- as the old one asked for, and every row past its end rendered blank. Zooming
+-- the other way hid it, because a page longer than the view is simply not all
+-- drawn.
+--
+-- Being short is only wrong when there was more to have. A window that already
+-- reaches the total IS the last page, and a partial last page is correct.
+function BookshelfWidget:_draftCacheServes(cached, view_size)
+    if not (cached and cached.all_items) then return false end
+    -- Whole-list source: the slice below reflows it to any size.
+    if not cached.total_hint then return true end
+    local have = #cached.all_items
+    if have >= (view_size or 0) then return true end
+    local from = math.max(0, (self._cursor or 1) - 1)
+    return from + have >= cached.total_hint
+end
+
 function BookshelfWidget:_viewSize()
     return self:_nShelves() * self:_nCols()
 end
