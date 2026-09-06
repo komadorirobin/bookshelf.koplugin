@@ -109,7 +109,7 @@ end)
 -- ── Quote page + chapter (issue 333) ───────────────────────────────────────
 
 t.test("%quote_page and %quote_chapter report the picked highlight", function()
-    _quote = { text = "a line", page = 42, chapter = "Chapter Three" }
+    _quote = { text = "a line", page_display = 42, chapter = "Chapter Three" }
     local book = { filepath = "/b/x.epub" }
     eq(Tokens.expand("%quote_page", book, {}), "42")
     eq(Tokens.expand("%quote_chapter", book, {}), "Chapter Three")
@@ -118,7 +118,7 @@ end)
 t.test("all three quote tokens describe ONE highlight", function()
     -- The contract that matters: a template combining them must not attribute
     -- one quote to another's location.
-    _quote = { text = "a line", page = 42, chapter = "Chapter Three" }
+    _quote = { text = "a line", page_display = 42, chapter = "Chapter Three" }
     local book = { filepath = "/b/x.epub" }
     local out = Tokens.expand("%quote / %quote_chapter / %quote_page", book, {})
     assert(out:find("a line", 1, true), "the quote text is missing")
@@ -128,7 +128,7 @@ end)
 
 t.test("a legacy highlight with no chapter yields empty, not nil text", function()
     -- Pre-annotations sidecars have no chapter field at all; [if:] gates it.
-    _quote = { text = "a line", page = 7 }
+    _quote = { text = "a line", page_display = 7 }
     local book = { filepath = "/b/x.epub" }
     eq(Tokens.expand("%quote_chapter", book, {}), "")
     eq(Tokens.expand("%quote_page", book, {}), "7")
@@ -167,6 +167,36 @@ t.test("%ssh_icon has a refresh trigger", function()
     -- Both spellings: the match is "%name" plus a boundary, so "%ssh" does not
     -- fire for "%ssh_icon" and the [if:ssh] form needs its own entry.
     assert(timer:match('"ssh"'), "[if:ssh] has no refresh trigger")
+end)
+
+t.test("an xPointer never reaches the template", function()
+    -- KOReader stores the highlight's LOCATION in `page`, and for a reflowable
+    -- book that is an xPointer, not a number. %quote_page printed it verbatim
+    -- and a reader got "/body/DocFragment[12]/body/div/p[3]/text()" on their
+    -- shelf. Number-only is the guard; a book with no printable page renders
+    -- empty, which [if:] gates.
+    _quote = { text = "a line",
+               page = "/body/DocFragment[12]/body/div/p[3]/text().0",
+               page_display = nil }
+    local book = { filepath = "/b/x.epub" }
+    eq(Tokens.expand("%quote_page", book, {}), "",
+        "the highlight's xPointer location reached the template")
+end)
+
+t.test("the printable page comes from the annotation, not the location", function()
+    -- SOURCE-SHAPE on the producer, which is where the wrong field was read.
+    -- pageref is the stable label and pageno the continuous number; preferring
+    -- the label keeps %quote_page in the same scale as %page_count and
+    -- %page_num, so a template mixing them does not compare two rulers.
+    local qsrc = {}
+    for line in io.lines("lib/bookshelf_quotes.lua") do
+        if not line:match("^%s*%-%-") then qsrc[#qsrc + 1] = line end
+    end
+    qsrc = table.concat(qsrc, "\n")
+    assert(qsrc:match("a%.pageref or a%.pageno"),
+        "the quote's printable page no longer comes from pageref/pageno")
+    assert(qsrc:match("page_display = tonumber%(page_display%)"),
+        "page_display is no longer forced to a number")
 end)
 
 t.done()

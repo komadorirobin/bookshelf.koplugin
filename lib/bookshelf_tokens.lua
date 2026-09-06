@@ -497,7 +497,10 @@ Tokens.expanders.quote_page = function(book)
     local ok, Quotes = pcall(require, "lib/bookshelf_quotes")
     if not ok then return "" end
     local q = Quotes.forBook(book.filepath)
-    return (q and q.page ~= nil) and tostring(q.page) or ""
+    -- page_display, NOT page: KOReader stores the highlight's LOCATION in
+    -- `page`, and for a reflowable book that is an xPointer, so this printed
+    -- "/body/DocFragment[12]/..." into the template.
+    return (q and type(q.page_display) == "number") and tostring(q.page_display) or ""
 end
 Tokens.expanders.quote_chapter = function(book)
     if not (book and book.filepath) then return "" end
