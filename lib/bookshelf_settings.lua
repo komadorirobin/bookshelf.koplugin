@@ -1735,6 +1735,41 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
+                return _("Selection outline color") .. ": " .. valueLabel("selection")
+            end,
+            help_text = _("Color of the ring drawn around the selected book"
+                .. " or the one you are currently reading. Default black."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("selection_color", "selection", 100,
+                    _("Selection outline color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("selection_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
+                return _("Cover shadow color") .. ": " .. valueLabel("card_shadow")
+            end,
+            help_text = _("Color of the drop shadow behind book covers and"
+                .. " folder cards. Has no effect where the shadow is switched"
+                .. " off. Default mid grey, and darker in night mode."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("card_shadow_color", "card_shadow", 50,
+                    _("Cover shadow color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("card_shadow_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
                 return _("Folder overlay background") .. ": " .. valueLabel("folder_bg")
             end,
             keep_menu_open = true,
@@ -1819,6 +1854,7 @@ function Settings:_colorsSubItems()
                     "bookmark_color", "complete_bookmark_color",
                     "favorite_star_color", "favorite_heart_color",
                     "badge_fg", "badge_bg", "border_color",
+                    "selection_color", "card_shadow_color",
                     "folder_overlay_bg", "folder_overlay_fg",
                     "chip_selected_bg", "chip_selected_fg",
                 }

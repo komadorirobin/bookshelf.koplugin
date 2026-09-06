@@ -150,11 +150,23 @@ local SELECTED_BORDER = SHADOW_OFFSET
 -- inversion). No user control — purely a function of the active mode.
 local SHADOW_GRAY_DAY   = Blitbuffer.gray(0.5)
 local SHADOW_GRAY_NIGHT = Blitbuffer.gray(0.15)
+-- The card's drop shadow. User-settable since issue #199; the constants below
+-- stay as the floor, so a resolver that has not loaded yet (or a colour that
+-- fails to parse) paints exactly what it always did rather than nothing.
 local function _shadowGray()
+    local ok, colors = pcall(CoverProgress.resolvedColors)
+    if ok and colors and colors.card_shadow then return colors.card_shadow end
     if G_reader_settings:isTrue("night_mode") then
         return SHADOW_GRAY_NIGHT
     end
     return SHADOW_GRAY_DAY
+end
+
+-- The ring a selected / current-book cover sits on. Same fallback reasoning.
+local function _selectionColor()
+    local ok, colors = pcall(CoverProgress.resolvedColors)
+    if ok and colors and colors.selection then return colors.selection end
+    return Blitbuffer.COLOR_BLACK
 end
 
 -- Placeholder (no-image) cover backgrounds. In day these are near-white
@@ -349,7 +361,8 @@ function ShadowRect:init()
 end
 function ShadowRect:paintTo(bb, x, y)
     local radius = self.radius or CARD_RADIUS
-    bb:paintRoundedRect(x, y, self.width, self.height, _shadowGray(), radius)
+    CoverProgress.paintRoundedRect(bb, x, y, self.width, self.height,
+                                   _shadowGray(), radius)
 end
 
 -- Paints a shorter-than-box image top-anchored within a fixed
@@ -398,9 +411,9 @@ function BorderOverlay:init()
 end
 function BorderOverlay:paintTo(bb, x, y)
     local t = self.thickness
-    bb:paintRoundedRect(x - t, y - t,
+    CoverProgress.paintRoundedRect(bb, x - t, y - t,
                         self.width + 2 * t, self.height + 2 * t,
-                        self.color or Blitbuffer.COLOR_BLACK,
+                        self.color or _selectionColor(),
                         (self.radius or 0) + t)
 end
 
@@ -2041,10 +2054,11 @@ function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
         -- (0..R, 0..R) corner squares for points OUTSIDE the radius-R
         -- arc, to fake rounded corners on top of a rectangular image.
         -- With the BorderOverlay backdrop those bg-white pixels poke
-        -- out into the black ring as four little white teeth. Invert
-        -- the mask color to match the backdrop so the corner squares
-        -- merge seamlessly with the surrounding black.
-        cover_args.bg_color = Blitbuffer.COLOR_BLACK
+        -- out into the ring as four little white teeth. Match the mask
+        -- color to the backdrop so the corner squares merge seamlessly
+        -- into it -- which means following the ring's own colour now that
+        -- it is user-settable (issue #199), not the black it used to be.
+        cover_args.bg_color = _selectionColor()
     elseif self:_squareCorners() or (self:_noShadow() and not self.force_shadow) then
         -- Square corners mean no corner mask runs at all, so there are no
         -- masked pixels for a shadow to show through; no shadow means there is

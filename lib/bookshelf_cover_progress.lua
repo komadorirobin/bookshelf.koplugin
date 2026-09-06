@@ -212,6 +212,11 @@ end
 -- Widget: ProgressBarWidget
 -- ---------------------------------------------------------------------------
 
+-- Exported so the spine widget's ShadowRect / BorderOverlay paint the user's
+-- chosen ring and shadow colors in true color rather than their grey
+-- luminance (issue #199); see the dispatch note below.
+-- (assigned after the local is defined, further down)
+
 -- Blitbuffer's plain paintRoundedRect / paintBorder flatten their color
 -- argument to luminance via getColor8() before painting, so a ColorRGB32
 -- like red goes down as its grey luminance on a color buffer. KOReader
@@ -226,6 +231,7 @@ local function _paintRoundedRect(bb, x, y, w, h, c, r)
         bb:paintRoundedRect(x, y, w, h, c, r)
     end
 end
+M.paintRoundedRect = _paintRoundedRect
 
 local function _paintBorder(bb, x, y, w, h, bw, c, r)
     if not c then return end
@@ -526,6 +532,17 @@ local DEFAULT_FAVORITE_HEART    = { hex = "#FFB6C1" }
 -- badge borders. Defaults to pure black; users can shift to a softer
 -- grey for less contrast, or pick a tinted border on color panels.
 local DEFAULT_BORDER            = { hex = "#000000" }
+-- Selection ring + card shadow (issue #199). Both defaults reproduce EXACTLY
+-- what was hard-coded before, so a reader who never opens these rows sees no
+-- change: the ring painted COLOR_BLACK in both modes, and the shadow was
+-- Blitbuffer.gray(0.5) by day and gray(0.15) at night.
+--
+-- The ring's night default is black like its day one, NOT the near-white the
+-- border uses. That looks inconsistent and is not: the border is drawn from a
+-- palette meant to read against the page, while the ring is a solid backdrop
+-- the cover sits on, and it was never mode-switched.
+local DEFAULT_SELECTION         = { hex = "#000000" }
+local DEFAULT_CARD_SHADOW       = { hex = "#808080" }   -- gray(0.5)
 
 -- Night-mode defaults: chosen so the on-screen appearance approximates
 -- the day defaults AFTER KOReader's framebuffer inversion. The framework
@@ -553,6 +570,8 @@ local NIGHT_DEFAULT_FAVORITE_HEART    = { hex = "#00493E" }
 -- into the background. 98% black -> displayed grey ~0x05; night inverts the
 -- framebuffer, so paint the inverse 0xFA (#FAFAFA) to land there.
 local NIGHT_DEFAULT_BORDER            = { hex = "#FAFAFA" }
+local NIGHT_DEFAULT_SELECTION         = { hex = "#000000" }
+local NIGHT_DEFAULT_CARD_SHADOW       = { hex = "#262626" }  -- gray(0.15)
 
 -- Memoised resolvers. resolvedColors() is called multiple times per
 -- cover paint (once per active indicator type per cover), and each call
@@ -627,6 +646,10 @@ function M.resolvedColors()
     local badge_fg_raw     = _readModeColor("badge_fg", DEFAULT_BADGE_FG, NIGHT_DEFAULT_BADGE_FG)
     local badge_bg_raw     = _readModeColor("badge_bg", DEFAULT_BADGE_BG, NIGHT_DEFAULT_BADGE_BG)
     local border_raw       = _readModeColor("border_color", DEFAULT_BORDER, NIGHT_DEFAULT_BORDER)
+    local selection_raw    = _readModeColor("selection_color",
+                                             DEFAULT_SELECTION, NIGHT_DEFAULT_SELECTION)
+    local card_shadow_raw  = _readModeColor("card_shadow_color",
+                                             DEFAULT_CARD_SHADOW, NIGHT_DEFAULT_CARD_SHADOW)
     local folder_bg_raw    = _readModeColor("folder_overlay_bg", nil)
     local folder_fg_raw    = _readModeColor("folder_overlay_fg", nil)
     -- Shadow color is hard-coded so it always paints DARK ON SCREEN
@@ -648,6 +671,12 @@ function M.resolvedColors()
         badge_fg          = Color.parseColorValue(badge_fg_raw, is_color),
         badge_bg          = Color.parseColorValue(badge_bg_raw, is_color),
         border            = Color.parseColorValue(border_raw,   is_color),
+        -- The ring a selected / current-book cover sits on, and the drop
+        -- shadow behind every card. Distinct from `shadow` below, which is the
+        -- offset shadow on GLYPHS and stays hard-coded for the reason given
+        -- there.
+        selection         = Color.parseColorValue(selection_raw,   is_color),
+        card_shadow       = Color.parseColorValue(card_shadow_raw, is_color),
         shadow            = Color.parseColorValue({ hex = shadow_hex }, is_color),
         folder_bg         = folder_bg_raw and Color.parseColorValue(folder_bg_raw, is_color) or nil,
         folder_fg         = folder_fg_raw and Color.parseColorValue(folder_fg_raw, is_color) or nil,
