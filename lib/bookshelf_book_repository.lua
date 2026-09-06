@@ -4339,6 +4339,22 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override, filter, opt
                     series_num = m.num,
                     genres     = book.genres,
                     lang       = book.lang,
+                    -- The author, so the stack can be SORTED by it (#351).
+                    -- The group itself has no author of its own -- a series is
+                    -- not a person -- so the sort engine takes the modal
+                    -- author of the members. Without these two the group fell
+                    -- back to parsing its own series_name as a name, and
+                    -- "sort by author surname" ordered a shelf of series by
+                    -- the last word of each TITLE.
+                    --
+                    -- Both spellings, matching the record-level preference
+                    -- order, so a Calibre library carrying the curated form
+                    -- everywhere does not split one author across two
+                    -- spellings of the same name. References to strings the
+                    -- light record already holds, so this costs no allocation
+                    -- beyond the two slots.
+                    author      = book.author,
+                    author_sort = book.author_sort,
                 }
             end
             local t = read_time[book.filepath] or c.mtime or 0

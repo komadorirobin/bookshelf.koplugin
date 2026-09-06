@@ -101,4 +101,33 @@ t.test("a group with no member authors falls back to its name", function()
     eq(surname({ series_name = "Some Series" }), "series")
 end)
 
+-- ── The producer actually supplies what the sort reads ─────────────────────
+
+t.test("a series stack's members carry an author", function()
+    -- THE TEST THAT WAS MISSING, and the reason the fix above shipped doing
+    -- nothing. Every behavioural test in this file builds its members by hand
+    -- and gives them an author, so they all passed against a record shape that
+    -- did not exist: Repo.getSeriesGroups emitted members of exactly
+    -- { filepath, series_num, genres, lang }. groupAuthor found no author on
+    -- any of them, returned nil, and the chain fell through to series_name --
+    -- the very behaviour this file claims to have fixed. A shelf of series
+    -- still sorted by the last word of each title.
+    --
+    -- So this asserts the PRODUCER, not the comparator. Source-shape, because
+    -- getSeriesGroups needs a library to run.
+    local src = {}
+    for line in io.lines("lib/bookshelf_book_repository.lua") do
+        if not line:match("^%s*%-%-") then src[#src + 1] = line end
+    end
+    src = table.concat(src, "\n")
+    local member = src:match("g%.books%[#g%.books %+ 1%] = {(.-)}")
+    assert(member, "the series member record moved or was renamed")
+    assert(member:match("author%s*="),
+        "series members carry no author, so sorting a series shelf by author "
+        .. "silently falls back to parsing the series TITLE as a name")
+    assert(member:match("author_sort%s*="),
+        "series members drop author_sort, so a Calibre library splits one "
+        .. "author across two spellings of the same name")
+end)
+
 t.done()
