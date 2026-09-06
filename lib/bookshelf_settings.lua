@@ -1805,7 +1805,7 @@ function Settings:_colorsSubItems()
             end,
             help_text = _("Color of the drop shadow behind book covers and"
                 .. " folder cards. Has no effect where the shadow is switched"
-                .. " off. Default mid grey, and darker in night mode."),
+                .. " off. Default mid gray, and darker in night mode."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("card_shadow_color", "card_shadow", 50,
