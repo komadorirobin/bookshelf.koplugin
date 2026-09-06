@@ -7463,6 +7463,17 @@ local TIMER_TOKENS = {
     "date", "date_long", "date_numeric", "weekday", "weekday_short",
     "book_time_left", "book_read_time", "days_reading_book",
     "pages_per_day", "speed", "batt",
+    -- %ssh_icon / [if:ssh] change without any event to hang a repaint on:
+    -- KOReader's SSH plugin broadcasts nothing when the server starts or
+    -- stops, unlike Wi-Fi, the frontlight and night mode, which each have
+    -- their own token group below. Rendered once and never refreshed, the icon
+    -- outlived the server it was reporting and read as "it will not stop".
+    -- The minute tick is the only trigger available, and a server indicator
+    -- can afford that latency. Costs nothing for a shelf that does not use it:
+    -- _anyActiveRegionUses gates the repaint on the token really being in a
+    -- template. Both spellings, since the match is on "%name" plus a boundary
+    -- and "%ssh" would not fire for "%ssh_icon".
+    "ssh", "ssh_icon",
 }
 local FRONTLIGHT_TOKENS = { "light", "light_icon", "warmth" }
 local BATTERY_TOKENS    = { "batt", "batt_icon" }

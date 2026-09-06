@@ -142,4 +142,31 @@ t.test("a book with no highlights renders both as empty", function()
     eq(Tokens.expand("%quote_chapter", book, {}), "")
 end)
 
+-- ── The icon has to stop showing when the server stops ─────────────────────
+
+t.test("%ssh_icon has a refresh trigger", function()
+    -- SOURCE-SHAPE. A token's value is baked into a TextWidget at REBUILD
+    -- time, not paint time, so a value that changes on its own needs something
+    -- to trigger a rebuild. Every other self-changing token has a group:
+    -- TIMER_TOKENS for the minute tick, and WIFI / BATTERY / FRONTLIGHT /
+    -- NIGHTMODE for their events.
+    --
+    -- %ssh_icon shipped in none of them. Rendered once, it outlived the server
+    -- it was reporting -- the maintainer stopped SSH, the icon stayed, and it
+    -- read as "I cannot stop the server". KOReader's SSH plugin broadcasts
+    -- nothing to hang an event on, so the minute tick is what there is.
+    local src = {}
+    for line in io.lines("lib/bookshelf_widget.lua") do
+        if not line:match("^%s*%-%-") then src[#src + 1] = line end
+    end
+    src = table.concat(src, "\n")
+    local timer = src:match("local TIMER_TOKENS = {(.-)}")
+    assert(timer, "TIMER_TOKENS is gone or was renamed")
+    assert(timer:match('"ssh_icon"'),
+        "%ssh_icon never refreshes, so it will outlive the server it reports")
+    -- Both spellings: the match is "%name" plus a boundary, so "%ssh" does not
+    -- fire for "%ssh_icon" and the [if:ssh] form needs its own entry.
+    assert(timer:match('"ssh"'), "[if:ssh] has no refresh trigger")
+end)
+
 t.done()
