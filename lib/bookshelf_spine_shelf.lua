@@ -656,6 +656,34 @@ function ShelfPlank:paintTo(bb, x, y)
                  Blitbuffer.COLOR_BLACK)
 end
 
+-- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
+-- file and no subfolders -- a wrapper folder (one Calibre-style directory
+-- per book), whose spine should read as its book, not as its directory
+-- name. Shallow scan, early exit on the second book or any subfolder.
+local function _folderIsSingleBook(path)
+    local ok, result = pcall(function()
+        local lfs = require("libs/libkoreader-lfs")
+        local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
+        if not (ok_repo and Repo and Repo.isBookFile) then return false end
+        local count = 0
+        for entry in lfs.dir(path) do
+            if entry ~= "." and entry ~= ".." and entry:sub(1, 1) ~= "." then
+                local mode = lfs.attributes(path .. "/" .. entry, "mode")
+                if mode == "directory" then
+                    -- KOReader sidecars ride beside their book; only a real
+                    -- subfolder makes this a collection.
+                    if not entry:match("%.sdr$") then return false end
+                elseif mode == "file" and Repo.isBookFile(entry) then
+                    count = count + 1
+                    if count > 1 then return false end
+                end
+            end
+        end
+        return count == 1
+    end)
+    return ok and result == true
+end
+
 -- ── Plan: which books fit which rows, and how wide each stands ──────────────
 --
 -- plan(items, opts) -> {
@@ -709,6 +737,17 @@ function SpineShelf.plan(items, opts)
         if not bk.filepath then
             rep = bk.first_book or bk
         end
+        -- A wrapper folder (exactly one book inside) stands on the shelf AS
+        -- its book: title, author, number and thickness all come from the
+        -- book record; only the tap stays a folder drill. Checked once per
+        -- record, cached on it.
+        local src = bk
+        if bk.kind == "folder" and bk.first_book and bk.path then
+            if bk._spine_single == nil then
+                bk._spine_single = _folderIsSingleBook(bk.path)
+            end
+            if bk._spine_single then src = bk.first_book end
+        end
         -- A stack member is a LIGHT stub, built from whatever the light-meta
         -- cache held when the group was assembled -- on a cold start that
         -- can predate the Calibre load, so its title can be the filename and
@@ -744,14 +783,14 @@ function SpineShelf.plan(items, opts)
                 end
             end)
         end
-        local label = bk.display_title or bk.title or bk.label
-                      or bk.series_name or bk.text or bk.name
-        if (not label or label == "") and bk.filename then
-            label = bk.filename:gsub("%.%w+$", "")
+        local label = src.display_title or src.title or src.label
+                      or bk.label or src.series_name or src.text or src.name
+        if (not label or label == "") and src.filename then
+            label = src.filename:gsub("%.%w+$", "")
         end
-        if (not label or label == "") and type(bk.filepath) == "string" then
-            label = bk.filepath:match("([^/]+)%.%w+$")
-                    or bk.filepath:match("([^/]+)$") or ""
+        if (not label or label == "") and type(src.filepath) == "string" then
+            label = src.filepath:match("([^/]+)%.%w+$")
+                    or src.filepath:match("([^/]+)$") or ""
         end
         label = label or ""
         local look = SpineShelf.bookLook(rep)
@@ -763,13 +802,13 @@ function SpineShelf.plan(items, opts)
         -- the sidecar knows better and CoverProgress.decide reads it at
         -- paint time anyway for the glyphs, through the same TTL cache,
         -- so this backfill costs the page ONE sidecar read per book.
-        local pages = bk.page_count
-        if not pages and bk.filepath and ok_repo and Repo and Repo.readProgress then
+        local pages = src.page_count
+        if not pages and src.filepath and ok_repo and Repo and Repo.readProgress then
             pcall(function()
-                local _pct, _status, _rating, pc = Repo.readProgress(bk.filepath)
+                local _pct, _status, _rating, pc = Repo.readProgress(src.filepath)
                 if pc then
                     pages = pc
-                    bk.page_count = pc
+                    src.page_count = pc
                 end
             end)
         end
@@ -788,8 +827,8 @@ function SpineShelf.plan(items, opts)
             w = Screen:scaleBySize(w_dp)
         end
         local series_num = nil
-        if bk.series_num and tostring(bk.series_num) ~= "" then
-            series_num = tostring(bk.series_num)
+        if src.series_num and tostring(src.series_num) ~= "" then
+            series_num = tostring(src.series_num)
         end
         -- Filename-style leading index ("2 - Player of Games", "3. Morning
         -- Star"): the last-resort number when metadata has none, and a
@@ -828,7 +867,7 @@ function SpineShelf.plan(items, opts)
             book = bk, item = f.item, item_idx = f.item_idx,
             w = w, h = h, w_dp = w_dp, look = look,
             face_out = face_out, favourite = fav, label = label,
-            author = bk.author or (bk.authors and bk.authors[1]) or nil,
+            author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
         }
         logger.dbg(string.format(
