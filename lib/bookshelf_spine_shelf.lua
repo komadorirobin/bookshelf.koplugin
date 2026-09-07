@@ -432,7 +432,7 @@ function SpineShelf.plankBandT(y_rel, surf_h)
     local bands = 5
     local i = math.floor(y_rel * bands / math.max(1, surf_h))
     if i < 0 then i = 0 elseif i > bands - 1 then i = bands - 1 end
-    return 0.25 + 0.30 * (i / (bands - 1))
+    return i / (bands - 1)
 end
 
 -- Plank colours are computed in DISPLAY space and pre-inverted for night
@@ -449,6 +449,16 @@ end
 local function _plankShade(f)
     local r, g, b = _plankRGB()
     return _plankFinish(r * f, g * f, b * f)
+end
+
+-- The surface palette the user picked out of dark mode and asked to keep:
+-- DARK bands (base x0.62 at the far edge, darkening to x0.38 at the front),
+-- a front face just lighter than the base, and one bright edge line. mul
+-- darkens a band further for the lift shadows.
+local function _plankBandColor(y_rel, surf_h, mul)
+    local t = SpineShelf.plankBandT(y_rel, surf_h)
+    local f = (0.62 - 0.24 * t) * (mul or 1)
+    return _plankShade(f)
 end
 
 local function _plankLit(t, mul)
@@ -798,7 +808,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- a lifted book floats in front of the page, and the plank-toned nicks
     -- read as white specks cut into its corners there.
     if not lifted then
-        local nick_c = _plankLit(0.5)
+        local nick_c = _plankShade(0.42)
         local by = body_top + body_h - hairline
         bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
         bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
@@ -818,14 +828,15 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local air_end = math.min(foot + math.max(2, hairline), slot_bottom)
         local ins = hairline * 2
         for yy = start, slot_bottom - 1 do
-            local t = SpineShelf.plankBandT(yy - surf_top, surf_h)
             if yy < air_end or spine_w <= 2 * ins then
-                bb:paintRectRGB32(x, yy, spine_w, 1, _plankLit(t))
+                bb:paintRectRGB32(x, yy, spine_w, 1,
+                                  _plankBandColor(yy - surf_top, surf_h))
             else
-                bb:paintRectRGB32(x, yy, ins, 1, _plankLit(t))
+                local band = _plankBandColor(yy - surf_top, surf_h)
+                bb:paintRectRGB32(x, yy, ins, 1, band)
                 bb:paintRectRGB32(x + ins, yy, spine_w - 2 * ins, 1,
-                                  _plankLit(t, 0.72))
-                bb:paintRectRGB32(x + spine_w - ins, yy, ins, 1, _plankLit(t))
+                                  _plankBandColor(yy - surf_top, surf_h, 0.72))
+                bb:paintRectRGB32(x + spine_w - ins, yy, ins, 1, band)
             end
         end
     end
@@ -937,9 +948,8 @@ function LiftShadow:paintTo(bb, x, y)
         local surf_top = y + h + pk.inset - surf_h
         local y0 = math.max(y, surf_top)
         for yy = y0, y + h - 1 do
-            local t = SpineShelf.plankBandT(yy - surf_top, surf_h)
             bb:paintRectRGB32(x + ins, yy, math.max(1, w - 2 * ins), 1,
-                              _plankLit(t, 0.72))
+                              _plankBandColor(yy - surf_top, surf_h, 0.72))
         end
         return
     end
@@ -947,7 +957,7 @@ function LiftShadow:paintTo(bb, x, y)
     local sh = math.min(self.shadow_h or 0, h - air)
     if sh < 1 then return end
     bb:paintRectRGB32(x + ins, y + air, math.max(1, w - 2 * ins), sh,
-                      _plankLit(0.4, 0.72))
+                      _plankShade(0.35))
 end
 
 -- ── Face-out page block ─────────────────────────────────────────────────────
@@ -1040,16 +1050,16 @@ function ShelfPlank:paintTo(bb, x, y)
     for i = 0, bands - 1 do
         local by0 = front_y - surf_h + math.floor(surf_h * i / bands)
         local by1 = front_y - surf_h + math.floor(surf_h * (i + 1) / bands)
-        local t = SpineShelf.plankBandT(by0 - (front_y - surf_h), surf_h)
-        bb:paintRectRGB32(x, by0, w, by1 - by0, _plankLit(t))
+        bb:paintRectRGB32(x, by0, w, by1 - by0,
+                          _plankBandColor(by0 - (front_y - surf_h), surf_h))
     end
     -- The front-top edge line: the brightest element, a lit highlight along
     -- the shelf's leading edge, with the front face clearly lighter than the
     -- top surface below it -- the look the user picked out of dark mode and
     -- asked to keep in both ('the inverted colours look best').
     local line = math.max(1, Screen:scaleBySize(1))
-    bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.85))
-    bb:paintRectRGB32(x, front_y, w, b, _plankLit(0.62))
+    bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.55))
+    bb:paintRectRGB32(x, front_y, w, b, _plankLit(0.12))
 end
 
 -- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
