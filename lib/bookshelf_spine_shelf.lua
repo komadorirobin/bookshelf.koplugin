@@ -1043,11 +1043,13 @@ function ShelfPlank:paintTo(bb, x, y)
         local t = SpineShelf.plankBandT(by0 - (front_y - surf_h), surf_h)
         bb:paintRectRGB32(x, by0, w, by1 - by0, _plankLit(t))
     end
-    -- The front-top edge line.
+    -- The front-top edge line: the brightest element, a lit highlight along
+    -- the shelf's leading edge, with the front face clearly lighter than the
+    -- top surface below it -- the look the user picked out of dark mode and
+    -- asked to keep in both ('the inverted colours look best').
     local line = math.max(1, Screen:scaleBySize(1))
-    bb:paintRectRGB32(x, front_y - line, w, line, shade(0.35))
-    -- The front face, in shade.
-    bb:paintRectRGB32(x, front_y, w, b, shade(0.72))
+    bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.85))
+    bb:paintRectRGB32(x, front_y, w, b, _plankLit(0.62))
 end
 
 -- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
