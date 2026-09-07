@@ -5119,6 +5119,75 @@ function BookshelfWidget:_spineUpdateBookCounts(all_items, total_hint)
     self._spine_books_total, self._spine_books_before = total, before
 end
 
+-- _spinePageFirsts() — item-index page starts for the WHOLE chip, computed
+-- by planning the cached full list once (uncapped rows, grouped by the
+-- current row count) and cached beside the fetch cache. This is what makes
+-- back-wrap, history-less back-steps, page-jump and skip land on real page
+-- boundaries instead of the item-based cursor ceiling (the '247-247 of 247'
+-- wrap, then one-more-book-per-back-step).
+function BookshelfWidget:_spinePageFirsts()
+    local c = self._spine_fetch_cache
+    if c and c.page_firsts and c.firsts_shelves == self:_nShelves() then
+        return c.page_firsts
+    end
+    local d = self._shelf_dims
+    if not d or not d.content_w or not d.shelf_h then return nil end
+    local items = c and c.items
+    if not items then
+        items = select(1, self:_spineCachedFetch(400))
+        c = self._spine_fetch_cache
+    end
+    if not items or #items == 0 then return nil end
+    local ok, firsts = pcall(function()
+        local SpineShelf  = require("lib/bookshelf_spine_shelf")
+        local SpineLayout = require("lib/bookshelf_spine_layout")
+        local gap = Screen:scaleBySize(SpineShelf.BOOK_GAP_DP)
+        local plan = SpineShelf.plan(items, {
+            content_w  = d.content_w - 2 * SpineShelf.endMargin(d.shelf_h),
+            row_h      = d.shelf_h,
+            gap        = gap,
+            group_gap  = Screen:scaleBySize(SpineShelf.GROUP_GAP_DP),
+            n_rows     = math.huge,
+            face_out   = self:_spineFaceOut(),
+            thickness_pct = self:_chipListValue("spine_thickness_pct"),
+        })
+        local pages = SpineLayout.paginate(plan.rows, self:_nShelves())
+        local out = {}
+        for i = 1, #pages do
+            local en = plan.entries[pages[i].first]
+            out[i] = en and en.item_idx or 1
+        end
+        return out
+    end)
+    if ok and firsts and #firsts > 0 then
+        if c then
+            c.page_firsts = firsts
+            c.firsts_shelves = self:_nShelves()
+        end
+        return firsts
+    end
+    return nil
+end
+
+-- _spineCursorForPage(p) / _spinePrevPageCursor(cur) — page-map lookups.
+function BookshelfWidget:_spineCursorForPage(p)
+    local firsts = self:_spinePageFirsts()
+    if not firsts then return nil end
+    if p < 1 then p = 1 end
+    if p > #firsts then p = #firsts end
+    return firsts[p], #firsts
+end
+
+function BookshelfWidget:_spinePrevPageCursor(cur)
+    local firsts = self:_spinePageFirsts()
+    if not firsts then return nil end
+    local prev
+    for i = 1, #firsts do
+        if firsts[i] < cur then prev = firsts[i] else break end
+    end
+    return prev
+end
+
 -- _spineStep — spine mode's chevron step. Forward advances by the number of
 -- books the current page actually shows (variable), remembering where it
 -- came from; backward pops that history so the reader retraces the exact
@@ -5136,11 +5205,14 @@ function BookshelfWidget:_spineStep(direction)
         self._cursor = nxt
     else
         local prev = table.remove(self._spine_hist)
-        if prev and prev < self._cursor then
-            self._cursor = prev
-        else
-            self._cursor = self._cursor - shown
+        if not (prev and prev < self._cursor) then
+            -- No history (jump, wrap, relaunch): the page map gives the real
+            -- previous boundary instead of guessing by the CURRENT page's
+            -- shown count (which crept one book at a time off a wrap).
+            prev = self:_spinePrevPageCursor(self._cursor)
+                   or (self._cursor - shown)
         end
+        self._cursor = prev
     end
     if self._cursor < 1 then self._cursor = 1 end
 end
@@ -5194,6 +5266,18 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         -- aligned start in the current view size.
         return function()
             bw:_markOpdsNav()
+            if bw:_isSpineMode() then
+                -- Real page boundaries from the page map, not view-size
+                -- arithmetic (spine pages hold a variable count).
+                local cur = bw:_spineCursorForPage(p)
+                if cur then
+                    bw._cursor = cur
+                    bw._spine_hist = {}
+                    bw:_syncPageFromCursor()
+                    bw:_swapShelvesInPlace()
+                    return
+                end
+            end
             local view = bw:_viewSize()
             bw._cursor = math.max(1, (p - 1) * view + 1)
             bw:_clampCursor()
@@ -8936,7 +9020,13 @@ function BookshelfWidget:onBSKbPress()
             self:_swapShelvesInPlace()
             self:_swapFooterInPlace()
         elseif btn == "last" and self:_pageForwardPossible() then
-            self._cursor = self:_maxCursor()
+            if self:_isSpineMode() then
+                local cur, n = self:_spineCursorForPage(math.huge)
+                self._cursor = cur or self:_maxCursor()
+                self._spine_hist = {}
+            else
+                self._cursor = self:_maxCursor()
+            end
             self:_syncPageFromCursor()
             self._footer_cursor_btn = "prev"
             self:_swapShelvesInPlace()
@@ -11104,7 +11194,7 @@ function BookshelfWidget:_paginateNext()
     -- the neighbouring chip (issue #115). Drilled-in last page is left as a
     -- no-op; back-navigation there happens via the breadcrumb or east-swipe.
     if #self._drilldown_path == 0 and not self._chip_bar_hidden
-            and total > 1 and self._cursor > 1 then
+            and (total > 1 or self:_isSpineMode()) and self._cursor > 1 then
         self:_markOpdsNav()
         self._cursor = 1
         self:_syncPageFromCursor()
@@ -11156,7 +11246,18 @@ function BookshelfWidget:_paginatePrev()
         -- this wrap targets the last page with real books rather than the
         -- blank fetch-me page one beyond it.
         local last_cursor = self:_maxCursor()
-        if total > 1 and self._cursor < last_cursor then
+        if self:_isSpineMode() then
+            -- The item-based spine ceiling is the LAST BOOK, which wrapped
+            -- to a one-book page ('247-247 of 247'); the page map's final
+            -- boundary is the real last page.
+            local cur = self:_spineCursorForPage(math.huge)
+            if cur then last_cursor = cur end
+            self._spine_hist = {}
+        end
+        -- cursor < last_cursor alone decides: in cover mode total>1 iff
+        -- last_cursor>1, and spine's capacity-derived total_pages can read 1
+        -- while several REAL pages exist.
+        if self._cursor < last_cursor then
             self:_markOpdsNav()
             self._cursor = last_cursor
             self:_syncPageFromCursor()
