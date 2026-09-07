@@ -830,14 +830,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local glyph = _statusGlyph(self.book)
     local w_dp = e.w_dp or 20
     if glyph then
-        local gsize = math.max(8, math.min(14, math.floor(w_dp * 0.5)))
+        local gsize = math.max(9, math.min(17, math.floor(w_dp * 0.6)))
         local face = BFont:getFace("symbols", gsize)
         local used = _paintLevelText(bb, x, cur_top, spine_w, glyph, face, night)
         if used > 0 then cur_top = cur_top + used + math.floor(pad / 2) end
     end
     -- Favourite star under it (face-out favourites show the cover instead).
     if e.favourite and not e.face_out then
-        local gsize = math.max(7, math.min(12, math.floor(w_dp * 0.42)))
+        local gsize = math.max(8, math.min(14, math.floor(w_dp * 0.5)))
         local face = BFont:getFace("symbols", gsize)
         local used = _paintLevelText(bb, x, cur_top, spine_w,
                                      CoverProgress.FAV_GLYPH_STAR, face, night)
