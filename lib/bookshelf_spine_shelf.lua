@@ -902,21 +902,28 @@ local LiftShadow = Widget:extend{}
 function LiftShadow:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local w, h = self.dimen.w, self.dimen.h
+    local ins = Screen:scaleBySize(2)
+    local pk = self.plank
+    if pk then
+        -- The shadow lies ON the plank's top surface, never in the air the
+        -- book lifted through: painting the whole drop made it stick up
+        -- past the shelf's back edge (user report). Clamp to the surface
+        -- band, darkening the same tones the plank paints there.
+        local surf_h = 3 * pk.b
+        local surf_top = y + h + pk.inset - surf_h
+        local y0 = math.max(y, surf_top)
+        for yy = y0, y + h - 1 do
+            local t = SpineShelf.plankBandT(yy - surf_top, surf_h)
+            bb:paintRectRGB32(x + ins, yy, math.max(1, w - 2 * ins), 1,
+                              _plankLit(t, 0.72))
+        end
+        return
+    end
     local air = math.max(2, Screen:scaleBySize(1))
     local sh = math.min(self.shadow_h or 0, h - air)
     if sh < 1 then return end
-    local ins = Screen:scaleBySize(2)
-    local pk = self.plank
-    for yy = y + air, y + air + sh - 1 do
-        local t = 0.4
-        if pk then
-            local surf_h = 3 * pk.b
-            local surf_top = y + h + pk.inset - surf_h
-            t = SpineShelf.plankBandT(yy - surf_top, surf_h)
-        end
-        bb:paintRectRGB32(x + ins, yy, math.max(1, w - 2 * ins), 1,
-                          _plankLit(t, 0.72))
-    end
+    bb:paintRectRGB32(x + ins, y + air, math.max(1, w - 2 * ins), sh,
+                      _plankLit(0.4, 0.72))
 end
 
 -- ── Face-out page block ─────────────────────────────────────────────────────
