@@ -1174,6 +1174,22 @@ function SpineShelf.plan(items, opts)
         local fav = bk.filepath ~= nil and _isFavourite(bk.filepath)
         _t_fav = _t_fav + (_gettime() - _tf)
         local face_out = (opts.face_out ~= false) and fav
+        if face_out and src.has_cover == nil and src.filepath
+                and ok_repo and Repo and Repo.buildBookMeta then
+            -- Light page records carry no has_cover, and the cover tile
+            -- gates its whole cover ladder on it (the face-out rendered as
+            -- the text placeholder). Face-outs are few: enrich the record
+            -- with the full metadata build, missing fields only, cover
+            -- pixels still lazy-loaded by the tile.
+            pcall(function()
+                local full = Repo.buildBookMeta(src.filepath, { want_cover = false })
+                if full then
+                    for k, v in pairs(full) do
+                        if src[k] == nil then src[k] = v end
+                    end
+                end
+            end)
+        end
         -- The light record path leaves page_count nil for reflowables;
         -- the sidecar knows better and CoverProgress.decide reads it at
         -- paint time anyway for the glyphs, through the same TTL cache,
