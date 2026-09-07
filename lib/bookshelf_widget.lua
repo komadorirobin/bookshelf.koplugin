@@ -6548,6 +6548,7 @@ function BookshelfWidget:_repaintSpineSelection(old_fp, new_fp)
         union.x, union.y, union.w, union.h = x1, y1, x2 - x1, y2 - y1
     end
     local changed = 0
+    local faceout_hit = false
     for r = 1, (d.n_shelves or 1) do
         local row = self._inner_vgroup[(d.shelf_top_idx or 1) + 2 * (r - 1)]
         -- Row shape: OverlapGroup{ plank, HorizontalGroup{ slot, span, ... } };
@@ -6558,12 +6559,25 @@ function BookshelfWidget:_repaintSpineSelection(old_fp, new_fp)
                 local slot = hg[i]
                 local fp = slot and slot.book and slot.book.filepath
                 if fp and (fp == old_fp or fp == new_fp) then
-                    slot.is_selected = (fp == new_fp)
-                    expand(slot.dimen)
-                    changed = changed + 1
+                    if slot.entry then
+                        slot.is_selected = (fp == new_fp)
+                        expand(slot.dimen)
+                        changed = changed + 1
+                    else
+                        -- A face-out wrapper: its selection LIFT is baked at
+                        -- build time, so a flag flip paints nothing.
+                        faceout_hit = true
+                    end
                 end
             end
         end
+    end
+    if faceout_hit then
+        -- Rebuild the rows so the face-out's lift (or its return to the
+        -- shelf) actually shows. Favourites only, so the heavier path is
+        -- rare.
+        self:_swapShelvesInPlace()
+        return
     end
     if changed > 0 and union then
         local pad = Screen:scaleBySize(12)

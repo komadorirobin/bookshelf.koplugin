@@ -609,7 +609,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             -- reads as pressed paper rather than a printed pattern.
             local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
             bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xF0))
-            for cx = sx0 + sp, sx0 + sw_edge - 1, 2 * sp do
+            for cx = sx0 + 1, sx0 + sw_edge - 1, sp + 1 do
                 local lw = 1 + ((cx * 73 + 41) % sp)
                 lw = math.min(lw, sx0 + sw_edge - cx)
                 bb:paintRectRGB32(cx, sy0, lw, sh_edge, tone(0xA8))
@@ -703,7 +703,7 @@ function FaceOutTopBlock:paintTo(bb, x, y)
     if sw > 2 and sh > 1 then
         local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
         bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF0))
-        for cy = sy0 + sp, sy0 + sh - 1, 2 * sp do
+        for cy = sy0 + 1, sy0 + sh - 1, sp + 1 do
             local lh = 1 + ((cy * 73 + 41) % sp)
             lh = math.min(lh, sy0 + sh - cy)
             bb:paintRectRGB32(sx0, cy, sw, lh, tone(0xA8))
@@ -1077,9 +1077,18 @@ function SpineShelf.rowWidget(opts)
                 if ok_sw and CoverTile then
                     local VerticalGroup = require("ui/widget/verticalgroup")
                     local VerticalSpan  = require("ui/widget/verticalspan")
+                    -- Face-outs sit a step FURTHER back on the shelf than the
+                    -- spines (user ruling), and selection lifts them like any
+                    -- other book -- never the cover grid's ring.
+                    local push = inset
+                    local lift = 0
+                    if is_sel then
+                        lift = math.min(Screen:scaleBySize(10), push + inset)
+                    end
+                    local fo_stand = stand_h - push
                     local depth = math.min(e.depth or 0,
-                                           math.max(0, math.min(e.h, stand_h) - 10))
-                    local cover_h = math.min(e.h, stand_h) - depth
+                                           math.max(0, math.min(e.h, fo_stand) - 10))
+                    local cover_h = math.min(e.h, fo_stand) - depth
                     local cover = CoverTile:new{
                         book          = e.book,
                         width         = e.w,
@@ -1087,7 +1096,6 @@ function SpineShelf.rowWidget(opts)
                         on_tap        = opts.callbacks and opts.callbacks.on_book_tap,
                         on_hold       = opts.callbacks and opts.callbacks.on_book_hold,
                         on_double_tap = opts.callbacks and opts.callbacks.on_book_open,
-                        is_selected   = is_sel,
                         show_progress = true,
                         -- The page block replaces the drop shadow: a shelved
                         -- book doesn't float. flat_thumb drops the shadow AND
@@ -1095,7 +1103,7 @@ function SpineShelf.rowWidget(opts)
                         flat_thumb    = true,
                     }
                     local stack = VerticalGroup:new{ align = "center" }
-                    local head = stand_h - cover_h - depth
+                    local head = fo_stand - cover_h - depth - lift
                     if head > 0 then
                         stack[#stack + 1] = VerticalSpan:new{ width = head }
                     end
@@ -1106,6 +1114,12 @@ function SpineShelf.rowWidget(opts)
                         }
                     end
                     stack[#stack + 1] = cover
+                    if push + lift > 0 then
+                        stack[#stack + 1] = VerticalSpan:new{ width = push + lift }
+                    end
+                    -- Mark the wrapper so the selection repaint can find it
+                    -- (it has no .entry; flips fall back to a full swap).
+                    stack.book = e.book
                     tile = stack
                 end
             end
