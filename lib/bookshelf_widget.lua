@@ -4296,6 +4296,16 @@ function BookshelfWidget:_viewMode()
         return ViewMode.COVERS
     end
     local chip_mode = self:_chipViewMode()
+    -- Spines never apply to an OPDS catalogue: remote records have no local
+    -- file, no page count and no stable identity, so the style has nothing
+    -- to stand on (user ruling). A stored pin -- e.g. a chip re-pointed at a
+    -- catalogue after choosing Spines -- degrades to the covers default.
+    if chip_mode == ViewMode.SPINES then
+        local tab = require("lib/bookshelf_tab_model").getById(self.chip)
+        if tab and tab.source and tab.source.kind == "opds" then
+            chip_mode = nil
+        end
+    end
     if chip_mode == ViewMode.AUTO then
         return ViewMode.effective(self._expanded, self:_isDrilledIn())
     end

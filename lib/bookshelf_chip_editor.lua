@@ -1419,10 +1419,14 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                 draft[ViewMode.CHIP_KEY] = nil
             end)),
             -- Spines: books edge-on, a real bookcase. Never chosen by Auto;
-            -- an explicit pin only, like the others but purely for fun.
+            -- an explicit pin only, like the others but purely for fun. Not
+            -- offered for OPDS catalogues -- remote records have nothing for
+            -- the style to stand on, and the widget degrades a stored pin to
+            -- covers there.
+            (not (chrome and chrome.is_opds)) and
             radio(_("Spines"), mode == ViewMode.SPINES, pick(function()
                 draft[ViewMode.CHIP_KEY] = ViewMode.SPINES
-            end)),
+            end)) or nil,
         }
 
         -- Which density rows to offer. LIST numbers only: cover columns are
@@ -1435,6 +1439,7 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
         local show_covers = (mode ~= ViewMode.LIST and mode ~= ViewMode.SPINES)
         local show_list   = (mode ~= ViewMode.COVERS and mode ~= ViewMode.SPINES)
         local show_spines = (mode == ViewMode.SPINES)
+                            and not (chrome and chrome.is_opds)
         local bw = chrome and chrome.bw
 
         -- nudgeRow: [-]  Label: value  [+], writing draft[key].
