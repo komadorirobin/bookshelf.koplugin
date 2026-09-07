@@ -409,10 +409,57 @@ function SpineBookSlot:onDoubleTap()
     end
 end
 
+-- paintTo blits a cached offscreen render. Every setDirty on the shelf
+-- repaints the WHOLE widget tree (the refresh region only limits the e-ink
+-- update), and a spine render is expensive (a rotated-title TextWidget per
+-- book) -- selection taps felt slow because ~30 titles re-rendered per tap.
+-- The cache re-renders only when the slot's state key changes; book/look
+-- refreshes go through invalidate().
 function SpineBookSlot:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    local e = self.entry
     local night = _nightMode()
+    local key = (self.is_selected and "s" or "-") .. (night and "n" or "d")
+    if not self._cache_bb or self._cache_key ~= key then
+        if self._cache_bb then pcall(function() self._cache_bb:free() end) end
+        self._cache_bb = nil
+        local ok = pcall(function()
+            -- Match the screen's buffer type: greyscale devices cache at
+            -- 1 byte/px and flatten colour exactly once, colour screens
+            -- keep RGB32.
+            local btype = (Screen.bb and Screen.bb.getType and Screen.bb:getType())
+                          or Blitbuffer.TYPE_BBRGB32
+            local c = Blitbuffer.new(self.width, self.height, btype)
+            -- Page ground, pre-invert space (white displays black in night
+            -- via the frame invert, same as the shelf's own background).
+            c:paintRectRGB32(0, 0, self.width, self.height,
+                             Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+            self:_renderInto(c, night)
+            self._cache_bb, self._cache_key = c, key
+        end)
+        if not ok or not self._cache_bb then
+            -- Render straight to the target rather than showing nothing.
+            self:_renderIntoAt(bb, x, y, night)
+            return
+        end
+    end
+    bb:blitFrom(self._cache_bb, x, y, 0, 0, self.width, self.height)
+end
+
+function SpineBookSlot:invalidate()
+    if self._cache_bb then pcall(function() self._cache_bb:free() end) end
+    self._cache_bb, self._cache_key = nil, nil
+end
+
+function SpineBookSlot:free()
+    self:invalidate()
+end
+
+function SpineBookSlot:_renderInto(bb, night)
+    self:_renderIntoAt(bb, 0, 0, night)
+end
+
+function SpineBookSlot:_renderIntoAt(bb, x, y, night)
+    local e = self.entry
     local spine_w = e.w
     local spine_h = math.min(e.h, self.height)
     local top = y + self.height - spine_h
@@ -469,18 +516,27 @@ function SpineBookSlot:paintTo(bb, x, y)
         if used > 0 then cur_top = cur_top + used + math.floor(pad / 2) end
     end
 
-    -- Series number at the foot, level, encyclopedia style.
+    -- Series number at the foot, level, encyclopedia style: measured, then
+    -- anchored so the text BOTTOM sits one pad above the spine's foot --
+    -- the reserve arithmetic this replaces drifted with font size and let
+    -- the number float above the base.
     if self.show_series and e.series_num then
         local ssize = math.max(7, math.min(13, math.floor(w_dp * 0.45)))
         local face = BFont:getFace(BFont.getUIFontFace() or "cfont", ssize)
-        -- Measure by painting into position from the bottom: probe height
-        -- first with a throwaway paint into nowhere is wasteful; instead
-        -- reserve ~1.3em and paint inside it.
-        local reserve = Screen:scaleBySize(ssize + 4)
-        local sy = bottom - reserve
-        _paintLevelText(bb, x, sy + Screen:scaleBySize(2), spine_w,
-                        e.series_num, face, night)
-        bottom = sy - math.floor(pad / 2)
+        pcall(function()
+            local tw = TextWidget:new{
+                text = e.series_num, face = face,
+                fgcolor = _textColor(night),
+                max_width = spine_w, padding = 0,
+            }
+            local sz = tw:getSize()
+            if sz.w >= 1 and sz.h >= 1 and sz.h < spine_h / 2 then
+                local sy = top + spine_h - pad - sz.h
+                tw:paintTo(bb, x + math.floor((spine_w - sz.w) / 2), sy)
+                bottom = sy - math.floor(pad / 2)
+            end
+            tw:free()
+        end)
     end
 
     -- Title, rotated, in whatever run is left.
@@ -667,6 +723,18 @@ function SpineShelf.plan(items, opts)
         local series_num = nil
         if bk.series_num and tostring(bk.series_num) ~= "" then
             series_num = tostring(bk.series_num)
+        elseif f.in_group then
+            -- Inside a series run, many libraries carry the number only in
+            -- the filename ("2 - Player of Games", "3. Morning Star"). Lift
+            -- a leading index to the foot and strip it from the spine text
+            -- so the number isn't printed twice. Guarded to plausible
+            -- series indices so "2001: A Space Odyssey" keeps its title.
+            local pre, rest = label:match("^%s*(%d+%.?%d*)%s*[%-%.:]%s+(.+)$")
+            local n = tonumber(pre)
+            if n and n < 100 and rest and #rest > 2 then
+                series_num = pre
+                label = rest
+            end
         end
         -- The gap this spine carries on its left: none at the very start,
         -- the small gap inside a run or between loose books, the wide one

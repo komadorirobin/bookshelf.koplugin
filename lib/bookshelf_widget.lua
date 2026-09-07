@@ -1323,16 +1323,12 @@ function BookshelfWidget:_rebuild()
         local cap_mult = BookshelfSettings.isTrue("true_cover_aspect") and 1.0 or 1.05
         local capped_shelf_h = math.floor(slot_h_natural * cap_mult) + title_block_h
         -- Spine rows are NOT cover slots: they want the whole band split
-        -- evenly (the uncapped fill above), so a single-row shelf really is
-        -- one tall shelf. The cover cap only applies to the cover grid; the
-        -- spine rows honour the chip's shelf-height % instead (the leftover
-        -- lands in layout_slack, which the assembler already distributes).
-        if self:_isSpineMode() then
-            local pct = tonumber(self:_chipListValue("spine_height_pct"))
-            if pct and pct >= 30 and pct < 100 then
-                shelf_h = math.max(1, math.floor(shelf_h * pct / 100))
-            end
-        elseif shelf_h > capped_shelf_h then
+        -- evenly (the uncapped fill above), so the cover cap only applies to
+        -- the cover grid. The chip's shelf-height % is NOT reapplied here --
+        -- _nShelves already spent it choosing HOW MANY collapsed-height rows
+        -- fill the expanded band, so the even split lands each row close to
+        -- its collapsed size.
+        if not self:_isSpineMode() and shelf_h > capped_shelf_h then
             shelf_h = capped_shelf_h
         end
         -- List rows are a fixed height decided by the column set, not by the
@@ -6712,6 +6708,9 @@ function BookshelfWidget:_refreshSpineSlotInPlace(fp)
                     if slot.entry.cover_ok == false then
                         slot.entry.cover_ok = nil  -- let face-out retry
                     end
+                    -- The slot paints from an offscreen cache; a fresh
+                    -- record must force a re-render, not a stale blit.
+                    if slot.invalidate then slot:invalidate() end
                     if slot.dimen then
                         union = union or slot.dimen:copy()
                     end
@@ -9774,11 +9773,19 @@ function BookshelfWidget:_nShelves()
         -- bottom. Same rows expanded as collapsed there, with the freed pixels
         -- spread between them, is the honest answer.
         if self:_isListMode() then return self:_maxRows() end
-        -- A chip pinned to N spine rows means N rows, expanded or not --
-        -- the pin is the reader saying what the shelf looks like.
-        if self:_isSpineMode()
-                and type(self:_chipListValue("spine_rows")) == "number" then
-            return self:_baseShelves()
+        -- Spine mode: expanding fills the freed hero space with MORE rows at
+        -- the collapsed height (user ruling: "expanding the shelf should add
+        -- extra rows to fill the space"), never by stretching the pinned
+        -- rows. Same chrome sum as _maxRows' expanded budget.
+        if self:_isSpineMode() then
+            local base = self:_baseShelves()
+            local shelf_h_c = self:_collapsedSpineSplit(self._chip_bar_hidden, base)
+            local PAD, _cw, chip_h, footer_h = self:_layoutPrimitives()
+            local strip_minimum = Screen:scaleBySize(20)
+            local available = self.height - PAD - strip_minimum
+                            - Size.padding.large - chip_h - PAD - footer_h
+            local n = math.floor(available / (shelf_h_c + PAD))
+            return math.max(base, math.min(n, 8))
         end
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
