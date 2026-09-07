@@ -699,6 +699,75 @@ test("countFinishedBooks: counts Finished sidecars across the walk", function()
     Repo.invalidateWalkCache()
 end)
 
+-- The spine plan mutates the SHARED light-meta record (bakes the sidecar's
+-- status + a checked flag onto it so paints skip DocSettings). A status edit
+-- fires invalidateProgressCache, which must strip those fields too -- or the
+-- plan's `if src.status == nil` guard keeps serving the old status until
+-- restart: the stale reading-glyph bug on the spine shelf.
+test("invalidateProgressCache strips spine-plan fields from shared light records", function()
+    Repo.invalidateWalkCache()
+    Repo.invalidateLightMeta()
+    Repo.invalidateBookCache("test")
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = { ["/lib/spine.epub"] = { title = "Spine" } }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    lfs_stub.dir = function(path)
+        local files = (path == "/lib") and { ".", "..", "spine.epub" } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+        if key == "size" then return 1 end
+    end
+    -- Give the BIM stub the batch-SELECT surface so _getLightMetaCache
+    -- builds the shared memoised map -- the sharing under test. Column-major
+    -- arrays, ljsqlite3 exec shape.
+    local bim = package.loaded["bookinfomanager"]
+    local prev_open, prev_conn = bim.openDbConnection, bim.db_conn
+    bim.openDbConnection = function() end
+    bim.db_conn = { exec = function()
+        return { { "/lib/" }, { "spine.epub" }, { "Spine" },
+                 { "A. Author" }, {}, {}, {}, {} }
+    end }
+
+    -- A custom sort routes the library kind through the predicate path,
+    -- which serves the memoised light records (the device shape: the Home
+    -- chip sorts by date added).
+    local sortp = { { key = "date_added", reverse = true } }
+    local function fetch()
+        Repo.spine_light = true
+        local page = Repo.getBySource({ kind = "library" }, nil, sortp, 0, 10)
+        Repo.spine_light = false
+        return page and page[1]
+    end
+    local rec = fetch()
+    assert(rec and rec.filepath == "/lib/spine.epub", "fetch must find the book")
+    -- Bake the plan's mutations, then prove the harness really shares the
+    -- record -- a fresh-record harness would pass the final assertions
+    -- against the bug.
+    rec.status = "reading"
+    rec._spine_status_checked = true
+    local rec_again = fetch()
+    assert(rec_again == rec, "harness must serve the SHARED light record")
+    Repo.invalidateProgressCache(rec.filepath)
+    local rec_after = fetch()
+    assert(rec_after == rec, "still the shared record after invalidation")
+    assert(rec_after.status == nil,
+        "status edit must strip the plan-baked status, got " .. tostring(rec_after.status))
+    assert(rec_after._spine_status_checked == nil,
+        "the checked flag must clear so the plan re-reads the sidecar")
+
+    bim.openDbConnection, bim.db_conn = prev_open, prev_conn
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    _G._test_bim_data = nil
+    Repo.invalidateWalkCache()
+    Repo.invalidateLightMeta()
+end)
+
 -- KOReader's "Folders and files mixed" (collate_mixed) on the home view:
 -- OFF partitions folders before books, ON interleaves them by the sort key.
 test("getAll honours collate_mixed in both positions", function()

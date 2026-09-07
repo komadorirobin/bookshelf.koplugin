@@ -1991,6 +1991,12 @@ local function _resetLightMetaProgress(rec)
     rec._pct              = nil
     rec.rating            = nil
     rec.read_status       = nil
+    -- The spine plan bakes the sidecar's status onto the record (and flags
+    -- it checked) so paints skip DocSettings; these are the same cached
+    -- objects, so a status edit must strip that too or the plan's
+    -- `if src.status == nil` guard keeps serving the old status.
+    rec.status                = nil
+    rec._spine_status_checked = nil
 end
 
 function Repo.invalidateProgressCache(filepath)
