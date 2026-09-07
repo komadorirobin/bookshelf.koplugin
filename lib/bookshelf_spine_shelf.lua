@@ -723,16 +723,42 @@ function SpineShelf.plan(items, opts)
         local series_num = nil
         if bk.series_num and tostring(bk.series_num) ~= "" then
             series_num = tostring(bk.series_num)
-        elseif f.in_group then
-            -- Inside a series run, many libraries carry the number only in
-            -- the filename ("2 - Player of Games", "3. Morning Star"). Lift
-            -- a leading index to the foot and strip it from the spine text
-            -- so the number isn't printed twice. Guarded to plausible
-            -- series indices so "2001: A Space Odyssey" keeps its title.
+        elseif f.in_group and bk.filepath and not bk._spine_series_checked then
+            -- A stack member is a light stub built from whatever the light
+            -- cache held when the group was assembled -- on a cold start
+            -- that can predate the Calibre load, so the number the hero
+            -- happily shows (full record) is missing here. Ask the same
+            -- resolver the hero uses, once per stub; the answer is written
+            -- back onto the stub, which lives in the series cache.
+            bk._spine_series_checked = true
+            pcall(function()
+                if ok_repo and Repo and Repo.buildBookMeta then
+                    local full = Repo.buildBookMeta(bk.filepath,
+                                                    { want_cover = false })
+                    if full and full.series_num
+                            and tostring(full.series_num) ~= "" then
+                        bk.series_num = tostring(full.series_num)
+                        series_num = bk.series_num
+                    end
+                end
+            end)
+        end
+        -- Filename-style leading index ("2 - Player of Games", "3. Morning
+        -- Star"): the last-resort number when metadata has none, and a
+        -- duplicate to strip from the spine text when it matches the number
+        -- already going to the foot. Guarded to plausible series indices so
+        -- "2001: A Space Odyssey" keeps its title.
+        if f.in_group then
             local pre, rest = label:match("^%s*(%d+%.?%d*)%s*[%-%.:]%s+(.+)$")
             local n = tonumber(pre)
             if n and n < 100 and rest and #rest > 2 then
-                series_num = pre
+                if not series_num then
+                    series_num = pre
+                end
+                -- Strip the prefix even when it DISAGREES with the metadata
+                -- number (Culture numbering is contested territory): the
+                -- foot is authoritative, and a conflicting index inside the
+                -- title reads as two different numbers on one spine.
                 label = rest
             end
         end
