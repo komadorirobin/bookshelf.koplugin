@@ -209,9 +209,35 @@ end
 -- never-opened book (status legitimately nil) doesn't re-read its sidecar
 -- forever. Invalidation: dropLook (book closed / record refreshed) clears
 -- the whole entry, so the next plan re-reads once and re-persists.
+-- The persisted status is only as good as the sidecar it came from, and
+-- sidecars change behind our back: an edit made before the invalidation
+-- hook existed, or a sidecar synced in from another device. Each book's
+-- entry stores the sidecar's mtime and is validated against it once per
+-- session; a mismatch clears the entry so the next plan re-reads the truth.
+local _progress_validated = {}
+
+local function _sidecarMtime(fp)
+    local ok, m = pcall(function()
+        local DocSettings = require("docsettings")
+        local sf = DocSettings:findSidecarFile(fp)
+        if not sf then return 0 end
+        local lfs = require("libs/libkoreader-lfs")
+        return lfs.attributes(sf, "modification") or 0
+    end)
+    return ok and (m or 0) or 0
+end
+
 function SpineShelf.cachedProgress(fp)
     local e = fp and _persistTable()[fp]
     if not e then return nil, nil, false end
+    if e.sk and not _progress_validated[fp] then
+        _progress_validated[fp] = true
+        if _sidecarMtime(fp) ~= (e.m or 0) then
+            e.p, e.s, e.sk, e.m = nil, nil, nil, nil
+            _persist_dirty = true
+            return nil, nil, false
+        end
+    end
     return e.p, e.s, e.sk == true
 end
 
@@ -226,6 +252,8 @@ function SpineShelf.persistProgress(fp, pages, status)
     if pages then e.p = pages end
     e.s = status or nil
     e.sk = true
+    e.m = _sidecarMtime(fp)
+    _progress_validated[fp] = true
     _persist_dirty = true
 end
 
@@ -358,6 +386,7 @@ function SpineShelf.invalidateBook(fp)
     if not fp then return end
     SpineShelf.dropLook(fp)
     _hydrate_cache[fp] = nil
+    _progress_validated[fp] = nil
     SpineShelf.invalidateRender(fp)
 end
 
