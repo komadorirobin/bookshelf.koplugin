@@ -1553,9 +1553,13 @@ function SpineShelf.rowWidget(opts)
                         glyphs_top_left = true,
                         -- flat_thumb normally means "list thumbnail" to the
                         -- opening effect and gets the flat squash; a shelf
-                        -- face-out is a full cover and keeps the 3D flex.
+                        -- face-out opens with the tilt instead (below).
                         spine_face_out = true,
                     }
+                    -- Geometry the opening tilt needs (paintFaceOutTilt):
+                    -- the page block sits directly above the cover card and
+                    -- gets redrawn taller as the book tips forward.
+                    cover.faceout_fx = { depth = depth, look = e.look }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
                     if head > 0 then
@@ -1639,6 +1643,66 @@ function SpineShelf.paintOpeningTilt(slot)
         return
     end
     return d.x, d.y, d.w, d.h
+end
+
+-- paintFaceOutTilt(tile) — the face-out cover's opening feedback, matching
+-- the spine tilt's perspective rather than the cover grid's straight-on
+-- flex (user report: the flex reads wrong on this shelf, where the viewer
+-- is slightly ABOVE the books -- the page block on top says so). The
+-- cover foreshortens toward its feet and the page block grows down into
+-- the freed strip: the book tipping forward off the shelf. The squashed
+-- pixels come from the framebuffer capture; the block is REDRAWN taller
+-- through FaceOutTopBlock's own painter, so tipping shows more page
+-- lines rather than stretched ones. tile is the face-out CoverTile
+-- (carries faceout_fx from rowWidget and _cover_card from its render).
+-- Returns the affected region for the caller's refresh, or nothing.
+function SpineShelf.paintFaceOutTilt(tile)
+    local fx = tile and tile.faceout_fx
+    local card = tile and tile._cover_card
+    local rect = card and card.dimen
+    if not (fx and rect and rect.x and rect.w and rect.w > 8 and rect.h > 16) then
+        return
+    end
+    local bb = Screen.bb
+    if not bb then return end
+    local depth = fx.depth or 0
+    local freed = rect.h - math.floor(rect.h * 0.90)
+    if freed < 2 then return end
+    local ok = pcall(function()
+        -- Squash the cover toward its feet: bottom edge (on the plank)
+        -- stays put, the top drops by `freed`.
+        local src = Blitbuffer.new(rect.w, rect.h, bb:getType())
+        src:blitFrom(bb, 0, 0, rect.x, rect.y, rect.w, rect.h)
+        local scaled = src:scale(rect.w, rect.h - freed)
+        bb:blitFrom(scaled, rect.x, rect.y + freed, 0, 0, rect.w, rect.h - freed)
+        src:free()
+        scaled:free()
+        -- The page block keeps its top edge and grows down to meet the
+        -- squashed cover. A book too thin to have shown a block while
+        -- standing gains one as it tips -- same rule as the spine tilt.
+        local block = FaceOutTopBlock:new{
+            dimen = Geom:new{ w = rect.w, h = depth + freed },
+            look  = fx.look,
+        }
+        block:paintTo(bb, rect.x, rect.y - depth)
+    end)
+    if not ok then
+        logger.dbg("[bookshelf] face-out opening tilt failed; skipping")
+        return
+    end
+    -- Re-crisp the corner status glyphs at the squashed cover's new top:
+    -- the capture carries their squashed ghosts, and the block redraw
+    -- erased their above-card overhang; a full repaint shifted down by
+    -- `freed` rides them along with the cover.
+    if tile._overhang_glyph_widgets then
+        for _i, gw in ipairs(tile._overhang_glyph_widgets) do
+            local gd = gw.dimen
+            if gd and gd.x and gd.w and gd.w > 0 then
+                pcall(function() gw:paintTo(bb, gd.x, gd.y + freed) end)
+            end
+        end
+    end
+    return rect.x, rect.y - depth, rect.w, rect.h + depth
 end
 
 -- drainRenderStats() -> n, ms since the last drain: how many slot renders

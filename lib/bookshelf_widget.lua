@@ -7148,6 +7148,21 @@ function BookshelfWidget:_paintOpeningEffect(fp)
     local card = spine._cover_card
     local rect = card and card.dimen
     if not (rect and rect.x and rect.w and rect.w > 8 and rect.h > 8) then return end
+    -- A spine-shelf face-out opens with the SHELF's perspective, not the
+    -- grid's: the viewer sits slightly above (the page block on top says
+    -- so), so the straight-on trapezoid flex read wrong there (user
+    -- report). It tips forward instead -- the same tilt the spines play,
+    -- via the face-out's own page-block painter.
+    if spine.spine_face_out then
+        local ok_ss, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
+        if ok_ss and SpineShelf and SpineShelf.paintFaceOutTilt then
+            local rx, ry, rw2, rh2 = SpineShelf.paintFaceOutTilt(spine)
+            if rx then
+                pcall(function() Screen:refreshUI(rx, ry, rw2, rh2) end)
+            end
+        end
+        return
+    end
     -- A selected book wears the thick ring (BorderOverlay) just outside the
     -- card, which visually cages the flex - the 3D lift can't extend past
     -- it. Erase the ring band in the same frame, so the cover pops free of
@@ -7238,12 +7253,10 @@ function BookshelfWidget:_paintOpeningEffect(fp)
     -- flat_thumb is the caller's own declaration that this is a table cell and
     -- not a card (bookshelf_list_row.lua sets it for exactly that reason), and
     -- a size threshold would have to be re-guessed for every panel and every
-    -- list_font_scale. A spine-shelf face-out sets flat_thumb only for the
-    -- chrome (no shadow, square corners) but is a full-size cover -- it
-    -- keeps the 3D flex (user report: the open effect read flat there).
-    local flex = (spine.flat_thumb and not spine.spine_face_out)
-                 and BookshelfWidget.squashCoverOpen
-                 or BookshelfWidget.flexCoverOpen
+    -- list_font_scale. (Spine-shelf face-outs never reach here -- they
+    -- returned above with the tilt.)
+    local flex = spine.flat_thumb and BookshelfWidget.squashCoverOpen
+                                   or BookshelfWidget.flexCoverOpen
     local fx, fy, fw, fh = flex(rect, { skip_refresh = true })
     -- Union of everything painted this frame, starting from the flex region.
     local ux0, uy0 = fx or rect.x, fy or rect.y

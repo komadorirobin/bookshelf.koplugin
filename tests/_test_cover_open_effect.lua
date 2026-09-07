@@ -40,14 +40,15 @@ t.test("the rounded shadow repaint is skipped when the shadow is off", function(
         .. "shadow on open")
 end)
 
-t.test("a spine-shelf face-out keeps the 3D flex despite flat_thumb", function()
+t.test("a spine-shelf face-out opens with the shelf-perspective tilt", function()
     -- Face-out tiles set flat_thumb for the chrome (square corners, no
-    -- shadow) but are full-size covers: routing them to the list
-    -- thumbnail's flat squash lost the skew (user report). The branch must
-    -- consult the tile's spine_face_out declaration.
-    assert(body:match("spine_face_out"),
-        "the flex/squash branch must exempt spine_face_out tiles, or shelf "
-        .. "face-outs open with the flat thumbnail squash")
+    -- shadow), which routed them to the list thumbnail's flat squash; the
+    -- straight-on trapezoid flex read wrong too, because the shelf views
+    -- its books from slightly above (user reports, both). They tip
+    -- forward through the spine shelf's own painter instead.
+    assert(body:match("spine_face_out") and body:match("paintFaceOutTilt"),
+        "spine_face_out tiles must route to SpineShelf.paintFaceOutTilt, or "
+        .. "shelf face-outs open with a straight-on grid effect")
 end)
 
 t.test("a spine-mode open without a tapped tile hands off to the spine effect", function()
