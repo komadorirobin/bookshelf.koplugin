@@ -4251,6 +4251,7 @@ function BookshelfWidget:_viewMode()
     if self:_isSearchResults() then
         local m = BookshelfSettings.read("search_view_mode")
         if m == ViewMode.LIST then return ViewMode.LIST end
+        if m == ViewMode.SPINES then return ViewMode.SPINES end
         if m == ViewMode.AUTO then
             return ViewMode.effective(self._expanded, true)
         end
@@ -4280,7 +4281,8 @@ end
 function BookshelfWidget:_showSearchViewModePicker()
     local ButtonDialog = require("ui/widget/buttondialog")
     local current = BookshelfSettings.read("search_view_mode")
-    if current ~= ViewMode.LIST and current ~= ViewMode.AUTO then
+    if current ~= ViewMode.LIST and current ~= ViewMode.AUTO
+            and current ~= ViewMode.SPINES then
         current = ViewMode.COVERS
     end
     local dialog
@@ -4304,6 +4306,7 @@ function BookshelfWidget:_showSearchViewModePicker()
         buttons = {
             row(_("Covers"), ViewMode.COVERS),
             row(_("List"), ViewMode.LIST),
+            row(_("Spines"), ViewMode.SPINES),
             row(_("Auto"), ViewMode.AUTO),
         },
     }
