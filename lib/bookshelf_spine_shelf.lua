@@ -460,6 +460,30 @@ local function _plankLit(t, mul)
     return _plankFinish(r, g, b)
 end
 
+-- Boards and the spine's outer border share ONE colour: the darkest shade
+-- of the sampled cover colour (user ruling -- the black border clashed with
+-- the look-coloured boards). paintBorder flattens colour to luminance, so
+-- borders paint as four colour-safe rects.
+local BOARD_SHADE = 0.45
+
+local function _boardColor(look, night)
+    local r = look.r * BOARD_SHADE
+    local g = look.g * BOARD_SHADE
+    local b = look.b * BOARD_SHADE
+    if night then r, g, b = 255 - r, 255 - g, 255 - b end
+    return Blitbuffer.ColorRGB32(
+        math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5), 0xFF)
+end
+
+local function _paintBorderRGB32(bb, x, y, w, h, bw, c)
+    bb:paintRectRGB32(x, y, w, bw, c)
+    bb:paintRectRGB32(x, y + h - bw, w, bw, c)
+    if h > 2 * bw then
+        bb:paintRectRGB32(x, y + bw, bw, h - 2 * bw, c)
+        bb:paintRectRGB32(x + w - bw, y + bw, bw, h - 2 * bw, c)
+    end
+end
+
 local function _tintColor(look, f, night)
     local r = math.floor(math.min(255, look.r * f) + 0.5)
     local g = math.floor(math.min(255, look.g * f) + 0.5)
@@ -767,8 +791,8 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         bb:paintRectRGB32(x + i, body_top, 1, body_h,
                           _tintColor(e.look, _rampF(i, spine_w), night))
     end
-    local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-    bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, hairline, border_c)
+    _paintBorderRGB32(bb, x, body_top, spine_w, spine_h - edge_h, hairline,
+                      _boardColor(e.look, night))
     -- Soften the meeting with the plank: the bottom corner pixels come off,
     -- the hint of a chamfer where the book stands. Only while it STANDS --
     -- a lifted book floats in front of the page, and the plank-toned nicks
@@ -832,10 +856,10 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
                 bb:paintRectRGB32(cx, sy0, lw, sh_edge, tone(0xA8))
             end
         end
-        -- The boards, rising the lip above the paper.
-        bb:paintRectRGB32(x, top, board_w, edge_h, _fillColor(e.look, night))
-        bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h,
-                          _fillColor(e.look, night))
+        -- The boards, rising the lip above the paper, in the board shade.
+        local bc = _boardColor(e.look, night)
+        bb:paintRectRGB32(x, top, board_w, edge_h, bc)
+        bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h, bc)
     end
 
     local pad = Screen:scaleBySize(3)
@@ -961,7 +985,7 @@ function FaceOutTopBlock:paintTo(bb, x, y)
             bb:paintRectRGB32(sx0, cy, sw, lh, tone(0xA8))
         end
     end
-    local fill = _fillColor(self.look, night)
+    local fill = _boardColor(self.look, night)
     -- The top-left corner pixel comes off, the same chamfer the spine feet
     -- get where they meet the plank.
     local ch = math.max(2, Screen:scaleBySize(1))
