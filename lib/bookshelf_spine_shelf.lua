@@ -292,6 +292,13 @@ local function _plankRGB()
     return r, g, b
 end
 
+local function _plankShade(f)
+    local r, g, b = _plankRGB()
+    return Blitbuffer.ColorRGB32(
+        math.floor(r * f + 0.5), math.floor(g * f + 0.5),
+        math.floor(b * f + 0.5), 0xFF)
+end
+
 local function _plankLit(t)
     local r, g, b = _plankRGB()
     return Blitbuffer.ColorRGB32(
@@ -597,10 +604,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local air = math.max(2, hairline)
         local sy = foot + air
         if slot_bottom - sy > 1 then
-            bb:paintRectRGB32(x, foot, spine_w, air, _plankLit(0.55))
+            -- Ground the WHOLE under-strip in plank tone first: the shadow
+            -- is inset, and whatever flanks it must read as shelf, not as
+            -- the slot cache's white (which showed as bright lines).
+            bb:paintRectRGB32(x, foot, spine_w, slot_bottom - foot,
+                              _plankLit(0.5))
             local ins = hairline * 2
             bb:paintRectRGB32(x + ins, sy, math.max(1, spine_w - 2 * ins),
-                              slot_bottom - sy, _plankLit(0.2))
+                              slot_bottom - sy, _plankShade(0.72))
         end
     end
     if edge_h > 0 then
@@ -703,7 +714,7 @@ function LiftShadow:paintTo(bb, x, y)
     if sh < 1 then return end
     local ins = Screen:scaleBySize(2)
     bb:paintRectRGB32(x + ins, y + air, math.max(1, w - 2 * ins), sh,
-                      _plankLit(0.2))
+                      _plankShade(0.72))
 end
 
 -- ── Face-out page block ─────────────────────────────────────────────────────
@@ -753,7 +764,7 @@ local ShelfPlank = Widget:extend{}
 -- as a piece of furniture rather than a stripe (user ruling, promoted from
 -- a happy accident on partial rows).
 function SpineShelf.endMargin(row_h)
-    return 2 * SpineShelf.plankUnit(row_h)
+    return SpineShelf.plankUnit(row_h)
 end
 
 -- plankUnit(row_h) -> the plank's edge unit in px: roughly one page-block
