@@ -63,6 +63,25 @@ t.test("height: unknown aspect uses the default, and never returns 0", function(
     assert(SL.spineHeight(1, 1.5) >= 1)
 end)
 
+-- ── auto thickness from shelf height ────────────────────────────────────
+
+t.test("auto thickness: 1.0 at the reference two-row height", function()
+    local s = SL.autoThickness(SL.THICKNESS_REF_ROW_DP)
+    assert(math.abs(s - 1.0) < 0.001, "reference height must scale 1.0")
+end)
+
+t.test("auto thickness: a doubled row wants ~1.5x (device calibration)", function()
+    local s = SL.autoThickness(SL.THICKNESS_REF_ROW_DP * 2)
+    assert(s > 1.45 and s < 1.6, "got " .. tostring(s))
+end)
+
+t.test("auto thickness: clamps and degenerates", function()
+    eq(SL.autoThickness(nil), 1)
+    eq(SL.autoThickness(0), 1)
+    eq(SL.autoThickness(1), SL.THICKNESS_MIN)
+    eq(SL.autoThickness(1e6), SL.THICKNESS_MAX)
+end)
+
 -- ── favourite face-out width ────────────────────────────────────────────
 
 t.test("face-out: width is spine height over aspect", function()

@@ -520,13 +520,50 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- ── The spine proper ────────────────────────────────────────────────
     local hairline = Screen:scaleBySize(1)
     if hairline < 1 then hairline = 1 end
-    bb:paintRectRGB32(x, top, spine_w, spine_h, _fillColor(e.look, night))
+    -- Top edge: the sliver of page block you see looking at a real shelf.
+    -- Cover boards (spine colour) run up the sides and past the paper by a
+    -- lip; between them, fine vertical stripes alternate paper tones. Lives
+    -- INSIDE the book's allotted height, so layout is untouched; tiny
+    -- spines skip it.
+    local edge_h = 0
+    if spine_h >= Screen:scaleBySize(60) then
+        edge_h = math.floor(spine_h * 0.05)
+        local e_min, e_max = Screen:scaleBySize(5), Screen:scaleBySize(14)
+        if edge_h < e_min then edge_h = e_min end
+        if edge_h > e_max then edge_h = e_max end
+    end
+    local body_top = top + edge_h
+    bb:paintRectRGB32(x, body_top, spine_w, spine_h - edge_h,
+                      _fillColor(e.look, night))
     local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
-    bb:paintBorder(x, top, spine_w, spine_h, bw_px, border_c)
+    bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
+    if edge_h > 0 then
+        local lip     = math.max(2, math.floor(edge_h * 0.3))
+        local board_w = math.max(2, math.min(Screen:scaleBySize(3),
+                                             math.floor(spine_w * 0.1)))
+        local function tone(v)
+            if night then v = 255 - v end
+            return Blitbuffer.ColorRGB32(v, v, v, 0xFF)
+        end
+        local sx0 = x + board_w
+        local sw_edge = spine_w - 2 * board_w
+        local sy0 = top + lip
+        local sh_edge = edge_h - lip
+        if sw_edge > 2 and sh_edge > 1 then
+            bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xE8))
+            for cx = sx0 + 1, sx0 + sw_edge - 1, 2 do
+                bb:paintRectRGB32(cx, sy0, 1, sh_edge, tone(0xB0))
+            end
+        end
+        -- The boards, rising the lip above the paper.
+        bb:paintRectRGB32(x, top, board_w, edge_h, _fillColor(e.look, night))
+        bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h,
+                          _fillColor(e.look, night))
+    end
 
     local pad = Screen:scaleBySize(3)
-    local cur_top = top + pad
+    local cur_top = body_top + pad
     local bottom = top + spine_h - pad
 
     -- Status glyph (reading / finished / on hold), level, at the head.
@@ -697,6 +734,12 @@ end
 function SpineShelf.plan(items, opts)
     local entries = {}
     local budget = opts.row_h
+    -- Auto thickness: base widths scale with the shelf height, so one tall
+    -- row doesn't stand needle-thin books (calibrated on device: two rows =
+    -- 1.0, one row wants ~1.5). The chip's thickness % multiplies on top.
+    local px_per_dp = Screen:scaleBySize(100) / 100
+    local auto_thick = SpineLayout.autoThickness(
+        px_per_dp > 0 and (budget / px_per_dp) or nil)
     local book_gap  = opts.gap or 0
     local group_gap = opts.group_gap or book_gap
 
@@ -813,13 +856,15 @@ function SpineShelf.plan(items, opts)
             w = SpineLayout.faceOutWidth(h, aspect)
             w_dp = math.floor(w / (Screen:scaleBySize(100) / 100) + 0.5)
         else
-            w_dp = SpineLayout.spineWidthDp(pages)
-            -- Per-chip thickness: a straight multiplier on the page-count
-            -- width. Face-out covers are aspect-true and stay out of it.
+            w_dp = SpineLayout.spineWidthDp(pages) * auto_thick
+            -- Per-chip thickness: a straight multiplier on top of the
+            -- height-scaled width. Face-out covers are aspect-true and
+            -- stay out of both.
             local t = tonumber(opts.thickness_pct)
             if t and t >= 40 and t <= 300 and t ~= 100 then
-                w_dp = math.max(8, w_dp * t / 100)
+                w_dp = w_dp * t / 100
             end
+            w_dp = math.max(8, w_dp)
             w = Screen:scaleBySize(w_dp)
         end
         local series_num = nil

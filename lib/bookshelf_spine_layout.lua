@@ -47,6 +47,28 @@ SpineLayout.DEFAULT_ASPECT  = 1.5   -- assumed when cover dimensions unknown
 SpineLayout.TOP_FRAC        = 0.98
 SpineLayout.MIN_FRAC        = 0.62
 
+-- Auto thickness: a spine's width scales with the shelf's height, so one
+-- tall row doesn't stand needle-thin books. User calibration on device:
+-- at REF_ROW_DP (the two-row shelf under a standard hero) the base widths
+-- read right (scale 1.0), and one row -- roughly double the height --
+-- wants about 1.5x. A power curve fits both: (h/REF)^0.6, since
+-- 2^0.6 = 1.52. Clamped so degenerate shelves stay recognisable.
+SpineLayout.THICKNESS_REF_ROW_DP = 240
+SpineLayout.THICKNESS_EXP        = 0.6
+SpineLayout.THICKNESS_MIN        = 0.7
+SpineLayout.THICKNESS_MAX        = 2.2
+
+-- autoThickness(row_h_dp) -> multiplier for spineWidthDp's answer.
+function SpineLayout.autoThickness(row_h_dp)
+    row_h_dp = tonumber(row_h_dp)
+    if not row_h_dp or row_h_dp <= 0 then return 1 end
+    local scale = (row_h_dp / SpineLayout.THICKNESS_REF_ROW_DP)
+                  ^ SpineLayout.THICKNESS_EXP
+    if scale < SpineLayout.THICKNESS_MIN then scale = SpineLayout.THICKNESS_MIN end
+    if scale > SpineLayout.THICKNESS_MAX then scale = SpineLayout.THICKNESS_MAX end
+    return scale
+end
+
 -- spineWidthDp(pages) -> dp
 -- Linear in page count between the clamps. nil/invalid -> DEFAULT_PAGES.
 function SpineLayout.spineWidthDp(pages)
