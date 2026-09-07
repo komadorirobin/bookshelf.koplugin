@@ -1668,12 +1668,15 @@ function SpineShelf.paintFaceOutTilt(tile)
     local depth = fx.depth or 0
     local freed = rect.h - math.floor(rect.h * 0.80)
     if freed < 2 then return end
-    -- The block grows by only HALF the freed height (user calibration:
-    -- growing by all of it kept the silhouette the same height, which
-    -- read as the cover alone shrinking rather than the book tipping),
-    -- so the whole book gets shorter and the strip it vacates shows the
-    -- page ground.
-    local grow = math.floor(freed * 0.5)
+    -- The block grows by half ITS OWN height, not by the freed space
+    -- (user calibration, two rounds): full-freed growth kept the
+    -- silhouette constant, and half-freed growth still made every book's
+    -- top swell by the same amount regardless of how fat it is. Growing
+    -- relative to the standing depth keeps the tilt page-count-true --
+    -- the depth is the book's thickness, so a doorstop tips to show a
+    -- broad top and a novella barely any. Capped by `freed` so the block
+    -- can never rise above its standing top edge (and the refresh rect).
+    local grow = math.min(math.floor(depth * 0.5), freed)
     local ok = pcall(function()
         -- Squash the cover toward its feet: bottom edge (on the plank)
         -- stays put, the top drops by `freed`.
