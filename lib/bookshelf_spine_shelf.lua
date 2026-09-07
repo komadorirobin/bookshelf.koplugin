@@ -1415,6 +1415,10 @@ function SpineShelf.rowWidget(opts)
                         -- book doesn't float. flat_thumb drops the shadow AND
                         -- its pixel reservation; badges and glyphs stay.
                         flat_thumb    = true,
+                        -- Facing out IS the favourite marker on this shelf;
+                        -- the heart badge on top of it doubles the message
+                        -- and breaks the skeuomorphism (user ruling).
+                        suppress_favorite_badge = true,
                     }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
