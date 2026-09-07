@@ -677,6 +677,38 @@ function SpineShelf.plan(items, opts)
         if not bk.filepath then
             rep = bk.first_book or bk
         end
+        -- A stack member is a LIGHT stub, built from whatever the light-meta
+        -- cache held when the group was assembled -- on a cold start that
+        -- can predate the Calibre load, so its title can be the filename and
+        -- its series number missing while the hero (full record) shows both
+        -- cleanly. Hydrate once per stub from the same resolver the hero
+        -- uses; the answers are written back onto the stub, which lives in
+        -- the group cache, so this costs one metadata read per book ever.
+        if f.in_group and bk.filepath and not bk._spine_meta_checked then
+            bk._spine_meta_checked = true
+            pcall(function()
+                if not (ok_repo and Repo and Repo.buildBookMeta) then return end
+                local full = Repo.buildBookMeta(bk.filepath, { want_cover = false })
+                if not full then return end
+                if full.display_title and full.display_title ~= "" then
+                    bk.display_title = full.display_title
+                end
+                if full.title and full.title ~= "" then
+                    bk.title = full.title
+                end
+                if (not bk.series_num or tostring(bk.series_num) == "")
+                        and full.series_num
+                        and tostring(full.series_num) ~= "" then
+                    bk.series_num = tostring(full.series_num)
+                end
+                if not bk.page_count and full.page_count then
+                    bk.page_count = full.page_count
+                end
+                if not bk.cover_sizetag and full.cover_sizetag then
+                    bk.cover_sizetag = full.cover_sizetag
+                end
+            end)
+        end
         local label = bk.display_title or bk.title or bk.label
                       or bk.series_name or bk.text or bk.name
         if (not label or label == "") and bk.filename then
@@ -723,25 +755,6 @@ function SpineShelf.plan(items, opts)
         local series_num = nil
         if bk.series_num and tostring(bk.series_num) ~= "" then
             series_num = tostring(bk.series_num)
-        elseif f.in_group and bk.filepath and not bk._spine_series_checked then
-            -- A stack member is a light stub built from whatever the light
-            -- cache held when the group was assembled -- on a cold start
-            -- that can predate the Calibre load, so the number the hero
-            -- happily shows (full record) is missing here. Ask the same
-            -- resolver the hero uses, once per stub; the answer is written
-            -- back onto the stub, which lives in the series cache.
-            bk._spine_series_checked = true
-            pcall(function()
-                if ok_repo and Repo and Repo.buildBookMeta then
-                    local full = Repo.buildBookMeta(bk.filepath,
-                                                    { want_cover = false })
-                    if full and full.series_num
-                            and tostring(full.series_num) ~= "" then
-                        bk.series_num = tostring(full.series_num)
-                        series_num = bk.series_num
-                    end
-                end
-            end)
         end
         -- Filename-style leading index ("2 - Player of Games", "3. Morning
         -- Star"): the last-resort number when metadata has none, and a

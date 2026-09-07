@@ -4230,6 +4230,22 @@ local function _seriesReadout(group_shapes, standalone_shapes, filter,
     local total = #sorted
     local out   = {}
     offset      = offset or 0
+    -- Spine mode flattens stacks, so its footer counts BOOKS; the window
+    -- carries the flattened totals as fields on the page table, the same
+    -- way an OPDS page carries opds_open_ended. books_before is relative
+    -- to this window's offset, which is the shelf cursor at fetch time.
+    local books_total, books_before = 0, 0
+    for i = 1, total do
+        local s = sorted[i]
+        local n = 1
+        if not s.standalone and s.filepaths and #s.filepaths > 0 then
+            n = #s.filepaths
+        end
+        books_total = books_total + n
+        if i <= offset then books_before = books_before + n end
+    end
+    out.spine_books_total  = books_total
+    out.spine_books_before = books_before
     local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", light_only)
     for i = offset + 1, stop do
         local s = sorted[i]

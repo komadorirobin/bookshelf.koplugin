@@ -1773,6 +1773,7 @@ function BookshelfWidget:_rebuild()
     self._total_items = total
     self:_clampCursor(total)
     self:_syncPageFromCursor()
+    self:_spineUpdateBookCounts(all_items, _total_hint)
     -- all/folder chips return a pre-sliced page; others return the full list.
     local items
     if _total_hint then
@@ -4932,6 +4933,9 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
         thickness_pct = self:_chipListValue("spine_thickness_pct"),
     })
     self._spine_shown = plan.shown
+    -- Book-unit count for the footer range: plan entries ARE books.
+    self._spine_books_shown = plan.rows[#plan.rows]
+                              and plan.rows[#plan.rows].last or 0
     -- Page history is per chip: stepping back retraces the pages the reader
     -- actually saw. A chip switch invalidates it.
     if self._spine_hist_chip ~= self.chip then
@@ -4985,6 +4989,38 @@ function BookshelfWidget:_spineFaceOut()
     if own == false then return false end
     if own == true then return true end
     return BookshelfSettings.nilOrTrue("spine_face_out")
+end
+
+-- _spineUpdateBookCounts(all_items, total_hint) — the footer's range reads
+-- in BOOKS, but the cursor counts ITEMS, and a flattened stack is one item
+-- holding many books ("1-13 of 47" over a shelf of forty spines read as
+-- wrong). For whole-list sources, sum member counts across the list: total,
+-- and how many books stand before the cursor. Windowed sources (home,
+-- folders, search, OPDS) are one book per item, so item units already ARE
+-- book units and the fields stay nil.
+function BookshelfWidget:_spineUpdateBookCounts(all_items, total_hint)
+    self._spine_books_total, self._spine_books_before = nil, nil
+    if not self:_isSpineMode() then return end
+    if total_hint then
+        -- Windowed source: the repo attaches the flattened counts to the
+        -- page table when it can (series groups); a window without them is
+        -- one book per item and the item-unit fallback is already exact.
+        if type(all_items) == "table" and all_items.spine_books_total then
+            self._spine_books_total  = all_items.spine_books_total
+            self._spine_books_before = all_items.spine_books_before or 0
+        end
+        return
+    end
+    local total, before = 0, 0
+    for i = 1, #all_items do
+        local it = all_items[i]
+        if it then
+            local n = (it.books and #it.books > 0) and #it.books or 1
+            total = total + n
+            if i < (self._cursor or 1) then before = before + n end
+        end
+    end
+    self._spine_books_total, self._spine_books_before = total, before
 end
 
 -- _spineStep — spine mode's chevron step. Forward advances by the number of
@@ -5148,10 +5184,21 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     -- of how many are on the shelf right now.
     local spine_label
     if self:_isSpineMode() and not open_ended then
-        local first = self._cursor or 1
-        local total = self._total_items or 0
-        local shown = self._spine_shown or 0
-        local last = shown > 0 and math.min(first + shown - 1, total) or first
+        local first, last, total
+        if self._spine_books_total and self._spine_books_total > 0 then
+            -- Whole-list source with groups flattened: count BOOKS, since
+            -- that is what stands on the shelf ("1-38 of 312"), not items.
+            total = self._spine_books_total
+            first = math.min((self._spine_books_before or 0) + 1, total)
+            local shown = self._spine_books_shown or 0
+            last = math.min(first + math.max(shown, 1) - 1, total)
+        else
+            -- Windowed sources are one book per item; item units serve.
+            first = self._cursor or 1
+            total = self._total_items or 0
+            local shown = self._spine_shown or 0
+            last = shown > 0 and math.min(first + shown - 1, total) or first
+        end
         spine_label = T(_("%1-%2 of %3"), first, last, total)
     end
     local page_text = Button:new{
@@ -5916,6 +5963,7 @@ function BookshelfWidget:_swapShelvesInPlace()
     self._total_items = total
     self:_clampCursor(total)
     self:_syncPageFromCursor()
+    self:_spineUpdateBookCounts(all_items, _total_hint)
     if total == 0 then
         -- Going to empty state needs a structural change (hero + chips +
         -- placeholder, no shelves) — fall back to full rebuild.
