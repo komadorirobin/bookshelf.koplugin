@@ -3290,20 +3290,29 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
         local hit_light_cache = Filter.isActive(filter) and _getLightMetaCache(home_lc, depth_lc) or nil
         local shapes_for_slice, total = _filterAllShapes(entry.shapes, filter, hit_light_cache)
         local out   = {}
-        local stop  = _hydrationStop(offset, limit, total, total, "getAll", opts and opts.light_only)
-        -- Letter-jump path: serve light metadata for the slice instead of
-        -- full _safeBuildBookMeta records. Book shapes only carry .fp, so a
-        -- batched light-meta lookup supplies the sort-key fields (title /
-        -- author / series); folder shapes already carry their label. The
-        -- caller only reads those to find a page boundary and never renders
-        -- these records, so skipping the heavy build is safe.
-        if opts and opts.light_only then
+        local light = (opts and opts.light_only) or Repo.spine_light
+        local stop  = _hydrationStop(offset, limit, total, total, "getAll", light)
+        -- Light path, two callers: the letter-jump (opts.light_only, never
+        -- rendered) and the SPINE shelf (Repo.spine_light -- it renders
+        -- colour + text, never a cover; looks sample lazily by filepath).
+        -- Book shapes only carry .fp, so a batched light-meta lookup
+        -- supplies the display/sort fields (title / author / series);
+        -- folder shapes already carry their label, plus a LIGHT first_book
+        -- so a wrapper folder can still stand as its book on the spine
+        -- shelf. Before this branch honoured spine_light, an all/folder
+        -- chip shown as spines paid a full _safeBuildBookMeta per record
+        -- AND the 512 hydrate clamp broke its pagination.
+        if light then
             local light_cache = hit_light_cache or _getLightMetaCache(home_lc, depth_lc)
             for i = offset + 1, stop do
                 local shape = shapes_for_slice[i]
                 if shape.kind == "folder" then
                     out[#out + 1] = { kind = "folder", path = shape.path,
-                                      label = shape.label, name = shape.label }
+                                      label = shape.label, name = shape.label,
+                                      first_book = shape.first_book_fp
+                                          and _lightMetaForFp(light_cache,
+                                                              shape.first_book_fp)
+                                          or nil }
                 else
                     local b = _lightMetaForFp(light_cache, shape.fp)
                     out[#out + 1] = b or { fp = shape.fp, filepath = shape.fp }
@@ -3678,23 +3687,27 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
     local miss_light_cache = Filter.isActive(filter) and _getLightMetaCache(miss_lc_home, miss_lc_depth) or nil
     local shapes_for_slice, total = _filterAllShapes(shapes, filter, miss_light_cache)
     local out  = {}
-    local stop = _hydrationStop(offset, limit, total, total, "getAll", opts and opts.light_only)
-    -- Light path, same as the HIT branch above. It has to be here too: a
-    -- light_only caller passes limit = 10000 and _hydrationStop deliberately
-    -- lifts the MAX_HYDRATE ceiling for it, so falling through to the full
-    -- build below would decode a cover BlitBuffer for every book in the
-    -- folder and free none of them -- the OOM shape light_only exists to
-    -- avoid, reached whenever the walk cache is cold for this path (first
-    -- visit, or the TTL lapsed) and a "Go to letter" jump is the call that
-    -- warms it.
-    if opts and opts.light_only then
+    local miss_light = (opts and opts.light_only) or Repo.spine_light
+    local stop = _hydrationStop(offset, limit, total, total, "getAll", miss_light)
+    -- Light path, same as the HIT branch above (letter-jump AND the spine
+    -- shelf). It has to be here too: a light caller passes limit = 10000
+    -- and _hydrationStop deliberately lifts the MAX_HYDRATE ceiling for it,
+    -- so falling through to the full build below would decode a cover
+    -- BlitBuffer for every book in the folder and free none of them -- the
+    -- OOM shape light_only exists to avoid, reached whenever the walk cache
+    -- is cold for this path (first visit, or the TTL lapsed).
+    if miss_light then
         local light_cache = miss_light_cache
                             or _getLightMetaCache(miss_lc_home, miss_lc_depth)
         for i = offset + 1, stop do
             local shape = shapes_for_slice[i]
             if shape.kind == "folder" then
                 out[#out + 1] = { kind = "folder", path = shape.path,
-                                  label = shape.label, name = shape.label }
+                                  label = shape.label, name = shape.label,
+                                  first_book = shape.first_book_fp
+                                      and _lightMetaForFp(light_cache,
+                                                          shape.first_book_fp)
+                                      or nil }
             else
                 local b = _lightMetaForFp(light_cache, shape.fp)
                 out[#out + 1] = b or { fp = shape.fp, filepath = shape.fp }
