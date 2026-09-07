@@ -1819,6 +1819,24 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
+                return _("Shelf plank color") .. ": " .. valueLabel("plank")
+            end,
+            help_text = _("Color of the shelf plank the Spines style stands"
+                .. " its books on. The lit top surface and shaded front edge"
+                .. " are both tinted from this one color. Default mid gray."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("spine_plank_color", "plank", 45,
+                    _("Shelf plank color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("spine_plank_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
                 return _("Folder overlay background") .. ": " .. valueLabel("folder_bg")
             end,
             keep_menu_open = true,
@@ -1904,6 +1922,7 @@ function Settings:_colorsSubItems()
                     "favorite_star_color", "favorite_heart_color",
                     "badge_fg", "badge_bg", "border_color",
                     "selection_color", "card_shadow_color",
+                    "spine_plank_color",
                     "folder_overlay_bg", "folder_overlay_fg",
                     "chip_selected_bg", "chip_selected_fg",
                 }

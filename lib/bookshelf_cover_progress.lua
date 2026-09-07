@@ -543,6 +543,7 @@ local DEFAULT_BORDER            = { hex = "#000000" }
 -- the cover sits on, and it was never mode-switched.
 local DEFAULT_SELECTION         = { hex = "#000000" }
 local DEFAULT_CARD_SHADOW       = { hex = "#808080" }   -- gray(0.5)
+local DEFAULT_PLANK             = { hex = "#8C8C8C" }   -- the spine shelf's wood
 
 -- Night-mode defaults: chosen so the on-screen appearance approximates
 -- the day defaults AFTER KOReader's framebuffer inversion. The framework
@@ -572,6 +573,7 @@ local NIGHT_DEFAULT_FAVORITE_HEART    = { hex = "#00493E" }
 local NIGHT_DEFAULT_BORDER            = { hex = "#FAFAFA" }
 local NIGHT_DEFAULT_SELECTION         = { hex = "#000000" }
 local NIGHT_DEFAULT_CARD_SHADOW       = { hex = "#262626" }  -- gray(0.15)
+local NIGHT_DEFAULT_PLANK             = { hex = "#8C8C8C" }  -- inverts to itself-ish
 
 -- Memoised resolvers. resolvedColors() is called multiple times per
 -- cover paint (once per active indicator type per cover), and each call
@@ -650,6 +652,8 @@ function M.resolvedColors()
                                              DEFAULT_SELECTION, NIGHT_DEFAULT_SELECTION)
     local card_shadow_raw  = _readModeColor("card_shadow_color",
                                              DEFAULT_CARD_SHADOW, NIGHT_DEFAULT_CARD_SHADOW)
+    local plank_raw        = _readModeColor("spine_plank_color",
+                                             DEFAULT_PLANK, NIGHT_DEFAULT_PLANK)
     local folder_bg_raw    = _readModeColor("folder_overlay_bg", nil)
     local folder_fg_raw    = _readModeColor("folder_overlay_fg", nil)
     -- Shadow color is hard-coded so it always paints DARK ON SCREEN
@@ -677,6 +681,9 @@ function M.resolvedColors()
         -- there.
         selection         = Color.parseColorValue(selection_raw,   is_color),
         card_shadow       = Color.parseColorValue(card_shadow_raw, is_color),
+        -- The spine shelf's plank wood; its lit/shaded faces are tinted
+        -- from this one pick in bookshelf_spine_shelf.
+        plank             = Color.parseColorValue(plank_raw, is_color),
         shadow            = Color.parseColorValue({ hex = shadow_hex }, is_color),
         folder_bg         = folder_bg_raw and Color.parseColorValue(folder_bg_raw, is_color) or nil,
         folder_fg         = folder_fg_raw and Color.parseColorValue(folder_fg_raw, is_color) or nil,
@@ -713,6 +720,7 @@ function M.rawColors()
                                             NIGHT_DEFAULT_FAVORITE_HEART),
         badge_fg          = _readModeColor("badge_fg", DEFAULT_BADGE_FG, NIGHT_DEFAULT_BADGE_FG),
         badge_bg          = _readModeColor("badge_bg", DEFAULT_BADGE_BG, NIGHT_DEFAULT_BADGE_BG),
+        plank             = _readModeColor("spine_plank_color", DEFAULT_PLANK, NIGHT_DEFAULT_PLANK),
         border            = _readModeColor("border_color", DEFAULT_BORDER, NIGHT_DEFAULT_BORDER),
         folder_bg         = _readModeColor("folder_overlay_bg", nil),
         folder_fg         = _readModeColor("folder_overlay_fg", nil),

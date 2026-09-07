@@ -37,8 +37,6 @@ SpineShelf.BOOK_GAP_DP = 2
 -- Gap either side of a flattened group's run of spines, dp -- the visual
 -- seam that keeps a series reading as a series once its stack is flattened.
 SpineShelf.GROUP_GAP_DP = 12
--- The shelf plank under each row, dp.
-SpineShelf.SHELF_LINE_DP = 3
 
 -- Rotation for the title run. 90 = reads bottom-to-top ("running up the
 -- spine"); if a build's rotatedCopy turns the other way, this is the one
@@ -584,13 +582,15 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             -- Stripe pitch and tones sized for e-ink: 1px alternation at
             -- 300dpi dithers into a wash (user report), so the stripes are
             -- DPI-scaled and the tones far enough apart to survive 16 greys.
-            -- Fine page LINES on paper, not alternating bands (the equal
-            -- bands read as a comb): a thin darker line every third pitch.
+            -- Fine page LINES on paper. Tighter than the comb-fix pass, with
+            -- widths that VARY per line (1px up to the pitch) so the block
+            -- reads as pressed paper rather than a printed pattern.
             local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
             bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xF0))
-            for cx = sx0 + sp, sx0 + sw_edge - 1, 3 * sp do
-                local wch = math.min(sp, sx0 + sw_edge - cx)
-                bb:paintRectRGB32(cx, sy0, wch, sh_edge, tone(0xA8))
+            for cx = sx0 + sp, sx0 + sw_edge - 1, 2 * sp do
+                local lw = 1 + ((cx * 73 + 41) % sp)
+                lw = math.min(lw, sx0 + sw_edge - cx)
+                bb:paintRectRGB32(cx, sy0, lw, sh_edge, tone(0xA8))
             end
         end
         -- The boards, rising the lip above the paper.
@@ -681,9 +681,10 @@ function FaceOutTopBlock:paintTo(bb, x, y)
     if sw > 2 and sh > 1 then
         local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
         bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF0))
-        for cy = sy0 + sp, sy0 + sh - 1, 3 * sp do
-            local hch = math.min(sp, sy0 + sh - cy)
-            bb:paintRectRGB32(sx0, cy, sw, hch, tone(0xA8))
+        for cy = sy0 + sp, sy0 + sh - 1, 2 * sp do
+            local lh = 1 + ((cy * 73 + 41) % sp)
+            lh = math.min(lh, sy0 + sh - cy)
+            bb:paintRectRGB32(sx0, cy, sw, lh, tone(0xA8))
         end
     end
     local fill = _fillColor(self.look, night)
@@ -695,12 +696,67 @@ end
 
 local ShelfPlank = Widget:extend{}
 
+-- plankUnit(row_h) -> the plank's edge unit in px: roughly one page-block
+-- height, derived from the row like the slots derive theirs.
+function SpineShelf.plankUnit(row_h)
+    local b = math.floor((row_h or 0) * 0.02)
+    local bmin, bmax = Screen:scaleBySize(4), Screen:scaleBySize(9)
+    if b < bmin then b = bmin end
+    if b > bmax then b = bmax end
+    return b
+end
+
+-- The plank's base colour: the user's "Shelf plank" pick from the Colors
+-- menu, mid grey when unset. Returned as plain rgb so the shading tints
+-- can be computed from it.
+local function _plankRGB()
+    local r, g, b = 0x8C, 0x8C, 0x8C
+    pcall(function()
+        local c = CoverProgress.resolvedColors().plank
+        local rgb = c and c.getColorRGB32 and c:getColorRGB32()
+        if rgb then r, g, b = rgb.r, rgb.g, rgb.b end
+    end)
+    return r, g, b
+end
+
+-- The plank in 3D (user spec): the upward-facing top surface rises TWO edge
+-- units behind the books, the front-top edge is a thin dark line, and below
+-- it the plank's front face drops one unit, darker. Shading is derived from
+-- the one plank colour: surface lit, face in shade, edge darkest.
 function ShelfPlank:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    local line_h = Screen:scaleBySize(SpineShelf.SHELF_LINE_DP)
-    if line_h < 2 then line_h = 2 end
-    bb:paintRect(x, y + self.dimen.h - line_h, self.dimen.w, line_h,
-                 Blitbuffer.COLOR_BLACK)
+    local w, h = self.dimen.w, self.dimen.h
+    local b = SpineShelf.plankUnit(h)
+    local pr, pg, pb = _plankRGB()
+    local function shade(f)
+        return Blitbuffer.ColorRGB32(
+            math.floor(math.min(255, pr * f) + 0.5),
+            math.floor(math.min(255, pg * f) + 0.5),
+            math.floor(math.min(255, pb * f) + 0.5), 0xFF)
+    end
+    local function lit(t)
+        -- lighten towards white by t
+        return Blitbuffer.ColorRGB32(
+            math.floor(pr + (255 - pr) * t + 0.5),
+            math.floor(pg + (255 - pg) * t + 0.5),
+            math.floor(pb + (255 - pb) * t + 0.5), 0xFF)
+    end
+    local front_y = y + h - b
+    -- Top surface, receding: darker at the far (top) edge, lighter as it
+    -- reaches the front. Painted in a few bands rather than per-pixel.
+    local surf_h = 2 * b
+    local bands = 4
+    for i = 0, bands - 1 do
+        local by0 = front_y - surf_h + math.floor(surf_h * i / bands)
+        local by1 = front_y - surf_h + math.floor(surf_h * (i + 1) / bands)
+        local t = 0.25 + 0.30 * (i / (bands - 1))
+        bb:paintRectRGB32(x, by0, w, by1 - by0, lit(t))
+    end
+    -- The front-top edge line.
+    local line = math.max(1, Screen:scaleBySize(1))
+    bb:paintRectRGB32(x, front_y - line, w, line, shade(0.35))
+    -- The front face, in shade.
+    bb:paintRectRGB32(x, front_y, w, b, shade(0.72))
 end
 
 -- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
@@ -872,10 +928,13 @@ function SpineShelf.plan(items, opts)
             if t and t >= 40 and t <= 300 and t ~= 100 then
                 depth_dp = depth_dp * t / 100
             end
-            depth = math.floor(Screen:scaleBySize(depth_dp) * 0.6)
-            local d_max = math.min(math.floor(h * 0.18), Screen:scaleBySize(26))
+            -- A face-out book shows far less depth than a spine-out one (in
+            -- 3D you are looking at its thin edge above the cover): a third
+            -- of the spine width, tightly capped.
+            depth = math.floor(Screen:scaleBySize(depth_dp) * 0.3)
+            local d_max = math.min(math.floor(h * 0.10), Screen:scaleBySize(14))
             if depth > d_max then depth = d_max end
-            if depth < Screen:scaleBySize(4) then depth = Screen:scaleBySize(4) end
+            if depth < Screen:scaleBySize(3) then depth = Screen:scaleBySize(3) end
             w = SpineLayout.faceOutWidth(h - depth, aspect)
             w_dp = math.floor(w / (Screen:scaleBySize(100) / 100) + 0.5)
         else
@@ -983,10 +1042,10 @@ function SpineShelf.rowWidget(opts)
         return OverlapGroup:new{ dimen = dimen, plank }
     end
 
-    -- Books stand ON the plank: their slot stops where the plank starts.
-    local line_h = Screen:scaleBySize(SpineShelf.SHELF_LINE_DP)
-    if line_h < 2 then line_h = 2 end
-    local stand_h = math.max(1, opts.height - line_h)
+    -- Books stand with their feet on the plank's front-top edge; the
+    -- front face drops one plank unit below them, and the top surface
+    -- rises behind them (painted by ShelfPlank underneath this group).
+    local stand_h = math.max(1, opts.height - SpineShelf.plankUnit(opts.height))
     local group = HorizontalGroup:new{ align = "top" }
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
