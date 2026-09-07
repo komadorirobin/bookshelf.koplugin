@@ -452,12 +452,13 @@ local function _plankShade(f)
 end
 
 -- The surface palette the user picked out of dark mode and asked to keep:
--- DARK bands (base x0.62 at the far edge, darkening to x0.38 at the front),
--- a front face just lighter than the base, and one bright edge line. mul
--- darkens a band further for the lift shadows.
+-- DARK bands, darkest at the BACK and lightening toward the front edge
+-- (base x0.38 far, x0.62 near), then the bright edge line and the mid-light
+-- front face -- lit from the front, receding into shade. mul darkens a band
+-- further for the lift shadows.
 local function _plankBandColor(y_rel, surf_h, mul)
     local t = SpineShelf.plankBandT(y_rel, surf_h)
-    local f = (0.62 - 0.24 * t) * (mul or 1)
+    local f = (0.38 + 0.24 * t) * (mul or 1)
     return _plankShade(f)
 end
 
