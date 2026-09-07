@@ -458,7 +458,9 @@ end
 -- further for the lift shadows.
 local function _plankBandColor(y_rel, surf_h, mul)
     local t = SpineShelf.plankBandT(y_rel, surf_h)
-    local f = (0.38 + 0.24 * t) * (mul or 1)
+    -- x0.50 back to x0.76 front: a touch lighter than the first dark pass,
+    -- so a lift shadow (x0.72 of the band) still separates from the wood.
+    local f = (0.50 + 0.26 * t) * (mul or 1)
     return _plankShade(f)
 end
 
