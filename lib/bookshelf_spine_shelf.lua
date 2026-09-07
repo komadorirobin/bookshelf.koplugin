@@ -748,6 +748,14 @@ end
 
 local ShelfPlank = Widget:extend{}
 
+-- endMargin(row_h) -> exposed plank at EACH end of a row, px. Books never
+-- reach the shelf's ends; the visible margins are what make the plank read
+-- as a piece of furniture rather than a stripe (user ruling, promoted from
+-- a happy accident on partial rows).
+function SpineShelf.endMargin(row_h)
+    return 2 * SpineShelf.plankUnit(row_h)
+end
+
 -- plankUnit(row_h) -> the plank's edge unit in px: roughly one page-block
 -- height, derived from the row like the slots derive theirs.
 function SpineShelf.plankUnit(row_h)
@@ -1084,13 +1092,17 @@ function SpineShelf.rowWidget(opts)
     local inset = math.floor(b * 0.8)
     local stand_h = math.max(1, opts.height - b - inset)
     local group = HorizontalGroup:new{ align = "top" }
+    group[#group + 1] = HorizontalSpan:new{
+        width = SpineShelf.endMargin(opts.height),
+    }
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
         if e then
-            if #group > 0 then
+            if #group > 1 then
                 -- Each spine carries its own leading gap: hairline inside a
                 -- run, wider across a group boundary. The row's first spine
-                -- carries none (fillRows dropped it from the arithmetic too).
+                -- carries none (fillRows dropped it from the arithmetic too;
+                -- the end margin span is group[1]).
                 group[#group + 1] = HorizontalSpan:new{
                     width = e.gap_before or opts.gap,
                 }

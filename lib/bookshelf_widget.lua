@@ -4921,8 +4921,10 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
     local SpineShelf = require("lib/bookshelf_spine_shelf")
     local shared = self:_shelfCallbacks()
     local gap = Screen:scaleBySize(SpineShelf.BOOK_GAP_DP)
+    -- The row keeps exposed plank at both ends; the fill budget shrinks by
+    -- the two margins so books never reach the shelf's edges.
     local plan = SpineShelf.plan(items, {
-        content_w  = content_w,
+        content_w  = content_w - 2 * SpineShelf.endMargin(shelf_h),
         row_h      = shelf_h,
         gap        = gap,
         group_gap  = Screen:scaleBySize(SpineShelf.GROUP_GAP_DP),
