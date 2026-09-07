@@ -303,11 +303,20 @@ function SpineShelf.plankBandT(y_rel, surf_h)
     return 0.25 + 0.30 * (i / (bands - 1))
 end
 
+-- Plank colours are computed in DISPLAY space and pre-inverted for night
+-- (constantInNight): painted literally, the frame invert flipped every
+-- relationship - the lift shadow displayed LIGHTER than the surface and the
+-- front face glowed. The resolved night plank colour (darker by default)
+-- now displays exactly as designed.
+local function _plankFinish(r, g, b)
+    if _nightMode() then r, g, b = 255 - r, 255 - g, 255 - b end
+    return Blitbuffer.ColorRGB32(
+        math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5), 0xFF)
+end
+
 local function _plankShade(f)
     local r, g, b = _plankRGB()
-    return Blitbuffer.ColorRGB32(
-        math.floor(r * f + 0.5), math.floor(g * f + 0.5),
-        math.floor(b * f + 0.5), 0xFF)
+    return _plankFinish(r * f, g * f, b * f)
 end
 
 local function _plankLit(t, mul)
@@ -316,8 +325,7 @@ local function _plankLit(t, mul)
     g = g + (255 - g) * t
     b = b + (255 - b) * t
     if mul then r, g, b = r * mul, g * mul, b * mul end
-    return Blitbuffer.ColorRGB32(
-        math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5), 0xFF)
+    return _plankFinish(r, g, b)
 end
 
 local function _tintColor(look, f, night)
@@ -723,7 +731,9 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
 end
 
 -- A lifted face-out's shadow on the plank: transparent except for the
--- darker patch, so the plank's own shading shows around it.
+-- darker patch, so the plank's own shading shows around it. The patch
+-- darkens the SAME banded tones the plank paints at those rows (via the
+-- shared plankBandT), so it matches the shadow under a lifted spine.
 local LiftShadow = Widget:extend{}
 
 function LiftShadow:paintTo(bb, x, y)
@@ -733,8 +743,17 @@ function LiftShadow:paintTo(bb, x, y)
     local sh = math.min(self.shadow_h or 0, h - air)
     if sh < 1 then return end
     local ins = Screen:scaleBySize(2)
-    bb:paintRectRGB32(x + ins, y + air, math.max(1, w - 2 * ins), sh,
-                      _plankShade(0.72))
+    local pk = self.plank
+    for yy = y + air, y + air + sh - 1 do
+        local t = 0.4
+        if pk then
+            local surf_h = 3 * pk.b
+            local surf_top = y + h + pk.inset - surf_h
+            t = SpineShelf.plankBandT(yy - surf_top, surf_h)
+        end
+        bb:paintRectRGB32(x + ins, yy, math.max(1, w - 2 * ins), 1,
+                          _plankLit(t, 0.72))
+    end
 end
 
 -- ── Face-out page block ─────────────────────────────────────────────────────
@@ -1193,6 +1212,7 @@ function SpineShelf.rowWidget(opts)
                             stack[#stack + 1] = LiftShadow:new{
                                 dimen    = Geom:new{ w = e.w, h = push + lift },
                                 shadow_h = lift,
+                                plank    = { b = b, inset = inset },
                             }
                         else
                             stack[#stack + 1] = VerticalSpan:new{

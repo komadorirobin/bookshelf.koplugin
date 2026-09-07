@@ -573,7 +573,7 @@ local NIGHT_DEFAULT_FAVORITE_HEART    = { hex = "#00493E" }
 local NIGHT_DEFAULT_BORDER            = { hex = "#FAFAFA" }
 local NIGHT_DEFAULT_SELECTION         = { hex = "#000000" }
 local NIGHT_DEFAULT_CARD_SHADOW       = { hex = "#262626" }  -- gray(0.15)
-local NIGHT_DEFAULT_PLANK             = { hex = "#8C8C8C" }  -- inverts to itself-ish
+local NIGHT_DEFAULT_PLANK             = { hex = "#4A4A4A" }  -- displays as dark wood (plank paints constantInNight)
 
 -- Memoised resolvers. resolvedColors() is called multiple times per
 -- cover paint (once per active indicator type per cover), and each call
