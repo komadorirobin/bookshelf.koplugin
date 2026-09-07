@@ -1324,8 +1324,15 @@ function BookshelfWidget:_rebuild()
         local capped_shelf_h = math.floor(slot_h_natural * cap_mult) + title_block_h
         -- Spine rows are NOT cover slots: they want the whole band split
         -- evenly (the uncapped fill above), so a single-row shelf really is
-        -- one tall shelf. The cover cap only applies to the cover grid.
-        if shelf_h > capped_shelf_h and not self:_isSpineMode() then
+        -- one tall shelf. The cover cap only applies to the cover grid; the
+        -- spine rows honour the chip's shelf-height % instead (the leftover
+        -- lands in layout_slack, which the assembler already distributes).
+        if self:_isSpineMode() then
+            local pct = tonumber(self:_chipListValue("spine_height_pct"))
+            if pct and pct >= 30 and pct < 100 then
+                shelf_h = math.max(1, math.floor(shelf_h * pct / 100))
+            end
+        elseif shelf_h > capped_shelf_h then
             shelf_h = capped_shelf_h
         end
         -- List rows are a fixed height decided by the column set, not by the
@@ -4924,7 +4931,9 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
         group_gap  = Screen:scaleBySize(SpineShelf.GROUP_GAP_DP),
         n_rows     = n_rows,
         face_out   = self:_spineFaceOut(),
-        height_pct = self:_chipListValue("spine_height_pct") or 100,
+        -- Shelf height % is applied to the ROW by the band split (the hero
+        -- absorbs the difference), so the plan gets the full row.
+        thickness_pct = self:_chipListValue("spine_thickness_pct"),
     })
     self._spine_shown = plan.shown
     -- Page history is per chip: stepping back retraces the pages the reader
@@ -6675,6 +6684,48 @@ function BookshelfWidget:_refreshListRowInPlace(fp)
     return false
 end
 
+-- _refreshSpineSlotInPlace(fp) — spine mode's single-book refresh. The slot
+-- paints everything from its book record and plan entry, so refreshing is:
+-- fresh record in, look resampled (the trigger is usually "the cover just
+-- landed" or "the book was just closed", both of which change what the
+-- spine shows), repaint the slot's rect. Geometry (width from page count)
+-- deliberately stays until the next full rebuild -- resizing one slot would
+-- reflow the whole row for a change the reader may not even notice.
+function BookshelfWidget:_refreshSpineSlotInPlace(fp)
+    local d = self._shelf_dims
+    if not d or not self._inner_vgroup then return false end
+    local SpineShelf = require("lib/bookshelf_spine_shelf")
+    local union
+    for r = 1, (d.n_shelves or 1) do
+        local row = self._inner_vgroup[(d.shelf_top_idx or 1) + 2 * (r - 1)]
+        local hg = row and row[2]
+        if hg then
+            for i = 1, #hg do
+                local slot = hg[i]
+                if slot and slot.book and slot.book.filepath == fp
+                        and slot.entry then
+                    local fresh = Repo.buildBookMeta(fp) or slot.book
+                    slot.book = fresh
+                    slot.entry.book = fresh
+                    SpineShelf.dropLook(fp)
+                    slot.entry.look = SpineShelf.bookLook(fresh)
+                    if slot.entry.cover_ok == false then
+                        slot.entry.cover_ok = nil  -- let face-out retry
+                    end
+                    if slot.dimen then
+                        union = union or slot.dimen:copy()
+                    end
+                end
+            end
+        end
+    end
+    if union then
+        UIManager:setDirty(self, function() return "ui", union, self.dithered end)
+        return true
+    end
+    return false
+end
+
 -- _refreshSpineInPlace(fp) — rebuild a single spine in place, preserving
 -- its current is_selected state. Used after a book is closed: the spine
 -- needs to pick up the new percent_finished / status / progress glyph
@@ -6692,6 +6743,12 @@ end
 function BookshelfWidget:_refreshSpineInPlace(fp)
     if not fp or not self._inner_vgroup or not self._shelf_dims then return false end
     if self:_isListMode() then return self:_refreshListRowInPlace(fp) end
+    -- Spine mode: the cover-tile swap below would find the SpineBookSlot by
+    -- filepath (_descendFindSpine matches anything carrying .book) and
+    -- replace it with a cover-grid SpineWidget at slot height -- the
+    -- "full-height cover in the middle of the shelf" bug from the device.
+    -- The slot repaints from its own record instead.
+    if self:_isSpineMode() then return self:_refreshSpineSlotInPlace(fp) end
     local d = self._shelf_dims
     local replaced_dimen
     local replaced = false
@@ -9235,7 +9292,14 @@ function BookshelfWidget:_collapsedSpineSplit(hide_chip_bar, n_shelves)
                     + n_shelves * PAD              -- after each row
     local available   = self.height - chip_contrib - label_h - total_pad
     local hero_target = math.floor(available * HERO_MIN_FRAC)
-    local shelf_h = math.max(1, math.floor((available - hero_target) / n_shelves))
+    -- Shelf height % shrinks the ROW, and the hero absorbs what the shelf
+    -- gave up -- the user's ruling: a 50% single-row shelf is "about the
+    -- right height", and the freed space should go to a LARGER hero, not
+    -- sit as dead air inside a full-height row.
+    local pct = tonumber(self:_chipListValue("spine_height_pct"))
+    if not (pct and pct >= 30 and pct <= 100) then pct = 100 end
+    local shelf_h = math.max(1, math.floor(
+        (available - hero_target) / n_shelves * pct / 100))
     local hero_h  = math.max(hero_target, available - n_shelves * shelf_h)
     return shelf_h, hero_h
 end

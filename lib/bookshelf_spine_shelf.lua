@@ -656,6 +656,12 @@ function SpineShelf.plan(items, opts)
             w_dp = math.floor(w / (Screen:scaleBySize(100) / 100) + 0.5)
         else
             w_dp = SpineLayout.spineWidthDp(pages)
+            -- Per-chip thickness: a straight multiplier on the page-count
+            -- width. Face-out covers are aspect-true and stay out of it.
+            local t = tonumber(opts.thickness_pct)
+            if t and t >= 40 and t <= 300 and t ~= 100 then
+                w_dp = math.max(8, w_dp * t / 100)
+            end
             w = Screen:scaleBySize(w_dp)
         end
         local series_num = nil

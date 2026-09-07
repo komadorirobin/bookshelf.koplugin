@@ -481,9 +481,10 @@ function Editor:editTab(tab_id, opts)
         override.list_columns = draft.list_columns
         -- The spine pins, same nil-means-default semantics. spine_face_out
         -- is the one tri-state: nil = the default (yes), false = no.
-        override.spine_rows       = draft.spine_rows
-        override.spine_height_pct = draft.spine_height_pct
-        override.spine_face_out   = draft.spine_face_out
+        override.spine_rows          = draft.spine_rows
+        override.spine_height_pct    = draft.spine_height_pct
+        override.spine_thickness_pct = draft.spine_thickness_pct
+        override.spine_face_out      = draft.spine_face_out
         TabModel.setOverride(tab_id, override)
         if opts.on_change then opts.on_change() end
     end
@@ -1488,26 +1489,24 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                     local ok, n = pcall(bw._nShelves, bw)
                     return ok and n or 2
                 end)
-            rows[#rows + 1] = (function()
-                local key, lo, hi, step_sz = "spine_height_pct", 40, 100, 10
+            -- Percent rows step by 10 and treat auto_value as the stored
+            -- absence (nil = "follow the default"), so both settings keep
+            -- the dialog's nil-means-default semantics.
+            local function pctRow(label, key, lo, hi, auto_value)
+                local step_sz = 10
                 local function shown()
                     local v = draft[key]
-                    return _("Shelf height") .. ": "
+                    return label .. ": "
                            .. (v and (tostring(v) .. "%") or _("Auto"))
                 end
                 local function step(delta)
                     return pick(function()
-                        local cur = draft[key]
-                        if not cur then
-                            -- Auto is the full row; minus starts shrinking,
-                            -- plus has nowhere taller to go.
-                            if delta < 0 then draft[key] = hi - step_sz end
-                        else
-                            local n = cur + delta * step_sz
-                            if n >= hi then draft[key] = nil
-                            elseif n < lo then draft[key] = lo
-                            else draft[key] = n end
-                        end
+                        local cur = draft[key] or auto_value
+                        local n = cur + delta * step_sz
+                        if n > hi then n = hi end
+                        if n < lo then n = lo end
+                        if n == auto_value then draft[key] = nil
+                        else draft[key] = n end
                     end)
                 end
                 return {
@@ -1515,7 +1514,14 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                     { text_func = shown, enabled = false },
                     { text = "+", callback = step(1) },
                 }
-            end)()
+            end
+            -- Shelf height: % of the row the spines stand in; the hero
+            -- absorbs whatever the shelf gives up. Auto = the full row.
+            rows[#rows + 1] = pctRow(_("Shelf height"), "spine_height_pct",
+                                     40, 100, 100)
+            -- Spine thickness: a multiplier on the page-count width.
+            rows[#rows + 1] = pctRow(_("Spine thickness"), "spine_thickness_pct",
+                                     60, 200, 100)
             -- Favourites face out (front cover, bookstore style). Default
             -- YES; stored as false only, nil meaning the default, the same
             -- absence semantics as every other key here.

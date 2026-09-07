@@ -32,8 +32,11 @@ local SpineLayout = {}
 SpineLayout.DEFAULT_PAGES = 300  -- assumed when the page count is unknown
 SpineLayout.MIN_PAGES     = 60   -- everything thinner renders at MIN_W_DP
 SpineLayout.MAX_PAGES     = 1200 -- everything thicker renders at MAX_W_DP
-SpineLayout.MIN_W_DP      = 11
-SpineLayout.MAX_W_DP      = 46
+-- 14..52 rather than the first cut's 11..46: on the device the whole shelf
+-- read "a bit thin" (user), and the default-pages book in particular. The
+-- per-chip thickness setting scales from here.
+SpineLayout.MIN_W_DP      = 14
+SpineLayout.MAX_W_DP      = 52
 
 -- Height mapping. Real covers cluster in aspect (h/w) 1.3..1.7; the tallest
 -- common shape (1.8) nearly fills the row and everything shorter scales
