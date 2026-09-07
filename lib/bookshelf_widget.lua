@@ -10209,7 +10209,14 @@ function BookshelfWidget:_baseShelves()
     if self:_isSpineMode() then
         local n = self:_chipListValue("spine_rows")
         if type(n) == "number" then
-            return math.max(1, math.min(math.floor(n), self:_maxShelfRows()))
+            -- Clamped to the chip editor's own 1-6 range, NOT
+            -- _maxShelfRows(): that is COVER-row geometry, and a
+            -- large-cover layout answers 1 -- which silently ate a 2-row
+            -- pin (device report: dialog said 2, shelf showed one tall
+            -- row). Spine rows are far shorter than cover rows;
+            -- _collapsedSpineSplit's min_band guard already protects a
+            -- genuinely tiny screen by shrinking the hero, never the pin.
+            return math.max(1, math.min(math.floor(n), 6))
         end
     end
     local max_fit = self:_maxShelfRows()
