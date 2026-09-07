@@ -561,6 +561,13 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
     bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
+    -- Soften the meeting with the plank: the bottom corner pixels come off,
+    -- the hint of a chamfer where the book stands. Page ground in pre-invert
+    -- space, so it stays the page colour in night mode too.
+    local page = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+    local by = body_top + body_h - hairline
+    bb:paintRectRGB32(x, by, hairline, hairline, page)
+    bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, page)
     if edge_h > 0 then
         local lip     = math.max(2, math.floor(edge_h * 0.22))
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
@@ -577,11 +584,13 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             -- Stripe pitch and tones sized for e-ink: 1px alternation at
             -- 300dpi dithers into a wash (user report), so the stripes are
             -- DPI-scaled and the tones far enough apart to survive 16 greys.
+            -- Fine page LINES on paper, not alternating bands (the equal
+            -- bands read as a comb): a thin darker line every third pitch.
             local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
-            bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xF2))
-            for cx = sx0 + sp, sx0 + sw_edge - 1, 2 * sp do
+            bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xF0))
+            for cx = sx0 + sp, sx0 + sw_edge - 1, 3 * sp do
                 local wch = math.min(sp, sx0 + sw_edge - cx)
-                bb:paintRectRGB32(cx, sy0, wch, sh_edge, tone(0x90))
+                bb:paintRectRGB32(cx, sy0, wch, sh_edge, tone(0xA8))
             end
         end
         -- The boards, rising the lip above the paper.
@@ -671,10 +680,10 @@ function FaceOutTopBlock:paintTo(bb, x, y)
     local sw, sh = w - board, h - board
     if sw > 2 and sh > 1 then
         local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
-        bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF2))
-        for cy = sy0 + sp, sy0 + sh - 1, 2 * sp do
+        bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF0))
+        for cy = sy0 + sp, sy0 + sh - 1, 3 * sp do
             local hch = math.min(sp, sy0 + sh - cy)
-            bb:paintRectRGB32(sx0, cy, sw, hch, tone(0x90))
+            bb:paintRectRGB32(sx0, cy, sw, hch, tone(0xA8))
         end
     end
     local fill = _fillColor(self.look, night)
