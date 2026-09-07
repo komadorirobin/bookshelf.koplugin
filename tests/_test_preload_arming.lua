@@ -59,7 +59,8 @@ local function harness(self_)
 end
 
 t.test("before the first paint the preload is held, not scheduled", function()
-    local self_ = { _first_paint_done = false }
+    local self_ = { _first_paint_done = false,
+                    _isSpineMode = function() return false end }
     local _e, scheduled, schedule = harness(self_)
     schedule(1)
     assert(#scheduled == 0,
@@ -68,7 +69,8 @@ t.test("before the first paint the preload is held, not scheduled", function()
 end)
 
 t.test("the first paint starts the held preload", function()
-    local self_ = { _first_paint_done = false }
+    local self_ = { _first_paint_done = false,
+                    _isSpineMode = function() return false end }
     local _e, scheduled, schedule, arm = harness(self_)
     schedule(1)
     self_._first_paint_done = true
@@ -81,7 +83,8 @@ end)
 t.test("after the first paint it schedules immediately, as before", function()
     -- Page turns must be unaffected: by then the paint has happened and this
     -- takes the normal path with no extra wait.
-    local self_ = { _first_paint_done = true }
+    local self_ = { _first_paint_done = true,
+                    _isSpineMode = function() return false end }
     local _e, scheduled, schedule = harness(self_)
     schedule(1)
     assert(#scheduled == 1, "a page-turn preload stopped being scheduled")
@@ -89,7 +92,8 @@ t.test("after the first paint it schedules immediately, as before", function()
 end)
 
 t.test("arming does nothing when nothing is held", function()
-    local self_ = { _first_paint_done = true }
+    local self_ = { _first_paint_done = true,
+                    _isSpineMode = function() return false end }
     local _e, scheduled, _schedule, arm = harness(self_)
     arm()
     assert(#scheduled == 0, "armed a preload that was never requested")
@@ -98,7 +102,8 @@ end)
 t.test("cancelling clears the held preload too", function()
     -- Otherwise a preload cancelled before the paint would still fire when the
     -- paint landed, for a page the user has already navigated away from.
-    local self_ = { _first_paint_done = false }
+    local self_ = { _first_paint_done = false,
+                    _isSpineMode = function() return false end }
     local _e, scheduled, schedule, arm = harness(self_)
     schedule(1)
     self_:_cancelPreload()

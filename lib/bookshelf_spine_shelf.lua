@@ -607,6 +607,39 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     end
 end
 
+-- ── Face-out page block ─────────────────────────────────────────────────────
+-- The book's top edge above a face-out cover: fine vertical page stripes,
+-- with the cover board as a border on the LEFT edge and across the TOP (the
+-- back board seen edge-on). Its height is the book's thickness -- the same
+-- page-count width its spine would have had. Replaces the cover tile's drop
+-- shadow, which read as floating rather than shelved.
+local FaceOutTopBlock = Widget:extend{}
+
+function FaceOutTopBlock:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local w, h = self.dimen.w, self.dimen.h
+    if w < 6 or h < 3 then return end
+    local night = _nightMode()
+    local board = math.max(2, math.min(Screen:scaleBySize(3),
+                                       math.floor(h * 0.3)))
+    local function tone(v)
+        if night then v = 255 - v end
+        return Blitbuffer.ColorRGB32(v, v, v, 0xFF)
+    end
+    -- Pages first, boards over the left and top.
+    local sx0, sy0 = x + board, y + board
+    local sw, sh = w - board, h - board
+    if sw > 2 and sh > 1 then
+        bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xE8))
+        for cx = sx0 + 1, sx0 + sw - 1, 2 do
+            bb:paintRectRGB32(cx, sy0, 1, sh, tone(0xB0))
+        end
+    end
+    local fill = _fillColor(self.look, night)
+    bb:paintRectRGB32(x, y, board, h, fill)      -- left board
+    bb:paintRectRGB32(x, y, w, board, fill)      -- top board
+end
+
 -- ── The shelf plank ─────────────────────────────────────────────────────────
 
 local ShelfPlank = Widget:extend{}
@@ -777,9 +810,22 @@ function SpineShelf.plan(items, opts)
                 end
             end)
         end
-        local w_dp, w
+        local w_dp, w, depth
         if face_out then
-            w = SpineLayout.faceOutWidth(h, aspect)
+            -- The page block above a face-out cover is the book's THICKNESS:
+            -- the same page-count width its spine would have had (auto scale
+            -- and the chip's thickness % included), capped so the cover
+            -- stays the point.
+            local depth_dp = SpineLayout.spineWidthDp(pages) * auto_thick
+            local t = tonumber(opts.thickness_pct)
+            if t and t >= 40 and t <= 300 and t ~= 100 then
+                depth_dp = depth_dp * t / 100
+            end
+            depth = math.floor(Screen:scaleBySize(depth_dp) * 0.6)
+            local d_max = math.min(math.floor(h * 0.18), Screen:scaleBySize(26))
+            if depth > d_max then depth = d_max end
+            if depth < Screen:scaleBySize(4) then depth = Screen:scaleBySize(4) end
+            w = SpineLayout.faceOutWidth(h - depth, aspect)
             w_dp = math.floor(w / (Screen:scaleBySize(100) / 100) + 0.5)
         else
             w_dp = SpineLayout.spineWidthDp(pages) * auto_thick
@@ -832,7 +878,7 @@ function SpineShelf.plan(items, opts)
         end
         entries[#entries + 1] = {
             book = bk, item = f.item, item_idx = f.item_idx,
-            w = w, h = h, w_dp = w_dp, look = look,
+            w = w, h = h, w_dp = w_dp, look = look, depth = depth,
             face_out = face_out, favourite = fav, label = label,
             author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
@@ -914,7 +960,9 @@ function SpineShelf.rowWidget(opts)
                 if ok_sw and CoverTile then
                     local VerticalGroup = require("ui/widget/verticalgroup")
                     local VerticalSpan  = require("ui/widget/verticalspan")
-                    local cover_h = math.min(e.h, stand_h)
+                    local depth = math.min(e.depth or 0,
+                                           math.max(0, math.min(e.h, stand_h) - 10))
+                    local cover_h = math.min(e.h, stand_h) - depth
                     local cover = CoverTile:new{
                         book          = e.book,
                         width         = e.w,
@@ -924,11 +972,20 @@ function SpineShelf.rowWidget(opts)
                         on_double_tap = opts.callbacks and opts.callbacks.on_book_open,
                         is_selected   = is_sel,
                         show_progress = true,
+                        -- The page block replaces the drop shadow: a shelved
+                        -- book doesn't float. flat_thumb drops the shadow AND
+                        -- its pixel reservation; badges and glyphs stay.
+                        flat_thumb    = true,
                     }
                     local stack = VerticalGroup:new{ align = "center" }
-                    if cover_h < stand_h then
-                        stack[#stack + 1] = VerticalSpan:new{
-                            width = stand_h - cover_h,
+                    local head = stand_h - cover_h - depth
+                    if head > 0 then
+                        stack[#stack + 1] = VerticalSpan:new{ width = head }
+                    end
+                    if depth > 0 then
+                        stack[#stack + 1] = FaceOutTopBlock:new{
+                            dimen = Geom:new{ w = e.w, h = depth },
+                            look  = e.look,
                         }
                     end
                     stack[#stack + 1] = cover
