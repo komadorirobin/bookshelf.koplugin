@@ -827,6 +827,7 @@ local function _reattachKindleIdentity(book, filepath)
 end
 
 function Repo.buildBookMeta(filepath, opts)
+    local _bm_t0 = _gettime()
     if not filepath then return nil end
     -- OPDS://server/id is a pseudo-path for a remote catalog entry -- there
     -- is no file behind it. BIM/Calibre/filename fallbacks below would
@@ -1049,7 +1050,28 @@ function Repo.buildBookMeta(filepath, opts)
     end
     _applyCoverOverrides(book)
     _reattachKindleIdentity(book, filepath)
+    -- Per-turn accounting for the shelf turn summary: how many full record
+    -- builds a fetch cost, their total time, and how many decoded a cover
+    -- (the expensive half). Drained by Repo.drainBuildStats.
+    Repo._turn_builds   = (Repo._turn_builds or 0) + 1
+    Repo._turn_build_ms = (Repo._turn_build_ms or 0)
+                          + (_gettime() - _bm_t0) * 1000
+    if want_cover then
+        Repo._turn_covers = (Repo._turn_covers or 0) + 1
+    end
     return book
+end
+
+-- drainBuildStats() -> n, ms, covers since the last drain. Feeds the
+-- cover/list "shelf turn" INFO line so a slow fetch is attributable from
+-- a stock crash.log: n full builds, their total cost, and how many paid
+-- the BIM cover decode (vs served metadata-only).
+function Repo.drainBuildStats()
+    local n  = Repo._turn_builds or 0
+    local ms = Repo._turn_build_ms or 0
+    local c  = Repo._turn_covers or 0
+    Repo._turn_builds, Repo._turn_build_ms, Repo._turn_covers = 0, 0, 0
+    return n, ms, c
 end
 
 -- Repo.getCoverBB(filepath) — lazy cover accessor for callers that

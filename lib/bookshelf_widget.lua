@@ -6345,11 +6345,17 @@ function BookshelfWidget:_swapShelvesInPlace()
         -- INFO line per page turn, so a slow device report is diagnosable
         -- from a stock crash.log without enabling debug. It earned its keep
         -- the first day it existed.
+        local _builds_n, _builds_ms, _covers_n = 0, 0, 0
+        if Repo.drainBuildStats then
+            _builds_n, _builds_ms, _covers_n = Repo.drainBuildStats()
+        end
         logger.info(string.format(
-            "[bookshelf perf] shelf turn: build=%.0fms (fetch=%.0f rows=%.0f) mode=%s chip=%s",
+            "[bookshelf perf] shelf turn: build=%.0fms (fetch=%.0f rows=%.0f"
+            .. " builds=%d/%.0fms covers=%d) mode=%s chip=%s",
             (_gettime() - _perf_t0) * 1000,
             (_perf_t1 - _perf_t0) * 1000,
             (_perf_t2 - _perf_t1) * 1000,
+            _builds_n, _builds_ms, _covers_n,
             self:_isListMode() and "list" or "covers",
             tostring(self.chip)))
     end
