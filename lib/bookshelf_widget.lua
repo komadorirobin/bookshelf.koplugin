@@ -16437,6 +16437,18 @@ end
 -- Mirrors the long-press menu's Apply-status step.
 function BookshelfWidget:_commitBookStatus(book, status)
     if not (book and book.filepath and status) then return end
+    -- If THIS book's reader is parked hot under the shelf, its in-memory
+    -- DocSettings flush on the eventual real close would overwrite whatever
+    -- we write here ('set to Unopened, the reading glyph stayed' - the
+    -- parked flush restored status=reading afterwards). Finish the park
+    -- first so its flush lands BEFORE ours; the park is only a resume
+    -- optimisation for a book the user already closed.
+    pcall(function()
+        local Park = require("lib/bookshelf_reader_park")
+        if Park.isParked() and Park.parkedFile() == book.filepath then
+            Park.runInFileManager(function() end)
+        end
+    end)
     local DocSettings = require("docsettings")
     local ds = DocSettings:open(book.filepath)
     local summary = ds:readSetting("summary") or {}
