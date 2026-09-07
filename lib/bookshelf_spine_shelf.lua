@@ -268,7 +268,7 @@ end
 -- with the spine colour (so glyph anti-aliasing blends into the right
 -- ground), rotate the buffer, blit. Rotation cost is one copy of a
 -- text-sized buffer.
-local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, look, night)
+local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, look, night, author)
     if run_len < Screen:scaleBySize(14) or band_w < 8 then return end
     local ok, err = pcall(function()
         -- Shrink to fit: a narrow spine can't take the nominal size, so step
@@ -292,9 +292,35 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
             size = size - 2
         end
         if not tw then return end
-        local sw = math.min(sz.w, run_len)
+        local title_w = math.min(sz.w, run_len)
         local sh = sz.h
-        if sw < 1 or sh < 1 then tw:free() return end
+        if title_w < 1 or sh < 1 then tw:free() return end
+        -- The author rides the same band in a smaller face, above the title
+        -- the way a printed spine sets it -- only when the title left it a
+        -- worthwhile stretch of spine to sit on.
+        local atw, asz, author_w = nil, nil, 0
+        local seg_gap = Screen:scaleBySize(10)
+        if author and author ~= "" then
+            local avail = run_len - title_w - seg_gap
+            if avail >= Screen:scaleBySize(28) then
+                local asize = math.max(6, size - 3)
+                atw = TextWidget:new{
+                    text      = author,
+                    face      = BFont:getFace(face_name, asize),
+                    fgcolor   = _textColor(night),
+                    max_width = avail,
+                    padding   = 0,
+                }
+                asz = atw:getSize()
+                if asz.w < 1 or asz.h > band_w then
+                    atw:free()
+                    atw = nil
+                else
+                    author_w = math.min(asz.w, avail)
+                end
+            end
+        end
+        local sw = title_w + (atw and (seg_gap + author_w) or 0)
         local scratch = Blitbuffer.new(sw, sh, Blitbuffer.TYPE_BBRGB32)
         -- NOT scratch:fill() -- fill flattens its colour argument to
         -- luminance via getColor8, which is exactly the washed-out band this
@@ -302,6 +328,11 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
         scratch:paintRectRGB32(0, 0, sw, sh, _fillColor(look, night))
         tw:paintTo(scratch, 0, 0)
         tw:free()
+        if atw then
+            atw:paintTo(scratch, title_w + seg_gap,
+                        math.floor((sh - asz.h) / 2))
+            atw:free()
+        end
         local rot = scratch:rotatedCopy(TITLE_ROTATION)
         scratch:free()
         local rw, rh = rot:getWidth(), rot:getHeight()
@@ -543,8 +574,9 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local run = bottom - cur_top
     if run > 0 and e.label and e.label ~= "" then
         local tsize = math.max(8, math.min(18, math.floor(w_dp * 0.5)))
+        local author = (self.show_author ~= false) and e.author or nil
         _paintRotatedTitle(bb, x, cur_top, run, spine_w, e.label, tsize,
-                           e.look, night)
+                           e.look, night, author)
     end
 end
 
@@ -707,6 +739,9 @@ function SpineShelf.plan(items, opts)
                 if not bk.cover_sizetag and full.cover_sizetag then
                     bk.cover_sizetag = full.cover_sizetag
                 end
+                if (not bk.author or bk.author == "") and full.author then
+                    bk.author = full.author
+                end
             end)
         end
         local label = bk.display_title or bk.title or bk.label
@@ -793,6 +828,7 @@ function SpineShelf.plan(items, opts)
             book = bk, item = f.item, item_idx = f.item_idx,
             w = w, h = h, w_dp = w_dp, look = look,
             face_out = face_out, favourite = fav, label = label,
+            author = bk.author or (bk.authors and bk.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
         }
         logger.dbg(string.format(
@@ -866,6 +902,7 @@ function SpineShelf.rowWidget(opts)
                 width       = e.w,
                 height      = stand_h,
                 callbacks   = opts.callbacks,
+                show_author = opts.show_author,
                 is_selected = opts.selected_filepath ~= nil
                               and e.book.filepath == opts.selected_filepath,
             }

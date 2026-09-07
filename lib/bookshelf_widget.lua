@@ -4951,6 +4951,7 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
             height            = shelf_h,
             gap               = gap,
             callbacks         = shared,
+            show_author       = self:_spineShowAuthor(),
             selected_filepath = shared.selected_filepath,
         }
     end
@@ -4989,6 +4990,17 @@ function BookshelfWidget:_spineFaceOut()
     if own == false then return false end
     if own == true then return true end
     return BookshelfSettings.nilOrTrue("spine_face_out")
+end
+
+-- _spineShowAuthor() — author name on the spine, below the title the way a
+-- printed spine sets it. Same tri-state as face-out: chip pin first
+-- (false = no, nil = follow), then the library default of YES.
+function BookshelfWidget:_spineShowAuthor()
+    local tab = require("lib/bookshelf_tab_model").getById(self.chip)
+    local own = tab and tab.spine_show_author
+    if own == false then return false end
+    if own == true then return true end
+    return BookshelfSettings.nilOrTrue("spine_show_author")
 end
 
 -- _spineUpdateBookCounts(all_items, total_hint) — the footer's range reads

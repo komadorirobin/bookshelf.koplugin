@@ -3935,6 +3935,31 @@ local function _groupShapeCmp(priority_or_key)
     return SortEngine.chainedComparator(priority)
 end
 
+-- _attachFlattenedCounts(out, sorted, offset) -- spine mode flattens stacks,
+-- so its footer counts BOOKS; every group window carries the flattened
+-- totals as fields on the page table (the opds_open_ended pattern).
+-- books_before is relative to the window's offset, which is the shelf
+-- cursor at fetch time. Group shapes carry filepaths (cached shapes) or
+-- books (freshly built, e.g. getTags); standalones count as one.
+local function _attachFlattenedCounts(out, sorted, offset)
+    local total, before = 0, 0
+    for i = 1, #sorted do
+        local s = sorted[i]
+        local n = 1
+        if s and not s.standalone then
+            if s.filepaths and #s.filepaths > 0 then
+                n = #s.filepaths
+            elseif s.books and #s.books > 0 then
+                n = #s.books
+            end
+        end
+        total = total + n
+        if i <= (offset or 0) then before = before + n end
+    end
+    out.spine_books_total  = total
+    out.spine_books_before = before
+end
+
 function Repo.getTags(limit, offset, sort_priority_override, filter, opts)
     local rc = getCollections()
     if not rc.coll then return {}, 0 end
@@ -4002,6 +4027,7 @@ function Repo.getTags(limit, offset, sort_priority_override, filter, opts)
     offset      = offset or 0
     local stop  = _hydrationStop(offset, limit, total, total, "getTags", opts and opts.light_only)
     local out   = {}
+    _attachFlattenedCounts(out, groups, offset)
     -- Upgrade each visible group's FRONT book (the one whose cover the
     -- SeriesStack renders) to a full record. Covers already in
     -- ScaledCoverCache skip the BIM zstd decode; SpineWidget repaints
@@ -4230,22 +4256,7 @@ local function _seriesReadout(group_shapes, standalone_shapes, filter,
     local total = #sorted
     local out   = {}
     offset      = offset or 0
-    -- Spine mode flattens stacks, so its footer counts BOOKS; the window
-    -- carries the flattened totals as fields on the page table, the same
-    -- way an OPDS page carries opds_open_ended. books_before is relative
-    -- to this window's offset, which is the shelf cursor at fetch time.
-    local books_total, books_before = 0, 0
-    for i = 1, total do
-        local s = sorted[i]
-        local n = 1
-        if not s.standalone and s.filepaths and #s.filepaths > 0 then
-            n = #s.filepaths
-        end
-        books_total = books_total + n
-        if i <= offset then books_before = books_before + n end
-    end
-    out.spine_books_total  = books_total
-    out.spine_books_before = books_before
+    _attachFlattenedCounts(out, sorted, offset)
     local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", light_only)
     for i = offset + 1, stop do
         local s = sorted[i]
@@ -5034,6 +5045,7 @@ function Repo.getAuthors(limit, offset, sort_priority_override, filter, opts)
     local total = #sorted
     local out   = {}
     offset      = offset or 0
+    _attachFlattenedCounts(out, sorted, offset)
     local stop  = _hydrationStop(offset, limit, total, 8, "getAuthors", opts and opts.light_only)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
@@ -5077,6 +5089,7 @@ function Repo.getGenres(limit, offset, sort_priority_override, filter, opts)
     local total = #sorted
     local out   = {}
     offset      = offset or 0
+    _attachFlattenedCounts(out, sorted, offset)
     local stop  = _hydrationStop(offset, limit, total, 8, "getGenres", opts and opts.light_only)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
@@ -5582,6 +5595,7 @@ function Repo.getLanguages(limit, offset, sort_priority_override, filter, opts)
     local total = #sorted
     local out   = {}
     offset      = offset or 0
+    _attachFlattenedCounts(out, sorted, offset)
     local stop  = _hydrationStop(offset, limit, total, 8, "getLanguages", opts and opts.light_only)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)

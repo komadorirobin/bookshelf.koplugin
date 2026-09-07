@@ -485,6 +485,7 @@ function Editor:editTab(tab_id, opts)
         override.spine_height_pct    = draft.spine_height_pct
         override.spine_thickness_pct = draft.spine_thickness_pct
         override.spine_face_out      = draft.spine_face_out
+        override.spine_show_author   = draft.spine_show_author
         TabModel.setOverride(tab_id, override)
         if opts.on_change then opts.on_change() end
     end
@@ -1522,25 +1523,30 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
             -- Spine thickness: a multiplier on the page-count width.
             rows[#rows + 1] = pctRow(_("Spine thickness"), "spine_thickness_pct",
                                      60, 200, 100)
-            -- Favourites face out (front cover, bookstore style). Default
-            -- YES; stored as false only, nil meaning the default, the same
-            -- absence semantics as every other key here.
-            rows[#rows + 1] = {{
-                text_func = function()
-                    local v = draft.spine_face_out
-                    if v == nil then v = true end
-                    return _("Favourites face out: ") .. (v and _("Yes") or _("No"))
-                end,
-                callback = pick(function()
-                    local cur = draft.spine_face_out
-                    if cur == nil then cur = true end
-                    if cur then
-                        draft.spine_face_out = false
-                    else
-                        draft.spine_face_out = nil
-                    end
-                end),
-            }}
+            -- Yes/No toggles, default YES; stored as false only, nil meaning
+            -- the default, the same absence semantics as every other key.
+            local function toggleRow(label, key)
+                return {{
+                    text_func = function()
+                        local v = draft[key]
+                        if v == nil then v = true end
+                        return label .. ": " .. (v and _("Yes") or _("No"))
+                    end,
+                    callback = pick(function()
+                        local cur = draft[key]
+                        if cur == nil then cur = true end
+                        if cur then
+                            draft[key] = false
+                        else
+                            draft[key] = nil
+                        end
+                    end),
+                }}
+            end
+            -- Favourites face out (front cover, bookstore style).
+            rows[#rows + 1] = toggleRow(_("Favourites face out"), "spine_face_out")
+            -- Author on the spine, below the title like a printed spine.
+            rows[#rows + 1] = toggleRow(_("Author on spine"), "spine_show_author")
         end
 
         -- Folder tiles: ONE row that cycles through the styles, live-previewed
