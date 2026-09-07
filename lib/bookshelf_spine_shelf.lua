@@ -1631,7 +1631,7 @@ function SpineShelf.paintOpeningTilt(slot)
         -- shrinking spine vacates reads as the shelf background behind it.
         c:paintRectRGB32(0, 0, slot.width, slot.height,
                          Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
-        slot._tilt = { squash = 0.90, edge_mul = 2.4 }
+        slot._tilt = { squash = 0.80, edge_mul = 2.4 }
         slot:_renderInto(c, night)
         slot._tilt = nil
         bb:blitFrom(c, d.x, d.y, 0, 0, slot.width, slot.height)
@@ -1666,8 +1666,14 @@ function SpineShelf.paintFaceOutTilt(tile)
     local bb = Screen.bb
     if not bb then return end
     local depth = fx.depth or 0
-    local freed = rect.h - math.floor(rect.h * 0.90)
+    local freed = rect.h - math.floor(rect.h * 0.80)
     if freed < 2 then return end
+    -- The block grows by only HALF the freed height (user calibration:
+    -- growing by all of it kept the silhouette the same height, which
+    -- read as the cover alone shrinking rather than the book tipping),
+    -- so the whole book gets shorter and the strip it vacates shows the
+    -- page ground.
+    local grow = math.floor(freed * 0.5)
     local ok = pcall(function()
         -- Squash the cover toward its feet: bottom edge (on the plank)
         -- stays put, the top drops by `freed`.
@@ -1677,14 +1683,20 @@ function SpineShelf.paintFaceOutTilt(tile)
         bb:blitFrom(scaled, rect.x, rect.y + freed, 0, 0, rect.w, rect.h - freed)
         src:free()
         scaled:free()
-        -- The page block keeps its top edge and grows down to meet the
-        -- squashed cover. A book too thin to have shown a block while
-        -- standing gains one as it tips -- same rule as the spine tilt.
+        -- Clear the vacated strip, then redraw the page block dropped and
+        -- grown so its bottom meets the squashed cover's top. Page ground
+        -- in pre-invert space, same as the slot renders paint. A book too
+        -- thin to have shown a block while standing gains one as it tips
+        -- -- same rule as the spine tilt.
+        if freed - grow > 0 then
+            bb:paintRectRGB32(rect.x, rect.y - depth, rect.w, freed - grow,
+                              Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+        end
         local block = FaceOutTopBlock:new{
-            dimen = Geom:new{ w = rect.w, h = depth + freed },
+            dimen = Geom:new{ w = rect.w, h = depth + grow },
             look  = fx.look,
         }
-        block:paintTo(bb, rect.x, rect.y - depth)
+        block:paintTo(bb, rect.x, rect.y - depth + (freed - grow))
     end)
     if not ok then
         logger.dbg("[bookshelf] face-out opening tilt failed; skipping")
