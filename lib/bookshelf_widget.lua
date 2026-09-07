@@ -233,6 +233,18 @@ function BookshelfWidget:init()
     self.width  = Screen:getWidth()
     self.height = Screen:getHeight()
     self.dimen  = Geom:new{ w = self.width, h = self.height }
+    -- Per-book invalidation from the repo (status edits, history removal,
+    -- cover changes) must reach the spine shelf's own caches -- the
+    -- persisted status behind the glyphs, the hydration answers, the
+    -- rendered pixels, and the cached page fetch. Without this a book
+    -- marked unopened kept its reading glyph on the spine.
+    local bw = self
+    Repo.on_book_invalidated = function(fp)
+        pcall(function()
+            require("lib/bookshelf_spine_shelf").invalidateBook(fp)
+        end)
+        bw._spine_fetch_cache = nil
+    end
     self:_refreshDitherFlag()   -- colour-panel cover saturation, #289
     self.chip   = BookshelfSettings.read("active_chip") or "recent"
     -- Cursor-based pagination: _cursor is the 1-based index of the first

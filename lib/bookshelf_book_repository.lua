@@ -2027,6 +2027,12 @@ function Repo.invalidateProgressCache(filepath)
                 if rec then _resetLightMetaProgress(rec) end
             end
         end
+        -- Downstream caches (the spine shelf persists status and rendered
+        -- pixels per book) register here; without this a status edit left
+        -- the old reading glyph on the spine.
+        if Repo.on_book_invalidated then
+            pcall(Repo.on_book_invalidated, filepath)
+        end
     else
         _progress_cache = {}
         _sidecar_memo = {}
