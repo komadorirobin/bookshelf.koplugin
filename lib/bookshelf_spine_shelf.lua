@@ -728,15 +728,22 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local top = y + self.height - spine_h
 
     -- Selected: the book is pulled up off the plank, the way a hand lifts
-    -- it clear of the row. Falls back to a heavier border when the spine
-    -- already fills the slot and has no headroom to rise into.
+    -- it clear of the row -- with DAYLIGHT between its foot and the shelf
+    -- (user ruling: the old fixed lift still overlapped the plank's top
+    -- surface). The lift is the surface's height above the feet plus an
+    -- air gap; a book too tall to have that headroom shrinks a few percent
+    -- while held instead of staying overlapped.
     local lifted = false
     if self.is_selected then
-        local lift = math.min(Screen:scaleBySize(13), top - y)
-        if lift >= Screen:scaleBySize(3) then
-            top = top - lift
-            lifted = true
+        local pk = self.plank
+        local clear = (pk and (3 * pk.b - pk.inset) or Screen:scaleBySize(18))
+                      + Screen:scaleBySize(6)
+        if spine_h > self.height - clear then
+            spine_h = math.max(Screen:scaleBySize(40), self.height - clear)
         end
+        top = y + self.height - spine_h - clear
+        if top < y then top = y end
+        lifted = true
     end
 
     -- ── The spine proper ────────────────────────────────────────────────
@@ -761,8 +768,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
                           _tintColor(e.look, _rampF(i, spine_w), night))
     end
     local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-    local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
-    bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
+    bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, hairline, border_c)
     -- Soften the meeting with the plank: the bottom corner pixels come off,
     -- the hint of a chamfer where the book stands. Only while it STANDS --
     -- a lifted book floats in front of the page, and the plank-toned nicks
@@ -1407,12 +1413,21 @@ function SpineShelf.rowWidget(opts)
                     local push = inset
                     local lift = 0
                     if is_sel then
-                        lift = math.min(Screen:scaleBySize(13), push + inset)
+                        -- Clear the plank's top surface plus an air gap,
+                        -- accounting for the extra push face-outs sit at.
+                        lift = math.max(0, 3 * b - inset - push)
+                               + Screen:scaleBySize(6)
                     end
                     local fo_stand = stand_h - push
                     local depth = math.min(e.depth or 0,
                                            math.max(0, math.min(e.h, fo_stand) - 10))
                     local cover_h = math.min(e.h, fo_stand) - depth
+                    -- A tall cover shrinks to make room for the lift rather
+                    -- than losing the gap.
+                    if lift > 0 and cover_h + depth + lift > fo_stand then
+                        cover_h = math.max(Screen:scaleBySize(40),
+                                           fo_stand - depth - lift)
+                    end
                     local cover = CoverTile:new{
                         book          = e.book,
                         width         = e.w,
