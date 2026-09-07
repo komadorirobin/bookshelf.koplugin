@@ -292,6 +292,17 @@ local function _plankRGB()
     return r, g, b
 end
 
+-- plankBandT(y_rel, surf_h) -> the lit fraction of the plank's top surface
+-- at y_rel px below its far edge. ONE quantisation, shared by ShelfPlank and
+-- by the slots' lift shadows, so the patch under a lifted book matches the
+-- plank around it exactly.
+function SpineShelf.plankBandT(y_rel, surf_h)
+    local bands = 5
+    local i = math.floor(y_rel * bands / math.max(1, surf_h))
+    if i < 0 then i = 0 elseif i > bands - 1 then i = bands - 1 end
+    return 0.25 + 0.30 * (i / (bands - 1))
+end
+
 local function _plankShade(f)
     local r, g, b = _plankRGB()
     return Blitbuffer.ColorRGB32(
@@ -299,12 +310,14 @@ local function _plankShade(f)
         math.floor(b * f + 0.5), 0xFF)
 end
 
-local function _plankLit(t)
+local function _plankLit(t, mul)
     local r, g, b = _plankRGB()
+    r = r + (255 - r) * t
+    g = g + (255 - g) * t
+    b = b + (255 - b) * t
+    if mul then r, g, b = r * mul, g * mul, b * mul end
     return Blitbuffer.ColorRGB32(
-        math.floor(r + (255 - r) * t + 0.5),
-        math.floor(g + (255 - g) * t + 0.5),
-        math.floor(b + (255 - b) * t + 0.5), 0xFF)
+        math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5), 0xFF)
 end
 
 local function _tintColor(look, f, night)
@@ -595,23 +608,30 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local by = body_top + body_h - hairline
     bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
     bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
-    -- A lifted book leaves its shadow on the plank where it stood: a sliver
-    -- of air directly under the feet, then a darker patch (inset a touch,
-    -- the way shadows shrink) down to the slot's foot line.
-    if lifted then
+    -- A lifted book leaves its shadow on the plank where it stood. The
+    -- under-strip REPRODUCES the plank's banded surface (same quantisation,
+    -- via plankBandT) and darkens those same bands for the shadow, so the
+    -- patch is indistinguishable from the shelf around it; above the
+    -- surface's far edge the page ground stays. Row-by-row, but the render
+    -- is cached per slot.
+    if lifted and self.plank then
         local foot = body_top + body_h
         local slot_bottom = y + self.height
-        local air = math.max(2, hairline)
-        local sy = foot + air
-        if slot_bottom - sy > 1 then
-            -- Ground the WHOLE under-strip in plank tone first: the shadow
-            -- is inset, and whatever flanks it must read as shelf, not as
-            -- the slot cache's white (which showed as bright lines).
-            bb:paintRectRGB32(x, foot, spine_w, slot_bottom - foot,
-                              _plankLit(0.5))
-            local ins = hairline * 2
-            bb:paintRectRGB32(x + ins, sy, math.max(1, spine_w - 2 * ins),
-                              slot_bottom - sy, _plankShade(0.72))
+        local surf_h = 3 * self.plank.b
+        local surf_top = slot_bottom + self.plank.inset - surf_h
+        local start = math.max(foot, surf_top)
+        local air_end = math.min(foot + math.max(2, hairline), slot_bottom)
+        local ins = hairline * 2
+        for yy = start, slot_bottom - 1 do
+            local t = SpineShelf.plankBandT(yy - surf_top, surf_h)
+            if yy < air_end or spine_w <= 2 * ins then
+                bb:paintRectRGB32(x, yy, spine_w, 1, _plankLit(t))
+            else
+                bb:paintRectRGB32(x, yy, ins, 1, _plankLit(t))
+                bb:paintRectRGB32(x + ins, yy, spine_w - 2 * ins, 1,
+                                  _plankLit(t, 0.72))
+                bb:paintRectRGB32(x + spine_w - ins, yy, ins, 1, _plankLit(t))
+            end
         end
     end
     if edge_h > 0 then
@@ -801,7 +821,7 @@ function ShelfPlank:paintTo(bb, x, y)
     for i = 0, bands - 1 do
         local by0 = front_y - surf_h + math.floor(surf_h * i / bands)
         local by1 = front_y - surf_h + math.floor(surf_h * (i + 1) / bands)
-        local t = 0.25 + 0.30 * (i / (bands - 1))
+        local t = SpineShelf.plankBandT(by0 - (front_y - surf_h), surf_h)
         bb:paintRectRGB32(x, by0, w, by1 - by0, _plankLit(t))
     end
     -- The front-top edge line.
@@ -1195,6 +1215,7 @@ function SpineShelf.rowWidget(opts)
                     callbacks   = opts.callbacks,
                     show_author = opts.show_author,
                     is_selected = is_sel,
+                    plank       = { b = b, inset = inset },
                 }
             end
             group[#group + 1] = tile
