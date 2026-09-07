@@ -244,6 +244,16 @@ function BookshelfWidget:init()
             require("lib/bookshelf_spine_shelf").invalidateBook(fp)
         end)
         bw._spine_fetch_cache = nil
+        -- The extraction kickoff memo holds "this book's BIM row is
+        -- complete" verdicts; a metadata edit / cover change can make
+        -- that stale for this book.
+        local memo = bw._bim_check_memo
+        if memo and fp then
+            local prefix = fp .. "|"
+            for k in pairs(memo) do
+                if k:sub(1, #prefix) == prefix then memo[k] = nil end
+            end
+        end
     end
     self:_refreshDitherFlag()   -- colour-panel cover saturation, #289
     self.chip   = BookshelfSettings.read("active_chip") or "recent"
@@ -2511,8 +2521,36 @@ local BIM_POLL_TOTAL_BUDGET_S = 60
 -- Folder records carry their own first_book — we queue that too so a folder
 -- whose representative book isn't indexed yet gets a real cover next render.
 function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_w, hero_h)
+    -- Deferred until AFTER the repaint (tickAfterNext; nextTick still runs
+    -- before the paint): the check loop below is a per-book BIM SQLite read,
+    -- ~46 of them on a 3-row spine page, which on device flash was the bulk
+    -- of a 3-4s page turn -- all to conclude "cover-ok" for every book on an
+    -- already-extracted library. Queueing extraction a frame later changes
+    -- nothing about the outcome; the turn no longer waits on it.
+    local run = function()
+        pcall(function()
+            self:_kickOffMissingMetaExtractionNow(
+                items, slot_w, slot_h, hero_w, hero_h)
+        end)
+    end
+    if UIManager.tickAfterNext then
+        UIManager:tickAfterNext(run)
+    else
+        UIManager:nextTick(run)
+    end
+end
+
+function BookshelfWidget:_kickOffMissingMetaExtractionNow(items, slot_w, slot_h, hero_w, hero_h)
+    local _kick_t0 = _gettime()
     local ok, BIM = pcall(require, "bookinfomanager")
     if not ok or not BIM or not BIM.getBookInfo then return end
+    -- Session memo: fp|spec -> "checked, nothing to do". A clean book's BIM
+    -- row doesn't change behind our back (edits invalidate per-fp via
+    -- Repo.on_book_invalidated), so the steady-state page costs zero reads.
+    -- Books that DO need queueing are deliberately not memoised: they retry
+    -- on later turns until BIM heals them or hits max_tries, as before.
+    self._bim_check_memo = self._bim_check_memo or {}
+    local memo = self._bim_check_memo
     local max_tries = BIM.max_extract_tries or 3
     local files = {}
     local seen  = {}
@@ -2540,6 +2578,9 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
     }
     local function maybe_queue(fp, specs)
         if not fp or seen[fp] then return end
+        local mkey = fp .. "|" .. tostring(specs.max_cover_w)
+                     .. "x" .. tostring(specs.max_cover_h)
+        if memo[mkey] then return end
         -- OPDS pseudo-paths have no file behind them. Queueing one sends the
         -- BIM subprocess off to extract metadata from something that isn't on
         -- this device, on every rebuild of the chip (spec 6.6). Filtered here
@@ -2600,6 +2641,8 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
                 filepath    = fp,
                 cover_specs = specs,
             }
+        else
+            memo[mkey] = true
         end
     end
     -- Hero book (preview / lastfile) FIRST, at hero size. It may not appear
@@ -2642,8 +2685,9 @@ function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h, he
             end
         end
     end
-    logger.dbg(string.format("[bookshelf perf] _kickOffMeta: queued=%d displayed=%d",
-        #files, #(items or {})))
+    logger.dbg(string.format(
+        "[bookshelf perf] _kickOffMeta (post-paint): %.0fms queued=%d displayed=%d",
+        (_gettime() - _kick_t0) * 1000, #files, #(items or {})))
     logger.dbg(string.format(
         "[bim kickoff] queued=%d displayed=%d bim_busy=%s",
         #files, #(items or {}),
@@ -6238,7 +6282,9 @@ function BookshelfWidget:_swapShelvesInPlace()
         slot_h = d.shelf_h
         slot_w = math.floor(d.shelf_h / 1.5)
     end
+    local _perf_tk0 = _gettime()
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, d.hero_cover_w, d.hero_cover_h)
+    local _perf_kick_ms = (_gettime() - _perf_tk0) * 1000
 
     -- Swap each shelf row in place. Rows sit at shelf_top_idx, +2, +4, ...
     -- (each separated by exactly one gap widget -- a VerticalSpan in cover
@@ -6315,9 +6361,22 @@ function BookshelfWidget:_swapShelvesInPlace()
         local swap_ms = (_gettime() - _perf_t0) * 1000
         local ok_ss, SS = pcall(require, "lib/bookshelf_spine_shelf")
         local plan = ok_ss and SS and SS._last_plan or nil
+        -- fetch / rows / kick / tiles split the build so the slow bucket is
+        -- visible from a stock crash.log: the 3-row full-screen report spent
+        -- seconds in `build` with plan+pages+look accounting for a fraction.
+        local tiles_ms, tiles_n = 0, 0
+        if ok_ss and SS and SS.drainTileStats then
+            tiles_ms, tiles_n = SS.drainTileStats()
+        end
         logger.info(string.format(
-            "[bookshelf perf] spine turn: build=%.0fms (plan=%.0f hydrate=%.0f/%d pages=%.0f look=%.0f) chip=%s",
-            swap_ms, plan and plan.total_ms or -1,
+            "[bookshelf perf] spine turn: build=%.0fms (fetch=%.0f rows=%.0f"
+            .. " tiles=%.0f/%d kick=%.0f plan=%.0f hydrate=%.0f/%d"
+            .. " pages=%.0f look=%.0f) chip=%s",
+            swap_ms,
+            (_perf_t1 - _perf_t0) * 1000,
+            (_perf_t2 - _perf_t1) * 1000,
+            tiles_ms, tiles_n, _perf_kick_ms or -1,
+            plan and plan.total_ms or -1,
             plan and plan.hydrate_ms or -1, plan and plan.hydrated or -1,
             plan and plan.pages_ms or -1, plan and plan.look_ms or -1,
             tostring(self.chip)))

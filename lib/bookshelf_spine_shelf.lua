@@ -1506,6 +1506,7 @@ function SpineShelf.rowWidget(opts)
             local is_sel = opts.selected_filepath ~= nil
                            and e.book.filepath == opts.selected_filepath
             local tile
+            local _tile_t0 = e.face_out and _gettime() or nil
             if e.face_out then
                 -- A face-out favourite IS a cover-grid book: reuse the cover
                 -- tile wholesale (user ruling) so it carries every glyph,
@@ -1596,6 +1597,13 @@ function SpineShelf.rowWidget(opts)
                     stack.book = e.book
                     tile = stack
                 end
+            end
+            if _tile_t0 then
+                -- Face-out tile construction is where the cover pixels get
+                -- loaded; accounted separately in the turn summary.
+                SpineShelf._tile_ms = (SpineShelf._tile_ms or 0)
+                                      + (_gettime() - _tile_t0) * 1000
+                SpineShelf._tile_n = (SpineShelf._tile_n or 0) + 1
             end
             if not tile then
                 tile = SpineBookSlot:new{
@@ -1753,6 +1761,14 @@ function SpineShelf.paintFaceOutTilt(tile)
         end
     end)
     return rect.x, rect.y - depth, rect.w, rect.h + depth
+end
+
+-- drainTileStats() -> ms, n since the last drain: face-out tile build cost
+-- (cover load included). Logged by the widget's spine turn summary.
+function SpineShelf.drainTileStats()
+    local ms, n = SpineShelf._tile_ms or 0, SpineShelf._tile_n or 0
+    SpineShelf._tile_ms, SpineShelf._tile_n = 0, 0
+    return ms, n
 end
 
 -- drainRenderStats() -> n, ms since the last drain: how many slot renders
