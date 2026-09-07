@@ -351,6 +351,16 @@ function SpineShelf.bookLook(book)
     return look
 end
 
+-- invalidateBook(fp) — one entry point for 'this book's metadata changed':
+-- drops the persisted look/progress, the hydration answers, and every
+-- cached render, so the next plan and paint rebuild it all fresh.
+function SpineShelf.invalidateBook(fp)
+    if not fp then return end
+    SpineShelf.dropLook(fp)
+    _hydrate_cache[fp] = nil
+    SpineShelf.invalidateRender(fp)
+end
+
 function SpineShelf.dropLook(fp)
     if fp and _look_cache[fp] then
         _look_cache[fp] = nil

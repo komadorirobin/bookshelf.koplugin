@@ -6975,13 +6975,26 @@ function BookshelfWidget:_refreshSpineSlotInPlace(fp)
                 if slot and slot.book and slot.book.filepath == fp
                         and slot.entry then
                     local fresh = Repo.buildBookMeta(fp) or slot.book
+                    -- Every spine-side cache of this book goes: look,
+                    -- hydration answers, rendered pixels. Without this a
+                    -- metadata edit (e.g. a Hardcover link) updated the
+                    -- record but the spine kept painting the old title.
+                    SpineShelf.invalidateBook(fp)
                     slot.book = fresh
                     slot.entry.book = fresh
-                    SpineShelf.dropLook(fp)
                     slot.entry.look = SpineShelf.bookLook(fresh)
-                    -- The slot paints from an offscreen cache; a fresh
-                    -- record must force a re-render, not a stale blit.
-                    if slot.invalidate then slot:invalidate() end
+                    -- The render paints the ENTRY's display fields, not the
+                    -- record: refresh those too.
+                    local label = fresh.display_title or fresh.title
+                    if label and label ~= "" then slot.entry.label = label end
+                    slot.entry.author = fresh.author
+                        or (fresh.authors and fresh.authors[1])
+                        or slot.entry.author
+                    if fresh.series_num and tostring(fresh.series_num) ~= "" then
+                        slot.entry.series_num = tostring(fresh.series_num)
+                    end
+                    -- The cached page fetch still holds the stale record.
+                    self._spine_fetch_cache = nil
                     if slot.dimen then
                         union = union or slot.dimen:copy()
                     end
