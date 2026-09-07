@@ -4928,8 +4928,6 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
         group_gap  = Screen:scaleBySize(SpineShelf.GROUP_GAP_DP),
         n_rows     = n_rows,
         face_out   = self:_spineFaceOut(),
-        -- Shelf height % is applied to the ROW by the band split (the hero
-        -- absorbs the difference), so the plan gets the full row.
         thickness_pct = self:_chipListValue("spine_thickness_pct"),
     })
     self._spine_shown = plan.shown
@@ -9346,20 +9344,28 @@ function BookshelfWidget:_collapsedSpineSplit(hide_chip_bar, n_shelves)
     local label_h      = _footerReserveH()
     local chip_contrib = hide_chip_bar and 0 or chip_h
     if not n_shelves or n_shelves < 1 then n_shelves = 1 end
+    -- The hero is the COVER GRID's hero -- the same number regardless of the
+    -- chip's shelf style, which is the list-mode ruling applied here after
+    -- the same bug (the hero jumping size on every chip switch between
+    -- styles). Rows split whatever the standard hero leaves; there is no
+    -- height setting any more -- book height IS rows over available space.
+    local hero_h = _asCoverGrid(function()
+        local _shelf_h, h = self:_collapsedGridSplit(hide_chip_bar)
+        return h
+    end)
+    if type(hero_h) ~= "number" then
+        hero_h = math.floor(self.height * HERO_MIN_FRAC)
+    end
     local total_pad = PAD + PAD                    -- outer top + hero->chips
                     + ((not hide_chip_bar) and PAD or 0)
                     + n_shelves * PAD              -- after each row
-    local available   = self.height - chip_contrib - label_h - total_pad
-    local hero_target = math.floor(available * HERO_MIN_FRAC)
-    -- Shelf height % shrinks the ROW, and the hero absorbs what the shelf
-    -- gave up -- the user's ruling: a 50% single-row shelf is "about the
-    -- right height", and the freed space should go to a LARGER hero, not
-    -- sit as dead air inside a full-height row.
-    local pct = tonumber(self:_chipListValue("spine_height_pct"))
-    if not (pct and pct >= 30 and pct <= 100) then pct = 100 end
-    local shelf_h = math.max(1, math.floor(
-        (available - hero_target) / n_shelves * pct / 100))
-    local hero_h  = math.max(hero_target, available - n_shelves * shelf_h)
+    local available = self.height - chip_contrib - label_h - total_pad
+    -- The hero must still leave every row something to stand in.
+    local min_band = n_shelves * Screen:scaleBySize(60)
+    if hero_h > available - min_band then
+        hero_h = math.max(1, available - min_band)
+    end
+    local shelf_h = math.max(1, math.floor((available - hero_h) / n_shelves))
     return shelf_h, hero_h
 end
 

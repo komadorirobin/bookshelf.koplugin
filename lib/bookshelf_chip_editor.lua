@@ -482,7 +482,6 @@ function Editor:editTab(tab_id, opts)
         -- The spine pins, same nil-means-default semantics. spine_face_out
         -- is the one tri-state: nil = the default (yes), false = no.
         override.spine_rows          = draft.spine_rows
-        override.spine_height_pct    = draft.spine_height_pct
         override.spine_thickness_pct = draft.spine_thickness_pct
         override.spine_face_out      = draft.spine_face_out
         override.spine_show_author   = draft.spine_show_author
@@ -1516,11 +1515,9 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                     { text = "+", callback = step(1) },
                 }
             end
-            -- Shelf height: % of the row the spines stand in; the hero
-            -- absorbs whatever the shelf gives up. Auto = the full row.
-            rows[#rows + 1] = pctRow(_("Shelf height"), "spine_height_pct",
-                                     40, 100, 100)
             -- Spine thickness: a multiplier on the page-count width.
+            -- (No height row: book height IS rows over available space,
+            -- with the hero pinned to the cover grid's standard size.)
             rows[#rows + 1] = pctRow(_("Spine thickness"), "spine_thickness_pct",
                                      60, 200, 100)
             -- Yes/No toggles, default YES; stored as false only, nil meaning

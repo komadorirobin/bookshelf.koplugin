@@ -697,10 +697,6 @@ end
 function SpineShelf.plan(items, opts)
     local entries = {}
     local budget = opts.row_h
-    local pct = tonumber(opts.height_pct)
-    if pct and pct >= 30 and pct <= 100 then
-        budget = math.floor(budget * pct / 100)
-    end
     local book_gap  = opts.gap or 0
     local group_gap = opts.group_gap or book_gap
 
