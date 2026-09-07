@@ -5362,31 +5362,38 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     -- Spine mode: pages hold a variable number of books, so "Page 3 of 27"
     -- would be a fiction. The label reads as a position instead: which books
     -- of how many are on the shelf right now.
-    local spine_label
-    if self:_isSpineMode() and not open_ended then
-        local first, last, total
+    -- The label is a RANGE in every mode now -- "9-16 of 247" -- because a
+    -- range is always true while a page number lies whenever the cursor is
+    -- misaligned (the swipe-up case _syncPageFromCursor papers over), and
+    -- because spine pages made page numbers meaningless anyway (user ruling:
+    -- unify). Pages survive INTERNALLY: the jump dialog and skip-10 still
+    -- steer by them; only the display changed.
+    local range_first, range_last, range_total
+    if self:_isSpineMode() then
         if self._spine_books_total and self._spine_books_total > 0 then
             -- Whole-list source with groups flattened: count BOOKS, since
             -- that is what stands on the shelf ("1-38 of 312"), not items.
-            total = self._spine_books_total
-            first = math.min((self._spine_books_before or 0) + 1, total)
+            range_total = self._spine_books_total
+            range_first = math.min((self._spine_books_before or 0) + 1, range_total)
             local shown = self._spine_books_shown or 0
-            last = math.min(first + math.max(shown, 1) - 1, total)
+            range_last = math.min(range_first + math.max(shown, 1) - 1, range_total)
         else
             -- Windowed sources are one book per item; item units serve.
-            first = self._cursor or 1
-            total = self._total_items or 0
+            range_first = self._cursor or 1
+            range_total = self._total_items or 0
             local shown = self._spine_shown or 0
-            last = shown > 0 and math.min(first + shown - 1, total) or first
+            range_last = shown > 0
+                and math.min(range_first + shown - 1, range_total) or range_first
         end
-        spine_label = T(_("%1-%2 of %3"), first, last, total)
+    else
+        range_first = self._cursor or 1
+        range_total = self._total_items or 0
+        range_last  = math.min(range_first + view_size_now - 1, range_total)
+        if range_last < range_first then range_last = range_first end
     end
     local page_text = Button:new{
-        -- "Page %1 of %2+" is the SAME source string bookshelf_pagination.lua
-        -- uses for its open-ended nav, so the two share one POT entry.
-        text = spine_label
-               or (open_ended and T(_("Page %1 of %2+"), self.page, total_pages)
-                               or string.format(_("Page %d of %d"), self.page, total_pages)),
+        text = open_ended and T(_("%1-%2 of %3+"), range_first, range_last, range_total)
+                          or T(_("%1-%2 of %3"), range_first, range_last, range_total),
         -- Adopt the Bookshelf UI font (a FontList-resolvable face), like the
         -- rest of the chrome; falls back to cfont in follow mode. Button
         -- resolves text_font_face via Font:getFace, and the UI-font setting
@@ -6275,6 +6282,19 @@ function BookshelfWidget:_swapShelvesInPlace()
     logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d items=%d chip=%s",
         (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
         self._total_items or 0, self.chip))
+    if not self:_isSpineMode() then
+        -- The same always-on turn summary the spine mode gets (below): one
+        -- INFO line per page turn, so a slow device report is diagnosable
+        -- from a stock crash.log without enabling debug. It earned its keep
+        -- the first day it existed.
+        logger.info(string.format(
+            "[bookshelf perf] shelf turn: build=%.0fms (fetch=%.0f rows=%.0f) mode=%s chip=%s",
+            (_gettime() - _perf_t0) * 1000,
+            (_perf_t1 - _perf_t0) * 1000,
+            (_perf_t2 - _perf_t1) * 1000,
+            self:_isListMode() and "list" or "covers",
+            tostring(self.chip)))
+    end
     if self:_isSpineMode() then
         -- Always-on (info level) turn summary, so a slow device page turn
         -- is diagnosable from a stock crash.log without enabling debug: the
