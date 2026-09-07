@@ -458,9 +458,11 @@ end
 -- further for the lift shadows.
 local function _plankBandColor(y_rel, surf_h, mul)
     local t = SpineShelf.plankBandT(y_rel, surf_h)
-    -- x0.50 back to x0.76 front: a touch lighter than the first dark pass,
-    -- so a lift shadow (x0.72 of the band) still separates from the wood.
-    local f = (0.50 + 0.26 * t) * (mul or 1)
+    -- x0.50 back to x0.95 front: the narrower span read flat on e-ink's 16
+    -- greys (user report), so the front stretches nearly to the base tone
+    -- while the back stays where it was; the bright edge line and the
+    -- lit front face still top it.
+    local f = (0.50 + 0.45 * t) * (mul or 1)
     return _plankShade(f)
 end
 
