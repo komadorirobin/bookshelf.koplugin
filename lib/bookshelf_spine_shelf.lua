@@ -849,6 +849,11 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         edge_h = math.min(math.floor(base * (tilt.edge_mul or 2.4)),
                           math.floor(spine_h * 0.30))
     end
+    -- Where the book landed in this render, for the tilt painter's shading
+    -- pass (the face below the page block darkens as it tips away from the
+    -- light; the block itself faces up and stays lit).
+    self._render_spine_rect = { x = x, y = top, w = spine_w, h = spine_h,
+                                edge = edge_h }
     local body_top = top + edge_h
     local body_h = spine_h - edge_h
     for i = 0, spine_w - 1 do
@@ -1611,6 +1616,10 @@ function SpineShelf.rowWidget(opts)
     return result
 end
 
+-- How much the tipped face shades: black (day) / white (night, pre-invert)
+-- blended over the cover at this opacity. Shared by both tilt painters.
+local TILT_SHADE = 0.15
+
 -- paintOpeningTilt(slot) — one-frame "book coming off the shelf" feedback,
 -- painted straight onto the framebuffer like the cover grid's flex (e-ink
 -- cannot animate through the blocking document open). The slot re-renders
@@ -1634,6 +1643,19 @@ function SpineShelf.paintOpeningTilt(slot)
         slot._tilt = { squash = 0.80, edge_mul = 2.4 }
         slot:_renderInto(c, night)
         slot._tilt = nil
+        -- Tipping away from the light, the face shades (user report: with
+        -- the shadow underneath, an unshaded face read as still upright).
+        -- Pre-invert space flips the blend in night: painted lighter
+        -- displays darker.
+        local r = slot._render_spine_rect
+        if r then
+            local sy = r.y + (r.edge or 0)
+            local sh = r.h - (r.edge or 0)
+            if sh > 0 then
+                if night then c:lightenRect(r.x, sy, r.w, sh, TILT_SHADE)
+                else c:darkenRect(r.x, sy, r.w, sh, TILT_SHADE) end
+            end
+        end
         bb:blitFrom(c, d.x, d.y, 0, 0, slot.width, slot.height)
         c:free()
     end)
@@ -1717,6 +1739,19 @@ function SpineShelf.paintFaceOutTilt(tile)
             end
         end
     end
+    -- Shade the tipped cover face -- glyphs included, they sit on it --
+    -- while the up-facing page block stays lit (see the spine tilt's note;
+    -- pre-invert space flips the blend in night).
+    pcall(function()
+        local night = _nightMode()
+        if night then
+            bb:lightenRect(rect.x, rect.y + freed, rect.w, rect.h - freed,
+                           TILT_SHADE)
+        else
+            bb:darkenRect(rect.x, rect.y + freed, rect.w, rect.h - freed,
+                          TILT_SHADE)
+        end
+    end)
     return rect.x, rect.y - depth, rect.w, rect.h + depth
 end
 
