@@ -945,11 +945,13 @@ function FaceOutTopBlock:paintTo(bb, x, y)
         if night then v = 255 - v end
         return Blitbuffer.ColorRGB32(v, v, v, 0xFF)
     end
-    -- Pages first, boards over the left and top. The stripes run
-    -- HORIZONTALLY here: a face-out book's pages stack front to back, so
-    -- their edges read as lines parallel to the cover's top.
+    -- Pages first, boards left / top / a thin sliver right, so the block
+    -- reads as pages BETWEEN the cover boards like a spine top does. The
+    -- stripes run HORIZONTALLY here: a face-out book's pages stack front to
+    -- back, so their edges read as lines parallel to the cover's top.
+    local rb = math.max(1, math.floor(board / 2))
     local sx0, sy0 = x + board, y + board
-    local sw, sh = w - board, h - board
+    local sw, sh = w - board - rb, h - board
     if sw > 2 and sh > 1 then
         local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
         bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF0))
@@ -960,8 +962,12 @@ function FaceOutTopBlock:paintTo(bb, x, y)
         end
     end
     local fill = _fillColor(self.look, night)
-    bb:paintRectRGB32(x, y, board, h, fill)      -- left board
-    bb:paintRectRGB32(x, y, w, board, fill)      -- top board
+    -- The top-left corner pixel comes off, the same chamfer the spine feet
+    -- get where they meet the plank.
+    local ch = math.max(2, Screen:scaleBySize(1))
+    bb:paintRectRGB32(x, y + ch, board, h - ch, fill)   -- left board, below the chamfer
+    bb:paintRectRGB32(x + ch, y, w - ch, board, fill)   -- top board, right of it
+    bb:paintRectRGB32(x + w - rb, y + board, rb, h - board, fill)  -- right sliver
 end
 
 -- ── The shelf plank ─────────────────────────────────────────────────────────
