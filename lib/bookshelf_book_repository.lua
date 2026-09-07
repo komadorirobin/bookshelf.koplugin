@@ -6674,9 +6674,15 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, opts)
         -- order) and rehydrate just the visible page.
         local total = #cached_paths
         local from  = (offset or 0) + 1
-        local to    = _hydrationStop(offset or 0, limit, total, total, "getBySource", opts and opts.light_only)
+        local to    = _hydrationStop(offset or 0, limit, total, total, "getBySource",
+                                     (opts and opts.light_only) or Repo.spine_light)
         local page  = {}
-        if opts and opts.light_only then
+        -- Repo.spine_light: the spine shelf renders colour + text, never a
+        -- cover, so its pages hydrate from the batched light metadata (one
+        -- SELECT) instead of a full _safeBuildBookMeta per record -- which
+        -- measured ~20ms/record on device flash, i.e. the whole of a slow
+        -- page turn on a 'library' chip.
+        if (opts and opts.light_only) or Repo.spine_light then
             -- Letter-jump path: the caller only reads sort-key fields
             -- (title / author / series) to locate a page boundary and never
             -- renders these records, so skip the heavy _safeBuildBookMeta
@@ -7075,9 +7081,11 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, opts)
     -- Light records are released for GC after this function returns.
     local total = #paths
     local from  = (offset or 0) + 1
-    local to    = _hydrationStop(offset or 0, limit, total, total, "getBySource", opts and opts.light_only)
+    local to    = _hydrationStop(offset or 0, limit, total, total, "getBySource",
+                                 (opts and opts.light_only) or Repo.spine_light)
     local page  = {}
-    if opts and opts.light_only then
+    -- See the HIT slice above: spine pages serve light records.
+    if (opts and opts.light_only) or Repo.spine_light then
         -- Letter-jump path: the sorted light candidates already carry the
         -- sort-key fields the caller needs, so hand back that slice directly
         -- rather than re-hydrating full records (covers etc.) it won't use.

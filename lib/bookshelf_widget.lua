@@ -904,6 +904,8 @@ end
 -- same no-op every non-OPDS chip tap already performs.
 function BookshelfWidget:_afterChipEdit()
     self:_markOpdsNav()
+    -- Chip settings (sort, filter, density) change what a fetch returns.
+    self._spine_fetch_cache = nil
     self:_rebuild()
     UIManager:setDirty(self, "ui")
 end
@@ -3009,8 +3011,10 @@ function BookshelfWidget:_fetchChipItems(n, want_all)
     -- inner call because the fetch dispatch below has many return points.
     if self:_isSpineMode() and not Repo.suppress_covers then
         Repo.suppress_covers = true
+        Repo.spine_light = true
         local ok, items, hint = pcall(self._fetchChipItems, self, n, want_all)
         Repo.suppress_covers = nil
+        Repo.spine_light = nil
         if not ok then error(items) end
         return items, hint
     end
@@ -5056,8 +5060,10 @@ function BookshelfWidget:_spineCachedFetch(n)
     local tip_sig = tip and (tostring(tip.kind) .. ":"
         .. tostring(tip.payload and (tip.payload.path or tip.payload.name
                     or tip.payload.query or "") or "")) or ""
-    local gen = BookshelfSettings.generation and BookshelfSettings.generation() or 0
-    local key = tostring(self.chip) .. "|" .. tip_sig .. "|" .. tostring(gen)
+    -- No settings generation in the key: the shelf's OWN cursor saves bump
+    -- it every turn, which refetched every turn (device log: 10s builds).
+    -- Chip edits invalidate explicitly; the TTL bounds everything else.
+    local key = tostring(self.chip) .. "|" .. tip_sig
     local c = self._spine_fetch_cache
     if c and c.key == key and (os.time() - c.at) <= 30 then
         return c.items, nil
