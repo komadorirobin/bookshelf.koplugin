@@ -264,6 +264,30 @@ local function _textColor(night)
     return night and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
 end
 
+-- The spine gradient: darker tint at the left edge to lighter at the right,
+-- a very slight rounding light (user request). D is the half-range; the
+-- centre column is the base colour, so the contrast clamp still holds where
+-- the text sits.
+local GRAD_D = 0.13
+-- The rotated title band's prefill must carry the same ramp; rotation maps
+-- scratch rows to screen columns, and this flag picks the direction (flip
+-- if a seam shows mirrored against the body).
+local GRAD_BAND_FLIP = false
+
+local function _rampF(col, w)
+    local t = (w and w > 1) and (col / (w - 1)) or 0.5
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    return (1 - GRAD_D) + 2 * GRAD_D * t
+end
+
+local function _tintColor(look, f, night)
+    local r = math.floor(math.min(255, look.r * f) + 0.5)
+    local g = math.floor(math.min(255, look.g * f) + 0.5)
+    local b = math.floor(math.min(255, look.b * f) + 0.5)
+    if night then r, g, b = 255 - r, 255 - g, 255 - b end
+    return Blitbuffer.ColorRGB32(r, g, b, 0xFF)
+end
+
 -- Rotated title: render horizontally into a scratch RGB32 buffer prefilled
 -- with the spine colour (so glyph anti-aliasing blends into the right
 -- ground), rotate the buffer, blit. Rotation cost is one copy of a
@@ -323,9 +347,15 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
         local sw = title_w + (atw and (seg_gap + author_w) or 0)
         local scratch = Blitbuffer.new(sw, sh, Blitbuffer.TYPE_BBRGB32)
         -- NOT scratch:fill() -- fill flattens its colour argument to
-        -- luminance via getColor8, which is exactly the washed-out band this
-        -- replaced. paintRectRGB32 keeps the true colour.
-        scratch:paintRectRGB32(0, 0, sw, sh, _fillColor(look, night))
+        -- luminance via getColor8. Each scratch ROW becomes a screen COLUMN
+        -- after rotation, so the prefill carries the body's gradient ramp
+        -- row-by-row -- a flat band would sit as a stripe on the gradient.
+        local band_off = math.floor((band_w - sh) / 2)
+        for ry = 0, sh - 1 do
+            local jx = GRAD_BAND_FLIP and (sh - 1 - ry) or ry
+            scratch:paintRectRGB32(0, ry, sw, 1,
+                _tintColor(look, _rampF(band_off + jx, band_w), night))
+        end
         tw:paintTo(scratch, 0, 0)
         tw:free()
         if atw then
@@ -523,8 +553,11 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         if edge_h > e_max then edge_h = e_max end
     end
     local body_top = top + edge_h
-    bb:paintRectRGB32(x, body_top, spine_w, spine_h - edge_h,
-                      _fillColor(e.look, night))
+    local body_h = spine_h - edge_h
+    for i = 0, spine_w - 1 do
+        bb:paintRectRGB32(x + i, body_top, 1, body_h,
+                          _tintColor(e.look, _rampF(i, spine_w), night))
+    end
     local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
     bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
@@ -541,9 +574,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local sy0 = top + lip
         local sh_edge = edge_h - lip
         if sw_edge > 2 and sh_edge > 1 then
-            bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xE8))
-            for cx = sx0 + 1, sx0 + sw_edge - 1, 2 do
-                bb:paintRectRGB32(cx, sy0, 1, sh_edge, tone(0xB0))
+            -- Stripe pitch and tones sized for e-ink: 1px alternation at
+            -- 300dpi dithers into a wash (user report), so the stripes are
+            -- DPI-scaled and the tones far enough apart to survive 16 greys.
+            local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
+            bb:paintRectRGB32(sx0, sy0, sw_edge, sh_edge, tone(0xF2))
+            for cx = sx0 + sp, sx0 + sw_edge - 1, 2 * sp do
+                local wch = math.min(sp, sx0 + sw_edge - cx)
+                bb:paintRectRGB32(cx, sy0, wch, sh_edge, tone(0x90))
             end
         end
         -- The boards, rising the lip above the paper.
@@ -626,13 +664,17 @@ function FaceOutTopBlock:paintTo(bb, x, y)
         if night then v = 255 - v end
         return Blitbuffer.ColorRGB32(v, v, v, 0xFF)
     end
-    -- Pages first, boards over the left and top.
+    -- Pages first, boards over the left and top. The stripes run
+    -- HORIZONTALLY here: a face-out book's pages stack front to back, so
+    -- their edges read as lines parallel to the cover's top.
     local sx0, sy0 = x + board, y + board
     local sw, sh = w - board, h - board
     if sw > 2 and sh > 1 then
-        bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xE8))
-        for cx = sx0 + 1, sx0 + sw - 1, 2 do
-            bb:paintRectRGB32(cx, sy0, 1, sh, tone(0xB0))
+        local sp = math.max(2, math.floor(Screen:scaleBySize(1.4)))
+        bb:paintRectRGB32(sx0, sy0, sw, sh, tone(0xF2))
+        for cy = sy0 + sp, sy0 + sh - 1, 2 * sp do
+            local hch = math.min(sp, sy0 + sh - cy)
+            bb:paintRectRGB32(sx0, cy, sw, hch, tone(0x90))
         end
     end
     local fill = _fillColor(self.look, night)
