@@ -1742,6 +1742,9 @@ function BookshelfWidget:_rebuild()
                                                      VIEW_SIZE) then
         all_items   = self._draft_items_cache.all_items
         _total_hint = self._draft_items_cache.total_hint
+    elseif self:_isSpineMode() then
+        all_items, _total_hint = self:_spineCachedFetch(MAX_FETCH)
+        self._draft_items_cache = { all_items = all_items, total_hint = _total_hint }
     else
         all_items, _total_hint = self:_fetchChipItems(MAX_FETCH)
         all_items = all_items or {}
@@ -5041,6 +5044,33 @@ function BookshelfWidget:_spineShowAuthor()
     return BookshelfSettings.nilOrTrue("spine_show_author")
 end
 
+-- _spineCachedFetch(n) — spine mode's page-turn fetch. The grid refetches
+-- the library on every turn (its freshness contract), which on device flash
+-- is most of the turn's latency. A spine page paints no covers and slices
+-- pages locally, so ONE whole-list fetch (want_all) serves every turn for
+-- 30 seconds -- invalidated by chip/drill changes and by any settings write
+-- (the store's generation covers sort and filter edits). Open-ended OPDS
+-- windows pass straight through: their windowed fetch IS the feed trigger.
+function BookshelfWidget:_spineCachedFetch(n)
+    local tip = self._drilldown_path and self._drilldown_path[#self._drilldown_path]
+    local tip_sig = tip and (tostring(tip.kind) .. ":"
+        .. tostring(tip.payload and (tip.payload.path or tip.payload.name
+                    or tip.payload.query or "") or "")) or ""
+    local gen = BookshelfSettings.generation and BookshelfSettings.generation() or 0
+    local key = tostring(self.chip) .. "|" .. tip_sig .. "|" .. tostring(gen)
+    local c = self._spine_fetch_cache
+    if c and c.key == key and (os.time() - c.at) <= 30 then
+        return c.items, nil
+    end
+    local items, hint = self:_fetchChipItems(n, true)
+    items = items or {}
+    if type(items) == "table" and items.opds_open_ended then
+        return items, hint
+    end
+    self._spine_fetch_cache = { key = key, items = items, at = os.time() }
+    return items, nil
+end
+
 -- _spineUpdateBookCounts(all_items, total_hint) — the footer's range reads
 -- in BOOKS, but the cursor counts ITEMS, and a flattened stack is one item
 -- holding many books ("1-13 of 47" over a shelf of forty spines read as
@@ -5994,7 +6024,12 @@ function BookshelfWidget:_swapShelvesInPlace()
     end
     local VIEW_SIZE = self:_viewSize()
     local MAX_FETCH = 400
-    local all_items, _total_hint = self:_fetchChipItems(MAX_FETCH)
+    local all_items, _total_hint
+    if self:_isSpineMode() then
+        all_items, _total_hint = self:_spineCachedFetch(MAX_FETCH)
+    else
+        all_items, _total_hint = self:_fetchChipItems(MAX_FETCH)
+    end
     all_items = all_items or {}
     -- Same open-ended capture as _rebuild: set before the clamp + footer.
     self._opds_open_ended = (type(all_items) == "table")
