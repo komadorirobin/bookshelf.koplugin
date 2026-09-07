@@ -610,12 +610,15 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
     bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
     -- Soften the meeting with the plank: the bottom corner pixels come off,
-    -- the hint of a chamfer where the book stands. The feet now rest on the
-    -- plank's top surface, so the nick reveals plank, not page.
-    local nick_c = _plankLit(0.5)
-    local by = body_top + body_h - hairline
-    bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
-    bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
+    -- the hint of a chamfer where the book stands. Only while it STANDS --
+    -- a lifted book floats in front of the page, and the plank-toned nicks
+    -- read as white specks cut into its corners there.
+    if not lifted then
+        local nick_c = _plankLit(0.5)
+        local by = body_top + body_h - hairline
+        bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
+        bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
+    end
     -- A lifted book leaves its shadow on the plank where it stood. The
     -- under-strip REPRODUCES the plank's banded surface (same quantisation,
     -- via plankBandT) and darkens those same bands for the shadow, so the
