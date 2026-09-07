@@ -550,7 +550,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- already fills the slot and has no headroom to rise into.
     local lifted = false
     if self.is_selected then
-        local lift = math.min(Screen:scaleBySize(10), top - y)
+        local lift = math.min(Screen:scaleBySize(13), top - y)
         if lift >= Screen:scaleBySize(3) then
             top = top - lift
             lifted = true
@@ -588,6 +588,21 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local by = body_top + body_h - hairline
     bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
     bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
+    -- A lifted book leaves its shadow on the plank where it stood: a sliver
+    -- of air directly under the feet, then a darker patch (inset a touch,
+    -- the way shadows shrink) down to the slot's foot line.
+    if lifted then
+        local foot = body_top + body_h
+        local slot_bottom = y + self.height
+        local air = math.max(2, hairline)
+        local sy = foot + air
+        if slot_bottom - sy > 1 then
+            bb:paintRectRGB32(x, foot, spine_w, air, _plankLit(0.55))
+            local ins = hairline * 2
+            bb:paintRectRGB32(x + ins, sy, math.max(1, spine_w - 2 * ins),
+                              slot_bottom - sy, _plankLit(0.2))
+        end
+    end
     if edge_h > 0 then
         local lip     = math.max(2, math.floor(edge_h * 0.22))
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
@@ -674,6 +689,21 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         _paintRotatedTitle(bb, x, cur_top, run, spine_w, e.label, tsize,
                            e.look, night, author)
     end
+end
+
+-- A lifted face-out's shadow on the plank: transparent except for the
+-- darker patch, so the plank's own shading shows around it.
+local LiftShadow = Widget:extend{}
+
+function LiftShadow:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local w, h = self.dimen.w, self.dimen.h
+    local air = math.max(2, Screen:scaleBySize(1))
+    local sh = math.min(self.shadow_h or 0, h - air)
+    if sh < 1 then return end
+    local ins = Screen:scaleBySize(2)
+    bb:paintRectRGB32(x + ins, y + air, math.max(1, w - 2 * ins), sh,
+                      _plankLit(0.2))
 end
 
 -- ── Face-out page block ─────────────────────────────────────────────────────
@@ -1083,7 +1113,7 @@ function SpineShelf.rowWidget(opts)
                     local push = inset
                     local lift = 0
                     if is_sel then
-                        lift = math.min(Screen:scaleBySize(10), push + inset)
+                        lift = math.min(Screen:scaleBySize(13), push + inset)
                     end
                     local fo_stand = stand_h - push
                     local depth = math.min(e.depth or 0,
@@ -1115,7 +1145,17 @@ function SpineShelf.rowWidget(opts)
                     end
                     stack[#stack + 1] = cover
                     if push + lift > 0 then
-                        stack[#stack + 1] = VerticalSpan:new{ width = push + lift }
+                        if lift > 0 then
+                            -- The lifted book's shadow where it stood.
+                            stack[#stack + 1] = LiftShadow:new{
+                                dimen    = Geom:new{ w = e.w, h = push + lift },
+                                shadow_h = lift,
+                            }
+                        else
+                            stack[#stack + 1] = VerticalSpan:new{
+                                width = push + lift,
+                            }
+                        end
                     end
                     -- Mark the wrapper so the selection repaint can find it
                     -- (it has no .entry; flips fall back to a full swap).
