@@ -278,6 +278,28 @@ local function _rampF(col, w)
     return (1 - GRAD_D) + 2 * GRAD_D * t
 end
 
+-- The plank's base colour: the user's "Shelf plank" pick from the Colors
+-- menu, mid grey when unset. Returned as plain rgb so the shading tints
+-- can be computed from it. Used by the plank AND by the slots' foot
+-- chamfers, which reveal the plank surface behind the book.
+local function _plankRGB()
+    local r, g, b = 0x8C, 0x8C, 0x8C
+    pcall(function()
+        local c = CoverProgress.resolvedColors().plank
+        local rgb = c and c.getColorRGB32 and c:getColorRGB32()
+        if rgb then r, g, b = rgb.r, rgb.g, rgb.b end
+    end)
+    return r, g, b
+end
+
+local function _plankLit(t)
+    local r, g, b = _plankRGB()
+    return Blitbuffer.ColorRGB32(
+        math.floor(r + (255 - r) * t + 0.5),
+        math.floor(g + (255 - g) * t + 0.5),
+        math.floor(b + (255 - b) * t + 0.5), 0xFF)
+end
+
 local function _tintColor(look, f, night)
     local r = math.floor(math.min(255, look.r * f) + 0.5)
     local g = math.floor(math.min(255, look.g * f) + 0.5)
@@ -560,12 +582,12 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
     bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
     -- Soften the meeting with the plank: the bottom corner pixels come off,
-    -- the hint of a chamfer where the book stands. Page ground in pre-invert
-    -- space, so it stays the page colour in night mode too.
-    local page = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+    -- the hint of a chamfer where the book stands. The feet now rest on the
+    -- plank's top surface, so the nick reveals plank, not page.
+    local nick_c = _plankLit(0.5)
     local by = body_top + body_h - hairline
-    bb:paintRectRGB32(x, by, hairline, hairline, page)
-    bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, page)
+    bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
+    bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
     if edge_h > 0 then
         local lip     = math.max(2, math.floor(edge_h * 0.22))
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
@@ -706,19 +728,6 @@ function SpineShelf.plankUnit(row_h)
     return b
 end
 
--- The plank's base colour: the user's "Shelf plank" pick from the Colors
--- menu, mid grey when unset. Returned as plain rgb so the shading tints
--- can be computed from it.
-local function _plankRGB()
-    local r, g, b = 0x8C, 0x8C, 0x8C
-    pcall(function()
-        local c = CoverProgress.resolvedColors().plank
-        local rgb = c and c.getColorRGB32 and c:getColorRGB32()
-        if rgb then r, g, b = rgb.r, rgb.g, rgb.b end
-    end)
-    return r, g, b
-end
-
 -- The plank in 3D (user spec): the upward-facing top surface rises TWO edge
 -- units behind the books, the front-top edge is a thin dark line, and below
 -- it the plank's front face drops one unit, darker. Shading is derived from
@@ -734,23 +743,17 @@ function ShelfPlank:paintTo(bb, x, y)
             math.floor(math.min(255, pg * f) + 0.5),
             math.floor(math.min(255, pb * f) + 0.5), 0xFF)
     end
-    local function lit(t)
-        -- lighten towards white by t
-        return Blitbuffer.ColorRGB32(
-            math.floor(pr + (255 - pr) * t + 0.5),
-            math.floor(pg + (255 - pg) * t + 0.5),
-            math.floor(pb + (255 - pb) * t + 0.5), 0xFF)
-    end
     local front_y = y + h - b
     -- Top surface, receding: darker at the far (top) edge, lighter as it
-    -- reaches the front. Painted in a few bands rather than per-pixel.
-    local surf_h = 2 * b
-    local bands = 4
+    -- reaches the front. Three units deep, so the books stand back from
+    -- the lip with surface showing in front of their feet.
+    local surf_h = 3 * b
+    local bands = 5
     for i = 0, bands - 1 do
         local by0 = front_y - surf_h + math.floor(surf_h * i / bands)
         local by1 = front_y - surf_h + math.floor(surf_h * (i + 1) / bands)
         local t = 0.25 + 0.30 * (i / (bands - 1))
-        bb:paintRectRGB32(x, by0, w, by1 - by0, lit(t))
+        bb:paintRectRGB32(x, by0, w, by1 - by0, _plankLit(t))
     end
     -- The front-top edge line.
     local line = math.max(1, Screen:scaleBySize(1))
@@ -1042,10 +1045,14 @@ function SpineShelf.rowWidget(opts)
         return OverlapGroup:new{ dimen = dimen, plank }
     end
 
-    -- Books stand with their feet on the plank's front-top edge; the
-    -- front face drops one plank unit below them, and the top surface
-    -- rises behind them (painted by ShelfPlank underneath this group).
-    local stand_h = math.max(1, opts.height - SpineShelf.plankUnit(opts.height))
+    -- Books stand ON the plank's top surface, a step back from the lip:
+    -- their feet sit one inset above the front-top edge, so a strip of
+    -- surface shows in FRONT of them, the front face drops below that,
+    -- and the rest of the surface rises behind (all painted by ShelfPlank
+    -- underneath this group).
+    local b = SpineShelf.plankUnit(opts.height)
+    local inset = math.floor(b * 0.8)
+    local stand_h = math.max(1, opts.height - b - inset)
     local group = HorizontalGroup:new{ align = "top" }
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
