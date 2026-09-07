@@ -165,9 +165,11 @@ local function _persistTable()
     return _persist
 end
 
--- flushLooks() — hand new samples to the settings store (in-memory write;
--- the plugin's action-boundary flushes persist it). Called once per plan,
--- not per sample, so a cold page costs one save.
+-- flushLooks() — hand new samples to the settings store, and schedule a
+-- REAL disk flush shortly after: an in-memory save is lost when KOReader is
+-- killed rather than exited, and every lost look is a cover decode paid
+-- again next session (the suspected '5s per page, every session' shape).
+local _flush_scheduled
 local function _flushLooks()
     if not _persist_dirty then return end
     _persist_dirty = nil
@@ -185,7 +187,46 @@ local function _flushLooks()
             return
         end
         BookshelfSettings.save(PERSIST_KEY, _persist)
+        if not _flush_scheduled and BookshelfSettings.flush then
+            _flush_scheduled = true
+            local ok_ui, UIManager = pcall(require, "ui/uimanager")
+            if ok_ui and UIManager then
+                UIManager:scheduleIn(3, function()
+                    _flush_scheduled = nil
+                    pcall(function() BookshelfSettings.flush() end)
+                end)
+            else
+                _flush_scheduled = nil
+            end
+        end
     end)
+end
+
+-- cachedProgress / persistProgress: page count and read status ride the
+-- same persisted table as the looks, so a page of spines costs its sidecar
+-- reads ONCE ever rather than once per page turn (DocSettings:open is a
+-- flash read + parse per book on device). sk marks 'status known', so a
+-- never-opened book (status legitimately nil) doesn't re-read its sidecar
+-- forever. Invalidation: dropLook (book closed / record refreshed) clears
+-- the whole entry, so the next plan re-reads once and re-persists.
+function SpineShelf.cachedProgress(fp)
+    local e = fp and _persistTable()[fp]
+    if not e then return nil, nil, false end
+    return e.p, e.s, e.sk == true
+end
+
+function SpineShelf.persistProgress(fp, pages, status)
+    if not fp then return end
+    local t = _persistTable()
+    local e = t[fp]
+    if not e then
+        e = {}
+        t[fp] = e
+    end
+    if pages then e.p = pages end
+    e.s = status or nil
+    e.sk = true
+    _persist_dirty = true
 end
 
 local function _sampleAverage(bb)
@@ -273,6 +314,7 @@ function SpineShelf.bookLook(book)
             end
         end
         if bb then
+            SpineShelf._samples = (SpineShelf._samples or 0) + 1
             local r, g, b = _sampleAverage(bb)
             local aspect
             local w, h = bb:getWidth(), bb:getHeight()
@@ -527,6 +569,11 @@ local function _paintLevelText(bb, x, y, box_w, text, face, night)
 end
 
 local function _statusGlyph(book)
+    if book and book._spine_status_checked and book.status == nil then
+        -- Checked at plan time and genuinely never opened: nothing for
+        -- decide() to say, and its lazy fallback would re-open the sidecar.
+        return nil
+    end
     local d
     local ok = pcall(function() d = CoverProgress.decide(book) end)
     if not ok or type(d) ~= "table" then return nil end
@@ -954,7 +1001,10 @@ end
 -- file and no subfolders -- a wrapper folder (one Calibre-style directory
 -- per book), whose spine should read as its book, not as its directory
 -- name. Shallow scan, early exit on the second book or any subfolder.
+local _folder_single_cache = {}
 local function _folderIsSingleBook(path)
+    local hit = _folder_single_cache[path]
+    if hit ~= nil then return hit end
     local ok, result = pcall(function()
         local lfs = require("libs/libkoreader-lfs")
         local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
@@ -975,7 +1025,9 @@ local function _folderIsSingleBook(path)
         end
         return count == 1
     end)
-    return ok and result == true
+    local single = ok and result == true
+    _folder_single_cache[path] = single
+    return single
 end
 
 -- ── Plan: which books fit which rows, and how wide each stands ──────────────
@@ -1127,16 +1179,28 @@ function SpineShelf.plan(items, opts)
         -- paint time anyway for the glyphs, through the same TTL cache,
         -- so this backfill costs the page ONE sidecar read per book.
         local pages = src.page_count
-        if not pages and src.filepath and ok_repo and Repo and Repo.readProgress then
-            local _tp = _gettime()
-            pcall(function()
-                local _pct, _status, _rating, pc = Repo.readProgress(src.filepath)
-                if pc then
-                    pages = pc
-                    src.page_count = pc
-                end
-            end)
-            _t_pages = _t_pages + (_gettime() - _tp)
+        do
+            local pp, ps, known = SpineShelf.cachedProgress(src.filepath)
+            pages = pages or pp
+            if src.status == nil and ps then src.status = ps end
+            if (not pages or not known) and src.filepath
+                    and ok_repo and Repo and Repo.readProgress then
+                local _tp = _gettime()
+                pcall(function()
+                    local _pct, st, _rating, pc = Repo.readProgress(src.filepath)
+                    if pc then
+                        pages = pc
+                        src.page_count = pc
+                    end
+                    if src.status == nil then src.status = st end
+                    SpineShelf.persistProgress(src.filepath, pc, st)
+                end)
+                _t_pages = _t_pages + (_gettime() - _tp)
+            end
+            -- The glyph resolver's lazy fallback opens the sidecar whenever
+            -- status is nil; a checked record with no status is a book that
+            -- has genuinely never been opened.
+            src._spine_status_checked = true
         end
         local w_dp, w, depth
         if face_out then
@@ -1244,6 +1308,14 @@ function SpineShelf.plan(items, opts)
         if shown < 1 then shown = 1 end
     end
     _flushLooks()
+    SpineShelf._last_plan = {
+        total_ms   = (_gettime() - _t0) * 1000,
+        entries    = #entries,
+        hydrate_ms = _t_hydrate * 1000,
+        hydrated   = _n_hydrated,
+        look_ms    = _t_look * 1000,
+        pages_ms   = _t_pages * 1000,
+    }
     logger.dbg(string.format(
         "[bookshelf perf] spine plan TOTAL=%.0fms entries=%d hydrate=%.0fms/%d look=%.0fms pages=%.0fms fav=%.0fms",
         (_gettime() - _t0) * 1000, #entries, _t_hydrate * 1000, _n_hydrated,
@@ -1383,8 +1455,9 @@ end
 -- (cache misses) a paint pass cost. Logged by the widget's perf lines.
 function SpineShelf.drainRenderStats()
     local n, ms = SpineShelf._renders or 0, SpineShelf._render_ms or 0
-    SpineShelf._renders, SpineShelf._render_ms = 0, 0
-    return n, ms
+    local samples = SpineShelf._samples or 0
+    SpineShelf._renders, SpineShelf._render_ms, SpineShelf._samples = 0, 0, 0
+    return n, ms, samples
 end
 
 SpineShelf._SpineBookSlot = SpineBookSlot  -- for tests

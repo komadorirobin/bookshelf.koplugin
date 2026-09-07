@@ -6175,6 +6175,29 @@ function BookshelfWidget:_swapShelvesInPlace()
     logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d items=%d chip=%s",
         (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
         self._total_items or 0, self.chip))
+    if self:_isSpineMode() then
+        -- Always-on (info level) turn summary, so a slow device page turn
+        -- is diagnosable from a stock crash.log without enabling debug: the
+        -- build half now, the paint half (renders + cover samples) drained
+        -- on the tick after the repaint.
+        local swap_ms = (_gettime() - _perf_t0) * 1000
+        local ok_ss, SS = pcall(require, "lib/bookshelf_spine_shelf")
+        local plan = ok_ss and SS and SS._last_plan or nil
+        logger.info(string.format(
+            "[bookshelf perf] spine turn: build=%.0fms (plan=%.0f hydrate=%.0f/%d pages=%.0f look=%.0f) chip=%s",
+            swap_ms, plan and plan.total_ms or -1,
+            plan and plan.hydrate_ms or -1, plan and plan.hydrated or -1,
+            plan and plan.pages_ms or -1, plan and plan.look_ms or -1,
+            tostring(self.chip)))
+        UIManager:nextTick(function()
+            if ok_ss and SS and SS.drainRenderStats then
+                local n, ms, samples = SS.drainRenderStats()
+                logger.info(string.format(
+                    "[bookshelf perf] spine turn paint: renders=%d %.0fms samples=%d",
+                    n, ms, samples))
+            end
+        end)
+    end
     -- Scope the refresh to the shelf area (top of row 1 down to the screen
     -- bottom, covering the rows + pagination footer). The swap only changed
     -- the shelves and footer; the hero and chip strip above are untouched, so
