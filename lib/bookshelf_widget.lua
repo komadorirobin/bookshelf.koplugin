@@ -6763,9 +6763,6 @@ function BookshelfWidget:_refreshSpineSlotInPlace(fp)
                     slot.entry.book = fresh
                     SpineShelf.dropLook(fp)
                     slot.entry.look = SpineShelf.bookLook(fresh)
-                    if slot.entry.cover_ok == false then
-                        slot.entry.cover_ok = nil  -- let face-out retry
-                    end
                     -- The slot paints from an offscreen cache; a fresh
                     -- record must force a re-render, not a stale blit.
                     if slot.invalidate then slot:invalidate() end
@@ -10885,6 +10882,11 @@ function BookshelfWidget:_armPendingPreload()
 end
 
 function BookshelfWidget:_schedulePreload(direction)
+    -- Spine mode: a page holds ~a hundred books whose covers the shelf never
+    -- paints (a spine is colour and text; the few face-out favourites decode
+    -- on demand), and the warm loop's decode chunks were exactly what made
+    -- the first tap after a chip switch feel dead. Nothing worth warming.
+    if self:_isSpineMode() then return end
     self:_cancelPreload()
     self:_applyCoverCacheBudget()
     self._preload_dir = direction

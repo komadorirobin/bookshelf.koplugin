@@ -507,16 +507,6 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         end
     end
 
-    if e.face_out and e.cover_ok ~= false then
-        if self:_paintFaceOut(bb, x, top, spine_w, spine_h, night) then
-            self:_paintCoverBadges(bb, x, top, spine_w, spine_h, night)
-            return
-        end
-        -- Cover fetch failed: fall through to a plain spine this paint,
-        -- and remember so the next paint doesn't retry the decode.
-        e.cover_ok = false
-    end
-
     -- ── The spine proper ────────────────────────────────────────────────
     local hairline = Screen:scaleBySize(1)
     if hairline < 1 then hairline = 1 end
@@ -539,7 +529,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
     bb:paintBorder(x, body_top, spine_w, spine_h - edge_h, bw_px, border_c)
     if edge_h > 0 then
-        local lip     = math.max(2, math.floor(edge_h * 0.3))
+        local lip     = math.max(2, math.floor(edge_h * 0.22))
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
                                              math.floor(spine_w * 0.1)))
         local function tone(v)
@@ -615,70 +605,6 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         _paintRotatedTitle(bb, x, cur_top, run, spine_w, e.label, tsize,
                            e.look, night, author)
     end
-end
-
--- Face-out favourite: the actual front cover at spine height, with the same
--- hairline the cover grid gives it. Returns false when no cover could be
--- painted (caller falls back to a spine).
-function SpineBookSlot:_paintFaceOut(bb, x, top, w, h, night)
-    local painted = false
-    pcall(function()
-        local book = self.book
-        local src, owned = nil, false
-        if book.cover_bb then
-            src = book.cover_bb
-        else
-            local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
-            if ok_repo and Repo and Repo.getCoverBB then
-                src = Repo.getCoverBB(book.filepath)
-                owned = src ~= nil
-            end
-        end
-        if not src then return end
-        local scaled = src:scale(w, h)
-        if owned and src.free then src:free() end
-        if not scaled then return end
-        -- Night inverts the framebuffer at refresh; a raw cover blit would
-        -- display as a negative. Pre-invert so it comes out as itself --
-        -- the same treatment the spine fills get in _fillColor.
-        if night and scaled.invertRect then
-            scaled:invertRect(0, 0, w, h)
-        end
-        bb:blitFrom(scaled, x, top, 0, 0, w, h)
-        if scaled.free then scaled:free() end
-        local hairline = Screen:scaleBySize(1)
-        if hairline < 1 then hairline = 1 end
-        local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-        -- The lift in paintTo already moved `top`; the hairline stays a
-        -- hairline so a lifted cover reads as raised, not outlined.
-        bb:paintBorder(x, top, w, h, hairline, border_c)
-        painted = true
-    end)
-    return painted
-end
-
--- Status glyph on a face-out cover, badge style, bottom-left -- the same
--- reading the cover grid gives it, simplified to the spike's needs.
-function SpineBookSlot:_paintCoverBadges(bb, x, top, w, h, night)
-    local glyph = _statusGlyph(self.book)
-    if not glyph then return end
-    pcall(function()
-        local gsize = 12
-        local face = BFont:getFace("symbols", gsize)
-        local tw = TextWidget:new{
-            text = glyph, face = face,
-            fgcolor = _textColor(night), padding = 0,
-        }
-        local sz = tw:getSize()
-        local pad = Screen:scaleBySize(3)
-        local bx = x + pad
-        local by = top + h - sz.h - pad
-        local bg = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-        bb:paintRect(bx - math.floor(pad / 2), by - math.floor(pad / 2),
-                     sz.w + pad, sz.h + pad, bg)
-        tw:paintTo(bb, bx, by)
-        tw:free()
-    end)
 end
 
 -- ── The shelf plank ─────────────────────────────────────────────────────────
@@ -976,16 +902,51 @@ function SpineShelf.rowWidget(opts)
                     width = e.gap_before or opts.gap,
                 }
             end
-            group[#group + 1] = SpineBookSlot:new{
-                book        = e.book,
-                entry       = e,
-                width       = e.w,
-                height      = stand_h,
-                callbacks   = opts.callbacks,
-                show_author = opts.show_author,
-                is_selected = opts.selected_filepath ~= nil
-                              and e.book.filepath == opts.selected_filepath,
-            }
+            local is_sel = opts.selected_filepath ~= nil
+                           and e.book.filepath == opts.selected_filepath
+            local tile
+            if e.face_out then
+                -- A face-out favourite IS a cover-grid book: reuse the cover
+                -- tile wholesale (user ruling) so it carries every glyph,
+                -- badge and pill the grid gives it -- bottom-aligned so it
+                -- stands on the plank with its neighbours.
+                local ok_sw, CoverTile = pcall(require, "lib/bookshelf_spine_widget")
+                if ok_sw and CoverTile then
+                    local VerticalGroup = require("ui/widget/verticalgroup")
+                    local VerticalSpan  = require("ui/widget/verticalspan")
+                    local cover_h = math.min(e.h, stand_h)
+                    local cover = CoverTile:new{
+                        book          = e.book,
+                        width         = e.w,
+                        height        = cover_h,
+                        on_tap        = opts.callbacks and opts.callbacks.on_book_tap,
+                        on_hold       = opts.callbacks and opts.callbacks.on_book_hold,
+                        on_double_tap = opts.callbacks and opts.callbacks.on_book_open,
+                        is_selected   = is_sel,
+                        show_progress = true,
+                    }
+                    local stack = VerticalGroup:new{ align = "center" }
+                    if cover_h < stand_h then
+                        stack[#stack + 1] = VerticalSpan:new{
+                            width = stand_h - cover_h,
+                        }
+                    end
+                    stack[#stack + 1] = cover
+                    tile = stack
+                end
+            end
+            if not tile then
+                tile = SpineBookSlot:new{
+                    book        = e.book,
+                    entry       = e,
+                    width       = e.w,
+                    height      = stand_h,
+                    callbacks   = opts.callbacks,
+                    show_author = opts.show_author,
+                    is_selected = is_sel,
+                }
+            end
+            group[#group + 1] = tile
         end
     end
     local result = OverlapGroup:new{ dimen = dimen, plank, group }
