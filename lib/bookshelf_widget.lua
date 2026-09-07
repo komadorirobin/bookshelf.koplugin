@@ -4936,6 +4936,17 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
     -- Book-unit count for the footer range: plan entries ARE books.
     self._spine_books_shown = plan.rows[#plan.rows]
                               and plan.rows[#plan.rows].last or 0
+    -- The hero's swipe-cycle steps through what the page VISIBLY shows,
+    -- which in spine mode is flattened members, not the item window --
+    -- collect their records (books only; folders have no filepath and
+    -- cannot be previewed).
+    local page_books = {}
+    for i = 1, self._spine_books_shown do
+        local en = plan.entries[i]
+        local fp = en and en.book and en.book.filepath
+        if fp then page_books[#page_books + 1] = en.book end
+    end
+    self._spine_page_books = page_books
     -- Page history is per chip: stepping back retraces the pages the reader
     -- actually saw. A chip switch invalidates it.
     if self._spine_hist_chip ~= self.chip then
@@ -9864,7 +9875,12 @@ function BookshelfWidget:_nShelves()
             local available = self.height - PAD - strip_minimum
                             - Size.padding.large - chip_h - PAD - footer_h
             local n = math.floor(available / (shelf_h_c + PAD))
-            return math.max(base, math.min(n, 8))
+            -- Expanding must always reveal at least one more row than
+            -- collapsed (the cover grid's guarantee, and what the swipe-up
+            -- gesture visibly promises): when the collapsed-height fill
+            -- doesn't gain a row -- one tall row on a rotated screen --
+            -- the rows squash to make room instead.
+            return math.max(base + 1, math.min(n, 8))
         end
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
@@ -10261,15 +10277,26 @@ end
 -- discarded and the swipe landed on the page's first or last book every time
 -- rather than stepping (#325).
 function BookshelfWidget:_previewNeighbourBook(direction)
-    local all_items, total_hint = self:_fetchChipItems(400)
-    all_items = all_items or {}
-    local view  = self:_viewSize()
-    local first = total_hint and 1 or (self._cursor or 1)
-    local last  = math.min(first + view - 1, #all_items)
-    local books = {}
-    for i = first, last do
-        local item = all_items[i]
-        if item and item.filepath then books[#books + 1] = item end
+    local books
+    if self:_isSpineMode() and self._spine_page_books
+            and #self._spine_page_books > 0 then
+        -- Spine pages show FLATTENED stack members; the item window below
+        -- skips groups entirely (no filepath), so the previewed member was
+        -- never found and 'next' no-opped on the page anchor while 'prev'
+        -- wrapped to the last book. The row builder stashed exactly what
+        -- the page shows.
+        books = self._spine_page_books
+    else
+        local all_items, total_hint = self:_fetchChipItems(400)
+        all_items = all_items or {}
+        local view  = self:_viewSize()
+        local first = total_hint and 1 or (self._cursor or 1)
+        local last  = math.min(first + view - 1, #all_items)
+        books = {}
+        for i = first, last do
+            local item = all_items[i]
+            if item and item.filepath then books[#books + 1] = item end
+        end
     end
     if #books == 0 then return end
     local n = #books
