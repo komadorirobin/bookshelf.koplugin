@@ -845,6 +845,11 @@ function Repo.buildBookMeta(filepath, opts)
         return nil
     end
     local want_cover = not opts or opts.want_cover ~= false
+    -- Repo.suppress_covers: a fetch-scoped override the spine shelf sets
+    -- around its page fetches -- a spine paints no cover, so attaching one
+    -- to every record on the page is pure disk I/O (measured: ~200 cover
+    -- reads per page turn on a 192-book chip).
+    if want_cover and Repo.suppress_covers then want_cover = false end
     -- Last-chance cover gate. Callers that know better already pass
     -- want_cover=false when ScaledCoverCache holds the book (opts.lazy_cover
     -- on the paged fetchers), but not every route into buildBookMeta does,

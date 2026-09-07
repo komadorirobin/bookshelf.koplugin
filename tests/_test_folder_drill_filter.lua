@@ -55,6 +55,10 @@ local function drill(opts)
         chip            = "library",
         _cursor         = opts.cursor or 1,
         _viewSize       = function() return opts.view or 8 end,
+        -- The fetch suppresses cover attachment for spine chips before its
+        -- dispatch; these tests pin the folder-drill filter plumbing, so
+        -- the stub answers covers.
+        _isSpineMode    = function() return false end,
         _drilldown_path = { { kind = "folder", payload = { path = opts.path or "/books/scifi" } } },
     }
     local f = compile("local self, n, want_all = ... ; " .. body, env)

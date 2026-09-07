@@ -2104,6 +2104,8 @@ function BookshelfWidget:_rebuild()
     local _perf_t3 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: shelves=%.0fms",
         (_perf_t3 - _perf_t2) * 1000))
+    -- (spine slot renders happen at PAINT time, not build time; their
+    -- counters are drained by the paint-side logs below)
     -- Footer row (chev nav + optional selection bucket/✕) is built
     -- BELOW after the inner_vgroup is composed — it's anchored at the
     -- screen bottom in the outer OverlapGroup, not flowed in
@@ -2132,6 +2134,20 @@ function BookshelfWidget:_rebuild()
         slot_w = math.floor(shelf_h / 1.5)
     end
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_cover_w, hero_cover_h)
+    if self:_isSpineMode() then
+        -- The slot renders run inside the NEXT paint pass; drain their
+        -- counters right after it so the cost is attributable.
+        UIManager:nextTick(function()
+            local ok_ss, SS = pcall(require, "lib/bookshelf_spine_shelf")
+            if ok_ss and SS and SS.drainRenderStats then
+                local n, ms = SS.drainRenderStats()
+                if n > 0 then
+                    logger.dbg(string.format(
+                        "[bookshelf perf] spine paint: renders=%d %.0fms", n, ms))
+                end
+            end
+        end)
+    end
 
     -- ── Assemble ──────────────────────────────────────────────────────────────
     -- Page background = pure white (e-ink unprinted paper). The defensive
@@ -2984,6 +3000,17 @@ local SELECT_ALL_LIMIT = 5000
 -- Home reported 59 of 246 books). Everything else already returns the full
 -- list, so this only widens the window.
 function BookshelfWidget:_fetchChipItems(n, want_all)
+    -- Spine mode paints no covers on the shelf (spine looks persist; the
+    -- few face-out favourites decode on demand at paint), so the whole
+    -- fetch runs with cover attachment suppressed. Flag-scoped around the
+    -- inner call because the fetch dispatch below has many return points.
+    if self:_isSpineMode() and not Repo.suppress_covers then
+        Repo.suppress_covers = true
+        local ok, items, hint = pcall(self._fetchChipItems, self, n, want_all)
+        Repo.suppress_covers = nil
+        if not ok then error(items) end
+        return items, hint
+    end
     local fetch_opts = { lazy_cover = true }
     -- Drill-down: when the path tip is a series, show that series' books
     -- as flat spine widgets. Rebuild from filepaths so each render gets
@@ -6548,6 +6575,7 @@ end
 -- selection is flipping two flags and dirtying the union of their rects
 -- (padded upward for the lift headroom) -- no widget rebuilding at all.
 function BookshelfWidget:_repaintSpineSelection(old_fp, new_fp)
+    local _perf_t0 = _gettime()
     local d = self._shelf_dims
     if not d or not self._inner_vgroup then return end
     local union
@@ -6597,6 +6625,9 @@ function BookshelfWidget:_repaintSpineSelection(old_fp, new_fp)
         union.y = math.max(0, union.y - pad)
         union.h = union.h + pad
         UIManager:setDirty(self, function() return "ui", union, self.dithered end)
+        logger.dbg(string.format(
+            "[bookshelf perf] spine selection: flip=%d %.0fms region=%dx%d",
+            changed, (_gettime() - _perf_t0) * 1000, union.w, union.h))
     else
         -- Neither book is on this page (e.g. preview restored from another
         -- page): nothing to flip, and nothing needs painting.

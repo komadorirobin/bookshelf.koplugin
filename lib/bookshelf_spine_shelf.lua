@@ -31,6 +31,19 @@ local SpineLayout    = require("lib/bookshelf_spine_layout")
 
 local SpineShelf = {}
 
+local _gettime
+do
+    local ok, TimeVal = pcall(require, "ui/timeval")
+    if ok and TimeVal and TimeVal.now then
+        _gettime = function()
+            local tv = TimeVal:now()
+            return tv.sec + tv.usec / 1e6
+        end
+    else
+        _gettime = os.clock
+    end
+end
+
 -- Gap between neighbouring spines, dp. Books on a real shelf touch; a hair
 -- of daylight keeps the hairline borders from doubling up.
 SpineShelf.BOOK_GAP_DP = 2
@@ -63,6 +76,73 @@ end
 
 local _look_cache, _look_count = {}, 0
 local LOOK_CACHE_MAX = 600
+
+-- Hydrated stub answers (title / series number / pages / author), session
+-- lifetime, keyed by filepath: group-member stubs are rebuilt on every
+-- fetch, so per-record flags cannot carry this across page turns.
+local _hydrate_cache = {}
+
+-- Rendered-slot pixel cache, MODULE level: every page turn builds fresh
+-- slot widgets, so a per-instance cache re-rendered the whole page (a
+-- rotated-title TextWidget per book) on every turn. Keyed by book +
+-- geometry + state; FIFO-evicted at ~3 pages' worth. The cache owns the
+-- buffers; slots look up per paint and never free them.
+local _render_cache, _render_order = {}, {}
+local _render_bytes = 0
+-- Byte budget, not a count: a count cap that fits a greyscale device
+-- would balloon 4x on an RGB32 screen. ~5MB holds roughly three pages of
+-- slots on a PW5.
+local RENDER_CACHE_MAX_BYTES = 5 * 1024 * 1024
+
+local function _bbBytes(bbuf)
+    local ok, n = pcall(function()
+        local bpp = 1
+        local t = bbuf.getType and bbuf:getType()
+        if t == Blitbuffer.TYPE_BBRGB32 then bpp = 4
+        elseif t == Blitbuffer.TYPE_BBRGB24 then bpp = 3
+        elseif t == Blitbuffer.TYPE_BBRGB16 or t == Blitbuffer.TYPE_BB8A then bpp = 2
+        end
+        return bbuf:getWidth() * bbuf:getHeight() * bpp
+    end)
+    return ok and n or 0
+end
+
+local function _renderCacheDrop(key)
+    local old_bb = _render_cache[key]
+    if not old_bb then return end
+    _render_cache[key] = nil
+    _render_bytes = _render_bytes - _bbBytes(old_bb)
+    pcall(function() old_bb:free() end)
+end
+
+local function _renderCachePut(key, bbuf)
+    if _render_cache[key] then
+        _renderCacheDrop(key)
+        _render_order[#_render_order + 1] = key
+    else
+        _render_order[#_render_order + 1] = key
+    end
+    _render_cache[key] = bbuf
+    _render_bytes = _render_bytes + _bbBytes(bbuf)
+    while _render_bytes > RENDER_CACHE_MAX_BYTES and #_render_order > 1 do
+        local old_key = table.remove(_render_order, 1)
+        _renderCacheDrop(old_key)
+    end
+end
+
+-- invalidateRender(fp) — drop every cached render of one book (record
+-- refresh, cover landing). fp is embedded at the front of each key.
+function SpineShelf.invalidateRender(fp)
+    if not fp then return end
+    local prefix = fp .. "|"
+    for i = #_render_order, 1, -1 do
+        local key = _render_order[i]
+        if key:sub(1, #prefix) == prefix then
+            table.remove(_render_order, i)
+            _renderCacheDrop(key)
+        end
+    end
+end
 
 -- Sampled looks persist across launches: sampling means a full BIM cover
 -- decode per book, and a Kindle page of 50+ spines would otherwise pay
@@ -524,13 +604,24 @@ end
 -- book) -- selection taps felt slow because ~30 titles re-rendered per tap.
 -- The cache re-renders only when the slot's state key changes; book/look
 -- refreshes go through invalidate().
+function SpineBookSlot:_renderKey(night)
+    local e = self.entry
+    local fp = (self.book and self.book.filepath) or self.entry.label or "?"
+    return table.concat({
+        fp, self.width, self.height, e.w, e.h,
+        self.is_selected and "s" or "-",
+        night and "n" or "d",
+        self.show_author == false and "A" or "a",
+    }, "|")
+end
+
 function SpineBookSlot:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local night = _nightMode()
-    local key = (self.is_selected and "s" or "-") .. (night and "n" or "d")
-    if not self._cache_bb or self._cache_key ~= key then
-        if self._cache_bb then pcall(function() self._cache_bb:free() end) end
-        self._cache_bb = nil
+    local key = self:_renderKey(night)
+    local cached = _render_cache[key]
+    if not cached then
+        local _tr = _gettime()
         local ok = pcall(function()
             -- Match the screen's buffer type: greyscale devices cache at
             -- 1 byte/px and flatten colour exactly once, colour screens
@@ -543,24 +634,30 @@ function SpineBookSlot:paintTo(bb, x, y)
             c:paintRectRGB32(0, 0, self.width, self.height,
                              Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
             self:_renderInto(c, night)
-            self._cache_bb, self._cache_key = c, key
+            _renderCachePut(key, c)
+            cached = c
         end)
-        if not ok or not self._cache_bb then
+        if not ok or not cached then
             -- Render straight to the target rather than showing nothing.
             self:_renderIntoAt(bb, x, y, night)
             return
         end
+        SpineShelf._renders = (SpineShelf._renders or 0) + 1
+        SpineShelf._render_ms = (SpineShelf._render_ms or 0)
+                                + (_gettime() - _tr) * 1000
     end
-    bb:blitFrom(self._cache_bb, x, y, 0, 0, self.width, self.height)
+    bb:blitFrom(cached, x, y, 0, 0, self.width, self.height)
 end
 
 function SpineBookSlot:invalidate()
-    if self._cache_bb then pcall(function() self._cache_bb:free() end) end
-    self._cache_bb, self._cache_key = nil, nil
+    -- The pixel cache is module-level and keyed by book; drop every render
+    -- of this one (state variants included).
+    SpineShelf.invalidateRender(self.book and self.book.filepath)
 end
 
 function SpineBookSlot:free()
-    self:invalidate()
+    -- Nothing owned per instance: renders belong to the module cache and
+    -- outlive the widget precisely so page turns can reuse them.
 end
 
 function SpineBookSlot:_renderInto(bb, night)
@@ -909,6 +1006,8 @@ function SpineShelf.plan(items, opts)
     -- spine, and the run gets a wider gap on each side so the grouping
     -- still reads on the shelf. Groups that only know their first book
     -- (folders) stay as one drillable spine.
+    local _t0 = _gettime()
+    local _t_hydrate, _t_look, _t_pages, _t_fav, _n_hydrated = 0, 0, 0, 0, 0
     local flat, n_items = {}, 0
     for i = 1, #items do
         local it = items[i]
@@ -956,31 +1055,53 @@ function SpineShelf.plan(items, opts)
         -- the group cache, so this costs one metadata read per book ever.
         if f.in_group and bk.filepath and not bk._spine_meta_checked then
             bk._spine_meta_checked = true
-            pcall(function()
-                if not (ok_repo and Repo and Repo.buildBookMeta) then return end
-                local full = Repo.buildBookMeta(bk.filepath, { want_cover = false })
-                if not full then return end
-                if full.display_title and full.display_title ~= "" then
-                    bk.display_title = full.display_title
+            local _th = _gettime()
+            -- The stubs are REBUILT on every fetch (the group cache holds
+            -- shapes, not records), so a flag on the stub only dedupes
+            -- within one plan. The resolver's answers live in a module map
+            -- keyed by filepath -- measured before it existed: 76 full
+            -- metadata builds per page turn, every page turn.
+            local hyd = _hydrate_cache[bk.filepath]
+            if not hyd then
+                _n_hydrated = _n_hydrated + 1
+                pcall(function()
+                    if not (ok_repo and Repo and Repo.buildBookMeta) then return end
+                    local full = Repo.buildBookMeta(bk.filepath, { want_cover = false })
+                    if not full then return end
+                    hyd = {
+                        display_title = full.display_title,
+                        title         = full.title,
+                        series_num    = full.series_num
+                                        and tostring(full.series_num) or nil,
+                        page_count    = full.page_count,
+                        cover_sizetag = full.cover_sizetag,
+                        author        = full.author,
+                    }
+                    _hydrate_cache[bk.filepath] = hyd
+                end)
+            end
+            if hyd then
+                if hyd.display_title and hyd.display_title ~= "" then
+                    bk.display_title = hyd.display_title
                 end
-                if full.title and full.title ~= "" then
-                    bk.title = full.title
+                if hyd.title and hyd.title ~= "" then
+                    bk.title = hyd.title
                 end
                 if (not bk.series_num or tostring(bk.series_num) == "")
-                        and full.series_num
-                        and tostring(full.series_num) ~= "" then
-                    bk.series_num = tostring(full.series_num)
+                        and hyd.series_num and hyd.series_num ~= "" then
+                    bk.series_num = hyd.series_num
                 end
-                if not bk.page_count and full.page_count then
-                    bk.page_count = full.page_count
+                if not bk.page_count and hyd.page_count then
+                    bk.page_count = hyd.page_count
                 end
-                if not bk.cover_sizetag and full.cover_sizetag then
-                    bk.cover_sizetag = full.cover_sizetag
+                if not bk.cover_sizetag and hyd.cover_sizetag then
+                    bk.cover_sizetag = hyd.cover_sizetag
                 end
-                if (not bk.author or bk.author == "") and full.author then
-                    bk.author = full.author
+                if (not bk.author or bk.author == "") and hyd.author then
+                    bk.author = hyd.author
                 end
-            end)
+            end
+            _t_hydrate = _t_hydrate + (_gettime() - _th)
         end
         local label = src.display_title or src.title or src.label
                       or bk.label or src.series_name or src.text or src.name
@@ -992,10 +1113,14 @@ function SpineShelf.plan(items, opts)
                     or src.filepath:match("([^/]+)$") or ""
         end
         label = label or ""
+        local _tl = _gettime()
         local look = SpineShelf.bookLook(rep)
+        _t_look = _t_look + (_gettime() - _tl)
         local aspect = look.aspect
         local h = SpineLayout.spineHeight(budget, aspect)
+        local _tf = _gettime()
         local fav = bk.filepath ~= nil and _isFavourite(bk.filepath)
+        _t_fav = _t_fav + (_gettime() - _tf)
         local face_out = (opts.face_out ~= false) and fav
         -- The light record path leaves page_count nil for reflowables;
         -- the sidecar knows better and CoverProgress.decide reads it at
@@ -1003,6 +1128,7 @@ function SpineShelf.plan(items, opts)
         -- so this backfill costs the page ONE sidecar read per book.
         local pages = src.page_count
         if not pages and src.filepath and ok_repo and Repo and Repo.readProgress then
+            local _tp = _gettime()
             pcall(function()
                 local _pct, _status, _rating, pc = Repo.readProgress(src.filepath)
                 if pc then
@@ -1010,6 +1136,7 @@ function SpineShelf.plan(items, opts)
                     src.page_count = pc
                 end
             end)
+            _t_pages = _t_pages + (_gettime() - _tp)
         end
         local w_dp, w, depth
         if face_out then
@@ -1117,6 +1244,10 @@ function SpineShelf.plan(items, opts)
         if shown < 1 then shown = 1 end
     end
     _flushLooks()
+    logger.dbg(string.format(
+        "[bookshelf perf] spine plan TOTAL=%.0fms entries=%d hydrate=%.0fms/%d look=%.0fms pages=%.0fms fav=%.0fms",
+        (_gettime() - _t0) * 1000, #entries, _t_hydrate * 1000, _n_hydrated,
+        _t_look * 1000, _t_pages * 1000, _t_fav * 1000))
     return { entries = entries, rows = rows, shown = shown }
 end
 
@@ -1246,6 +1377,14 @@ function SpineShelf.rowWidget(opts)
     end
     local result = OverlapGroup:new{ dimen = dimen, plank, group }
     return result
+end
+
+-- drainRenderStats() -> n, ms since the last drain: how many slot renders
+-- (cache misses) a paint pass cost. Logged by the widget's perf lines.
+function SpineShelf.drainRenderStats()
+    local n, ms = SpineShelf._renders or 0, SpineShelf._render_ms or 0
+    SpineShelf._renders, SpineShelf._render_ms = 0, 0
+    return n, ms
 end
 
 SpineShelf._SpineBookSlot = SpineBookSlot  -- for tests
