@@ -1005,6 +1005,18 @@ function SpineWidget:_renderShadowedCard(inner)
         }
     end
 
+    -- glyphs_top_left (spine shelf face-outs): both status glyphs move to
+    -- the top-left corner the favourite heart vacated there. On the shelf
+    -- the bottom edge meets the plank, so the usual below-card dangle
+    -- disappeared behind the lift shadow / plank bands (user report); at
+    -- the top edge the bookmark drapes over the book's pages instead --
+    -- the same overhang share the favourite star uses. The relocated
+    -- glyph must paint IN FRONT of the artwork (its on-card body carries
+    -- the message now, not a dangle), so the in-progress branch defers
+    -- its insertion until after `inner`.
+    local glyph_top_left = self.glyphs_top_left
+    local deferred_glyph
+
     -- 2. In-progress glyph (IN FRONT of inner): anchored so its top is
     --    GLYPH_TOP_LIFT * glyph_h above the card bottom (i.e. the entire
     --    glyph sits inside the cover, bottom at card_h - 0.35*glyph_h).
@@ -1046,15 +1058,32 @@ function SpineWidget:_renderShadowedCard(inner)
             if list_badges then
                 y_offset = y_offset - self:_listBadgeClearance(widget_h)
             end
-            local glyph_frame = FrameContainer:new{
-                bordersize   = 0,
-                padding      = 0,
-                padding_top  = y_offset - halo_w,
-                padding_left = _glyphLeftInset() - halo_w,
-                outlined,
-            }
-            children[#children + 1] = glyph_frame
-            -- Overhangs the card bottom: the opening effect repaints it on
+            local glyph_frame
+            if glyph_top_left then
+                -- Top-left corner, star anchoring: 35% of the unscaled
+                -- footprint above the top edge, the rest draped onto the
+                -- artwork. Deferred so it paints over `inner`.
+                glyph_frame = FrameContainer:new{
+                    bordersize = 0,
+                    padding    = 0,
+                    outlined,
+                }
+                glyph_frame.overlap_offset = {
+                    _glyphLeftInset() - halo_w,
+                    -math.floor(base_widget_h * 0.35 + 0.5) - halo_w,
+                }
+                deferred_glyph = glyph_frame
+            else
+                glyph_frame = FrameContainer:new{
+                    bordersize   = 0,
+                    padding      = 0,
+                    padding_top  = y_offset - halo_w,
+                    padding_left = _glyphLeftInset() - halo_w,
+                    outlined,
+                }
+                children[#children + 1] = glyph_frame
+            end
+            -- Overhangs the card edge: the opening effect repaints it on
             -- top of the ring erase + flex (frame stamps its painted rect).
             self._overhang_glyph_widgets = self._overhang_glyph_widgets or {}
             table.insert(self._overhang_glyph_widgets, glyph_frame)
@@ -1063,6 +1092,9 @@ function SpineWidget:_renderShadowedCard(inner)
 
     -- 3. Inner card (image or fallback) at (0,0)
     children[#children + 1] = inner
+    if deferred_glyph then
+        children[#children + 1] = deferred_glyph
+    end
 
     -- 3b. On-hold badge (IN FRONT of inner): a centred pause "button" drawn
     --     as a filled circle + two solid bars, sharing the page-count badge's
@@ -1140,13 +1172,28 @@ function SpineWidget:_renderShadowedCard(inner)
             if list_badges then
                 y_offset = y_offset - self:_listBadgeClearance(widget_h)
             end
-            local glyph_frame = FrameContainer:new{
-                bordersize   = 0,
-                padding      = 0,
-                padding_top  = y_offset - halo_w,
-                padding_left = _glyphLeftInset() - halo_w,
-                outlined,
-            }
+            local glyph_frame
+            if glyph_top_left then
+                -- Top-left corner on a shelf face-out (see the
+                -- glyphs_top_left note above); already after `inner`.
+                glyph_frame = FrameContainer:new{
+                    bordersize = 0,
+                    padding    = 0,
+                    outlined,
+                }
+                glyph_frame.overlap_offset = {
+                    _glyphLeftInset() - halo_w,
+                    -math.floor(base_widget_h * 0.35 + 0.5) - halo_w,
+                }
+            else
+                glyph_frame = FrameContainer:new{
+                    bordersize   = 0,
+                    padding      = 0,
+                    padding_top  = y_offset - halo_w,
+                    padding_left = _glyphLeftInset() - halo_w,
+                    outlined,
+                }
+            end
             children[#children + 1] = glyph_frame
             -- Same overhang-repaint note as the in-progress glyph above.
             self._overhang_glyph_widgets = self._overhang_glyph_widgets or {}

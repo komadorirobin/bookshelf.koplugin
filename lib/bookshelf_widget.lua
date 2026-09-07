@@ -7135,7 +7135,16 @@ function BookshelfWidget:_paintOpeningEffect(fp)
     -- Opt-out: the cover-opening flex is purely cosmetic. When disabled, open
     -- plainly with no flex frame.
     if not BookshelfSettings.nilOrTrue("open_cover_effect") then return end
-    if not (spine and spine.book and spine.book.filepath == fp) then return end
+    if not (spine and spine.book and spine.book.filepath == fp) then
+        -- No tapped cover tile on record: a spine-mode open came from a
+        -- SpineBookSlot (double tap, or the expanded second-tap), which has
+        -- its own feedback -- the spine tilts forward, and the hero cover
+        -- flexes when it is showing the same book.
+        if self:_isSpineMode() then
+            pcall(function() self:_paintSpineOpeningEffect(fp) end)
+        end
+        return
+    end
     local card = spine._cover_card
     local rect = card and card.dimen
     if not (rect and rect.x and rect.w and rect.w > 8 and rect.h > 8) then return end
@@ -7229,9 +7238,12 @@ function BookshelfWidget:_paintOpeningEffect(fp)
     -- flat_thumb is the caller's own declaration that this is a table cell and
     -- not a card (bookshelf_list_row.lua sets it for exactly that reason), and
     -- a size threshold would have to be re-guessed for every panel and every
-    -- list_font_scale.
-    local flex = spine.flat_thumb and BookshelfWidget.squashCoverOpen
-                                   or BookshelfWidget.flexCoverOpen
+    -- list_font_scale. A spine-shelf face-out sets flat_thumb only for the
+    -- chrome (no shadow, square corners) but is a full-size cover -- it
+    -- keeps the 3D flex (user report: the open effect read flat there).
+    local flex = (spine.flat_thumb and not spine.spine_face_out)
+                 and BookshelfWidget.squashCoverOpen
+                 or BookshelfWidget.flexCoverOpen
     local fx, fy, fw, fh = flex(rect, { skip_refresh = true })
     -- Union of everything painted this frame, starting from the flex region.
     local ux0, uy0 = fx or rect.x, fy or rect.y
@@ -7262,6 +7274,72 @@ function BookshelfWidget:_paintOpeningEffect(fp)
         end
     end
     pcall(function() Screen:refreshUI(ux0, uy0, ux1 - ux0, uy1 - uy0) end)
+end
+
+-- _findSpineSlot(fp) — the LIVE SpineBookSlot showing this book on the
+-- current page, found by the same row walk _repaintSpineSelection uses.
+-- Found fresh at effect time rather than via a tap rendezvous: a preview
+-- tap rebuilds the rows, so a stored slot instance would be a dead widget
+-- with stale geometry. Face-out wrappers (no .entry) are skipped -- their
+-- cover tile records itself in SpineWidget.last_tapped and takes the
+-- normal flex path.
+function BookshelfWidget:_findSpineSlot(fp)
+    local d = self._shelf_dims
+    if not (fp and d and self._inner_vgroup) then return end
+    for r = 1, (d.n_shelves or 1) do
+        local row = self._inner_vgroup[(d.shelf_top_idx or 1) + 2 * (r - 1)]
+        local hg = row and row[2]
+        if hg then
+            for i = 1, #hg do
+                local slot = hg[i]
+                if slot and slot.entry and slot.book
+                        and slot.book.filepath == fp then
+                    return slot
+                end
+            end
+        end
+    end
+end
+
+-- _paintSpineOpeningEffect(fp) — opening feedback for a book opened FROM A
+-- SPINE (no cover tile to flex): the spine tilts forward off the shelf --
+-- squashed toward its feet with more of its page block showing -- and, when
+-- the hero is mounted and showing the same book, the hero cover plays the
+-- standard flex too (the user usually just previewed the book, so the hero
+-- is where the cover is actually legible). One EPDC frame, like the flex.
+function BookshelfWidget:_paintSpineOpeningEffect(fp)
+    local ux0, uy0, ux1, uy1
+    local function join(rx, ry, rw, rh)
+        if not (rx and rw and rw > 0) then return end
+        ux0 = math.min(ux0 or rx, rx)
+        uy0 = math.min(uy0 or ry, ry)
+        ux1 = math.max(ux1 or (rx + rw), rx + rw)
+        uy1 = math.max(uy1 or (ry + rh), ry + rh)
+    end
+    local slot = self:_findSpineSlot(fp)
+    if slot then
+        local ok_ss, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
+        if ok_ss and SpineShelf and SpineShelf.paintOpeningTilt then
+            join(SpineShelf.paintOpeningTilt(slot))
+        end
+    end
+    -- The hero card is only trusted when it is actually mounted (expanded
+    -- mode tears it down; micro mode nils it) and showing this book.
+    if not self._expanded then
+        local hc = self._hero_card
+        local hs = hc and hc._cover_spine
+        local card = hs and hs.book and hs.book.filepath == fp
+                     and hs._cover_card
+        local rect = card and card.dimen
+        if rect and rect.w and rect.w > 8 then
+            join(BookshelfWidget.flexCoverOpen(rect, { skip_refresh = true }))
+        end
+    end
+    if ux0 then
+        pcall(function()
+            Screen:refreshUI(ux0, uy0, ux1 - ux0, uy1 - uy0)
+        end)
+    end
 end
 
 -- How much of its width a list thumbnail's artwork keeps while opening.

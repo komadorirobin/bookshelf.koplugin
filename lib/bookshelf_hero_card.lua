@@ -1173,6 +1173,10 @@ function HeroCard:_renderFull()
         -- budget and evicted LRU like any other, so the displacement worry
         -- is negligible against eliminating the per-cycle blocking read.
     }
+    -- Kept for the spine shelf's opening feedback: a book opened from a
+    -- bare spine flexes the HERO cover (the legible copy of the artwork)
+    -- when the hero is showing it -- see _paintSpineOpeningEffect.
+    self._cover_spine = cover
     local cover_widget = FrameContainer:new{
         bordersize   = 0,
         padding      = 0,

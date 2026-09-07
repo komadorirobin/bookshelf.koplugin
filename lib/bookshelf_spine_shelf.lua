@@ -793,6 +793,15 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local e = self.entry
     local spine_w = e.w
     local spine_h = math.min(e.h, self.height)
+    -- Opening tilt (paintOpeningTilt's one-shot render, never cached): the
+    -- book tips forward off the shelf, so it foreshortens -- squashed
+    -- toward its feet -- while more of its page-block top edge comes into
+    -- view (edge_mul, applied below where edge_h is sized).
+    local tilt = self._tilt
+    if tilt then
+        spine_h = math.max(Screen:scaleBySize(30),
+                           math.floor(spine_h * (tilt.squash or 0.9)))
+    end
     local top = y + self.height - spine_h
 
     -- Selected: the book is pulled up off the plank, the way a hand lifts
@@ -828,6 +837,17 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local e_min, e_max = Screen:scaleBySize(5), Screen:scaleBySize(14)
         if edge_h < e_min then edge_h = e_min end
         if edge_h > e_max then edge_h = e_max end
+    end
+    if tilt then
+        -- Tipped forward, the viewer looks down onto the pages: the top
+        -- edge grows well past its standing clamp (capped so the spine
+        -- still reads as a spine). Spines too short to show an edge when
+        -- standing get a minimal one -- the growing top block is most of
+        -- what sells the tilt.
+        local base = edge_h > 0 and edge_h
+                     or math.max(2, math.floor(spine_h * 0.05))
+        edge_h = math.min(math.floor(base * (tilt.edge_mul or 2.4)),
+                          math.floor(spine_h * 0.30))
     end
     local body_top = top + edge_h
     local body_h = spine_h - edge_h
@@ -1527,6 +1547,14 @@ function SpineShelf.rowWidget(opts)
                         -- the heart badge on top of it doubles the message
                         -- and breaks the skeuomorphism (user ruling).
                         suppress_favorite_badge = true,
+                        -- The status glyphs' below-card dangle vanished
+                        -- behind the lift shadow / plank here; they move to
+                        -- the corner the heart vacated (user ruling).
+                        glyphs_top_left = true,
+                        -- flat_thumb normally means "list thumbnail" to the
+                        -- opening effect and gets the flat squash; a shelf
+                        -- face-out is a full cover and keeps the 3D flex.
+                        spine_face_out = true,
                     }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
@@ -1577,6 +1605,40 @@ function SpineShelf.rowWidget(opts)
     end
     local result = OverlapGroup:new{ dimen = dimen, plank, group }
     return result
+end
+
+-- paintOpeningTilt(slot) — one-frame "book coming off the shelf" feedback,
+-- painted straight onto the framebuffer like the cover grid's flex (e-ink
+-- cannot animate through the blocking document open). The slot re-renders
+-- itself with the tilt overrides -- foreshortened toward its feet, top
+-- edge grown -- into a scratch buffer that is blitted over its on-screen
+-- rect; the render cache is bypassed so the frame is never served later.
+-- Returns the affected region (x, y, w, h) for the caller's refresh union,
+-- or nothing when the slot has no usable geometry.
+function SpineShelf.paintOpeningTilt(slot)
+    local d = slot and slot.dimen
+    if not (d and d.x and d.w and d.w > 4 and d.h > 8) then return end
+    local bb = Screen.bb
+    if not bb then return end
+    local night = _nightMode()
+    local ok = pcall(function()
+        local c = Blitbuffer.new(slot.width, slot.height, bb:getType())
+        -- Same page ground the cached render starts from, so the strip the
+        -- shrinking spine vacates reads as the shelf background behind it.
+        c:paintRectRGB32(0, 0, slot.width, slot.height,
+                         Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+        slot._tilt = { squash = 0.90, edge_mul = 2.4 }
+        slot:_renderInto(c, night)
+        slot._tilt = nil
+        bb:blitFrom(c, d.x, d.y, 0, 0, slot.width, slot.height)
+        c:free()
+    end)
+    slot._tilt = nil
+    if not ok then
+        logger.dbg("[bookshelf] spine opening tilt failed; skipping")
+        return
+    end
+    return d.x, d.y, d.w, d.h
 end
 
 -- drainRenderStats() -> n, ms since the last drain: how many slot renders

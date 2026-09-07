@@ -40,6 +40,24 @@ t.test("the rounded shadow repaint is skipped when the shadow is off", function(
         .. "shadow on open")
 end)
 
+t.test("a spine-shelf face-out keeps the 3D flex despite flat_thumb", function()
+    -- Face-out tiles set flat_thumb for the chrome (square corners, no
+    -- shadow) but are full-size covers: routing them to the list
+    -- thumbnail's flat squash lost the skew (user report). The branch must
+    -- consult the tile's spine_face_out declaration.
+    assert(body:match("spine_face_out"),
+        "the flex/squash branch must exempt spine_face_out tiles, or shelf "
+        .. "face-outs open with the flat thumbnail squash")
+end)
+
+t.test("a spine-mode open without a tapped tile hands off to the spine effect", function()
+    -- Opens from a bare spine have no cover tile to flex; the spine tilt +
+    -- hero flex live in _paintSpineOpeningEffect.
+    assert(body:match("_paintSpineOpeningEffect"),
+        "the no-tapped-tile branch must route spine-mode opens to "
+        .. "_paintSpineOpeningEffect, or spines open with no feedback")
+end)
+
 t.test("the effect asks the tapped spine, not the settings directly", function()
     -- The spine knows about flat_thumb too: a list-view thumbnail is already
     -- flat whatever the grid preference says. Reading the settings here would
