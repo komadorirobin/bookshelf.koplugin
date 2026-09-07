@@ -49,6 +49,10 @@ local function shelf(view, total_items, stale_total_pages)
         _total_items = total_items,
         _total_pages = stale_total_pages,
         _viewSize = function() return view end,
+        -- The cursor stack asks the mode before doing view-size arithmetic
+        -- (spine pages hold a variable count); these tests pin the fixed-view
+        -- behaviour, so the stub answers covers.
+        _isSpineMode = function() return false end,
     }
     for k, fn in pairs(Shelf) do s[k] = fn end
     return s

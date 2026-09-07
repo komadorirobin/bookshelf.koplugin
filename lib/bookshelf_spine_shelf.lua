@@ -66,6 +66,50 @@ end
 local _look_cache, _look_count = {}, 0
 local LOOK_CACHE_MAX = 600
 
+-- Sampled looks persist across launches: sampling means a full BIM cover
+-- decode per book, and a Kindle page of 50+ spines would otherwise pay
+-- seconds of flash I/O on every cold page. Loaded lazily once; saved back
+-- (in-memory, the store's normal flush cadence persists it) whenever a
+-- plan added new samples -- see flushLooks().
+local _persist, _persist_dirty
+local PERSIST_KEY = "spine_looks"
+local PERSIST_MAX = 1200
+
+local function _persistTable()
+    if _persist then return _persist end
+    local ok, BookshelfSettings = pcall(require, "lib/bookshelf_settings_store")
+    if ok and BookshelfSettings and BookshelfSettings.read then
+        local t = BookshelfSettings.read(PERSIST_KEY)
+        _persist = type(t) == "table" and t or {}
+    else
+        _persist = {}
+    end
+    return _persist
+end
+
+-- flushLooks() — hand new samples to the settings store (in-memory write;
+-- the plugin's action-boundary flushes persist it). Called once per plan,
+-- not per sample, so a cold page costs one save.
+local function _flushLooks()
+    if not _persist_dirty then return end
+    _persist_dirty = nil
+    pcall(function()
+        local BookshelfSettings = require("lib/bookshelf_settings_store")
+        local n = 0
+        for _k in pairs(_persist) do n = n + 1 end
+        if n > PERSIST_MAX then
+            -- Whole-table reset rather than LRU bookkeeping: resampling is
+            -- the cost of a cold page, once, and only after a library far
+            -- larger than the cap has cycled through.
+            _persist = {}
+            _persist_dirty = nil
+            BookshelfSettings.save(PERSIST_KEY, nil)
+            return
+        end
+        BookshelfSettings.save(PERSIST_KEY, _persist)
+    end)
+end
+
 local function _sampleAverage(bb)
     local n, r, g, b = 0, 0, 0, 0
     local w, h = bb:getWidth(), bb:getHeight()
@@ -124,6 +168,20 @@ function SpineShelf.bookLook(book)
     local hit = _look_cache[fp]
     if hit then return hit end
 
+    -- A look sampled in a previous session skips the cover decode entirely.
+    local kept = _persistTable()[fp]
+    if type(kept) == "table" and kept.r then
+        local look = { r = kept.r, g = kept.g, b = kept.b,
+                       aspect = kept.a, sampled = true }
+        look.aspect = look.aspect or _aspectFromSizetag(book.cover_sizetag)
+        if _look_count >= LOOK_CACHE_MAX then
+            _look_cache, _look_count = {}, 0
+        end
+        _look_cache[fp] = look
+        _look_count = _look_count + 1
+        return look
+    end
+
     local look
     local ok = pcall(function()
         local bb, owned = nil, false
@@ -166,6 +224,9 @@ function SpineShelf.bookLook(book)
         end
         _look_cache[fp] = look
         _look_count = _look_count + 1
+        _persistTable()[fp] = { r = look.r, g = look.g, b = look.b,
+                                a = look.aspect }
+        _persist_dirty = true
     end
     return look
 end
@@ -174,6 +235,10 @@ function SpineShelf.dropLook(fp)
     if fp and _look_cache[fp] then
         _look_cache[fp] = nil
         _look_count = math.max(0, _look_count - 1)
+    end
+    if fp and _persist and _persist[fp] then
+        _persist[fp] = nil
+        _persist_dirty = true
     end
 end
 
@@ -352,6 +417,18 @@ function SpineBookSlot:paintTo(bb, x, y)
     local spine_h = math.min(e.h, self.height)
     local top = y + self.height - spine_h
 
+    -- Selected: the book is pulled up off the plank, the way a hand lifts
+    -- it clear of the row. Falls back to a heavier border when the spine
+    -- already fills the slot and has no headroom to rise into.
+    local lifted = false
+    if self.is_selected then
+        local lift = math.min(Screen:scaleBySize(10), top - y)
+        if lift >= Screen:scaleBySize(3) then
+            top = top - lift
+            lifted = true
+        end
+    end
+
     if e.face_out and e.cover_ok ~= false then
         if self:_paintFaceOut(bb, x, top, spine_w, spine_h, night) then
             self:_paintCoverBadges(bb, x, top, spine_w, spine_h, night)
@@ -367,7 +444,8 @@ function SpineBookSlot:paintTo(bb, x, y)
     if hairline < 1 then hairline = 1 end
     bb:paintRectRGB32(x, top, spine_w, spine_h, _fillColor(e.look, night))
     local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-    bb:paintBorder(x, top, spine_w, spine_h, hairline, border_c)
+    local bw_px = (self.is_selected and not lifted) and (hairline * 3) or hairline
+    bb:paintBorder(x, top, spine_w, spine_h, bw_px, border_c)
 
     local pad = Screen:scaleBySize(3)
     local cur_top = top + pad
@@ -435,11 +513,19 @@ function SpineBookSlot:_paintFaceOut(bb, x, top, w, h, night)
         local scaled = src:scale(w, h)
         if owned and src.free then src:free() end
         if not scaled then return end
+        -- Night inverts the framebuffer at refresh; a raw cover blit would
+        -- display as a negative. Pre-invert so it comes out as itself --
+        -- the same treatment the spine fills get in _fillColor.
+        if night and scaled.invertRect then
+            scaled:invertRect(0, 0, w, h)
+        end
         bb:blitFrom(scaled, x, top, 0, 0, w, h)
         if scaled.free then scaled:free() end
         local hairline = Screen:scaleBySize(1)
         if hairline < 1 then hairline = 1 end
         local border_c = night and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+        -- The lift in paintTo already moved `top`; the hairline stays a
+        -- hairline so a lifted cover reads as raised, not outlined.
         bb:paintBorder(x, top, w, h, hairline, border_c)
         painted = true
     end)
@@ -625,6 +711,7 @@ function SpineShelf.plan(items, opts)
         shown = fully and last_item or (last_item - 1)
         if shown < 1 then shown = 1 end
     end
+    _flushLooks()
     return { entries = entries, rows = rows, shown = shown }
 end
 
@@ -661,11 +748,13 @@ function SpineShelf.rowWidget(opts)
                 }
             end
             group[#group + 1] = SpineBookSlot:new{
-                book      = e.book,
-                entry     = e,
-                width     = e.w,
-                height    = stand_h,
-                callbacks = opts.callbacks,
+                book        = e.book,
+                entry       = e,
+                width       = e.w,
+                height      = stand_h,
+                callbacks   = opts.callbacks,
+                is_selected = opts.selected_filepath ~= nil
+                              and e.book.filepath == opts.selected_filepath,
             }
         end
     end

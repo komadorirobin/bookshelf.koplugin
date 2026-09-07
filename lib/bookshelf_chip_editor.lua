@@ -479,6 +479,11 @@ function Editor:editTab(tab_id, opts)
         -- this dialog end up in the same place.
         override.list_rows    = draft.list_rows
         override.list_columns = draft.list_columns
+        -- The spine pins, same nil-means-default semantics. spine_face_out
+        -- is the one tri-state: nil = the default (yes), false = no.
+        override.spine_rows       = draft.spine_rows
+        override.spine_height_pct = draft.spine_height_pct
+        override.spine_face_out   = draft.spine_face_out
         TabModel.setOverride(tab_id, override)
         if opts.on_change then opts.on_change() end
     end
@@ -1426,8 +1431,9 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
         -- Columns/Rows editor and under the cover grid's own pinch. List
         -- columns and rows divide nothing but the shelf band, which is what
         -- makes them safe to vary per chip.
-        local show_covers = (mode ~= ViewMode.LIST)
-        local show_list   = (mode ~= ViewMode.COVERS)
+        local show_covers = (mode ~= ViewMode.LIST and mode ~= ViewMode.SPINES)
+        local show_list   = (mode ~= ViewMode.COVERS and mode ~= ViewMode.SPINES)
+        local show_spines = (mode == ViewMode.SPINES)
         local bw = chrome and chrome.bw
 
         -- nudgeRow: [-]  Label: value  [+], writing draft[key].
@@ -1471,6 +1477,64 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                                            bw._chip_bar_hidden)
                     return ok and plan and plan.rows or 4
                 end)
+        end
+
+        if show_spines then
+            -- The spine view's own density. Rows like the list's; height as
+            -- a percentage of the row so a single-shelf chip can pull the
+            -- books down to a size whose titles stay readable.
+            rows[#rows + 1] = nudgeRow(_("Spine rows"), "spine_rows", 1, 6,
+                bw and function()
+                    local ok, n = pcall(bw._nShelves, bw)
+                    return ok and n or 2
+                end)
+            rows[#rows + 1] = (function()
+                local key, lo, hi, step_sz = "spine_height_pct", 40, 100, 10
+                local function shown()
+                    local v = draft[key]
+                    return _("Shelf height") .. ": "
+                           .. (v and (tostring(v) .. "%") or _("Auto"))
+                end
+                local function step(delta)
+                    return pick(function()
+                        local cur = draft[key]
+                        if not cur then
+                            -- Auto is the full row; minus starts shrinking,
+                            -- plus has nowhere taller to go.
+                            if delta < 0 then draft[key] = hi - step_sz end
+                        else
+                            local n = cur + delta * step_sz
+                            if n >= hi then draft[key] = nil
+                            elseif n < lo then draft[key] = lo
+                            else draft[key] = n end
+                        end
+                    end)
+                end
+                return {
+                    { text = "\u{2212}", callback = step(-1) },
+                    { text_func = shown, enabled = false },
+                    { text = "+", callback = step(1) },
+                }
+            end)()
+            -- Favourites face out (front cover, bookstore style). Default
+            -- YES; stored as false only, nil meaning the default, the same
+            -- absence semantics as every other key here.
+            rows[#rows + 1] = {{
+                text_func = function()
+                    local v = draft.spine_face_out
+                    if v == nil then v = true end
+                    return _("Favourites face out: ") .. (v and _("Yes") or _("No"))
+                end,
+                callback = pick(function()
+                    local cur = draft.spine_face_out
+                    if cur == nil then cur = true end
+                    if cur then
+                        draft.spine_face_out = false
+                    else
+                        draft.spine_face_out = nil
+                    end
+                end),
+            }}
         end
 
         -- Folder tiles: ONE row that cycles through the styles, live-previewed
