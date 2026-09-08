@@ -1233,6 +1233,13 @@ end
 -- Author / series extraction from a hydrated Hardcover search hit, mirroring
 -- the vendored search_dialog.lua (contributions may be a single .author string
 -- or an array of { author = { name } }; book_series[1].series.name is series).
+--
+-- ONLY plain authorship counts. cached_contributors lists every credited
+-- contributor with a role string ("Narrator", "Translator", "Illustrator",
+-- ... nil/empty for the authors themselves); joining them all put audiobook
+-- narrators into the author field, and the Authors shelf then grew a
+-- second one-book card per affected title (device report: Never Flinch
+-- under Stephen King AND under his narrator).
 local function _candidateAuthor(b)
     local c = b and b.contributions
     if type(c) ~= "table" then return nil end
@@ -1241,7 +1248,10 @@ local function _candidateAuthor(b)
     for _, a in ipairs(c) do
         if type(a) == "table" and type(a.author) == "table"
                 and type(a.author.name) == "string" then
-            names[#names + 1] = a.author.name
+            local role = a.contribution
+            if role == nil or role == "" or role == "Author" then
+                names[#names + 1] = a.author.name
+            end
         end
     end
     return #names > 0 and table.concat(names, ", ") or nil

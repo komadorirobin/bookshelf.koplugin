@@ -1189,20 +1189,36 @@ function ShelfBadges:paintTo(bb, x, y)
     end)
     local face = BFont:getFace(BFont.getUIFontFace() or "cfont",
                                math.max(8, math.floor(14 * scale / 100 + 0.5)))
-    for _i, s in ipairs(self.spans or {}) do
-        if s.label and s.label ~= "" and s.w > Screen:scaleBySize(24) then
+    local spans = self.spans or {}
+    for _i, s in ipairs(spans) do
+        if s.label and s.label ~= "" then
             pcall(function()
+                -- A thin section's badge may stick out past its spines --
+                -- real shelf badges do -- by up to 30dp, but never into
+                -- the NEXT section's badge (left-aligned, so the next
+                -- span's x is the wall).
+                local nxt = spans[_i + 1]
+                local wall = (nxt and nxt.x or (self.dimen.w
+                              - SpineShelf.endMargin(h))) - s.x
+                              - Screen:scaleBySize(2)
+                local allow = math.max(s.w,
+                    math.min(wall, s.w + Screen:scaleBySize(30)))
+                -- Below ~9 characters of room the badge is pure noise
+                -- ("T…"): skip it. Back-to-back single-book sections on a
+                -- dense authors shelf fall out naturally; anything with a
+                -- run, a face-out or breathing room keeps its name.
+                if allow < Screen:scaleBySize(55) then return end
                 local tw = TextWidget:new{
                     text      = s.label,
                     face      = face,
                     fgcolor   = fg,
-                    max_width = math.max(8, s.w - 2 * pad_x),
+                    max_width = math.max(8, allow - 2 * pad_x),
                     padding   = 0,
                 }
                 local sz = tw:getSize()
                 if sz.w > 0 and sz.h > 0 then
                     local badge_h = sz.h + 2 * pad_y
-                    local bw = math.min(s.w, sz.w + 2 * pad_x)
+                    local bw = math.min(allow, sz.w + 2 * pad_x)
                     -- Left edge flush with the run's first spine (user
                     -- ruling) -- the way a shop's badge marks where the
                     -- section STARTS, not its middle.
@@ -1749,7 +1765,12 @@ function SpineShelf.rowWidget(opts)
                 }
                 cursor = cursor + (e.gap_before or opts.gap)
             end
-            if e.in_group then
+            if e.item and e.item.books then
+                -- Every GROUP gets a badge, single-member ones included --
+                -- on a grouping chip each item is a section, and an
+                -- unbadged lone book reads as a stray (user report: the
+                -- narrator-split singles looked like anonymous duplicates).
+                -- e.in_group stays the >1 flatten/gap semantics.
                 local seg = badge_spans[#badge_spans]
                 if seg and seg.item == e.item then
                     seg.w = (cursor + e.w) - seg.x
