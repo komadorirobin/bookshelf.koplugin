@@ -2483,14 +2483,29 @@ function Bookshelf:refreshHardcoverDetails()
         }
         UIManager:show(info)
     end
+    -- A paced multi-minute scan must hold the device awake: without this
+    -- the screensaver cut in at scan end and the reader woke to an
+    -- apparently unchanged shelf (device report).
+    pcall(function() UIManager:preventStandby() end)
     local step
     step = function()
         if st.cancelled or st.i >= #files then
             closeInfo()
+            pcall(function() UIManager:allowStandby() end)
             pcall(function()
                 local Repo = require("lib/bookshelf_book_repository")
                 Repo.invalidateLightMeta()
                 Repo.invalidateBookCache("hardcover-details-refresh")
+            end)
+            -- The refreshed metadata must reach the SCREEN, not just the
+            -- caches: rebuild the live shelf (its own fetch cache first --
+            -- the 30s TTL would happily serve the stale page back).
+            pcall(function()
+                if _live_widget and UIManager:isWidgetShown(_live_widget) then
+                    _live_widget._spine_fetch_cache = nil
+                    _live_widget:_rebuild()
+                    UIManager:setDirty(_live_widget, "ui")
+                end
             end)
             UIManager:show(InfoMessage:new{
                 text = T(_("Hardcover details refreshed for %1 of %2 linked books."),
