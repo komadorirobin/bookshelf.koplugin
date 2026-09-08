@@ -50,6 +50,13 @@ SpineShelf.BOOK_GAP_DP = 2
 -- Gap either side of a flattened group's run of spines, dp -- the visual
 -- seam that keeps a series reading as a series once its stack is flattened.
 SpineShelf.GROUP_GAP_DP = 12
+-- The gap a FACE-OUT needs against anything it isn't serially attached to:
+-- covers standing 2dp apart read as one slab (obvious once "All books"
+-- face out). Between the book gap and the group gap on purpose -- group
+-- boundaries must still read as the wider break. A face-out followed by
+-- its own series' SPINES keeps the tight book gap: that adjacency is what
+-- shows the run belongs to it (user ruling).
+SpineShelf.FACE_GAP_DP = 8
 
 -- Rotation for the title run. 90 = reads bottom-to-top ("running up the
 -- spine"); if a build's rotatedCopy turns the other way, this is the one
@@ -1450,16 +1457,28 @@ function SpineShelf.plan(items, opts)
         end
         -- The gap this spine carries on its left: none at the very start,
         -- the small gap inside a run or between loose books, the wide one
-        -- whenever the item boundary being crossed involves a group.
+        -- whenever the item boundary being crossed involves a group -- and
+        -- a face-out lifts anything smaller to FACE_GAP (see the constant),
+        -- except against its own run's spines.
         local gap_before = 0
         if j > 1 then
-            local prev = flat[j - 1]
+            local prev   = flat[j - 1]
+            local prev_e = entries[#entries]
+            local prev_face = prev_e and prev_e.face_out
+            local face_gap  = Screen:scaleBySize(SpineShelf.FACE_GAP_DP)
             if prev.item_idx == f.item_idx then
-                gap_before = book_gap
-            elseif prev.in_group or f.in_group then
-                gap_before = group_gap
+                -- Same run: tight, unless BOTH neighbours are covers
+                -- (the "All books" wall) -- covers need air.
+                gap_before = (face_out and prev_face) and face_gap or book_gap
             else
-                gap_before = book_gap
+                if prev.in_group or f.in_group then
+                    gap_before = group_gap
+                else
+                    gap_before = book_gap
+                end
+                if (face_out or prev_face) and gap_before < face_gap then
+                    gap_before = face_gap
+                end
             end
         end
         entries[#entries + 1] = {
