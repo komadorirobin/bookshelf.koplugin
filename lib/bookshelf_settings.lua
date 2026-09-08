@@ -3127,6 +3127,19 @@ function Settings:_librarySubItems()
                 UIManager:nextTick(function() plugin:scanAllMetadata() end)
             end,
         },
+        {
+            text      = _("Extract page counts"),
+            help_text = _("Paginate books that have never been opened, so"
+                .. " spine thickness and page-count badges reflect their real"
+                .. " length. Each book is rendered in the background; this"
+                .. " can take a while on a large library."),
+            callback  = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function() plugin:scanPageCounts() end)
+            end,
+        },
     {
         text     = _("Manage collections\xE2\x80\xA6"),
         help_text = _("Create, rename, reorder and delete collections."

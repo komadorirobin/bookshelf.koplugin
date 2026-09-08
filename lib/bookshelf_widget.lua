@@ -5102,6 +5102,7 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
             callbacks         = shared,
             show_author       = self:_spineShowAuthor(),
             selected_filepath = shared.selected_filepath,
+            selection         = self._selection,
         }
     end
     -- Preloader hint: covers are only painted face-out, at spine height.

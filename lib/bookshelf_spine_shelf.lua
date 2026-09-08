@@ -228,6 +228,12 @@ local function _flushLooks()
     end)
 end
 
+-- Public flush for bulk writers (the page-count scanner persists hundreds
+-- of entries in one pass and must not lose them to a mid-scan crash).
+function SpineShelf.flushPersist()
+    _flushLooks()
+end
+
 -- cachedProgress / persistProgress: page count and read status ride the
 -- same persisted table as the looks, so a page of spines costs its sidecar
 -- reads ONCE ever rather than once per page turn (DocSettings:open is a
@@ -761,6 +767,7 @@ function SpineBookSlot:_renderKey(night)
     return table.concat({
         fp, self.width, self.height, e.w, e.h,
         self.is_selected and "s" or "-",
+        self.is_bulk_selected and "B" or "-",
         night and "n" or "d",
         self.show_author == false and "A" or "a",
     }, "|")
@@ -849,10 +856,16 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- air gap; a book too tall to have that headroom shrinks a few percent
     -- while held instead of staying overlapped.
     local lifted = false
-    if self.is_selected then
+    if self.is_selected or tilt then
         local pk = self.plank
         local clear = (pk and (3 * pk.b - pk.inset) or Screen:scaleBySize(18))
                       + Screen:scaleBySize(6)
+        if tilt then
+            -- The opening tilt CONTINUES the selection lift (user ruling):
+            -- an unselected book jumps to the lifted height as it tips, a
+            -- selected one rises a little further.
+            clear = clear + Screen:scaleBySize(4)
+        end
         if spine_h > self.height - clear then
             spine_h = math.max(Screen:scaleBySize(40), self.height - clear)
         end
@@ -1026,6 +1039,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local author = (self.show_author ~= false) and e.author or nil
         _paintRotatedTitle(bb, x, cur_top, run, spine_w, e.label, tsize,
                            e.look, night, author)
+    end
+
+    -- Bulk selection: the whole spine inverts -- the one cue that stays
+    -- legible at any spine width and against any cover colour (a corner
+    -- flag has no corner to live in at 14dp). Face-outs carry the cover
+    -- grid's own ring + flag instead.
+    if self.is_bulk_selected then
+        pcall(function() bb:invertRect(x, top, spine_w, spine_h) end)
     end
 end
 
@@ -1645,6 +1666,17 @@ function SpineShelf.rowWidget(opts)
             end
             local is_sel = opts.selected_filepath ~= nil
                            and e.book.filepath == opts.selected_filepath
+            -- Bulk selection: mark this book when selection mode is live
+            -- and holds it (books only -- the bulk actions operate on
+            -- files).
+            local is_bulk = false
+            if opts.selection and e.book.filepath then
+                local ok_b, hit = pcall(function()
+                    return opts.selection:isActive()
+                           and opts.selection:contains(e.book.filepath)
+                end)
+                is_bulk = ok_b and hit or false
+            end
             local tile
             local _tile_t0 = e.face_out and _gettime() or nil
             if e.face_out then
@@ -1693,6 +1725,7 @@ function SpineShelf.rowWidget(opts)
                         -- the heart badge on top of it doubles the message
                         -- and breaks the skeuomorphism (user ruling).
                         suppress_favorite_badge = true,
+                        is_bulk_selected = is_bulk,
                         -- The status glyphs' below-card dangle vanished
                         -- behind the lift shadow / plank here; they move to
                         -- the corner the heart vacated (user ruling).
@@ -1707,8 +1740,21 @@ function SpineShelf.rowWidget(opts)
                     -- gets redrawn taller as the book tips forward; `below`
                     -- is the plank the cast shadow falls on -- push span +
                     -- surface strip + front face, cover foot to row bottom.
+                    -- `lift` continues the selection lift while opening: a
+                    -- standing book rises the full clearance, an already
+                    -- lifted one stays put (the capture is at the lifted
+                    -- position and the vacated strip below it -- lift
+                    -- shadow, not plank -- can't be reproduced from here).
+                    -- plank_b lets the painter refill the strip the rising
+                    -- foot vacates with the plank's own banded surface.
+                    local tilt_lift = 0
+                    if lift == 0 then
+                        tilt_lift = math.max(0, 3 * b - inset - push)
+                                    + Screen:scaleBySize(6)
+                    end
                     cover.faceout_fx = { depth = depth, look = e.look,
-                                         below = push + inset + b }
+                                         below = push + inset + b,
+                                         plank_b = b, lift = tilt_lift }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
                     if head > 0 then
@@ -1769,6 +1815,7 @@ function SpineShelf.rowWidget(opts)
                     callbacks   = opts.callbacks,
                     show_author = opts.show_author,
                     is_selected = is_sel,
+                    is_bulk_selected = is_bulk,
                     plank       = { b = b, inset = inset },
                 }
             end
@@ -1913,29 +1960,56 @@ function SpineShelf.paintFaceOutTilt(tile)
     -- rect).
     local grow = math.min(math.floor(depth * (SpineShelf.TILT_TOP_SCALE - 1)),
                           freed)
+    -- The opening tilt continues the selection lift (user ruling): the
+    -- standing book rises the same clearance a selection would give it as
+    -- it tips (fx.lift; zero when the wrapper was built already lifted --
+    -- the capture is at the lifted position and what sits under it is the
+    -- lift shadow, which this painter cannot reproduce).
+    local lift  = fx.lift or 0
+    local ny    = rect.y + freed - lift             -- squashed cover top
+    local block_y = ny - (depth + grow)             -- tipped block top
+    local top0  = rect.y - depth                    -- standing silhouette top
     local ok = pcall(function()
-        -- Squash the cover toward its feet: bottom edge (on the plank)
-        -- stays put, the top drops by `freed`.
+        -- Squash the cover toward its (raised) feet.
         local src = Blitbuffer.new(rect.w, rect.h, bb:getType())
         src:blitFrom(bb, 0, 0, rect.x, rect.y, rect.w, rect.h)
         local scaled = src:scale(rect.w, rect.h - freed)
-        bb:blitFrom(scaled, rect.x, rect.y + freed, 0, 0, rect.w, rect.h - freed)
+        local dy, sy, hh = ny, 0, rect.h - freed
+        if dy < 0 then sy = -dy; hh = hh + dy; dy = 0 end
+        if hh > 0 then
+            bb:blitFrom(scaled, rect.x, dy, 0, sy, rect.w, hh)
+        end
         src:free()
         scaled:free()
-        -- Clear the vacated strip, then redraw the page block dropped and
-        -- grown so its bottom meets the squashed cover's top. Page ground
-        -- in pre-invert space, same as the slot renders paint. A book too
-        -- thin to have shown a block while standing gains one as it tips
-        -- -- same rule as the spine tilt.
-        if freed - grow > 0 then
-            bb:paintRectRGB32(rect.x, rect.y - depth, rect.w, freed - grow,
+        -- Page ground over whatever the rising silhouette no longer
+        -- covers above the block (pre-invert space, same as the slot
+        -- renders paint), then the block, dropped/risen to meet the
+        -- squashed cover's top.
+        if block_y > top0 then
+            bb:paintRectRGB32(rect.x, top0, rect.w, block_y - top0,
                               Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
         end
         local block = FaceOutTopBlock:new{
             dimen = Geom:new{ w = rect.w, h = depth + grow },
             look  = fx.look,
         }
-        block:paintTo(bb, rect.x, rect.y - depth + (freed - grow))
+        block:paintTo(bb, rect.x, block_y)
+        -- The strip the rising foot vacates: the plank's own banded
+        -- surface, reproduced the way the spine's lifted under-strip
+        -- does it (fx tells us where the surface starts).
+        if lift > 0 then
+            local pb = fx.plank_b or Screen:scaleBySize(6)
+            local surf_top = rect.y + rect.h + (fx.below or 0) - 4 * pb
+            for yy = rect.y + rect.h - lift, rect.y + rect.h - 1 do
+                if yy >= surf_top then
+                    bb:paintRectRGB32(rect.x, yy, rect.w, 1,
+                                      _plankBandColor(yy - surf_top, 3 * pb))
+                else
+                    bb:paintRectRGB32(rect.x, yy, rect.w, 1,
+                                      Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+                end
+            end
+        end
     end)
     if not ok then
         logger.dbg("[bookshelf] face-out opening tilt failed; skipping")
@@ -1943,30 +2017,33 @@ function SpineShelf.paintFaceOutTilt(tile)
     end
     -- Re-crisp the corner status glyphs at the squashed cover's new top:
     -- the capture carries their squashed ghosts, and the block redraw
-    -- erased their above-card overhang; a full repaint shifted down by
-    -- `freed` rides them along with the cover.
+    -- erased their above-card overhang; a full repaint shifted with the
+    -- cover rides them along.
     if tile._overhang_glyph_widgets then
         for _i, gw in ipairs(tile._overhang_glyph_widgets) do
             local gd = gw.dimen
             if gd and gd.x and gd.w and gd.w > 0 then
-                pcall(function() gw:paintTo(bb, gd.x, gd.y + freed) end)
+                pcall(function() gw:paintTo(bb, gd.x, gd.y + freed - lift) end)
             end
         end
     end
     -- The lighting split (see the constants above): the page block tips
     -- INTO the front light and brightens; the cover face -- glyphs
     -- included, they sit on it -- darkens toward the shelf; and the
-    -- leaning book casts down over the plank in front of its feet.
+    -- hovering book casts down from its raised feet, over the strip it
+    -- vacated and the plank in front.
     local band = fx.below or Screen:scaleBySize(10)
     pcall(function()
         local night = _nightMode()
-        _lightRect(bb, rect.x, rect.y - depth + (freed - grow),
-                   rect.w, depth + grow, TILT_TOP_LIGHT, night)
-        _shadeTiltFace(bb, rect.x, rect.y + freed,
-                       rect.w, rect.h - freed, night)
-        _shadeTiltCast(bb, rect.x, rect.y + rect.h, rect.w, band, night)
+        _lightRect(bb, rect.x, block_y, rect.w, depth + grow,
+                   TILT_TOP_LIGHT, night)
+        _shadeTiltFace(bb, rect.x, ny, rect.w, rect.h - freed, night)
+        _shadeTiltCast(bb, rect.x, rect.y + rect.h - lift, rect.w,
+                       lift + band, night)
     end)
-    return rect.x, rect.y - depth, rect.w, rect.h + depth + band
+    local top_all = math.min(top0, block_y)
+    return rect.x, top_all, rect.w,
+           (rect.y + rect.h + band) - top_all
 end
 
 -- drainTileStats() -> ms, n since the last drain: face-out tile build cost

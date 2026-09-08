@@ -2133,6 +2133,105 @@ function Bookshelf:scanAllMetadata()
     end)
 end
 
+-- scanPageCounts() — bulk page-count extraction for books that have never
+-- been opened (the spine shelf's widths come from page counts, and an
+-- unopened reflowable has none until KOReader renders it). Each candidate
+-- is opened and rendered IN A SUBPROCESS (Trapper:dismissableRunInSubprocess,
+-- the same isolation BIM's extraction uses): a book that crashes the engine
+-- kills its own fork, not KOReader, and the progress dialog's dismiss
+-- cancels the pass between books. Counts land in the spine shelf's
+-- persisted progress table -- deliberately NOT in a sidecar, because
+-- creating one marks the book as opened. The count reflects crengine's
+-- default layout rather than the user's exact font settings; for a spine's
+-- thickness that is the right kind of true.
+function Bookshelf:scanPageCounts()
+    local Repo       = require("lib/bookshelf_book_repository")
+    local SpineShelf = require("lib/bookshelf_spine_shelf")
+    local Trapper    = require("ui/trapper")
+    local T          = require("ffi/util").template
+    local InfoMessage = require("ui/widget/infomessage")
+
+    -- Candidates: every library book whose page count is unknown to the
+    -- shelf pipeline (no persisted count, nothing in the sidecar, no
+    -- filename fallback). readProgress is the same resolver the spine
+    -- plan uses, so the scan and the shelf agree about who needs work.
+    local fps = Repo.getAllFilepaths and Repo.getAllFilepaths() or {}
+    local todo = {}
+    for _i, fp in ipairs(fps) do
+        local cached = select(1, SpineShelf.cachedProgress(fp))
+        if not cached then
+            local _p, _s, _r, pc = Repo.readProgress(fp)
+            if not pc then todo[#todo + 1] = fp end
+        end
+    end
+    if #todo == 0 then
+        UIManager:show(InfoMessage:new{
+            text    = _("Every book already has a page count."),
+            timeout = 3,
+        })
+        return
+    end
+
+    Trapper:wrap(function()
+        local go_on = Trapper:confirm(T(_(
+            "Extract page counts for %1 books?\n\nEach book is opened and paginated in the background; this can take a while on a large library. You can cancel between books by tapping the progress message."),
+            #todo), _("Cancel"), _("Extract"))
+        if not go_on then Trapper:clear() return end
+        local done, failed, cancelled = 0, 0, false
+        for i, fp in ipairs(todo) do
+            local name = fp:match("([^/]+)$") or fp
+            local completed, pages_s = Trapper:dismissableRunInSubprocess(
+                function()
+                    local ok_pc, pc = pcall(function()
+                        local DocumentRegistry = require("document/documentregistry")
+                        local doc = DocumentRegistry:openDocument(fp)
+                        if not doc then return nil end
+                        if doc.loadDocument then doc:loadDocument() end
+                        if doc.render then doc:render() end
+                        local n = doc:getPageCount()
+                        pcall(function() doc:close() end)
+                        return n
+                    end)
+                    return tostring(ok_pc and pc or "")
+                end,
+                T(_("Extracting page counts… %1 of %2\n%3"), i, #todo, name),
+                true)
+            if not completed then
+                cancelled = true
+                break
+            end
+            local pages = tonumber(pages_s)
+            if pages and pages > 0 then
+                -- Preserve whatever status the sidecar already has (a book
+                -- can be opened-but-uncounted); persistProgress's nil is
+                -- "known to be unopened", which is only true when the
+                -- sidecar says nothing.
+                local _p2, st = Repo.readProgress(fp)
+                SpineShelf.persistProgress(fp, pages, st)
+                done = done + 1
+            else
+                failed = failed + 1
+            end
+            -- Flush every few books: a mid-scan crash or battery death
+            -- should not cost the finished work.
+            if done % 10 == 0 then SpineShelf.flushPersist() end
+        end
+        SpineShelf.flushPersist()
+        Trapper:clear()
+        local summary
+        if cancelled then
+            summary = T(_("Page count scan cancelled.\n%1 extracted, %2 remaining."),
+                        done, #todo - done - failed)
+        elseif failed > 0 then
+            summary = T(_("Page counts extracted for %1 books.\n%2 could not be paginated."),
+                        done, failed)
+        else
+            summary = T(_("Page counts extracted for %1 books."), done)
+        end
+        UIManager:show(InfoMessage:new{ text = summary, timeout = 5 })
+    end)
+end
+
 -- Clear dev branch + install latest stable release. Used when escaping a
 -- broken branch back to a known-good release.
 function Bookshelf:resetToStableRelease()
