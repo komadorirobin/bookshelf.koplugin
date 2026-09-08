@@ -2327,9 +2327,20 @@ function Bookshelf:scanPageCounts()
             return
         end
         local processed = 0
+        local _gettime = require("lib/bookshelf_gettime")
         for i, fp in ipairs(todo) do
             local name = fp:match("([^/]+)$") or fp
-            local completed, pages_s = Trapper:dismissableRunInSubprocess(
+            -- Up to one retry per book: a dismissal within a second of the
+            -- trap widget appearing is the LAUNCH tap bleeding onto it (the
+            -- same ghost runPacedScan arms against -- Trapper overwrites
+            -- the widget's dismiss_callback, so arming isn't possible
+            -- here), not the user cancelling a scan they just started.
+            -- Device report: tapping Paginate produced an instant
+            -- "report (cancelled)" with no book attempted.
+            local completed, pages_s
+            for attempt = 1, 2 do
+                local t0 = _gettime()
+                completed, pages_s = Trapper:dismissableRunInSubprocess(
                 function()
                     local ok_pc, pc = pcall(function()
                         local DocumentRegistry = require("document/documentregistry")
@@ -2345,6 +2356,8 @@ function Bookshelf:scanPageCounts()
                 end,
                 T(_("Paginating\u{2026} %1 of %2\n%3"), i, #todo, name),
                 true)
+                if completed or (_gettime() - t0) > 1.0 then break end
+            end
             if not completed then
                 report.cancelled = true
                 break
