@@ -1296,6 +1296,9 @@ local function pageCountFromFilename(filepath)
     local n = base:match("[Pp]%((%d+)%)")
     return n and tonumber(n) or nil
 end
+-- Public alias: the page-count scanner classifies filename-counted books
+-- as their own (free) category before probing anything heavier.
+Repo.pageCountFromFilename = pageCountFromFilename
 
 -- opts is forwarded verbatim to buildBookMeta; opts.want_cover=false skips
 -- BIM's zstd decode and Blitbuffer allocation for callers that never look at
@@ -2156,6 +2159,20 @@ function Repo.readProgress(filepath)
         if not page_num then
             local ok_lp, last_page = pcall(ds.readSetting, ds, "last_page")
             if ok_lp then page_num = tonumber(last_page) end
+        end
+    end
+    -- Bookshelf's own persisted page-count store: the bulk scanner's
+    -- answers for never-opened books (publisher page lists, Hardcover
+    -- links, headless renders), kept OUT of sidecars because creating one
+    -- marks a book as opened in stock KOReader. Served here so EVERY
+    -- consumer of readProgress -- %pages, %bar{rel}, list lines, sort
+    -- keys -- sees them, not just spine widths. Above the filename guess:
+    -- a scanned count is real, the filename one is folklore.
+    if not page_count then
+        local ok_ss, SS = pcall(require, "lib/bookshelf_spine_shelf")
+        if ok_ss and SS and SS.cachedProgress then
+            local pp = select(1, SS.cachedProgress(filepath))
+            if pp then page_count = tonumber(pp) end
         end
     end
     -- #159: last-resort filename fallback (see pageCountFromFilename), matching

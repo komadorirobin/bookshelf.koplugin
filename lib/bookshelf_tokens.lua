@@ -752,6 +752,71 @@ function Tokens.autoLinkReportHtml(data)
     return table.concat(out, "\n")
 end
 
+-- pageCountReportHtml(data): the HTML body for the post-scan page-count
+-- report, same modal as the auto-link report. data:
+--   skipped   number       -- already had a count (opened / prior scan)
+--   filename  {name,...}   -- counted from a p(N) filename marker
+--   publisher {{name=,pages=},...}
+--   hardcover {{name=,pages=},...}
+--   rendered  {{name=,pages=},...}
+--   failed    {name,...}
+--   remaining number       -- unprocessed (cancelled / render skipped)
+--   cancelled boolean
+function Tokens.pageCountReportHtml(data)
+    data = type(data) == "table" and data or {}
+    local DOT = " \xC2\xB7 "  -- " · "
+    local function list(t) return type(t) == "table" and t or {} end
+    local filename  = list(data.filename)
+    local publisher = list(data.publisher)
+    local hardcover = list(data.hardcover)
+    local rendered  = list(data.rendered)
+    local failed    = list(data.failed)
+    local out = {}
+
+    out[#out + 1] = "<h1>" .. (data.cancelled
+        and "Page count report (cancelled)" or "Page count report") .. "</h1>"
+
+    local summary = {}
+    if tonumber(data.skipped) and data.skipped > 0 then
+        summary[#summary + 1] = string.format("Already known %d", data.skipped)
+    end
+    summary[#summary + 1] = string.format("Filename %d", #filename)
+    summary[#summary + 1] = string.format("Publisher %d", #publisher)
+    summary[#summary + 1] = string.format("Hardcover %d", #hardcover)
+    summary[#summary + 1] = string.format("Paginated %d", #rendered)
+    if #failed > 0 then
+        summary[#summary + 1] = string.format("Failed %d", #failed)
+    end
+    if tonumber(data.remaining) and data.remaining > 0 then
+        summary[#summary + 1] = string.format("Remaining %d", data.remaining)
+    end
+    out[#out + 1] = '<p class="rating">' .. table.concat(summary, DOT) .. "</p>"
+
+    local function section(title, entries, with_pages)
+        if #entries == 0 then return end
+        out[#out + 1] = "<hr/>"
+        out[#out + 1] = string.format("<p><b>%s (%d)</b></p>", title, #entries)
+        local items = {}
+        for _, e in ipairs(entries) do
+            if with_pages then
+                items[#items + 1] = "<li>" .. _escHtml(e.name or "?")
+                    .. DOT .. string.format("%d pages", tonumber(e.pages) or 0)
+                    .. "</li>"
+            else
+                items[#items + 1] = "<li>" .. _escHtml(e or "?") .. "</li>"
+            end
+        end
+        out[#out + 1] = "<ul>" .. table.concat(items, "\n") .. "</ul>"
+    end
+    section("Publisher page numbers", publisher, true)
+    section("Hardcover editions", hardcover, true)
+    section("Paginated with the reading engine", rendered, true)
+    section("Counted from the filename", filename, false)
+    section("Could not be paginated", failed, false)
+
+    return table.concat(out, "\n")
+end
+
 local function pct(v) return string.format("%d%%", math.floor((v or 0) * 100 + 0.5)) end
 
 -- %books_read: how many books in the WHOLE library are marked Finished.

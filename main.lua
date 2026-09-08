@@ -2151,20 +2151,33 @@ function Bookshelf:scanPageCounts()
     local T          = require("ffi/util").template
     local InfoMessage = require("ui/widget/infomessage")
 
-    -- Candidates: every library book whose page count is unknown to the
-    -- shelf pipeline (no persisted count, nothing in the sidecar, no
-    -- filename fallback). readProgress is the same resolver the spine
-    -- plan uses, so the scan and the shelf agree about who needs work.
+    -- Classify the library up front (user spec, in priority order):
+    --   skip   books that already have a count (opened, or a prior scan),
+    --   count  p(N) filename markers (free -- readProgress serves them live),
+    --   probe  the rest: publisher page list, then Hardcover, then render.
     local fps = Repo.getAllFilepaths and Repo.getAllFilepaths() or {}
-    local todo = {}
+    local skipped = 0
+    local fn_list, todo = {}, {}
     for _i, fp in ipairs(fps) do
-        local cached = select(1, SpineShelf.cachedProgress(fp))
-        if not cached then
-            local _p, _s, _r, pc = Repo.readProgress(fp)
-            if not pc then todo[#todo + 1] = fp end
+        local fn = Repo.pageCountFromFilename
+                   and Repo.pageCountFromFilename(fp)
+        local pp = select(1, SpineShelf.cachedProgress(fp))
+        local _p, _s, _r, pc = Repo.readProgress(fp)
+        -- The filename marker outranks a persisted echo of itself: the
+        -- spine plan persists whatever readProgress answers when a page
+        -- is shown, so a never-opened p(N) book usually arrives here
+        -- already holding N -- that is still a filename count, not an
+        -- "opened" one. A count that DISAGREES with the marker came from
+        -- a sidecar or a real scan and wins.
+        if fn and (pc == nil or pc == fn) and (pp == nil or pp == fn) then
+            fn_list[#fn_list + 1] = fp
+        elseif pp or pc then
+            skipped = skipped + 1
+        else
+            todo[#todo + 1] = fp
         end
     end
-    if #todo == 0 then
+    if #todo == 0 and #fn_list == 0 then
         UIManager:show(InfoMessage:new{
             text    = _("Every book already has a page count."),
             timeout = 3,
@@ -2172,52 +2185,148 @@ function Bookshelf:scanPageCounts()
         return
     end
 
-    -- Phase 0: Hardcover-linked books carry their matched edition's page
-    -- count in the plugin's own settings -- a stable print count, one
-    -- local read for the whole library (user insight). Harvest those
-    -- first; only unmatched books pay the heavy render below.
-    local hc_done = 0
-    pcall(function()
-        local HC = require("lib/bookshelf_hardcover")
-        if not (HC and HC.linkedPages) then return end
-        local linked = HC.linkedPages()
-        if not next(linked) then return end
-        local rest = {}
-        for _i, fp in ipairs(todo) do
-            local p = linked[fp]
-            if p then
-                local _p2, st = Repo.readProgress(fp)
-                SpineShelf.persistProgress(fp, p, st)
-                hc_done = hc_done + 1
-            else
-                rest[#rest + 1] = fp
-            end
+    -- Report names: the light record's title when the batch knows the
+    -- book (one map hit), else the de-extensioned filename.
+    local function nameFor(fp)
+        local rec = Repo.lightMetaFor and Repo.lightMetaFor(fp)
+        if rec and type(rec.title) == "string" and rec.title ~= "" then
+            return rec.title
         end
-        todo = rest
-    end)
-    if hc_done > 0 then SpineShelf.flushPersist() end
-    if #todo == 0 then
-        UIManager:show(InfoMessage:new{
-            text = T(_("Page counts taken from Hardcover for %1 books."), hc_done),
-            timeout = 4,
+        return (fp:match("([^/]+)$") or fp):gsub("%.[^%.]+$", "")
+    end
+
+    -- persist(fp, pages, is_publisher): the count lands in the spine
+    -- shelf's store (served library-wide through readProgress's fallback),
+    -- and a PUBLISHER count is additionally written into the book's
+    -- sidecar as pagemap_doc_pages -- the key ReaderPageMap owns and every
+    -- token consumer already reads -- but only when a sidecar EXISTS and
+    -- knows no count of its own: sidecars are never created (stock
+    -- KOReader treats their existence as "book opened"), and a sidecar
+    -- that already answers is never second-guessed.
+    local function persist(fp, pages, is_publisher)
+        local _p2, st = Repo.readProgress(fp)
+        SpineShelf.persistProgress(fp, pages, st)
+        if is_publisher then
+            pcall(function()
+                local DocSettings = require("docsettings")
+                if not DocSettings:hasSidecarFile(fp) then return end
+                local ds = DocSettings:open(fp)
+                local stats = ds:readSetting("stats")
+                if ds:readSetting("pagemap_doc_pages")
+                        or (type(stats) == "table" and stats.pages) then
+                    return
+                end
+                ds:saveSetting("pagemap_doc_pages", pages)
+                ds:flush()
+            end)
+        end
+    end
+
+    local report = {
+        skipped   = skipped,
+        filename  = {},
+        publisher = {},
+        hardcover = {},
+        rendered  = {},
+        failed    = {},
+    }
+    for _i, fp in ipairs(fn_list) do
+        report.filename[#report.filename + 1] = nameFor(fp)
+    end
+
+    local function showReport()
+        SpineShelf.flushPersist()
+        Repo.invalidateProgressCache()
+        local ok_tok, Tokens = pcall(require, "lib/bookshelf_tokens")
+        if not (ok_tok and Tokens and Tokens.pageCountReportHtml) then return end
+        local Screen = require("device").screen
+        UIManager:show(require("lib/bookshelf_reviews_modal"):new{
+            title     = _("Page count report"),
+            html_body = Tokens.pageCountReportHtml(report),
+            width  = math.floor(Screen:getWidth() * 0.92),
+            height = math.floor(Screen:getHeight() * 0.86),
         })
-        return
     end
 
     Trapper:wrap(function()
-        local prompt
-        if hc_done > 0 then
-            prompt = T(_(
-                "Page counts taken from Hardcover for %1 books.\n\nPaginate the remaining %2 books?\n\nEach one is opened in the background; this can take a while. You can cancel between books by tapping the progress message."),
-                hc_done, #todo)
-        else
-            prompt = T(_(
-                "Extract page counts for %1 books?\n\nEach book is opened and paginated in the background; this can take a while on a large library. You can cancel between books by tapping the progress message."),
-                #todo)
+        -- Phase A: publisher page numbers straight from each EPUB's zip
+        -- (bookshelf_pagemap_probe) -- the truest count there is, and
+        -- milliseconds per book. Dismissing the progress message cancels.
+        report.cancelled = false
+        do
+            local ok_probe, Probe = pcall(require, "lib/bookshelf_pagemap_probe")
+            if ok_probe and Probe then
+                local rest = {}
+                for i, fp in ipairs(todo) do
+                    if report.cancelled then
+                        rest[#rest + 1] = fp
+                    else
+                        if i % 20 == 1 then
+                            if not Trapper:info(T(_(
+                                    "Checking publisher page numbers\u{2026} %1 of %2"),
+                                    i, #todo)) then
+                                report.cancelled = true
+                                rest[#rest + 1] = fp
+                            end
+                        end
+                        if not report.cancelled then
+                            local n = Probe.publisherPages(fp)
+                            if n and n > 0 then
+                                persist(fp, n, true)
+                                report.publisher[#report.publisher + 1] =
+                                    { name = nameFor(fp), pages = n }
+                            else
+                                rest[#rest + 1] = fp
+                            end
+                        end
+                    end
+                end
+                todo = rest
+            end
         end
-        local go_on = Trapper:confirm(prompt, _("Cancel"), _("Extract"))
-        if not go_on then Trapper:clear() return end
-        local done, failed, cancelled = 0, 0, false
+        -- Phase B: Hardcover-linked books carry their matched edition's
+        -- page count in the plugin's own settings -- one local read for
+        -- the whole library (user insight).
+        if not report.cancelled then
+            pcall(function()
+                local HC = require("lib/bookshelf_hardcover")
+                if not (HC and HC.linkedPages) then return end
+                local linked = HC.linkedPages()
+                if not next(linked) then return end
+                local rest = {}
+                for _i, fp in ipairs(todo) do
+                    if linked[fp] then
+                        persist(fp, linked[fp], false)
+                        report.hardcover[#report.hardcover + 1] =
+                            { name = nameFor(fp), pages = linked[fp] }
+                    else
+                        rest[#rest + 1] = fp
+                    end
+                end
+                todo = rest
+            end)
+        end
+        SpineShelf.flushPersist()
+        if report.cancelled or #todo == 0 then
+            report.remaining = #todo
+            Trapper:clear()
+            showReport()
+            return
+        end
+
+        -- Phase C: everything still unknown gets opened and paginated by
+        -- the reading engine, one subprocess per book (a crashing book
+        -- kills its fork, not KOReader; dismiss cancels between books).
+        local go_on = Trapper:confirm(T(_(
+            "%1 books have no page source.\n\nPaginate them the slow way?\n\nEach one is opened in the background; this can take a while. You can cancel between books by tapping the progress message."),
+            #todo), _("Skip"), _("Paginate"))
+        if not go_on then
+            report.remaining = #todo
+            Trapper:clear()
+            showReport()
+            return
+        end
+        local processed = 0
         for i, fp in ipairs(todo) do
             local name = fp:match("([^/]+)$") or fp
             local completed, pages_s = Trapper:dismissableRunInSubprocess(
@@ -2234,46 +2343,31 @@ function Bookshelf:scanPageCounts()
                     end)
                     return tostring(ok_pc and pc or "")
                 end,
-                T(_("Extracting page counts… %1 of %2\n%3"), i, #todo, name),
+                T(_("Paginating\u{2026} %1 of %2\n%3"), i, #todo, name),
                 true)
             if not completed then
-                cancelled = true
+                report.cancelled = true
                 break
             end
+            processed = i
             local pages = tonumber(pages_s)
             if pages and pages > 0 then
-                -- Preserve whatever status the sidecar already has (a book
-                -- can be opened-but-uncounted); persistProgress's nil is
-                -- "known to be unopened", which is only true when the
-                -- sidecar says nothing.
-                local _p2, st = Repo.readProgress(fp)
-                SpineShelf.persistProgress(fp, pages, st)
-                done = done + 1
+                -- A render count is layout-derived, not publisher truth:
+                -- it stays out of sidecars (persist() only writes those
+                -- for publisher counts).
+                persist(fp, pages, false)
+                report.rendered[#report.rendered + 1] =
+                    { name = nameFor(fp), pages = pages }
             else
-                failed = failed + 1
+                report.failed[#report.failed + 1] = nameFor(fp)
             end
             -- Flush every few books: a mid-scan crash or battery death
             -- should not cost the finished work.
-            if done % 10 == 0 then SpineShelf.flushPersist() end
+            if #report.rendered % 10 == 0 then SpineShelf.flushPersist() end
         end
-        SpineShelf.flushPersist()
+        report.remaining = #todo - processed
         Trapper:clear()
-        local total_done = done + hc_done
-        local summary
-        if cancelled then
-            summary = T(_("Page count scan cancelled.\n%1 extracted, %2 remaining."),
-                        total_done, #todo - done - failed)
-        elseif failed > 0 then
-            summary = T(_("Page counts extracted for %1 books.\n%2 could not be paginated."),
-                        total_done, failed)
-        else
-            summary = T(_("Page counts extracted for %1 books."), total_done)
-        end
-        if hc_done > 0 then
-            summary = summary .. "\n"
-                      .. T(_("%1 came from Hardcover."), hc_done)
-        end
-        UIManager:show(InfoMessage:new{ text = summary, timeout = 5 })
+        showReport()
     end)
 end
 
