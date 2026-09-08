@@ -1041,12 +1041,27 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
                            e.look, night, author)
     end
 
-    -- Bulk selection: the whole spine inverts -- the one cue that stays
-    -- legible at any spine width and against any cover colour (a corner
-    -- flag has no corner to live in at 14dp). Face-outs carry the cover
-    -- grid's own ring + flag instead.
+    -- Bulk selection: the whole spine inverts, PLUS the cover grid's
+    -- corner flag stamped at the head. The invert alone is unmistakable
+    -- in greyscale (black flips to white), but on a COLOUR panel a
+    -- negative can pass for a real cover -- Grave Talk's green inverts
+    -- to a plausible mauve -- so the flag carries the meaning where the
+    -- colour can't.
     if self.is_bulk_selected then
-        pcall(function() bb:invertRect(x, top, spine_w, spine_h) end)
+        pcall(function()
+            bb:invertRect(x, top, spine_w, spine_h)
+            local leg = math.min(Screen:scaleBySize(20),
+                                 math.floor(spine_w * 0.6))
+            for i = 0, leg - 1 do
+                bb:paintRect(x, top + i, leg - i, 1, Blitbuffer.COLOR_BLACK)
+            end
+            local r_out = math.max(2,
+                math.floor(math.max(2, (leg - 2) / 3.41421) * 0.80))
+            local cx, cy = x + r_out + 1, top + r_out + 1
+            bb:paintCircle(cx, cy, r_out, Blitbuffer.COLOR_WHITE)
+            bb:paintCircle(cx, cy, math.max(1, math.floor(r_out * 0.5)),
+                           Blitbuffer.COLOR_BLACK)
+        end)
     end
 end
 
