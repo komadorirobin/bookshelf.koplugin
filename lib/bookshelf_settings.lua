@@ -2605,7 +2605,7 @@ function Settings:_hardcoverSubItems()
                     -- keeps the public ratings current as they drift on
                     -- Hardcover (one batched query, no per-book covers/text).
                     text = _("Refresh ratings only"),
-                    help_text = _("Fetch up-to-date public ratings and review counts for linked Hardcover books. Covers and descriptions are fetched when a book is linked, so this only updates the ratings."),
+                    help_text = _("Fetch up-to-date public ratings and review counts for every linked book in one quick batched request -- seconds, even for a large library. Ratings drift daily; for the rarely-changing details (author, genres, series, description, pages) use Refresh linked book details instead."),
                     callback = function(touchmenu_instance)
                         if touchmenu_instance then
                             UIManager:close(touchmenu_instance)
@@ -2638,7 +2638,7 @@ function Settings:_hardcoverSubItems()
                     -- translators). Links untouched; one query per book,
                     -- paced under Hardcover's rate limit.
                     text = _("Refresh linked book details"),
-                    help_text = _("Re-fetch the cached details (author, description, rating, series, genres) for every linked book. Use after an upgrade note asks for it, or when cached data looks stale. Contacts Hardcover (rate-limited) with cancellable progress."),
+                    help_text = _("Re-fetch the cached details (author, description, series, genres, page count, ratings) for every linked book, one rate-limited request per book -- minutes on a large library, cancellable. Use after an upgrade note asks for it, or when cached data looks stale; for just the ratings, Refresh ratings only is much faster."),
                     callback = function(touchmenu_instance)
                         if touchmenu_instance then
                             UIManager:close(touchmenu_instance)
