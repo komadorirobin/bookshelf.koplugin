@@ -1159,6 +1159,72 @@ function FaceOutFeet:paintTo(bb, x, y)
     bb:paintRectRGB32(x + w - hl, y + h - hl, hl, hl, c)
 end
 
+-- ── Shelf-edge section badges ───────────────────────────────────────────────
+-- The bookshop cue for a flattened group's run: an acrylic-style badge --
+-- dark, white text, the ribbon folder style's own colours so one setting
+-- drives both -- hooked over the front of the plank under the run (user
+-- spec). Full label, never truncated, unless it would outgrow the run of
+-- spines above it; centred under the run. One badge per run PER ROW, so a
+-- run that wraps keeps its name in view on every shelf it crosses.
+local ShelfBadges = Widget:extend{}
+
+function ShelfBadges:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local h = self.dimen.h
+    local ok_sd, StackDisplay = pcall(require, "lib/bookshelf_stack_display")
+    if not (ok_sd and StackDisplay and StackDisplay.ribbonColors) then return end
+    local fill, fg = StackDisplay.ribbonColors()
+    local pad_x = Screen:scaleBySize(5)
+    local pad_y = Screen:scaleBySize(2)
+    -- Sized from the TEXT, not the plank: the plank zone alone is too
+    -- shallow for a legible label on dense shelves, and a real acrylic
+    -- badge covers the books' feet anyway -- it hangs in FRONT of them.
+    -- 14pt base, scaled by the same "Stack and folder labels" size
+    -- setting the folder cards use -- the badge names sections the way
+    -- their labels name stacks (user ruling).
+    local scale = 100
+    pcall(function()
+        local BookshelfSettings = require("lib/bookshelf_settings_store")
+        scale = BookshelfSettings.read("stack_label_font_scale", 100) or 100
+    end)
+    local face = BFont:getFace(BFont.getUIFontFace() or "cfont",
+                               math.max(8, math.floor(14 * scale / 100 + 0.5)))
+    for _i, s in ipairs(self.spans or {}) do
+        if s.label and s.label ~= "" and s.w > Screen:scaleBySize(24) then
+            pcall(function()
+                local tw = TextWidget:new{
+                    text      = s.label,
+                    face      = face,
+                    fgcolor   = fg,
+                    max_width = math.max(8, s.w - 2 * pad_x),
+                    padding   = 0,
+                }
+                local sz = tw:getSize()
+                if sz.w > 0 and sz.h > 0 then
+                    local badge_h = sz.h + 2 * pad_y
+                    local bw = math.min(s.w, sz.w + 2 * pad_x)
+                    -- Left edge flush with the run's first spine (user
+                    -- ruling) -- the way a shop's badge marks where the
+                    -- section STARTS, not its middle.
+                    local bx = x + s.x
+                    -- Hooked over the shelf lip: the top edge sits a couple
+                    -- of pixels above the plank's FRONT FACE (user ruling),
+                    -- the body hanging down over it -- overhanging the row
+                    -- bottom into the inter-row gap when the face is
+                    -- shallower than the label.
+                    local b = SpineShelf.plankUnit(h)
+                    local by = y + h - b - 2
+                    bb:paintRoundedRect(bx, by, bw, badge_h, fill,
+                                        Screen:scaleBySize(2))
+                    tw:paintTo(bb, bx + math.floor((bw - sz.w) / 2),
+                               by + pad_y)
+                end
+                tw:free()
+            end)
+        end
+    end
+end
+
 -- ── The shelf plank ─────────────────────────────────────────────────────────
 
 local ShelfPlank = Widget:extend{}
@@ -1576,6 +1642,7 @@ function SpineShelf.plan(items, opts)
             face_out = face_out, favourite = fav, label = label,
             author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
+            in_group = f.in_group or nil,
         }
         logger.dbg(string.format(
             "[bookshelf perf] spine plan: %-24s w_dp=%.1f pages=%s aspect=%s rgb=%d,%d,%d sampled=%s fav=%s face_out=%s item=%d",
@@ -1662,10 +1729,13 @@ function SpineShelf.rowWidget(opts)
             end
         end
     end
-    group[#group + 1] = HorizontalSpan:new{
-        width = math.max(SpineShelf.endMargin(opts.height),
-                         math.floor((opts.width - content_w) / 2)),
-    }
+    local lead = math.max(SpineShelf.endMargin(opts.height),
+                          math.floor((opts.width - content_w) / 2))
+    group[#group + 1] = HorizontalSpan:new{ width = lead }
+    -- Section badges: collect each flattened group's run in THIS row (x
+    -- extent in row coordinates) so ShelfBadges can hang its name off the
+    -- plank beneath it.
+    local cursor, badge_spans = lead, {}
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
         if e then
@@ -1677,6 +1747,34 @@ function SpineShelf.rowWidget(opts)
                 group[#group + 1] = HorizontalSpan:new{
                     width = e.gap_before or opts.gap,
                 }
+                cursor = cursor + (e.gap_before or opts.gap)
+            end
+            if e.in_group then
+                local seg = badge_spans[#badge_spans]
+                if seg and seg.item == e.item then
+                    seg.w = (cursor + e.w) - seg.x
+                else
+                    local it = e.item or {}
+                    local label = it.series_name or it.label or it.name
+                    -- Author sections sort by SURNAME, and the surname is
+                    -- what a shopper scans the shelf edge for -- so the
+                    -- badge always reads "Last, First", whatever the
+                    -- author-name display setting says (user ruling: with
+                    -- first_last the sort order looked arbitrary).
+                    if it.kind == "author" and label then
+                        pcall(function()
+                            local AuthorName =
+                                require("lib/bookshelf_author_name")
+                            label = AuthorName.formatted(label, "last_first")
+                        end)
+                    end
+                    badge_spans[#badge_spans + 1] = {
+                        item  = e.item,
+                        x     = cursor,
+                        w     = e.w,
+                        label = label,
+                    }
+                end
             end
             local is_sel = opts.selected_filepath ~= nil
                            and e.book.filepath == opts.selected_filepath
@@ -1834,7 +1932,17 @@ function SpineShelf.rowWidget(opts)
                 }
             end
             group[#group + 1] = tile
+            cursor = cursor + e.w
         end
+    end
+    if #badge_spans > 0 then
+        return OverlapGroup:new{
+            dimen = dimen, plank, group,
+            ShelfBadges:new{
+                dimen = Geom:new{ w = opts.width, h = opts.height },
+                spans = badge_spans,
+            },
+        }
     end
     local result = OverlapGroup:new{ dimen = dimen, plank, group }
     return result
