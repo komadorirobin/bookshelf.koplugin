@@ -961,6 +961,18 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         bb:paintRectRGB32(x, top, board_w, edge_h, bc)
         bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h, bc)
     end
+    -- The top corners come off too, matching the chamfered feet (user
+    -- ruling) -- in page ground rather than plank shade, since that is
+    -- what sits behind the book's head. Works for both silhouettes:
+    -- board tops when the page block shows, the body's own corners on a
+    -- spine too short for one.
+    do
+        -- Page ground, pre-invert space: white displays as the theme
+        -- background in both modes, same as the slot's own ground fill.
+        local g = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+        bb:paintRectRGB32(x, top, hairline, hairline, g)
+        bb:paintRectRGB32(x + spine_w - hairline, top, hairline, hairline, g)
+    end
 
     local pad = Screen:scaleBySize(3)
     local cur_top = body_top + pad
@@ -1085,12 +1097,31 @@ function FaceOutTopBlock:paintTo(bb, x, y)
         end
     end
     local fill = _boardColor(self.look, night)
-    -- The top-left corner pixel comes off, the same chamfer the spine feet
-    -- get where they meet the plank.
+    -- BOTH top corner pixels come off, the same chamfer the spine feet get
+    -- where they meet the plank (the first cut nicked only the left; the
+    -- silhouette read square on the right -- user ruling).
     local ch = math.max(2, Screen:scaleBySize(1))
-    bb:paintRectRGB32(x, y + ch, board, h - ch, fill)   -- left board, below the chamfer
-    bb:paintRectRGB32(x + ch, y, w - ch, board, fill)   -- top board, right of it
+    bb:paintRectRGB32(x, y + ch, board, h - ch, fill)     -- left board, below the chamfer
+    bb:paintRectRGB32(x + ch, y, w - 2 * ch, board, fill) -- top board, notched both ends
     bb:paintRectRGB32(x + w - rb, y + board, rb, h - board, fill)  -- right sliver
+end
+
+-- ── Face-out foot nicks ─────────────────────────────────────────────────────
+-- The standing cover's bottom corners come off in plank shade, the same
+-- softening the spine feet get where they meet the plank. Overlaid on the
+-- cover tile (it owns its own paint); rowWidget skips it for a LIFTED
+-- book, whose feet float in front of the page -- the same rule the spines
+-- follow.
+local FaceOutFeet = Widget:extend{}
+
+function FaceOutFeet:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local w, h = self.dimen.w, self.dimen.h
+    local hl = Screen:scaleBySize(1)
+    if hl < 1 then hl = 1 end
+    local c = _plankShade(0.42)
+    bb:paintRectRGB32(x, y + h - hl, hl, hl, c)
+    bb:paintRectRGB32(x + w - hl, y + h - hl, hl, hl, c)
 end
 
 -- ── The shelf plank ─────────────────────────────────────────────────────────
@@ -1686,7 +1717,19 @@ function SpineShelf.rowWidget(opts)
                             look  = e.look,
                         }
                     end
-                    stack[#stack + 1] = cover
+                    if lift > 0 then
+                        stack[#stack + 1] = cover
+                    else
+                        -- Standing: nick the cover's bottom corners into
+                        -- the plank, like the spine feet (FaceOutFeet).
+                        stack[#stack + 1] = OverlapGroup:new{
+                            dimen = Geom:new{ w = e.w, h = cover_h },
+                            cover,
+                            FaceOutFeet:new{
+                                dimen = Geom:new{ w = e.w, h = cover_h },
+                            },
+                        }
+                    end
                     if push + lift > 0 then
                         if lift > 0 then
                             -- The lifted book's shadow where it stood.
@@ -1733,9 +1776,35 @@ function SpineShelf.rowWidget(opts)
     return result
 end
 
--- How much the tipped face shades: black (day) / white (night, pre-invert)
--- blended over the cover at this opacity. Shared by both tilt painters.
-local TILT_SHADE = 0.15
+-- The tipped face's shading: a vertical GRADIENT, strongest at the head and
+-- fading toward the foot -- the head has rotated furthest from the overhead
+-- light, the foot barely moved, so a flat wash read as a dimmed sticker
+-- rather than a turned surface (user report). Banded rather than per-row:
+-- a dozen blend rects cost nothing on a one-shot frame and e-ink's 16
+-- greys can't show finer steps anyway. Blends black in day, white in
+-- night (pre-invert space flips the direction).
+local TILT_SHADE_HEAD = 0.28
+local TILT_SHADE_FOOT = 0.04
+local TILT_SHADE_BANDS = 12
+
+local function _shadeTiltFace(bb, x, y, w, h, night)
+    if not (w and h and w > 0 and h > 0) then return end
+    local bands = math.min(TILT_SHADE_BANDS, h)
+    for i = 0, bands - 1 do
+        local y0 = y + math.floor(h * i / bands)
+        local y1 = y + math.floor(h * (i + 1) / bands)
+        if y1 > y0 then
+            local t = (i + 0.5) / bands
+            local by = TILT_SHADE_HEAD
+                       + (TILT_SHADE_FOOT - TILT_SHADE_HEAD) * t
+            if night then
+                bb:lightenRect(x, y0, w, y1 - y0, by)
+            else
+                bb:darkenRect(x, y0, w, y1 - y0, by)
+            end
+        end
+    end
+end
 
 -- paintOpeningTilt(slot) — one-frame "book coming off the shelf" feedback,
 -- painted straight onto the framebuffer like the cover grid's flex (e-ink
@@ -1760,18 +1829,12 @@ function SpineShelf.paintOpeningTilt(slot)
         slot._tilt = true
         slot:_renderInto(c, night)
         slot._tilt = nil
-        -- Tipping away from the light, the face shades (user report: with
-        -- the shadow underneath, an unshaded face read as still upright).
-        -- Pre-invert space flips the blend in night: painted lighter
-        -- displays darker.
+        -- Tipping away from the light, the face shades -- graded from the
+        -- head down (see _shadeTiltFace).
         local r = slot._render_spine_rect
         if r then
-            local sy = r.y + (r.edge or 0)
-            local sh = r.h - (r.edge or 0)
-            if sh > 0 then
-                if night then c:lightenRect(r.x, sy, r.w, sh, TILT_SHADE)
-                else c:darkenRect(r.x, sy, r.w, sh, TILT_SHADE) end
-            end
+            _shadeTiltFace(c, r.x, r.y + (r.edge or 0),
+                           r.w, r.h - (r.edge or 0), night)
         end
         bb:blitFrom(c, d.x, d.y, 0, 0, slot.width, slot.height)
         c:free()
@@ -1856,17 +1919,11 @@ function SpineShelf.paintFaceOutTilt(tile)
         end
     end
     -- Shade the tipped cover face -- glyphs included, they sit on it --
-    -- while the up-facing page block stays lit (see the spine tilt's note;
-    -- pre-invert space flips the blend in night).
+    -- graded from the head down while the up-facing page block stays lit
+    -- (see _shadeTiltFace).
     pcall(function()
-        local night = _nightMode()
-        if night then
-            bb:lightenRect(rect.x, rect.y + freed, rect.w, rect.h - freed,
-                           TILT_SHADE)
-        else
-            bb:darkenRect(rect.x, rect.y + freed, rect.w, rect.h - freed,
-                          TILT_SHADE)
-        end
+        _shadeTiltFace(bb, rect.x, rect.y + freed,
+                       rect.w, rect.h - freed, _nightMode())
     end)
     return rect.x, rect.y - depth, rect.w, rect.h + depth
 end
