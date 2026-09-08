@@ -2632,6 +2632,23 @@ function Settings:_hardcoverSubItems()
                     end,
                 },
                 {
+                    -- Full details re-fetch for every linked book: the path
+                    -- that heals stale cached enrichment in place (e.g. the
+                    -- pre-v5 author strings that included narrators and
+                    -- translators). Links untouched; one query per book,
+                    -- paced under Hardcover's rate limit.
+                    text = _("Refresh linked book details"),
+                    help_text = _("Re-fetch the cached details (author, description, rating, series, genres) for every linked book. Use after an upgrade note asks for it, or when cached data looks stale. Contacts Hardcover (rate-limited) with cancellable progress."),
+                    callback = function(touchmenu_instance)
+                        if touchmenu_instance then
+                            UIManager:close(touchmenu_instance)
+                        end
+                        UIManager:nextTick(function()
+                            self._plugin:refreshHardcoverDetails()
+                        end)
+                    end,
+                },
+                {
                     -- One clear for everything cached. Links are kept, so a
                     -- refresh repopulates afterwards.
                     text = _("Clear cache (keeps links)"),

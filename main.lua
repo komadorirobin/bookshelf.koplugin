@@ -251,6 +251,39 @@ function Bookshelf:init()
     Fonts.maybeSeedFreshInstall()
     Fonts.ensureInstalled()
 
+    -- One-time upgrade notice: enrichment cached before v5 could carry
+    -- narrators/translators in the author field (Hardcover's
+    -- cached_contributors joined role-blind), which split books across
+    -- extra author cards. The fix only applies to FRESH fetches, so users
+    -- with an existing cache are offered the bulk details refresh once.
+    -- The prompt itself does no network -- the refresh only runs if the
+    -- user asks (no-auto-network rule); either answer retires the notice.
+    if not BookshelfSettings.isTrue("hardcover_author_roles_notice") then
+        UIManager:scheduleIn(3, function()
+            pcall(function()
+                local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                local affected = ok_hc and Hardcover
+                    and Hardcover.isAvailable and Hardcover.isAvailable()
+                    and Hardcover.hasData and Hardcover.hasData()
+                if not affected then return end
+                BookshelfSettings.save("hardcover_author_roles_notice", true)
+                local ConfirmBox = require("ui/widget/confirmbox")
+                UIManager:show(ConfirmBox:new{
+                    text = _("Bookshelf update: cached Hardcover book details from earlier versions can list audiobook narrators and translators as authors, which shows extra author cards.\n\nRefresh the details for your linked books now? (Contacts Hardcover, rate-limited, cancellable. Also available later under Hardcover > Manage Hardcover data.)"),
+                    ok_text = _("Refresh now"),
+                    cancel_text = _("Later"),
+                    ok_callback = function()
+                        UIManager:nextTick(function()
+                            pcall(function()
+                                self:refreshHardcoverDetails()
+                            end)
+                        end)
+                    end,
+                })
+            end)
+        end)
+    end
+
     -- Cache update-related settings on the instance for the menu's text_func
     -- closures. Defaults match bookends: branch empty, source = "release",
     -- background check OFF (opt-in via the menu toggle).
@@ -2382,6 +2415,78 @@ function Bookshelf:scanPageCounts()
         Trapper:clear()
         showReport()
     end)
+end
+
+-- refreshHardcoverDetails() — re-fetch cached enrichment for every linked
+-- book, one paced query per book (Hardcover's ~60/min limit). Reached from
+-- Manage Hardcover data and from the one-time post-upgrade notice (the
+-- pre-v5 cache could hold narrators/translators in the author field; the
+-- role filter only applies to fresh fetches). Cancellable via the progress
+-- message; same armed-dismiss guard as the settings module's paced scans
+-- (the launching tap can bleed onto the fresh message).
+function Bookshelf:refreshHardcoverDetails()
+    local InfoMessage = require("ui/widget/infomessage")
+    local T = require("ffi/util").template
+    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+    if not ok_hc or not Hardcover
+            or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
+        UIManager:show(InfoMessage:new{
+            text = _("Hardcover plugin is not available"), timeout = 3 })
+        return
+    end
+    local files = Hardcover.linkedFiles and Hardcover.linkedFiles() or {}
+    if #files == 0 then
+        UIManager:show(InfoMessage:new{
+            text = _("No linked books to refresh"), timeout = 3 })
+        return
+    end
+    local st = { i = 0, refreshed = 0, errors = 0, cancelled = false }
+    local armed = false
+    UIManager:scheduleIn(0.6, function() armed = true end)
+    local info
+    local function closeInfo()
+        if info then
+            info.dismiss_callback = nil
+            UIManager:close(info)
+            info = nil
+        end
+    end
+    local function refresh()
+        closeInfo()
+        info = InfoMessage:new{
+            text = T(_("Refreshing Hardcover details\u{2026} %1 of %2"),
+                     st.i, #files),
+            dismiss_callback = function()
+                if armed then st.cancelled = true end
+            end,
+        }
+        UIManager:show(info)
+    end
+    local step
+    step = function()
+        if st.cancelled or st.i >= #files then
+            closeInfo()
+            pcall(function()
+                local Repo = require("lib/bookshelf_book_repository")
+                Repo.invalidateLightMeta()
+                Repo.invalidateBookCache("hardcover-details-refresh")
+            end)
+            UIManager:show(InfoMessage:new{
+                text = T(_("Hardcover details refreshed for %1 of %2 linked books."),
+                         st.refreshed, #files),
+                timeout = 4,
+            })
+            return
+        end
+        st.i = st.i + 1
+        local ok = pcall(Hardcover.refreshBook, { filepath = files[st.i] }, {})
+        if ok then st.refreshed = st.refreshed + 1
+        else st.errors = st.errors + 1 end
+        refresh()
+        UIManager:scheduleIn(1.2, step)
+    end
+    refresh()
+    UIManager:nextTick(step)
 end
 
 -- Clear dev branch + install latest stable release. Used when escaping a

@@ -573,6 +573,26 @@ local function _mirrorExternalLink(filepath, config)
     _notifyLoadedHardcoverSettings(filepath, config, original)
 end
 
+-- linkedFiles() -> { filepath, ... }
+-- Every locally-linked book, from the Hardcover plugin's own link store.
+-- The bulk details refresh walks this list (refreshBook re-fetches one
+-- book's enrichment and re-caches it).
+function Hardcover.linkedFiles()
+    local out = {}
+    pcall(function()
+        local settings = _openHardcoverSettingsObject()
+        local books = settings and settings:readSetting("books")
+        if type(books) ~= "table" then return end
+        for fp, cfg in pairs(books) do
+            if type(fp) == "string" and type(cfg) == "table" and cfg.book_id then
+                out[#out + 1] = fp
+            end
+        end
+        table.sort(out)
+    end)
+    return out
+end
+
 -- linkedPages() -> { [filepath] = pages }
 -- The Hardcover plugin stores the matched edition's page count per linked
 -- book (that is how it reports reading progress as print pages). For the
