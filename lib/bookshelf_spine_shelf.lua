@@ -1238,11 +1238,39 @@ function SpineShelf.plan(items, opts)
             -- keyed by filepath -- measured before it existed: 76 full
             -- metadata builds per page turn, every page turn.
             local hyd = _hydrate_cache[bk.filepath]
-            if not hyd then
+            -- Only PAY the full build when the stub actually shows the
+            -- stale-cache tell: a filename-shaped (or missing) title, or no
+            -- author anywhere. A complete light record already carries the
+            -- Calibre/Hardcover folds, its own series_num, and authors[1]
+            -- serves the spine's author segment -- hydrating it changes
+            -- nothing. Measured before this gate: a cold series-chip open
+            -- in spine mode paid 155 unconditional builds, 3.9s of a 4.3s
+            -- open on device flash.
+            local stem = type(bk.filename) == "string"
+                         and bk.filename:gsub("%.%w+$", "") or nil
+            local complete = type(bk.title) == "string" and bk.title ~= ""
+                             and bk.title ~= stem and bk.title ~= bk.filename
+                             and (bk.author ~= nil
+                                  or (type(bk.authors) == "table"
+                                      and bk.authors[1] ~= nil)
+                                  or type(bk.authors) == "string")
+            if not hyd and not complete then
                 _n_hydrated = _n_hydrated + 1
                 pcall(function()
-                    if not (ok_repo and Repo and Repo.buildBookMeta) then return end
-                    local full = Repo.buildBookMeta(bk.filepath, { want_cover = false })
+                    if not (ok_repo and Repo) then return end
+                    -- Light record first: the series stubs are BARE (only a
+                    -- filepath -- the group cache holds shapes), and the
+                    -- fields this needs are all on the memoised light
+                    -- record, an O(1) map hit. The full build is the
+                    -- fallback for books the batch doesn't know. Measured
+                    -- before: a cold series-chip open in spine mode paid
+                    -- 155 unconditional FULL builds, 3.9s of a 4.3s open.
+                    local full = Repo.lightMetaFor
+                                 and Repo.lightMetaFor(bk.filepath) or nil
+                    if not (full and full.title) and Repo.buildBookMeta then
+                        full = Repo.buildBookMeta(bk.filepath,
+                                                  { want_cover = false })
+                    end
                     if not full then return end
                     hyd = {
                         display_title = full.display_title,
@@ -1251,7 +1279,9 @@ function SpineShelf.plan(items, opts)
                                         and tostring(full.series_num) or nil,
                         page_count    = full.page_count,
                         cover_sizetag = full.cover_sizetag,
-                        author        = full.author,
+                        author        = full.author
+                                        or (type(full.authors) == "table"
+                                            and full.authors[1]) or nil,
                     }
                     _hydrate_cache[bk.filepath] = hyd
                 end)

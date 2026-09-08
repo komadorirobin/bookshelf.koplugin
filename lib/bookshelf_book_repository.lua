@@ -2915,6 +2915,19 @@ local function _lightMetaForFp(cache, fp)
     return _buildBookMetaLight(fp)
 end
 
+-- Public light-record lookup for consumers holding only a filepath (the
+-- spine shelf's stack-member stubs): one memoised map hit once the batch
+-- SELECT has run, nil when the batch doesn't know the file -- the caller
+-- falls back to a full build. Returns the SHARED cached record: read from
+-- it, never mutate it (see _resetLightMetaProgress for why).
+function Repo.lightMetaFor(filepath)
+    if type(filepath) ~= "string" then return nil end
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local cache = _getLightMetaCache(home, depth)
+    return cache and cache[filepath] or nil
+end
+
 -- Flat list of every book filepath in the library: the same depth-capped
 -- recursive walk getLatest / the series + author groups use (honours the
 -- bookshelf_latest_walk_depth setting). For bulk operations that need only
