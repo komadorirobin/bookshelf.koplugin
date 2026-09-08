@@ -251,14 +251,35 @@ function Bookshelf:init()
     Fonts.maybeSeedFreshInstall()
     Fonts.ensureInstalled()
 
+    -- Version marker, written every init. v5 is the FIRST build that
+    -- writes it, which makes it the upgrade detector: settings present
+    -- but marker absent = this install ran a pre-v5 build. Future
+    -- migrations get the stored version to compare against instead of
+    -- inventing their own flags.
+    local prior_version   = BookshelfSettings.read("last_run_version")
+    local was_fresh       = not BookshelfSettings.wasPresent()
+    local pre_v5_upgrade  = (not was_fresh) and prior_version == nil
+    do
+        local v = "unknown"
+        pcall(function()
+            local meta = dofile(self.path .. "/_meta.lua")
+            if type(meta) == "table" and meta.version then v = meta.version end
+        end)
+        BookshelfSettings.save("last_run_version", v)
+    end
+
     -- One-time upgrade notice: enrichment cached before v5 could carry
     -- narrators/translators in the author field (Hardcover's
     -- cached_contributors joined role-blind), which split books across
     -- extra author cards. The fix only applies to FRESH fetches, so users
     -- with an existing cache are offered the bulk details refresh once.
-    -- The prompt itself does no network -- the refresh only runs if the
+    -- Gated to PRE-V5 UPGRADERS: a fresh v5 install's cache was built
+    -- with the role filter and never needs the prompt, and future
+    -- upgrades carry the version marker so it can never re-fire. The
+    -- prompt itself does no network -- the refresh only runs if the
     -- user asks (no-auto-network rule); either answer retires the notice.
-    if not BookshelfSettings.isTrue("hardcover_author_roles_notice") then
+    if pre_v5_upgrade
+            and not BookshelfSettings.isTrue("hardcover_author_roles_notice") then
         UIManager:scheduleIn(3, function()
             pcall(function()
                 local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
