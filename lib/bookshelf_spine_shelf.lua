@@ -1558,8 +1558,24 @@ function SpineShelf.rowWidget(opts)
     local inset = math.floor(b * 0.8)
     local stand_h = math.max(1, opts.height - b - inset)
     local group = HorizontalGroup:new{ align = "top" }
+    -- Books stand CENTRED on their plank (user ruling, made obvious by the
+    -- all-face-out wall: left-aligned rows left all the slack ragged on the
+    -- right). The lead span absorbs half the row's leftover, floored at the
+    -- end margin so books never reach the shelf's ends -- an overwide
+    -- single book keeps the old left anchor and clips right as before.
+    local content_w = 0
+    for i = opts.row.first, opts.row.last do
+        local e = opts.plan.entries[i]
+        if e then
+            content_w = content_w + e.w
+            if i > opts.row.first then
+                content_w = content_w + (e.gap_before or opts.gap)
+            end
+        end
+    end
     group[#group + 1] = HorizontalSpan:new{
-        width = SpineShelf.endMargin(opts.height),
+        width = math.max(SpineShelf.endMargin(opts.height),
+                         math.floor((opts.width - content_w) / 2)),
     }
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
