@@ -50,6 +50,25 @@ SpineShelf.BOOK_GAP_DP = 2
 -- Gap either side of a flattened group's run of spines, dp -- the visual
 -- seam that keeps a series reading as a series once its stack is flattened.
 SpineShelf.GROUP_GAP_DP = 12
+-- ── The opening tilt's 2.5D model ───────────────────────────────────────────
+-- One pair of angles drives every scale, so the face and the top move like
+-- one rigid book instead of two tuned constants (user report: the fudged
+-- 0.80 squash + arbitrary top growth didn't convince). Orthographic camera
+-- pitched down by ALPHA (the same slightly-above viewpoint the standing
+-- shelf implies: a spine of thickness D shows a top edge of D*sin(ALPHA),
+-- which matches the standing page blocks at ALPHA ~= 12 deg). The book tips
+-- forward by THETA about its bottom-front edge, so:
+--   face height  scales by cos(ALPHA+THETA)/cos(ALPHA)
+--   top depth    scales by sin(ALPHA+THETA)/sin(ALPHA)
+--   and the tipped top edge is directly D*sin(ALPHA+THETA), where D is the
+--   book's on-screen thickness -- the spine's WIDTH -- so fat books tip to
+--   show broad tops and novellas barely any, with no separate rule.
+-- ALPHA = 12 deg, THETA = 26 deg (face scale ~0.81, close to the 0.80 the
+-- user calibrated by eye):
+SpineShelf.TILT_FACE_SCALE = 0.806   -- cos(38 deg) / cos(12 deg)
+SpineShelf.TILT_TOP_SCALE  = 2.96    -- sin(38 deg) / sin(12 deg)
+SpineShelf.TILT_TOP_SIN    = 0.616   -- sin(38 deg): tipped top = thickness * this
+
 -- The gap a FACE-OUT needs against anything it isn't serially attached to:
 -- covers standing 2dp apart read as one slab (obvious once "All books"
 -- face out). Between the book gap and the group gap on purpose -- group
@@ -801,13 +820,25 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local spine_w = e.w
     local spine_h = math.min(e.h, self.height)
     -- Opening tilt (paintOpeningTilt's one-shot render, never cached): the
-    -- book tips forward off the shelf, so it foreshortens -- squashed
-    -- toward its feet -- while more of its page-block top edge comes into
-    -- view (edge_mul, applied below where edge_h is sized).
+    -- book tips forward off the shelf. Face and top edge scale together
+    -- from the module's one 2.5D model (see TILT_FACE_SCALE) -- the face
+    -- foreshortens while the top edge opens up to thickness * sin of the
+    -- tipped angle, its breadth coming from the spine's own width.
     local tilt = self._tilt
+    local tilt_edge
     if tilt then
-        spine_h = math.max(Screen:scaleBySize(30),
-                           math.floor(spine_h * (tilt.squash or 0.9)))
+        local e0 = 0
+        if spine_h >= Screen:scaleBySize(60) then
+            e0 = math.floor(spine_h * 0.05)
+            local e_min, e_max = Screen:scaleBySize(5), Screen:scaleBySize(14)
+            if e0 < e_min then e0 = e_min end
+            if e0 > e_max then e0 = e_max end
+        end
+        tilt_edge = math.max(Screen:scaleBySize(3),
+                             math.floor(spine_w * SpineShelf.TILT_TOP_SIN))
+        tilt_edge = math.min(tilt_edge, math.floor(spine_h * 0.35))
+        local face = math.floor((spine_h - e0) * SpineShelf.TILT_FACE_SCALE)
+        spine_h = math.max(Screen:scaleBySize(30), face + tilt_edge)
     end
     local top = y + self.height - spine_h
 
@@ -839,22 +870,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- INSIDE the book's allotted height, so layout is untouched; tiny
     -- spines skip it.
     local edge_h = 0
-    if spine_h >= Screen:scaleBySize(60) then
+    if tilt then
+        -- Sized above with the face, from the same tip angles.
+        edge_h = tilt_edge
+    elseif spine_h >= Screen:scaleBySize(60) then
         edge_h = math.floor(spine_h * 0.05)
         local e_min, e_max = Screen:scaleBySize(5), Screen:scaleBySize(14)
         if edge_h < e_min then edge_h = e_min end
         if edge_h > e_max then edge_h = e_max end
-    end
-    if tilt then
-        -- Tipped forward, the viewer looks down onto the pages: the top
-        -- edge grows well past its standing clamp (capped so the spine
-        -- still reads as a spine). Spines too short to show an edge when
-        -- standing get a minimal one -- the growing top block is most of
-        -- what sells the tilt.
-        local base = edge_h > 0 and edge_h
-                     or math.max(2, math.floor(spine_h * 0.05))
-        edge_h = math.min(math.floor(base * (tilt.edge_mul or 2.4)),
-                          math.floor(spine_h * 0.30))
     end
     -- Where the book landed in this render, for the tilt painter's shading
     -- pass (the face below the page block darkens as it tips away from the
@@ -1734,7 +1757,7 @@ function SpineShelf.paintOpeningTilt(slot)
         -- shrinking spine vacates reads as the shelf background behind it.
         c:paintRectRGB32(0, 0, slot.width, slot.height,
                          Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
-        slot._tilt = { squash = 0.80, edge_mul = 2.4 }
+        slot._tilt = true
         slot:_renderInto(c, night)
         slot._tilt = nil
         -- Tipping away from the light, the face shades (user report: with
@@ -1782,17 +1805,16 @@ function SpineShelf.paintFaceOutTilt(tile)
     local bb = Screen.bb
     if not bb then return end
     local depth = fx.depth or 0
-    local freed = rect.h - math.floor(rect.h * 0.80)
+    local freed = rect.h - math.floor(rect.h * SpineShelf.TILT_FACE_SCALE)
     if freed < 2 then return end
-    -- The block grows by half ITS OWN height, not by the freed space
-    -- (user calibration, two rounds): full-freed growth kept the
-    -- silhouette constant, and half-freed growth still made every book's
-    -- top swell by the same amount regardless of how fat it is. Growing
-    -- relative to the standing depth keeps the tilt page-count-true --
-    -- the depth is the book's thickness, so a doorstop tips to show a
-    -- broad top and a novella barely any. Capped by `freed` so the block
-    -- can never rise above its standing top edge (and the refresh rect).
-    local grow = math.min(math.floor(depth * 0.5), freed)
+    -- Face and top from the module's one 2.5D model (see TILT_FACE_SCALE):
+    -- the standing block is the book's thickness at the resting view
+    -- angle, so tipping scales it by TILT_TOP_SCALE -- a doorstop tips to
+    -- show a broad top, a novella barely any. Capped by `freed` so the
+    -- block can never rise above its standing top edge (and the refresh
+    -- rect).
+    local grow = math.min(math.floor(depth * (SpineShelf.TILT_TOP_SCALE - 1)),
+                          freed)
     local ok = pcall(function()
         -- Squash the cover toward its feet: bottom edge (on the plank)
         -- stays put, the top drops by `freed`.
