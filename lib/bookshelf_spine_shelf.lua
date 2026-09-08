@@ -1704,8 +1704,11 @@ function SpineShelf.rowWidget(opts)
                     }
                     -- Geometry the opening tilt needs (paintFaceOutTilt):
                     -- the page block sits directly above the cover card and
-                    -- gets redrawn taller as the book tips forward.
-                    cover.faceout_fx = { depth = depth, look = e.look }
+                    -- gets redrawn taller as the book tips forward; `below`
+                    -- is the plank the cast shadow falls on -- push span +
+                    -- surface strip + front face, cover foot to row bottom.
+                    cover.faceout_fx = { depth = depth, look = e.look,
+                                         below = push + inset + b }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
                     if head > 0 then
@@ -1776,18 +1779,36 @@ function SpineShelf.rowWidget(opts)
     return result
 end
 
--- The tipped face's shading: a vertical GRADIENT, strongest at the head and
--- fading toward the foot -- the head has rotated furthest from the overhead
--- light, the foot barely moved, so a flat wash read as a dimmed sticker
--- rather than a turned surface (user report). Banded rather than per-row:
--- a dozen blend rects cost nothing on a one-shot frame and e-ink's 16
--- greys can't show finer steps anyway. Blends black in day, white in
--- night (pre-invert space flips the direction).
-local TILT_SHADE_HEAD = 0.28
-local TILT_SHADE_FOOT = 0.04
+-- The tilt's lighting, matched to the PLANK's: the plank paints as if lit
+-- from the camera -- its front face and front-top edge are the bright
+-- parts -- so a book tipping forward turns its TOP toward that light (the
+-- pages LIGHTEN) while its face turns away and down (darkens, most at the
+-- foot, where the plank's shadow zone eats the global light too). And a
+-- leaning book shades the shelf it leans over: a cast band grows down
+-- from its feet across the plank's surface strip and front face. The
+-- first two attempts -- a flat wash, then a head-dark gradient -- both
+-- read wrong against this light (user reports). Banded blends: a handful
+-- of rects cost nothing on a one-shot frame and e-ink's 16 greys can't
+-- show finer steps anyway. Every blend flips black/white in night
+-- (pre-invert space reverses which paint direction displays darker).
+local TILT_FACE_HEAD   = 0.08   -- face darken at the head...
+local TILT_FACE_FOOT   = 0.40   -- ...growing toward the shelf
+local TILT_TOP_LIGHT   = 0.18   -- pages lighten, tipped into the light
+local TILT_CAST_NEAR   = 0.35   -- cast shadow right under the feet...
+local TILT_CAST_FAR    = 0.10   -- ...fading down the plank's front
 local TILT_SHADE_BANDS = 12
 
-local function _shadeTiltFace(bb, x, y, w, h, night)
+local function _shadeRect(bb, x, y, w, h, by, night)
+    if night then bb:lightenRect(x, y, w, h, by)
+    else bb:darkenRect(x, y, w, h, by) end
+end
+
+local function _lightRect(bb, x, y, w, h, by, night)
+    if night then bb:darkenRect(x, y, w, h, by)
+    else bb:lightenRect(x, y, w, h, by) end
+end
+
+local function _gradeRect(bb, x, y, w, h, from, to, night)
     if not (w and h and w > 0 and h > 0) then return end
     local bands = math.min(TILT_SHADE_BANDS, h)
     for i = 0, bands - 1 do
@@ -1795,15 +1816,17 @@ local function _shadeTiltFace(bb, x, y, w, h, night)
         local y1 = y + math.floor(h * (i + 1) / bands)
         if y1 > y0 then
             local t = (i + 0.5) / bands
-            local by = TILT_SHADE_HEAD
-                       + (TILT_SHADE_FOOT - TILT_SHADE_HEAD) * t
-            if night then
-                bb:lightenRect(x, y0, w, y1 - y0, by)
-            else
-                bb:darkenRect(x, y0, w, y1 - y0, by)
-            end
+            _shadeRect(bb, x, y0, w, y1 - y0, from + (to - from) * t, night)
         end
     end
+end
+
+local function _shadeTiltFace(bb, x, y, w, h, night)
+    _gradeRect(bb, x, y, w, h, TILT_FACE_HEAD, TILT_FACE_FOOT, night)
+end
+
+local function _shadeTiltCast(bb, x, y, w, h, night)
+    _gradeRect(bb, x, y, w, h, TILT_CAST_NEAR, TILT_CAST_FAR, night)
 end
 
 -- paintOpeningTilt(slot) — one-frame "book coming off the shelf" feedback,
@@ -1829,12 +1852,15 @@ function SpineShelf.paintOpeningTilt(slot)
         slot._tilt = true
         slot:_renderInto(c, night)
         slot._tilt = nil
-        -- Tipping away from the light, the face shades -- graded from the
-        -- head down (see _shadeTiltFace).
+        -- The lighting split (see the constants above): pages tip INTO the
+        -- front light, the face away from it, foot-dark.
         local r = slot._render_spine_rect
         if r then
-            _shadeTiltFace(c, r.x, r.y + (r.edge or 0),
-                           r.w, r.h - (r.edge or 0), night)
+            local edge = r.edge or 0
+            if edge > 0 then
+                _lightRect(c, r.x, r.y, r.w, edge, TILT_TOP_LIGHT, night)
+            end
+            _shadeTiltFace(c, r.x, r.y + edge, r.w, r.h - edge, night)
         end
         bb:blitFrom(c, d.x, d.y, 0, 0, slot.width, slot.height)
         c:free()
@@ -1844,7 +1870,16 @@ function SpineShelf.paintOpeningTilt(slot)
         logger.dbg("[bookshelf] spine opening tilt failed; skipping")
         return
     end
-    return d.x, d.y, d.w, d.h
+    -- The leaning book shades the plank in front of it: a cast band from
+    -- its feet down over the surface strip and the front face (the slot
+    -- ends one inset above the front-top edge; plank geometry from the
+    -- descriptor the row hands every slot).
+    local pk = slot.plank
+    local band = pk and (pk.b + pk.inset) or Screen:scaleBySize(8)
+    pcall(function()
+        _shadeTiltCast(bb, d.x, d.y + d.h, d.w, band, _nightMode())
+    end)
+    return d.x, d.y, d.w, d.h + band
 end
 
 -- paintFaceOutTilt(tile) — the face-out cover's opening feedback, matching
@@ -1918,14 +1953,20 @@ function SpineShelf.paintFaceOutTilt(tile)
             end
         end
     end
-    -- Shade the tipped cover face -- glyphs included, they sit on it --
-    -- graded from the head down while the up-facing page block stays lit
-    -- (see _shadeTiltFace).
+    -- The lighting split (see the constants above): the page block tips
+    -- INTO the front light and brightens; the cover face -- glyphs
+    -- included, they sit on it -- darkens toward the shelf; and the
+    -- leaning book casts down over the plank in front of its feet.
+    local band = fx.below or Screen:scaleBySize(10)
     pcall(function()
+        local night = _nightMode()
+        _lightRect(bb, rect.x, rect.y - depth + (freed - grow),
+                   rect.w, depth + grow, TILT_TOP_LIGHT, night)
         _shadeTiltFace(bb, rect.x, rect.y + freed,
-                       rect.w, rect.h - freed, _nightMode())
+                       rect.w, rect.h - freed, night)
+        _shadeTiltCast(bb, rect.x, rect.y + rect.h, rect.w, band, night)
     end)
-    return rect.x, rect.y - depth, rect.w, rect.h + depth
+    return rect.x, rect.y - depth, rect.w, rect.h + depth + band
 end
 
 -- drainTileStats() -> ms, n since the last drain: face-out tile build cost
