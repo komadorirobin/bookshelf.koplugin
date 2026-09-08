@@ -377,7 +377,7 @@ function Updater.install(zip_url, old_version, new_version, on_success, error_la
         local downloaded, reason = false, nil
         local ok_require, http, ltn12, socket, socketutil =
             pcall(function()
-                return require("socket/http"),
+                return require("socket.http"),
                        require("ltn12"),
                        require("socket"),
                        require("socketutil")

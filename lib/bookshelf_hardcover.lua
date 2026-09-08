@@ -1717,7 +1717,7 @@ local function _downloadImage(url, key, force)
     end
 
     local ok_require, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"),
+        return require("socket.http"),
                require("ltn12"),
                require("socket"),
                require("socketutil")

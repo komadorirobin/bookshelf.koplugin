@@ -41,7 +41,7 @@ function M.getJSON(url, opts)
     local json = require("json")
     local user_agent = opts.user_agent or "KOReader-Bookshelf"
     local ok_require, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"), require("ltn12"),
+        return require("socket.http"), require("ltn12"),
                require("socket"), require("socketutil")
     end)
     if ok_require then

@@ -86,7 +86,7 @@ end
 -- optional Accept header value.
 local function _requestString(url, accept)
     local ok_req, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"),
+        return require("socket.http"),
                require("ltn12"),
                require("socket"),
                require("socketutil")
@@ -214,7 +214,7 @@ function CoverFetch.download(url, dest_path, user, password, opts)
     end
 
     local ok_req, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"),
+        return require("socket.http"),
                require("ltn12"),
                require("socket"),
                require("socketutil")

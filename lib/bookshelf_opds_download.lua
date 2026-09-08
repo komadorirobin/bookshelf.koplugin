@@ -471,7 +471,7 @@ function D.download(url, dest_path, user, password, redirect_depth)
     local auth_pass = (type(password) == "string" and password ~= "") and password or nil
 
     local ok_req, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"),
+        return require("socket.http"),
                require("ltn12"),
                require("socket"),
                require("socketutil")

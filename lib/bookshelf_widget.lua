@@ -15003,14 +15003,36 @@ function BookshelfWidget:_opdsRunDownload(book, acq, dest, dialog)
             -- "someone else is busy" and QUEUES the user's navigation rather
             -- than spending it.
             self._opds_download_started_at = os.time()
-            local go_on = Trapper:info(T(_("Downloading %1…"), title))
-            local path, err, extra
-            if go_on then
-                path, err, extra = D.download(acq.href, dest, user, password)
-            end
+            -- The transfer runs IN A SUBPROCESS (issue #377): in-process it
+            -- blocked the whole UI behind Trapper:info until the socket gave
+            -- up -- with a proxy misroute or a dead server that meant a
+            -- frozen shelf. The fork writes dest itself; dismissing the trap
+            -- SIGKILLs it, so a half-written file is removed here. Same
+            -- pattern as the stock OPDS plugin ("tap to cancel").
+            -- Returns packed in a table: the failure shape is (nil, err) and
+            -- a leading nil through the subprocess serialiser would misalign
+            -- the values.
+            local completed, result = Trapper:dismissableRunInSubprocess(
+                function()
+                    local p, e, x = D.download(acq.href, dest, user, password)
+                    return { path = p, err = e, extra = x }
+                end,
+                T(_("Downloading %1… (tap to cancel)"), title))
+            local path  = type(result) == "table" and result.path or nil
+            local err   = type(result) == "table" and result.err or nil
+            local extra = type(result) == "table" and result.extra or nil
             Trapper:clear()
             self._opds_download_started_at = nil
-            if not go_on then return end   -- dismissed before the transfer began
+            if not completed then
+                -- The fork downloads into dest .. ".tmp" and renames on
+                -- success; a SIGKILL leaves the temp, not dest.
+                pcall(function() os.remove(dest .. ".tmp") end)
+                pcall(function() os.remove(dest) end)
+                UIManager:show(Notification:new{
+                    text = _("Download cancelled"),
+                })
+                return
+            end
 
             if not path then
                 -- Once, before the branching, so every failure shape is

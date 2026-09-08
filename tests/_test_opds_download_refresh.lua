@@ -135,6 +135,11 @@ package.loaded["ui/trapper"] = {
     wrap  = function(_, fn) fn() end,
     info  = function() return true end,
     clear = function() end,
+    -- The transfer runs in a dismissable subprocess since issue #377;
+    -- under stubs it just runs inline and reports completion.
+    dismissableRunInSubprocess = function(_, task, _widget)
+        return true, task()
+    end,
 }
 package.loaded["ui/widget/confirmbox"] = {
     new = function(_, spec) spec.is_confirmbox = true; return spec end,
