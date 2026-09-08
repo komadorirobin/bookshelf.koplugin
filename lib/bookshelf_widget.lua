@@ -2463,6 +2463,30 @@ function BookshelfWidget:_rebuild()
         -- installs that did not come from disk.
         (_perf_cc._puts or 0) - (_perf_cc._disk_hits or 0),
         _perf_cc._disk_writes or 0))
+    -- Chip opens and mode flips route through THIS function, not the swap,
+    -- and had no always-on summary: a 16s Collections open was invisible in
+    -- a stock crash.log, showing up only as a mystery drain on the NEXT
+    -- page turn. Same contract as the turn lines; draining here also scopes
+    -- the swap lines' builds= to their own window.
+    do
+        local _rb_builds, _rb_builds_ms, _rb_covers = 0, 0, 0
+        if Repo.drainBuildStats then
+            _rb_builds, _rb_builds_ms, _rb_covers = Repo.drainBuildStats()
+        end
+        local mode = self:_isSpineMode() and "spines"
+                     or (self:_isListMode() and "list" or "covers")
+        logger.info(string.format(
+            "[bookshelf perf] shelf open: total=%.0fms (hero=%.0f fetch=%.0f"
+            .. " shelves=%.0f assemble=%.0f builds=%d/%.0fms covers=%d)"
+            .. " mode=%s chip=%s",
+            (_perf_t4 - _perf_t0) * 1000,
+            (_perf_t1 - _perf_t0) * 1000,
+            (_perf_t2 - _perf_t1) * 1000,
+            (_perf_t3 - _perf_t2) * 1000,
+            (_perf_t4 - _perf_t3) * 1000,
+            _rb_builds, _rb_builds_ms, _rb_covers,
+            mode, tostring(_perf_chip)))
+    end
     local _perf_persist_t0 = _gettime()
     self:_persistNavState()
     logger.dbg(string.format("[bookshelf perf] _rebuild: persist=%.0fms",
@@ -4470,7 +4494,21 @@ function BookshelfWidget:_flipViewMode()
     self:_markOpdsNav()
     local anchor_fp = self._page_items and _itemFilepath(self._page_items[1])
     local TabModel = require("lib/bookshelf_tab_model")
-    local target = self:_isListMode() and ViewMode.COVERS or ViewMode.LIST
+    -- Three-way cycle since the spine style exists: covers -> list ->
+    -- spines -> covers (user request; it used to toggle covers/list). An
+    -- OPDS chip skips spines -- the style is disabled for catalogues
+    -- everywhere else (the Shelf style dialog hides the radio), so the
+    -- gesture must not be the one back door that pins it.
+    local target
+    if self:_isSpineMode() then
+        target = ViewMode.COVERS
+    elseif self:_isListMode() then
+        local tab = TabModel.getById(self.chip)
+        local is_opds = tab and tab.source and tab.source.kind == "opds"
+        target = is_opds and ViewMode.COVERS or ViewMode.SPINES
+    else
+        target = ViewMode.LIST
+    end
     local tabs, hit = TabModel.load(), nil
     for _i, t in ipairs(tabs or {}) do
         if t.id == self.chip then hit = t break end
