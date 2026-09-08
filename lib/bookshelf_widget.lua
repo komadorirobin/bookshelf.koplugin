@@ -5496,8 +5496,12 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         if range_last < range_first then range_last = range_first end
     end
     local page_text = Button:new{
-        text = open_ended and T(_("%1-%2 of %3+"), range_first, range_last, range_total)
-                          or T(_("%1-%2 of %3"), range_first, range_last, range_total),
+        -- HAIR SPACES (U+200A) around the dash: bare digits against a
+        -- hyphen set too tight at this size (same treatment as the cover
+        -- page-count badge; the spaces live in the msgid so translators
+        -- keep or drop them deliberately).
+        text = open_ended and T(_("%1\u{200A}-\u{200A}%2 of %3+"), range_first, range_last, range_total)
+                          or T(_("%1\u{200A}-\u{200A}%2 of %3"), range_first, range_last, range_total),
         -- Adopt the Bookshelf UI font (a FontList-resolvable face), like the
         -- rest of the chrome; falls back to cfont in follow mode. Button
         -- resolves text_font_face via Font:getFace, and the UI-font setting
