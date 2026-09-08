@@ -1545,8 +1545,60 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                     end),
                 }}
             end
-            -- Favourites face out (front cover, bookstore style).
-            rows[#rows + 1] = toggleRow(_("Favourites face out"), "spine_face_out")
+            -- Face out (front cover, bookstore style): WHICH books stand
+            -- cover-forward. Five values, so a submenu rather than a
+            -- cycling button (user ruling). Stored back-compatibly: nil =
+            -- favourites (the default the old Yes toggle meant), false =
+            -- none (the old No), else the mode string.
+            local FACE_LABELS = {
+                none      = _("None"),
+                favorites = _("Favorites"),
+                first     = _("First in series"),
+                reading   = _("Currently reading"),
+                all       = _("All books"),
+            }
+            local function faceOutShown()
+                local v = draft.spine_face_out
+                if v == false then v = "none" end
+                if v == nil or v == true then v = "favorites" end
+                return _("Face out") .. ": "
+                       .. (FACE_LABELS[v] or FACE_LABELS.favorites)
+            end
+            rows[#rows + 1] = {{
+                text_func = faceOutShown,
+                callback = function()
+                    UIManager:close(d)
+                    local sub
+                    local sub_rows = {}
+                    for _i, m in ipairs({ "favorites", "first", "reading",
+                                          "all", "none" }) do
+                        sub_rows[#sub_rows + 1] = {{
+                            text = FACE_LABELS[m],
+                            callback = function()
+                                if m == "favorites" then
+                                    draft.spine_face_out = nil
+                                elseif m == "none" then
+                                    draft.spine_face_out = false
+                                else
+                                    draft.spine_face_out = m
+                                end
+                                if on_change then on_change() end
+                                UIManager:close(sub)
+                                show()
+                            end,
+                        }}
+                    end
+                    sub_rows[#sub_rows + 1] = {{
+                        text = _("Cancel"),
+                        callback = function()
+                            UIManager:close(sub)
+                            show()
+                        end,
+                    }}
+                    sub = ButtonDialog:new{ buttons = sub_rows }
+                    UIManager:show(sub)
+                end,
+            }}
             -- Author on the spine, below the title like a printed spine.
             rows[#rows + 1] = toggleRow(_("Author on spine"), "spine_show_author")
         end

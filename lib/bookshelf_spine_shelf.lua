@@ -1175,6 +1175,12 @@ function SpineShelf.plan(items, opts)
         px_per_dp > 0 and (budget / px_per_dp) or nil)
     local book_gap  = opts.gap or 0
     local group_gap = opts.group_gap or book_gap
+    -- Face-out policy: which books stand cover-forward. Mode string from
+    -- the chip editor's picker; the old boolean pins normalise onto it
+    -- (true/nil were "favourites face out: yes", false was "no").
+    local face_mode = opts.face_out
+    if face_mode == nil or face_mode == true then face_mode = "favorites" end
+    if face_mode == false then face_mode = "none" end
 
     -- ── Flatten ─────────────────────────────────────────────────────────
     -- A group that carries its member records (series stack, author /
@@ -1194,7 +1200,13 @@ function SpineShelf.plan(items, opts)
                 for m = 1, #members do
                     flat[#flat + 1] = { item = it, book = members[m],
                                         item_idx = n_items,
-                                        in_group = #members > 1 }
+                                        in_group = #members > 1,
+                                        -- The "first in series/stack"
+                                        -- face-out mode stands this one
+                                        -- cover-forward at the head of
+                                        -- its run.
+                                        first_of_group = m == 1
+                                            and #members > 1 or nil }
                 end
             else
                 flat[#flat + 1] = { item = it, book = it,
@@ -1327,23 +1339,6 @@ function SpineShelf.plan(items, opts)
         local _tf = _gettime()
         local fav = bk.filepath ~= nil and _isFavourite(bk.filepath)
         _t_fav = _t_fav + (_gettime() - _tf)
-        local face_out = (opts.face_out ~= false) and fav
-        if face_out and src.has_cover == nil and src.filepath
-                and ok_repo and Repo and Repo.buildBookMeta then
-            -- Light page records carry no has_cover, and the cover tile
-            -- gates its whole cover ladder on it (the face-out rendered as
-            -- the text placeholder). Face-outs are few: enrich the record
-            -- with the full metadata build, missing fields only, cover
-            -- pixels still lazy-loaded by the tile.
-            pcall(function()
-                local full = Repo.buildBookMeta(src.filepath, { want_cover = false })
-                if full then
-                    for k, v in pairs(full) do
-                        if src[k] == nil then src[k] = v end
-                    end
-                end
-            end)
-        end
         -- The light record path leaves page_count nil for reflowables;
         -- the sidecar knows better and CoverProgress.decide reads it at
         -- paint time anyway for the glyphs, through the same TTL cache,
@@ -1371,6 +1366,32 @@ function SpineShelf.plan(items, opts)
             -- status is nil; a checked record with no status is a book that
             -- has genuinely never been opened.
             src._spine_status_checked = true
+        end
+        -- Decided AFTER the status block: the "reading" mode needs
+        -- src.status. Books only -- a plain folder keeps its spine.
+        local face_out = false
+        if src.filepath then
+            if face_mode == "favorites"   then face_out = fav
+            elseif face_mode == "first"   then face_out = f.first_of_group == true
+            elseif face_mode == "reading" then face_out = src.status == "reading"
+            elseif face_mode == "all"     then face_out = true
+            end
+        end
+        if face_out and src.has_cover == nil and src.filepath
+                and ok_repo and Repo and Repo.buildBookMeta then
+            -- Light page records carry no has_cover, and the cover tile
+            -- gates its whole cover ladder on it (the face-out rendered as
+            -- the text placeholder). Enrich the record with the full
+            -- metadata build, missing fields only, cover pixels still
+            -- lazy-loaded by the tile.
+            pcall(function()
+                local full = Repo.buildBookMeta(src.filepath, { want_cover = false })
+                if full then
+                    for k, v in pairs(full) do
+                        if src[k] == nil then src[k] = v end
+                    end
+                end
+            end)
         end
         local w_dp, w, depth
         if face_out then

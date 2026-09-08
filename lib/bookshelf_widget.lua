@@ -5130,15 +5130,25 @@ function BookshelfWidget:_pageBackPossible()
     return (self.page or 1) > 1
 end
 
--- _spineFaceOut() — do favourites face outwards on this chip? The chip's
--- tri-state first (false = no, nil = follow), then the library default,
--- which is YES: the face-out favourite is half the fun of the mode.
+-- _spineFaceOut() — which books stand cover-forward on this chip: one of
+-- "none" / "favorites" / "first" / "reading" / "all". The chip's pin
+-- first, then the library default of favourites -- the face-out
+-- favourite is half the fun of the mode. Old boolean pins normalise
+-- (true/nil were "favourites face out: yes", false was "no").
+local FACE_OUT_MODES = {
+    none = true, favorites = true, first = true, reading = true, all = true,
+}
 function BookshelfWidget:_spineFaceOut()
+    local function norm(v)
+        if v == false then return "none" end
+        if v == true then return "favorites" end
+        if type(v) == "string" and FACE_OUT_MODES[v] then return v end
+        return nil
+    end
     local tab = require("lib/bookshelf_tab_model").getById(self.chip)
-    local own = tab and tab.spine_face_out
-    if own == false then return false end
-    if own == true then return true end
-    return BookshelfSettings.nilOrTrue("spine_face_out")
+    local own = norm(tab and tab.spine_face_out)
+    if own then return own end
+    return norm(BookshelfSettings.read("spine_face_out")) or "favorites"
 end
 
 -- _spineShowAuthor() — author name on the spine, below the title the way a
@@ -11957,6 +11967,10 @@ function BookshelfWidget:_nudgeColumns(delta)
     -- One item per row: there is no column count to adjust, so the gesture
     -- means the other density knob instead.
     if self:_isListMode() then return self:_nudgeListRows(delta) end
+    -- Spine mode's density knob is its row count (user request): pinch =
+    -- denser = more, shorter shelves; spread = fewer, taller books. Same
+    -- sign convention as the other two nudges.
+    if self:_isSpineMode() then return self:_nudgeSpineRows(delta) end
     -- The GLOBAL, matching _gridCols: cover columns shape the whole screen
     -- (hero size, chip bar position), so they cannot be per chip and the
     -- pinch moves the one shared count.
@@ -12021,6 +12035,33 @@ function BookshelfWidget:onShelfDiagonalSwipe(_, ges)
 end
 
 -- Spread (fingers apart) = zoom in = bigger covers = fewer columns.
+-- _nudgeSpineRows(delta) — the pinch/spread density step for spine mode:
+-- writes the same per-chip spine_rows pin the Shelf style dialog's nudge
+-- does. Starts from the pin when set, else from the row count actually on
+-- screen, so the first pinch steps from what the reader is looking at.
+-- No draft regrid: spines re-render from their module cache keyed by
+-- size, so a full rebuild IS the cheap path here.
+function BookshelfWidget:_nudgeSpineRows(delta)
+    local cur = tonumber(self:_chipListValue("spine_rows"))
+    if not cur then
+        local ok, n = pcall(self._baseShelves, self)
+        cur = ok and n or 1
+    end
+    cur = math.max(1, math.min(6, math.floor(cur)))
+    local new = math.max(1, math.min(6, cur + delta))
+    -- A no-op at the limit still CONSUMES the gesture (same reasoning as
+    -- the list nudge: falling through hands the pinch to whatever is
+    -- underneath).
+    if new == cur then return true end
+    self:_setChipDensity("spine_rows", new)
+    self._nav_dirty = true
+    self:_scheduleNavFlush()
+    self:_clearDpadFocus()
+    self:_rebuild()
+    UIManager:setDirty(self, "ui")
+    return true
+end
+
 function BookshelfWidget:onShelfSpread() return self:_nudgeColumns(-1) end
 -- Pinch (fingers together) = zoom out = smaller covers = more columns.
 function BookshelfWidget:onShelfPinch() return self:_nudgeColumns(1) end
