@@ -573,6 +573,29 @@ local function _mirrorExternalLink(filepath, config)
     _notifyLoadedHardcoverSettings(filepath, config, original)
 end
 
+-- linkedPages() -> { [filepath] = pages }
+-- The Hardcover plugin stores the matched edition's page count per linked
+-- book (that is how it reports reading progress as print pages). For the
+-- shelf that is a STABLE page count one local read away -- no network, no
+-- document render -- so the bulk page-count scan harvests these before
+-- paying the heavy per-book pagination (user insight). Empty table when
+-- the plugin or its settings are absent.
+function Hardcover.linkedPages()
+    local out = {}
+    pcall(function()
+        local settings = _openHardcoverSettingsObject()
+        local books = settings and settings:readSetting("books")
+        if type(books) ~= "table" then return end
+        for fp, cfg in pairs(books) do
+            local p = type(cfg) == "table" and tonumber(cfg.pages) or nil
+            if p and p > 0 and type(fp) == "string" then
+                out[fp] = math.floor(p)
+            end
+        end
+    end)
+    return out
+end
+
 function Hardcover.invalidate()
     _links = nil
     _external_links = nil

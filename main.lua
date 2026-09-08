@@ -2172,10 +2172,50 @@ function Bookshelf:scanPageCounts()
         return
     end
 
+    -- Phase 0: Hardcover-linked books carry their matched edition's page
+    -- count in the plugin's own settings -- a stable print count, one
+    -- local read for the whole library (user insight). Harvest those
+    -- first; only unmatched books pay the heavy render below.
+    local hc_done = 0
+    pcall(function()
+        local HC = require("lib/bookshelf_hardcover")
+        if not (HC and HC.linkedPages) then return end
+        local linked = HC.linkedPages()
+        if not next(linked) then return end
+        local rest = {}
+        for _i, fp in ipairs(todo) do
+            local p = linked[fp]
+            if p then
+                local _p2, st = Repo.readProgress(fp)
+                SpineShelf.persistProgress(fp, p, st)
+                hc_done = hc_done + 1
+            else
+                rest[#rest + 1] = fp
+            end
+        end
+        todo = rest
+    end)
+    if hc_done > 0 then SpineShelf.flushPersist() end
+    if #todo == 0 then
+        UIManager:show(InfoMessage:new{
+            text = T(_("Page counts taken from Hardcover for %1 books."), hc_done),
+            timeout = 4,
+        })
+        return
+    end
+
     Trapper:wrap(function()
-        local go_on = Trapper:confirm(T(_(
-            "Extract page counts for %1 books?\n\nEach book is opened and paginated in the background; this can take a while on a large library. You can cancel between books by tapping the progress message."),
-            #todo), _("Cancel"), _("Extract"))
+        local prompt
+        if hc_done > 0 then
+            prompt = T(_(
+                "Page counts taken from Hardcover for %1 books.\n\nPaginate the remaining %2 books?\n\nEach one is opened in the background; this can take a while. You can cancel between books by tapping the progress message."),
+                hc_done, #todo)
+        else
+            prompt = T(_(
+                "Extract page counts for %1 books?\n\nEach book is opened and paginated in the background; this can take a while on a large library. You can cancel between books by tapping the progress message."),
+                #todo)
+        end
+        local go_on = Trapper:confirm(prompt, _("Cancel"), _("Extract"))
         if not go_on then Trapper:clear() return end
         local done, failed, cancelled = 0, 0, false
         for i, fp in ipairs(todo) do
@@ -2218,15 +2258,20 @@ function Bookshelf:scanPageCounts()
         end
         SpineShelf.flushPersist()
         Trapper:clear()
+        local total_done = done + hc_done
         local summary
         if cancelled then
             summary = T(_("Page count scan cancelled.\n%1 extracted, %2 remaining."),
-                        done, #todo - done - failed)
+                        total_done, #todo - done - failed)
         elseif failed > 0 then
             summary = T(_("Page counts extracted for %1 books.\n%2 could not be paginated."),
-                        done, failed)
+                        total_done, failed)
         else
-            summary = T(_("Page counts extracted for %1 books."), done)
+            summary = T(_("Page counts extracted for %1 books."), total_done)
+        end
+        if hc_done > 0 then
+            summary = summary .. "\n"
+                      .. T(_("%1 came from Hardcover."), hc_done)
         end
         UIManager:show(InfoMessage:new{ text = summary, timeout = 5 })
     end)
