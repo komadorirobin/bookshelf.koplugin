@@ -8149,16 +8149,46 @@ function BookshelfWidget:_previewBook(book, tap_t)
     local is_diff = self._preview_book and lastfile_fp
                     and self._preview_book.filepath ~= lastfile_fp
 
-    -- Selection-state boundary crossed → full rebuild (cheap; chip strip
-    -- + shelves + footer in one pass) so the "currently reading" action
-    -- chip flips its inverted/normal styling in lockstep with the
-    -- preview state.
+    -- Selection-state boundary crossed: the "currently reading" action
+    -- chip's inverted fill flips with it. That used to be a synchronous
+    -- full rebuild + FULL-SCREEN flash -- and since the very first
+    -- selection after any shelf load crosses this boundary (preview nil ->
+    -- set), every fresh shelf's first tap felt slow (device report). The
+    -- tap now takes the fast path immediately -- hero swap + the two
+    -- spines' repaint -- and the chip restyles a frame later, with the
+    -- refresh scoped to the strip alone (the deferred rebuild's hero and
+    -- shelves are pixel-identical to what the swap just painted).
     if was_diff ~= is_diff then
-        self:_rebuild()
-        UIManager:setDirty(self, "ui")
-        logger.dbg(string.format(
-            "[bookshelf perf] _previewBook: branch=rebuild tap_gap=%.0fms TOTAL=%.0fms",
-            _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
+        local can_swap = self._hero_parent and self._hero_dims
+                         and self._inner_vgroup and self._shelf_dims
+        if can_swap then
+            self:_swapHeroInPlace()
+            self:_repaintSelectionHighlight(
+                prior_preview_fp, self._preview_book.filepath)
+            if self._chip_bar then
+                -- No chip strip mounted = nothing visible flips; skip.
+                local expected_fp = self._preview_book.filepath
+                UIManager:tickAfterNext(function()
+                    if BookshelfWidget.live ~= self then return end
+                    -- A later tap moved the preview on: its own boundary
+                    -- handling (or fast path) owns the strip now.
+                    if not (self._preview_book
+                            and self._preview_book.filepath == expected_fp) then
+                        return
+                    end
+                    self:_rebuildRefreshChipStrip()
+                end)
+            end
+            logger.dbg(string.format(
+                "[bookshelf perf] _previewBook: branch=swap+chipdefer tap_gap=%.0fms TOTAL=%.0fms",
+                _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
+        else
+            self:_rebuild()
+            UIManager:setDirty(self, "ui")
+            logger.dbg(string.format(
+                "[bookshelf perf] _previewBook: branch=rebuild tap_gap=%.0fms TOTAL=%.0fms",
+                _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
+        end
         return
     end
 
@@ -9435,6 +9465,24 @@ end
 -- band from the top down to the bottom of the chip strip, so the shelves and
 -- footer don't flash. Falls back to a full refresh if the chip strip's
 -- painted geometry isn't available (e.g. chips hidden).
+-- _rebuildRefreshChipStrip() — rebuild the tree but flash ONLY the chip
+-- strip. For deferred restyles where everything else on screen is already
+-- pixel-correct (the preview boundary: the swap painted the hero and
+-- spines; only the "currently reading" chip's fill flipped).
+function BookshelfWidget:_rebuildRefreshChipStrip()
+    local chip = self._chip_bar
+    local band = chip and chip.dimen and chip.dimen:copy()
+    self:_rebuild()
+    if band then
+        band.h = band.h + Screen:scaleBySize(4)
+        UIManager:setDirty(self, function()
+            return "ui", band, self.dithered
+        end)
+    else
+        UIManager:setDirty(self, "ui")
+    end
+end
+
 function BookshelfWidget:_rebuildRefreshHeroAndChips()
     local chip       = self._chip_bar
     local chip_dimen = chip and chip.dimen

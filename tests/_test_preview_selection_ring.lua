@@ -71,13 +71,17 @@ local function tap(opts)
         end,
         _swapShelvesInPlace = function() took.swap_shelves = true end,
         _openBook         = function(_s, b) took.opened = b.filepath end,
+        _chip_bar         = {},
+        _rebuildRefreshChipStrip = function() took.chip_strip = true end,
     }
     local env = {
         string = string, math = math, ipairs = ipairs, pairs = pairs,
         tostring = tostring, type = type, pcall = pcall,
         _gettime = function() now = now + 0.001; return now end,
         logger   = { dbg = function() end, warn = function() end },
-        UIManager = { setDirty = function() end, nextTick = function() end },
+        UIManager = { setDirty = function() end, nextTick = function() end,
+                      tickAfterNext = function(_, fn) if fn then fn() end end },
+        BookshelfWidget = nil, -- filled below, needs self_tbl
         Screen   = { scaleBySize = function(_s, n) return n end },
         Repo     = { currentFilepath = function() return opts.lastfile end },
         require  = function(name)
@@ -87,6 +91,7 @@ local function tap(opts)
             error("unexpected require: " .. tostring(name))
         end,
     }
+    env.BookshelfWidget = { live = self_tbl }
     compile("local self, book, tap_t = ... ; " .. preview_body, env, "_previewBook")(
         self_tbl, opts.tapped, nil)
     return self_tbl, took
@@ -109,7 +114,13 @@ t.test("a preview supersedes a staged hero tap (#335)", function()
         lastfile = C.filepath, preview = A, staged = A.filepath, tapped = C,
         hero_mounted = true,
     }
-    assert(took.rebuild, "expected the boundary-crossing rebuild branch")
+    -- The boundary no longer forces a synchronous full rebuild (the
+    -- first-tap-after-load lag): the tap takes the fast swap and the chip
+    -- strip restyles a frame later.
+    assert(took.swap_hero, "expected the fast hero swap at the boundary")
+    assert(took.repaint and took.repaint.new == C.filepath,
+        "the ring repaint must target the new preview")
+    assert(took.chip_strip, "the deferred chip-strip restyle must run")
     assert(not took.opened, "tapping a different book must not open it")
     assert(self_tbl._preview_book.filepath == C.filepath, "preview must move to C")
     local ring = selectedFilepath(self_tbl)
