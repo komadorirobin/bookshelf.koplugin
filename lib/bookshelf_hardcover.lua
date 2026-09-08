@@ -1773,6 +1773,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 contributions: cached_contributors
                 cached_tags
                 book_series { position series { name } }
+                pages
                 rating
                 ratings_count
                 reviews_count
@@ -1781,6 +1782,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 id
                 title
                 cached_image
+                pages
               }
             }
         ]]
@@ -1803,6 +1805,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 contributions: cached_contributors
                 cached_tags
                 book_series { position series { name } }
+                pages
                 rating
                 ratings_count
                 reviews_count
@@ -1851,6 +1854,11 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
         series_name = _candidateSeries(data.book),
         series_position = _candidateSeriesPosition(data.book),
         genres = _candidateGenres(data.book),
+        -- Page count rides the same query for free: the linked edition's
+        -- print pages when known, the book's canonical count otherwise.
+        -- refreshBook writes it back into the link store, which is where
+        -- linkedPages() / the bulk page-count scan read from.
+        pages = tonumber(edition and edition.pages) or tonumber(data.book.pages),
         fetched_at = os.time(),
     }
 end
@@ -1874,6 +1882,31 @@ function Hardcover.refreshBook(book, opts)
     if not ok then return false, payload end
     _cachePut("enrich", _cacheKey(link.book_id, link.edition_id), payload)
     _backfillRatingEntry(link.book_id, payload)
+    -- Everything in the enrichment CACHE row was just replaced wholesale
+    -- (authors, genres, series, description, ratings -- corrections on
+    -- Hardcover flow in automatically). The two fields living OUTSIDE that
+    -- row are in the plugin's link store: pages (what linkedPages() and
+    -- the bulk page-count scan read) and the display title the sync
+    -- plugin shows. Refresh heals both; link identity is untouched.
+    do
+        local upd = {}
+        if tonumber(payload.pages) then
+            upd.pages = math.floor(tonumber(payload.pages))
+        end
+        if type(payload.title) == "string" and payload.title ~= "" then
+            upd.title = payload.title
+        end
+        if next(upd) then
+            pcall(function()
+                local settings = _openHardcoverSettingsObject()
+                if settings then
+                    local original = _applyExternalBookSetting(settings,
+                        book.filepath, upd)
+                    _notifyLoadedHardcoverSettings(book.filepath, upd, original)
+                end
+            end)
+        end
+    end
     -- First-link defaults for the per-book cover/description overrides. Guarded
     -- internally to fire once (only on undecided flags) -- safe to call on every
     -- refresh.
