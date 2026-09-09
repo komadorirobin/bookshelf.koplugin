@@ -25,7 +25,13 @@
 -- take() transfers one out -- so eviction can genuinely free() instead of
 -- waiting on the GC finalizer the shared cache has to rely on.
 
-local logger = require("logger")
+-- Guarded: suites that load SpineWidget under stubs never provide a logger,
+-- and this module must not be the reason they can't load it.
+local ok_log, logger = pcall(require, "logger")
+if not ok_log or type(logger) ~= "table" then
+    local noop = function() end
+    logger = { dbg = noop, info = noop, warn = noop, err = noop }
+end
 
 local HeroTier = {
     _cache  = {},   -- fp → bb (tier owns until take())
