@@ -1802,6 +1802,9 @@ function BookshelfWidget:_rebuild()
     else
         total_pages = math.ceil(total / VIEW_SIZE)
     end
+    -- Spine mode: the page map knows the real page count (see
+    -- _spineTotalPages); the estimate above only bounds it.
+    total_pages = self:_spineTotalPages() or total_pages
     -- Cache for the swipe handlers (which run outside _rebuild's scope).
     self._total_pages = total_pages
     self._total_items = total
@@ -5305,6 +5308,38 @@ function BookshelfWidget:_spinePrevPageCursor(cur)
     return prev
 end
 
+-- _spineTotalPages() -> the REAL page count from the page map, or nil when
+-- not in spine mode / no map yet. Spine pages hold a variable number of
+-- books, so ceil(total / view-size estimate) is wrong for them: a 121-book
+-- chip with a generous capacity estimate reported ONE page, and the footer's
+-- "last" and skip-10 -- which target page numbers -- went nowhere while
+-- "next" (cursor-based) kept working (device report).
+function BookshelfWidget:_spineTotalPages()
+    if not self:_isSpineMode() then return nil end
+    local ok, _cur, n = pcall(self._spineCursorForPage, self, 1)
+    if ok and n and n > 0 then
+        -- Keep the cached count honest too: at the initial _rebuild the map
+        -- isn't available yet (no shelf dims), so _total_pages starts as the
+        -- estimate; the first caller with a real answer corrects it.
+        self._total_pages = n
+        return n
+    end
+    return nil
+end
+
+-- _spinePageIndexForCursor(cur) -> the 1-based page holding cursor, per the
+-- page map, or nil when unavailable.
+function BookshelfWidget:_spinePageIndexForCursor(cur)
+    if not self:_isSpineMode() then return nil end
+    local ok, firsts = pcall(self._spinePageFirsts, self)
+    if not ok or not firsts or #firsts == 0 then return nil end
+    local page = 1
+    for i = 1, #firsts do
+        if firsts[i] <= (cur or 1) then page = i else break end
+    end
+    return page
+end
+
 -- _spineStep — spine mode's chevron step. Forward advances by the number of
 -- books the current page actually shows (variable), remembering where it
 -- came from; backward pops that history so the reader retraces the exact
@@ -5338,6 +5373,9 @@ end
 -- Extracted so _swapShelvesInPlace can construct a fresh footer reflecting
 -- the new page's button-enabled states.
 function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
+    -- Spine mode: the page map's real count (the caller's total_pages is the
+    -- view-size estimate, which can say 1 for a multi-page shelf).
+    total_pages = self:_spineTotalPages() or total_pages
     local Button         = require("ui/widget/button")
     local HorizontalSpan = require("ui/widget/horizontalspan")
     local VerticalSpan   = require("ui/widget/verticalspan")
@@ -5554,7 +5592,11 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         icon = "chevron.last", icon_width = chev_size, icon_height = chev_size,
         width      = slot(SLOT_EDGE),
         callback   = open_ended and function() bw:_opdsWalkToEnd() end
-                                 or go_page(total_pages),
+                                 or function()
+                                        -- Live count at tap time: the map may
+                                        -- have arrived after this footer was built.
+                                        go_page(bw:_spineTotalPages() or total_pages)()
+                                    end,
         margin     = bm("last"), bordersize = bs("last"), radius = br("last"),
         enabled    = can_step_forward, show_parent = self,
     }
@@ -6306,6 +6348,8 @@ function BookshelfWidget:_swapShelvesInPlace()
     else
         total_pages = math.ceil(total / VIEW_SIZE)
     end
+    -- Spine mode: real page count from the page map (see _spineTotalPages).
+    total_pages = self:_spineTotalPages() or total_pages
     self._total_pages = total_pages
     self._total_items = total
     self:_clampCursor(total)
@@ -10696,6 +10740,12 @@ function BookshelfWidget:_syncPageFromCursor()
     local last_visible = self._cursor + view - 1
     if total > 0 and last_visible > total then last_visible = total end
     self.page = math.max(1, math.ceil(last_visible / view))
+    -- Spine mode: the page map's answer outranks the view-size arithmetic
+    -- (variable books per page), so page numbers agree with _total_pages
+    -- and the footer's page-number jumps land where they say.
+    local spine_page = self._spinePageIndexForCursor
+                       and self:_spinePageIndexForCursor(self._cursor)
+    if spine_page then self.page = spine_page end
     if self._total_pages and self.page > self._total_pages then
         self.page = self._total_pages
     end
