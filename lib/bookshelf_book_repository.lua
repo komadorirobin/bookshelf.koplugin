@@ -4243,6 +4243,25 @@ local function hydrateSeriesShape(shape, filter, light_only)
     local books = {}
     if light_only then
         for i = 1, #order do books[i] = { filepath = order[i] } end
+    elseif Repo.spine_light then
+        -- Spine shelf: series flatten into member spines, so the front cover
+        -- below is never rendered -- yet every series-chip fetch paid a full
+        -- buildBookMeta per series up to the 512 clamp (the clamp WARN on
+        -- every series open). Same cure as _hydrateGroupShape: COPIES of the
+        -- cached light meta (copies, because the spine plan bakes status onto
+        -- the records it renders and the shape cache has no strip protection).
+        local by_fp = {}
+        if meta then for _i, m in ipairs(meta) do by_fp[m.filepath] = m end end
+        for i = 1, #order do
+            local src = by_fp[order[i]]
+            if src then
+                local b = {}
+                for k, v in pairs(src) do b[k] = v end
+                books[i] = b
+            else
+                books[i] = { filepath = order[i] }
+            end
+        end
     else
         for i, fp in ipairs(order) do
             if i <= 1 then
@@ -4415,7 +4434,8 @@ local function _seriesReadout(group_shapes, standalone_shapes, filter,
     local out   = {}
     offset      = offset or 0
     _attachFlattenedCounts(out, sorted, offset)
-    local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups", light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getSeriesGroups",
+                                 light_only or Repo.spine_light)
     for i = offset + 1, stop do
         local s = sorted[i]
         if s.standalone then
@@ -4425,8 +4445,19 @@ local function _seriesReadout(group_shapes, standalone_shapes, filter,
                                   filename = s.filename, series_name = s.series_name }
             else
                 -- Plain Book record: shelf_row renders it as a single cover
-                -- and taps open the book, same as any book-list chip.
-                local b = Repo.buildBookMeta(s.filepath)
+                -- and taps open the book, same as any book-list chip. The
+                -- spine shelf renders no cover, so a copy of the light record
+                -- serves it (full build as the fallback for a book the batch
+                -- doesn't know).
+                local b
+                if Repo.spine_light then
+                    local light = Repo.lightMetaFor(s.filepath)
+                    if light then
+                        b = {}
+                        for k, v in pairs(light) do b[k] = v end
+                    end
+                end
+                b = b or Repo.buildBookMeta(s.filepath)
                 if b then out[#out + 1] = b end
             end
         else
