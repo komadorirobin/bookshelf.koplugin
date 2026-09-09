@@ -1254,8 +1254,8 @@ function ShelfBadges:paintTo(bb, x, y)
                     -- the body hanging down over it -- overhanging the row
                     -- bottom into the inter-row gap when the face is
                     -- shallower than the label.
-                    local b = SpineShelf.plankUnit(h)
-                    local by = y + h - b - 2
+                    local fh = SpineShelf.plankFace(h)
+                    local by = y + h - fh - 2
                     bb:paintRoundedRect(bx, by, bw, badge_h, fill,
                                         Screen:scaleBySize(2))
                     tw:paintTo(bb, bx + math.floor((bw - sz.w) / 2),
@@ -1289,14 +1289,25 @@ function SpineShelf.plankUnit(row_h)
     return b
 end
 
+-- plankFace(row_h) -> the plank's FRONT FACE height in px. 1.4 units: under
+-- the shelf's 12-degree view a vertical face barely foreshortens, so this is
+-- the plank's thickness against the books -- and at one unit it read as a
+-- thin board (~13mm on a 130mm-deep book, where a real shelf is 18-20mm).
+-- Books stand on the surface above it, so the stand height, the badges'
+-- hang point and the shading bands all derive from this one number.
+function SpineShelf.plankFace(row_h)
+    return math.max(1, math.floor(SpineShelf.plankUnit(row_h) * 1.4))
+end
+
 -- The plank in 3D (user spec): the upward-facing top surface rises TWO edge
 -- units behind the books, the front-top edge is a thin dark line, and below
--- it the plank's front face drops one unit, darker. Shading is derived from
--- the one plank colour: surface lit, face in shade, edge darkest.
+-- it the plank's front face drops (see plankFace), darker. Shading is
+-- derived from the one plank colour: surface lit, face in shade, edge darkest.
 function ShelfPlank:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local w, h = self.dimen.w, self.dimen.h
     local b = SpineShelf.plankUnit(h)
+    local fh = SpineShelf.plankFace(h)
     local pr, pg, pb = _plankRGB()
     local function shade(f)
         return Blitbuffer.ColorRGB32(
@@ -1304,7 +1315,7 @@ function ShelfPlank:paintTo(bb, x, y)
             math.floor(math.min(255, pg * f) + 0.5),
             math.floor(math.min(255, pb * f) + 0.5), 0xFF)
     end
-    local front_y = y + h - b
+    local front_y = y + h - fh
     -- Top surface, receding: darker at the far (top) edge, lighter as it
     -- reaches the front. Three units deep, so the books stand back from
     -- the lip with surface showing in front of their feet.
@@ -1322,7 +1333,7 @@ function ShelfPlank:paintTo(bb, x, y)
     -- asked to keep in both ('the inverted colours look best').
     local line = math.max(1, Screen:scaleBySize(1))
     bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.55))
-    bb:paintRectRGB32(x, front_y, w, b, _plankLit(0.12))
+    bb:paintRectRGB32(x, front_y, w, fh, _plankLit(0.12))
 end
 
 -- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
@@ -1767,15 +1778,16 @@ function SpineShelf.rowWidget(opts)
             local Orn = require("lib/bookshelf_ornaments")
             Orn.ensureTemplate()
             local b       = SpineShelf.plankUnit(opts.height)
+            local fh      = SpineShelf.plankFace(opts.height)
             local inset   = math.floor(b * 0.8)
-            local stand_h = math.max(1, opts.height - b - inset)
+            local stand_h = math.max(1, opts.height - fh - inset)
             local margin  = SpineShelf.endMargin(opts.height)
             local seed    = tostring(opts.page_key or "") .. "|empty|"
                             .. tostring(opts.row_index or 0)
             local pl = Orn.pick(seed, opts.width - 2 * margin, stand_h, nil, {
                 min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
                 min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
-                max_below = inset + b,
+                max_below = inset + fh,
             })
             if not pl then return end
             local span = math.max(0, opts.width - 2 * margin - pl.w)
@@ -1796,8 +1808,9 @@ function SpineShelf.rowWidget(opts)
     -- and the rest of the surface rises behind (all painted by ShelfPlank
     -- underneath this group).
     local b = SpineShelf.plankUnit(opts.height)
+    local fh = SpineShelf.plankFace(opts.height)
     local inset = math.floor(b * 0.8)
-    local stand_h = math.max(1, opts.height - b - inset)
+    local stand_h = math.max(1, opts.height - fh - inset)
     local group = HorizontalGroup:new{ align = "top" }
     -- Books stand CENTRED on their plank (user ruling, made obvious by the
     -- all-face-out wall: left-aligned rows left all the slack ragged on the
@@ -1959,7 +1972,8 @@ function SpineShelf.rowWidget(opts)
                     end
                     cover.faceout_fx = { depth = depth, look = e.look,
                                          below = push + inset + b,
-                                         plank_b = b, lift = tilt_lift }
+                                         plank_b = b, plank_face = fh,
+                                         lift = tilt_lift }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
                     if head > 0 then
@@ -2021,7 +2035,7 @@ function SpineShelf.rowWidget(opts)
                     show_author = opts.show_author,
                     is_selected = is_sel,
                     is_bulk_selected = is_bulk,
-                    plank       = { b = b, inset = inset },
+                    plank       = { b = b, inset = inset, face = fh },
                 }
             end
             group[#group + 1] = tile
@@ -2047,7 +2061,7 @@ function SpineShelf.rowWidget(opts)
         local pl = Orn.pick(seed, gap, stand_h, nil, {
             min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
             min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
-            max_below = inset + b,
+            max_below = inset + fh,
         })
         if not pl then return end
         local x
@@ -2168,7 +2182,7 @@ function SpineShelf.paintOpeningTilt(slot)
     -- ends one inset above the front-top edge; plank geometry from the
     -- descriptor the row hands every slot).
     local pk = slot.plank
-    local band = pk and (pk.b + pk.inset) or Screen:scaleBySize(8)
+    local band = pk and ((pk.face or pk.b) + pk.inset) or Screen:scaleBySize(8)
     pcall(function()
         _shadeTiltCast(bb, d.x, d.y + d.h, d.w, band, _nightMode())
     end)
@@ -2245,7 +2259,8 @@ function SpineShelf.paintFaceOutTilt(tile)
         -- does it (fx tells us where the surface starts).
         if lift > 0 then
             local pb = fx.plank_b or Screen:scaleBySize(6)
-            local surf_top = rect.y + rect.h + (fx.below or 0) - 4 * pb
+            local pf = fx.plank_face or pb
+            local surf_top = rect.y + rect.h + (fx.below or 0) - (3 * pb + pf)
             for yy = rect.y + rect.h - lift, rect.y + rect.h - 1 do
                 if yy >= surf_top then
                     bb:paintRectRGB32(rect.x, yy, rect.w, 1,
