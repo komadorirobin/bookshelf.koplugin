@@ -746,6 +746,11 @@ function Repo.getSortKey(chip)
     return _SORT_DEFAULT[chip]
 end
 
+-- Forward declaration: the raw batched-row accessor lives with the light
+-- meta cache further down, but buildBookMeta (below) reads it, and Lua
+-- upvalue scoping needs the local to exist before that body is compiled.
+local _batchInfoFor
+
 -- buildBookMeta(filepath [, opts])
 -- opts.want_cover: when false, ask BIM with get_cover=false so the zstd
 -- decompression + Blitbuffer allocation are skipped entirely (see
@@ -888,12 +893,27 @@ function Repo.buildBookMeta(filepath, opts)
     -- (Calibre JSON, filename-derived title) still populate the
     -- record; a later rebuild after BIM finishes will fill in the
     -- gaps.
-    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, want_cover)
-    if not ok_bim then
-        logger.warn("[bookshelf] BIM getBookInfo failed for", filepath, ":",
-                    tostring(info_or_err))
+    -- Batched-row fast path: when no cover decode is wanted, take the text
+    -- columns from the light map's raw row cache (one blob-free SELECT for
+    -- the whole library, snapshot-backed) instead of a per-book SELECT --
+    -- whose row drags the compressed cover blob off disk even with
+    -- get_cover=false, ~20ms/record on device flash and the bulk of a
+    -- cover/list page turn's fetch. Misses (new imports, books outside the
+    -- batch, BIM mid-write) fall back to the live query below; metadata
+    -- edits clear the batch wholesale (invalidateLightMeta), the same
+    -- freshness the shelf's light records already have.
+    local info
+    if not want_cover and _batchInfoFor then
+        info = _batchInfoFor(filepath)
     end
-    local info = (ok_bim and info_or_err) or {}
+    if not info then
+        local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, want_cover)
+        if not ok_bim then
+            logger.warn("[bookshelf] BIM getBookInfo failed for", filepath, ":",
+                        tostring(info_or_err))
+        end
+        info = (ok_bim and info_or_err) or {}
+    end
     -- Sticky-record cache. BIM's getBookInfo SELECT has a "WHERE
     -- in_progress=0" guard, so a row that's mid-extraction returns
     -- nil. Without this fallback, every cover-only re-extraction
@@ -2714,7 +2734,12 @@ local function _loadBatchBookInfoFromBim()
     local conn = bim.db_conn
     if not conn or type(conn.exec) ~= "function" then return nil end
 
-    local sql = "SELECT directory, filename, title, authors, series, series_index, keywords, language " ..
+    -- Every TEXT/INTEGER column buildBookMeta reads, so a batched row can
+    -- stand in for a live getBookInfo(fp, false) row (the fast path in
+    -- buildBookMeta). Still no cover_* blob columns: their inline pages are
+    -- what makes the per-book SELECT expensive in the first place.
+    local sql = "SELECT directory, filename, title, authors, series, series_index, keywords, language, " ..
+                "pages, description, has_meta, has_cover, ignore_cover, ignore_meta, cover_sizetag " ..
                 "FROM bookinfo WHERE in_progress=0;"
     local rows
     local ok, err = pcall(function() rows = conn:exec(sql) end)
@@ -2725,17 +2750,33 @@ local function _loadBatchBookInfoFromBim()
     if not rows then return {} end  -- empty DB
 
     -- ljsqlite3:exec returns column-major arrays: rows[col_index][row_index].
+    -- col() tolerates a result with fewer columns than the SELECT names
+    -- (a stubbed exec, or an exec that ignores the SQL): missing columns
+    -- read as nil fields, which every consumer already handles.
+    local function col(c, i)
+        local a = rows[c]
+        return a and a[i] or nil
+    end
     local n = (rows[1] and #rows[1]) or 0
     local map = {}
     for i = 1, n do
-        local fp = (rows[1][i] or "") .. (rows[2][i] or "")
+        local fp = (col(1, i) or "") .. (col(2, i) or "")
         map[fp] = {
-            title        = rows[3][i],
-            authors      = rows[4][i],
-            series       = rows[5][i],
-            series_index = rows[6][i],
-            keywords     = rows[7][i],
-            language     = rows[8][i],
+            title        = col(3, i),
+            authors      = col(4, i),
+            series       = col(5, i),
+            series_index = col(6, i),
+            keywords     = col(7, i),
+            language     = col(8, i),
+            -- tonumber: INTEGER comes back as cdata<int64_t>, which the
+            -- snapshot codec can't round-trip and callers can't compare.
+            pages        = tonumber(col(9, i)),
+            description  = col(10, i),
+            has_meta     = col(11, i),
+            has_cover    = col(12, i),
+            ignore_cover = col(13, i),
+            ignore_meta  = col(14, i),
+            cover_sizetag = col(15, i),
         }
     end
     return map
@@ -2752,7 +2793,11 @@ end
 -- SELECT, which re-saves. Only the RAW rows are persisted — the derived
 -- light records fold in Calibre metadata at derive time, which must stay
 -- fresh independently of BIM.
-local LIGHTMETA_SNAPSHOT_VERSION = 1
+-- v2: rows gained pages/description/has_meta/has_cover/ignore_cover/
+-- ignore_meta/cover_sizetag (the buildBookMeta batch fast path needs the
+-- full text row). The version is baked into the fingerprint, so a v1
+-- snapshot from before the upgrade fails the match and regenerates.
+local LIGHTMETA_SNAPSHOT_VERSION = 2
 
 local function _bimDbFingerprint()
     local ok, DataStorage = pcall(require, "datastorage")
@@ -2910,6 +2955,10 @@ local function _getLightMetaCache(home, depth)
     -- BIM for the same failed query on every chip switch.
     _light_meta_cache[key] = {
         map = meta_map,
+        -- RAW batched rows, unscoped by home prefix: buildBookMeta's batch
+        -- fast path serves any book BIM knows from here (same data a live
+        -- getBookInfo would return, minus the cover blob).
+        rows = row_map,
         count = count,
         expires_at = now + WALK_CACHE_TTL,
     }
@@ -2919,6 +2968,29 @@ local function _getLightMetaCache(home, depth)
         (_gettime() - _t_load) * 1000, count,
         snapshot and "snapshot" or (row_map and "batch" or "fallback")))
     return meta_map
+end
+
+-- _batchInfoFor(fp) — the RAW batched BIM row for a book: the same text
+-- columns a live getBookInfo(fp, false) returns, from the one blob-free
+-- SELECT (snapshot-backed) the light map is derived from. Serves
+-- buildBookMeta's no-cover path so a full record build costs a table
+-- lookup instead of a per-book SQLite SELECT, whose row drags the
+-- compressed cover blob off disk even when no cover was asked for
+-- (~20ms/record on device flash). nil on a miss (new import, BIM
+-- mid-write, batch unavailable); the caller falls back to live BIM.
+-- Freshness matches the light records the shelf already renders from:
+-- metadata edits clear the whole cache (invalidateLightMeta).
+_batchInfoFor = function(fp)
+    if type(fp) ~= "string" then return nil end
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local key   = (home or "/") .. ":" .. tostring(depth or 0)
+    local entry = _light_meta_cache[key]
+    if not entry then
+        _getLightMetaCache(home, depth)
+        entry = _light_meta_cache[key]
+    end
+    return entry and entry.rows and entry.rows[fp] or nil
 end
 
 -- Walk-time helper: prefer the cache, fall back to per-book on miss. Walk
