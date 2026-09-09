@@ -1047,8 +1047,15 @@ function BookshelfWidget:_rebuild()
             -- so the user-visible interaction stays snappy.
             collectgarbage("step", 200)
             BookshelfWidget._rebuild_count = (BookshelfWidget._rebuild_count or 0) + 1
-            if BookshelfWidget._rebuild_count >= 4 then
+            -- Also collect early when the cover cache has let go of a lot of
+            -- bbs (see _reclaimAfterTurn): a cycle of rebuilds can orphan them
+            -- faster than the every-4th rhythm reclaims.
+            local orphans = 0
+            local ok_scc, SCC = pcall(require, "lib/bookshelf_scaled_cover_cache")
+            if ok_scc and SCC and SCC.orphanBytes then orphans = SCC:orphanBytes() end
+            if BookshelfWidget._rebuild_count >= 4 or orphans >= 8 * 1024 * 1024 then
                 BookshelfWidget._rebuild_count = 0
+                if ok_scc and SCC and SCC.resetOrphanBytes then SCC:resetOrphanBytes() end
                 collectgarbage("collect")
             end
         end)
@@ -6209,6 +6216,36 @@ end
 -- never change with self.page; the hero only changes with _preview_book)
 -- AND avoids the use-after-free path where _buildHero rebuilds a SpineWidget
 -- against a freed BIM bb on _preview_book.cover_bb.
+-- _reclaimAfterTurn() -- GC work on the tick after a page turn's old rows
+-- are freed. LuaJIT's GC sizes its effort by the LUA heap, but a cover bb is
+-- C heap behind a tiny cdata handle, so bbs the caches have let go of
+-- (evicted, replaced by a larger scale, dropped) stay allocated until a FULL
+-- collect -- and the only full collect used to run on chip switches
+-- (_rebuild), never on page turns. Two minutes of fast spine paging on a PW5
+-- piled up enough of them to push the device into swap (a 60s freeze) and
+-- then the OOM killer. Every turn does a cheap incremental step; a full
+-- collect runs when the cover cache reports enough orphaned bytes, or every
+-- RECLAIM_TURNS turns as a floor.
+local RECLAIM_ORPHAN_BYTES = 8 * 1024 * 1024
+local RECLAIM_TURNS        = 16
+function BookshelfWidget:_reclaimAfterTurn()
+    collectgarbage("step", 200)
+    BookshelfWidget._turns_since_collect = (BookshelfWidget._turns_since_collect or 0) + 1
+    local orphans = 0
+    local ok, SCC = pcall(require, "lib/bookshelf_scaled_cover_cache")
+    if ok and SCC and SCC.orphanBytes then orphans = SCC:orphanBytes() end
+    if orphans >= RECLAIM_ORPHAN_BYTES
+            or BookshelfWidget._turns_since_collect >= RECLAIM_TURNS then
+        if ok and SCC and SCC.resetOrphanBytes then SCC:resetOrphanBytes() end
+        BookshelfWidget._turns_since_collect = 0
+        local _t0 = _gettime()
+        collectgarbage("collect")
+        logger.dbg(string.format(
+            "[bookshelf perf] reclaim: full collect %.0fms (orphans=%dKB)",
+            (_gettime() - _t0) * 1000, math.floor(orphans / 1024)))
+    end
+end
+
 function BookshelfWidget:_swapShelvesInPlace()
     local _perf_t0 = _gettime()
     -- Page-turn animation direction, set by the paginate handlers just before
@@ -6389,6 +6426,7 @@ function BookshelfWidget:_swapShelvesInPlace()
         if old_footer and old_footer.free then
             pcall(function() old_footer:free() end)
         end
+        self:_reclaimAfterTurn()
     end)
     logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d items=%d chip=%s",
         (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
@@ -6846,6 +6884,7 @@ function BookshelfWidget:_repaintListSelection(old_fp, new_fp)
             local w = old_rows[_i]
             if w and w.free then pcall(function() w:free() end) end
         end
+        self:_reclaimAfterTurn()
     end)
     if union_dimen then
         -- No ring padding needed, unlike the cover path: ListRow reserves
