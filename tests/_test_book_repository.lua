@@ -1368,6 +1368,50 @@ test("findGroup: returns hydrated group for known author", function()
     assert(#g.books == 2, "expected 2 books, got " .. #g.books)
 end)
 
+test("getAuthors: spine_light serves light copies, no full builds", function()
+    -- Spine mode flattens groups into member spines, so the front-book cover
+    -- is never rendered -- yet every page turn paid a full buildBookMeta per
+    -- group (device report: paging the author shelf felt slow).
+    Repo.invalidateWalkCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib") and {".", "..", "dune.epub", "dune2.epub"} or {".", ".."}
+        local i = 0; return function() i=i+1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        if key == "mode" then return "file" end; return 0
+    end
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/lib/dune.epub"]  = { title = "Dune",         authors = "Frank Herbert" },
+        ["/lib/dune2.epub"] = { title = "Dune Messiah", authors = "Frank Herbert" },
+    }
+    Repo.invalidateSeriesCache()
+    local orig_build = Repo.buildBookMeta
+    local builds = 0
+    Repo.buildBookMeta = function(...) builds = builds + 1; return orig_build(...) end
+    Repo.spine_light = true
+    local ok, err = pcall(function()
+        local groups = Repo.getAuthors(10, 0)
+        assert(#groups == 1, "expected one author group")
+        local g = groups[1]
+        assert(#g.books == 2, "expected both members hydrated")
+        assert(g.books[1].title == "Dune", "light copy lost its title")
+        assert(builds == 0,
+            "spine_light must not pay a full buildBookMeta, got " .. builds)
+        -- The spine plan BAKES status onto the records it renders; the light
+        -- copies must isolate the cached shape from that (the stale-glyph
+        -- lesson, e7559e6: shared records smear one render's status into the
+        -- next fetch).
+        g.books[1].status = "reading"
+        local again = Repo.getAuthors(10, 0)
+        assert(again[1].books[1].status == nil,
+            "a baked status leaked into the cached shape")
+    end)
+    Repo.spine_light = nil
+    Repo.buildBookMeta = orig_build
+    if not ok then error(err) end
+end)
+
 -- ============================================================================
 -- getSortKey
 -- ============================================================================

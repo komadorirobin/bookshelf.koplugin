@@ -4120,7 +4120,11 @@ function Repo.getTags(limit, offset, sort_priority_override, filter, opts)
     end
     for i = offset + 1, stop do
         local g = groups[i]
-        if not light_only and g.books[1] and g.books[1].filepath then
+        -- Spine shelf (Repo.spine_light): collections flatten into member
+        -- spines, so the front cover is never rendered -- skip the full
+        -- build like the _hydrateGroupShape spine branch does.
+        if not light_only and not Repo.spine_light
+                and g.books[1] and g.books[1].filepath then
             local fp = g.books[1].filepath
             local meta_opts
             if ScaledCoverCache and ScaledCoverCache:has(fp) then
@@ -4710,6 +4714,28 @@ local function _hydrateGroupShape(shape, within_priority, filter, light_only)
     local books = {}
     if light_only then
         for i = 1, #order do books[i] = { filepath = order[i] } end
+    elseif Repo.spine_light then
+        -- Spine shelf: groups FLATTEN into member spines, so the front-book
+        -- cover the branch below decodes is never rendered -- yet every page
+        -- turn on an authors/genres chip paid a full buildBookMeta (BIM read
+        -- + cover decode) per group, up to the 512 clamp (device report:
+        -- paging the author shelf felt slow; the same disease getBySource's
+        -- spine_light branch cured for library chips). Serve COPIES of the
+        -- cached light meta instead: title/author/series fields are all the
+        -- spine plan reads, and it BAKES status onto the records it renders,
+        -- so handing out the cached shape's own books_meta references would
+        -- smear one render's baked status into the next fetch (the stale-
+        -- glyph lesson, e7559e6).
+        for i = 1, #order do
+            local src = meta and meta[i]
+            if src and src.filepath == order[i] then
+                local b = {}
+                for k, v in pairs(src) do b[k] = v end
+                books[i] = b
+            else
+                books[i] = { filepath = order[i] }
+            end
+        end
     else
         for i, fp in ipairs(order) do
             if i <= 1 then
@@ -5137,7 +5163,8 @@ function Repo.getAuthors(limit, offset, sort_priority_override, filter, opts)
     local out   = {}
     offset      = offset or 0
     _attachFlattenedCounts(out, sorted, offset)
-    local stop  = _hydrationStop(offset, limit, total, 8, "getAuthors", opts and opts.light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getAuthors",
+                                 (opts and opts.light_only) or Repo.spine_light)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
     end
@@ -5181,7 +5208,8 @@ function Repo.getGenres(limit, offset, sort_priority_override, filter, opts)
     local out   = {}
     offset      = offset or 0
     _attachFlattenedCounts(out, sorted, offset)
-    local stop  = _hydrationStop(offset, limit, total, 8, "getGenres", opts and opts.light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getGenres",
+                                 (opts and opts.light_only) or Repo.spine_light)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
     end
@@ -5643,7 +5671,8 @@ function Repo.getFormats(limit, offset, sort_priority_override, filter, opts)
     local total = #sorted
     local out   = {}
     offset      = offset or 0
-    local stop  = _hydrationStop(offset, limit, total, 8, "getFormats", opts and opts.light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getFormats",
+                                 (opts and opts.light_only) or Repo.spine_light)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
     end
@@ -5687,7 +5716,8 @@ function Repo.getLanguages(limit, offset, sort_priority_override, filter, opts)
     local out   = {}
     offset      = offset or 0
     _attachFlattenedCounts(out, sorted, offset)
-    local stop  = _hydrationStop(offset, limit, total, 8, "getLanguages", opts and opts.light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getLanguages",
+                                 (opts and opts.light_only) or Repo.spine_light)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
     end
@@ -5813,7 +5843,8 @@ function Repo.getRatings(limit, offset, sort_priority_override, filter, opts)
     local total = #sorted
     local out   = {}
     offset      = offset or 0
-    local stop  = _hydrationStop(offset, limit, total, 8, "getRatings", opts and opts.light_only)
+    local stop  = _hydrationStop(offset, limit, total, 8, "getRatings",
+                                 (opts and opts.light_only) or Repo.spine_light)
     for i = offset + 1, stop do
         out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter, opts and opts.light_only)
     end
