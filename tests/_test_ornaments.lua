@@ -1,0 +1,200 @@
+-- tests/_test_ornaments.lua
+-- Ornaments: user SVGs standing in spine-shelf gaps. Pins the pure parts --
+-- header parsing, deterministic placement, sizing against the gap and the
+-- plank's front, and the create-once template. Rendering is the rig's job.
+--
+-- Run from the plugin root: lua tests/_test_ornaments.lua
+
+package.path = "./?.lua;./?/init.lua;" .. package.path
+package.loaded["logger"] = { dbg = function() end, info = function() end,
+                             warn = function() end, err = function() end }
+package.loaded["ui/widget/widget"] = { extend = function(_, t) return t end }
+package.loaded["ui/geometry"] = { new = function(_, t) return t end }
+
+-- Minimal lfs over shell + io, so the suite needs no lfs binding (same
+-- approach as _test_cover_disk_cache.lua). Only what the module touches.
+local function sh(cmd)
+    local f = io.popen(cmd .. " 2>/dev/null"); local out = f:read("*a"); f:close(); return out
+end
+local lfs_shim = {
+    attributes = function(path, attr)
+        local q = "'" .. path .. "'"
+        if attr == "mode" then
+            if sh("test -d " .. q .. " && echo d"):match("d") then return "directory" end
+            if sh("test -e " .. q .. " && echo f"):match("f") then return "file" end
+            return nil
+        elseif attr == "modification" then
+            local m = sh("stat -c %Y " .. q)
+            return tonumber(m)
+        end
+        return nil
+    end,
+    mkdir = function(path) return os.execute("mkdir -p '" .. path .. "'") end,
+    dir = function(path)
+        local list = {}
+        for name in sh("ls -a '" .. path .. "'"):gmatch("[^\n]+") do list[#list + 1] = name end
+        local i = 0
+        return function() i = i + 1; return list[i] end
+    end,
+}
+
+local t  = dofile("tests/_helpers.lua").runner()
+local eq = dofile("tests/_helpers.lua").eq
+
+local function fresh()
+    package.loaded["lib/bookshelf_ornaments"] = nil
+    return dofile("lib/bookshelf_ornaments.lua")
+end
+
+-- A scratch data dir under the system temp dir (never the repo).
+local tmp = os.getenv("TMPDIR") or "/tmp"
+local function scratch()
+    local d = string.format("%s/bookshelf_orn_test_%d_%d", tmp, os.time(), math.random(1e6))
+    os.execute("rm -rf '" .. d .. "' && mkdir -p '" .. d .. "'")
+    return d
+end
+local function exists(p) local f = io.open(p, "r"); if f then f:close() return true end return false end
+
+t.test("parseHeader reads aspect and overhang", function()
+    local O = fresh()
+    local a, over = O.parseHeader('<svg viewBox="0 0 60 100"><!-- bookshelf:overhang=20 -->')
+    eq(a, 0.6); eq(over, 0.2)
+    a, over = O.parseHeader("<svg viewBox='0 0 100 50'>")
+    eq(a, 2); eq(over, 0)
+    a = O.parseHeader("<svg>")
+    eq(a, nil, "no viewBox, no aspect")
+    local _a, _o, ni = O.parseHeader('<svg viewBox="0 0 1 1"><!-- bookshelf:night=invert -->')
+    eq(ni, true, "night flag read")
+    _a, _o, ni = O.parseHeader('<svg viewBox="0 0 1 1">')
+    eq(ni, false, "night flag defaults off")
+end)
+
+t.test("the seeded files' own headers parse", function()
+    local O = fresh()
+    for _i, seed in ipairs(O.SEED_FILES) do
+        local a, over = O.parseHeader(seed.svg)
+        eq(a, 0.6, seed.name); eq(over, 0, seed.name)
+    end
+end)
+
+local POOL = {
+    { path = "/o/a.svg", name = "a.svg", aspect = 0.6, overhang = 0 },
+    { path = "/o/b.svg", name = "b.svg", aspect = 1.5, overhang = 0.25 },
+}
+
+t.test("pick is deterministic for a seed and varies across seeds", function()
+    local O = fresh()
+    local p1 = O.pick("book|1|8", 400, 300, POOL, { min_gap = 10, min_h = 10 })
+    local p2 = O.pick("book|1|8", 400, 300, POOL, { min_gap = 10, min_h = 10 })
+    assert((p1 == nil) == (p2 == nil), "same seed must agree on placing")
+    if p1 then eq(p1.entry.path, p2.entry.path); eq(p1.w, p2.w) end
+    local placed = 0
+    for i = 1, 200 do
+        if O.pick("seed" .. i, 400, 300, POOL, { min_gap = 10, min_h = 10 }) then
+            placed = placed + 1
+        end
+    end
+    assert(placed > 60 and placed < 140,
+        "about half of eligible gaps should get one, got " .. placed .. "/200")
+end)
+
+t.test("a narrow gap stays empty; a fitting one sizes to the stand height", function()
+    local O = fresh()
+    O.CHANCE = 1.0
+    assert(O.pick("s", 30, 300, POOL, { min_gap = 48, min_h = 10 }) == nil, "gap below the floor")
+    local p = O.pick("s", 400, 300, { POOL[1] }, { min_gap = 48, min_h = 10 })
+    assert(p, "expected a placement")
+    eq(p.h, 240, "80% of the stand height")
+    eq(p.w, 144, "width follows the aspect")
+    eq(p.below, 0); eq(p.above, 240)
+end)
+
+t.test("a wide ornament shrinks to the gap", function()
+    local O = fresh()
+    O.CHANCE = 1.0
+    local p = O.pick("s", 120, 300, { POOL[2] }, { min_gap = 48, min_h = 10 })
+    assert(p, "expected a placement")
+    eq(p.w, 120, "capped at the gap")
+    eq(p.h, 80,  "height follows the cap through the aspect")
+end)
+
+t.test("the overhang never reaches past the plank's front", function()
+    local O = fresh()
+    O.CHANCE = 1.0
+    -- 25% overhang on a 240px ornament would be 60px; only 20px allowed.
+    local p = O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 10, max_below = 20 })
+    assert(p, "expected a placement")
+    eq(p.below, 20)
+    eq(p.h, 80, "shrunk so 25% of it is the allowed overhang")
+    eq(p.above + p.below, p.h)
+end)
+
+t.test("too small after shrinking is not placed", function()
+    local O = fresh()
+    O.CHANCE = 1.0
+    assert(O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 100, max_below = 20 }) == nil)
+end)
+
+t.test("ensureTemplate creates the folder with the template, once", function()
+    local O = fresh()
+    local d = scratch()
+    O._data_dir = d
+    O._lfs = lfs_shim
+    O.ensureTemplate()
+    assert(exists(d .. "/bookshelf.ornaments/template.svg"), "template should be written")
+    assert(exists(d .. "/bookshelf.ornaments/cactus.svg"), "cactus should be written")
+    -- A user deletes the plant: a later session must not bring it back.
+    os.remove(d .. "/bookshelf.ornaments/template.svg")
+    local O2 = fresh()
+    O2._data_dir = d
+    O2._lfs = lfs_shim
+    O2.ensureTemplate()
+    assert(not exists(d .. "/bookshelf.ornaments/template.svg"),
+        "an existing folder must never be re-seeded")
+    os.execute("rm -rf '" .. d .. "'")
+end)
+
+t.test("list finds SVGs and reads their headers", function()
+    local O = fresh()
+    local d = scratch()
+    O._data_dir = d
+    O._lfs = lfs_shim
+    O.ensureTemplate()
+    local f = io.open(d .. "/bookshelf.ornaments/cat.SVG", "w")
+    f:write('<svg viewBox="0 0 120 80"><!-- bookshelf:overhang=16 --></svg>'); f:close()
+    local f2 = io.open(d .. "/bookshelf.ornaments/notes.txt", "w"); f2:write("x"); f2:close()
+    local list = O.list()
+    eq(#list, 3, "cat + the two seeded svgs, the txt ignored")
+    eq(list[1].name, "cactus.svg")
+    eq(list[2].name, "cat.SVG"); eq(list[2].aspect, 1.5); eq(list[2].overhang, 0.2)
+    eq(list[3].name, "template.svg")
+    os.execute("rm -rf '" .. d .. "'")
+end)
+
+t.test("render caches, inverts for night, and evicts with a real free", function()
+    local O = fresh()
+    O.CACHE_MAX = 3
+    local made, freed = 0, 0
+    O._render = function(path, w, h)
+        made = made + 1
+        local o = { inverted = false }
+        o.getWidth = function() return w end
+        o.getHeight = function() return h end
+        o.invertRect = function() o.inverted = true end
+        o.free = function() freed = freed + 1 end
+        return o
+    end
+    local e = POOL[1]
+    local a = O.render(e, 10, 10, false)
+    assert(O.render(e, 10, 10, false) == a, "second render must hit the cache")
+    eq(made, 1)
+    local n = O.render(e, 10, 10, true)
+    assert(n.inverted, "night render of colour artwork is pre-inverted (faithful)")
+    local chalk = { path = "/o/c.svg", name = "c.svg", aspect = 1, overhang = 0, night_invert = true }
+    local c = O.render(chalk, 10, 10, true)
+    assert(not c.inverted, "a night=invert ornament is left alone so it displays inverted")
+    O.render(e, 20, 20, false)     -- fourth key: evicts the oldest
+    eq(freed, 1, "eviction frees the bb the cache owned")
+end)
+
+t.done()

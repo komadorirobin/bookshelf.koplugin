@@ -1975,17 +1975,48 @@ function SpineShelf.rowWidget(opts)
             cursor = cursor + e.w
         end
     end
+    -- Ornaments: the slack at a row's end (books stand centred, so half of
+    -- it sits each side) can take one of the user's SVGs, standing on the
+    -- plank at the books' feet line. Deterministic per page composition;
+    -- never on a full row. See bookshelf_ornaments.lua -- deliberately
+    -- undocumented, the folder it creates is the whole hint.
+    local ornament
+    pcall(function()
+        local Orn = require("lib/bookshelf_ornaments")
+        Orn.ensureTemplate()
+        local margin = SpineShelf.endMargin(opts.height)
+        local pad    = math.max(opts.gap or 0, b)
+        local slack  = opts.width - (lead + content_w)
+        local gap    = math.max(0, math.min(slack, lead) - margin - pad)
+        local first  = opts.plan.entries[opts.row.first]
+        local seed   = tostring(first and first.book and first.book.filepath or "")
+                       .. "|" .. tostring(opts.row.first) .. "|" .. tostring(opts.row.last)
+        local pl = Orn.pick(seed, gap, stand_h, nil, {
+            min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
+            min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
+            max_below = inset + b,
+        })
+        if not pl then return end
+        local x
+        if pl.side == "left" then
+            x = lead - pad - pl.w
+        else
+            x = lead + content_w + pad
+        end
+        if x < margin or x + pl.w > opts.width - margin then return end
+        local w_ = Orn.Ornament:new{ placement = pl, night = _nightMode() }
+        w_.overlap_offset = { x, stand_h - pl.above }
+        ornament = w_
+    end)
+    local children = { dimen = dimen, plank, group }
+    if ornament then children[#children + 1] = ornament end
     if #badge_spans > 0 then
-        return OverlapGroup:new{
-            dimen = dimen, plank, group,
-            ShelfBadges:new{
-                dimen = Geom:new{ w = opts.width, h = opts.height },
-                spans = badge_spans,
-            },
+        children[#children + 1] = ShelfBadges:new{
+            dimen = Geom:new{ w = opts.width, h = opts.height },
+            spans = badge_spans,
         }
     end
-    local result = OverlapGroup:new{ dimen = dimen, plank, group }
-    return result
+    return OverlapGroup:new(children)
 end
 
 -- The tilt's lighting, matched to the PLANK's: the plank paints as if lit
