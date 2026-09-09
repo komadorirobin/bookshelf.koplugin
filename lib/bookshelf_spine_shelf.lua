@@ -1057,16 +1057,34 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- unmissable on any spine.
     if self.is_bulk_selected then
         pcall(function()
-            local fy = body_top
-            local leg = math.min(spine_w, (top + spine_h) - fy)
-            for i = 0, leg - 1 do
-                bb:paintRect(x, fy + i, leg - i, 1, Blitbuffer.COLOR_BLACK)
+            -- Sized from an AVERAGE book (e.ref_w_dp, the reference the title
+            -- face caps at too), so every spine wears the same badge: the
+            -- circle sits centred on the spine, and the triangle behind it
+            -- is cut off at the spine's edges on thin books, as if it wrapped
+            -- round the side (user ruling). Sizing from the spine's own width
+            -- shrank the badge to a speck on a novella and hugged the corner
+            -- on everything else -- a cover-grid look, where a frame around
+            -- the cover keeps the circle off the edges.
+            local fy    = body_top
+            local ref_w = Screen:scaleBySize(e.ref_w_dp or 22)
+            local pad   = math.max(1, Screen:scaleBySize(1))
+            local r     = math.max(2, math.floor(ref_w * 0.28))
+            r = math.min(r, math.max(2, math.floor((spine_w - 2) / 2)))
+            local cx, cy = x + math.floor(spine_w / 2), fy + pad + r
+            -- Leg long enough that the centred circle clears the diagonal
+            -- (distance to it >= r), then cropped to the spine's width and
+            -- the face's height.
+            local leg   = math.max(ref_w,
+                              math.floor(spine_w / 2 + pad + 2.414 * r) + 2)
+            local max_h = (top + spine_h) - fy
+            for i = 0, math.min(leg, max_h) - 1 do
+                local run = math.min(leg - i, spine_w)
+                if run > 0 then
+                    bb:paintRect(x, fy + i, run, 1, Blitbuffer.COLOR_BLACK)
+                end
             end
-            local r_out = math.max(2,
-                math.floor(math.max(2, (leg - 2) / 3.41421) * 0.80))
-            local cx, cy = x + r_out + 1, fy + r_out + 1
-            bb:paintCircle(cx, cy, r_out, Blitbuffer.COLOR_WHITE)
-            bb:paintCircle(cx, cy, math.max(1, math.floor(r_out * 0.5)),
+            bb:paintCircle(cx, cy, r, Blitbuffer.COLOR_WHITE)
+            bb:paintCircle(cx, cy, math.max(1, math.floor(r * 0.5)),
                            Blitbuffer.COLOR_BLACK)
         end)
     end
@@ -1910,6 +1928,9 @@ function SpineShelf.rowWidget(opts)
                         -- and breaks the skeuomorphism (user ruling).
                         suppress_favorite_badge = true,
                         is_bulk_selected = is_bulk,
+                        -- No frame around a face-out on this shelf, so the
+                        -- bulk flag keeps its circle off the card's edges.
+                        bulk_flag_inset  = Screen:scaleBySize(4),
                         -- The status glyphs' below-card dangle vanished
                         -- behind the lift shadow / plank here; they move to
                         -- the corner the heart vacated (user ruling).

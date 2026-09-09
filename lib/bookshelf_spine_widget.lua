@@ -625,6 +625,10 @@ end
 local CornerFlag = Widget:extend{
     width  = nil,   -- card width
     height = nil,   -- card height
+    -- Extra room between the circle and the card's top/left edges. The cover
+    -- grid needs none (its frame around the cover keeps the circle off the
+    -- edge); a face-out on the spine shelf has no frame, so it asks for some.
+    inset  = 0,
 }
 
 function CornerFlag:getSize()
@@ -635,7 +639,8 @@ function CornerFlag:paintTo(bb, x, y)
     -- Flag scaled so the black "glass corner" reads from across the room
     -- on e-ink. Cap raised to 64dp; the 0.28 ratio scales down sanely on
     -- small thumbnails.
-    local leg = math.min(Screen:scaleBySize(64), math.floor(self.width * 0.28))
+    local inset = self.inset or 0
+    local leg = math.min(Screen:scaleBySize(64), math.floor(self.width * 0.28)) + inset
     -- Fill the triangle by rasterising one horizontal line per row,
     -- shrinking the line width as we move down. Row i (0..leg-1) fills
     -- pixels from x..x+(leg-1-i) at y+i.
@@ -654,10 +659,10 @@ function CornerFlag:paintTo(bb, x, y)
     -- cover's left/top edges — closer to the corner than the geometric
     -- incentre (which sits too far inside the triangle visually) but
     -- not so close that the circle bleeds out into the cover's frame.
-    local r_max = math.max(2, math.floor((leg - 2) / 3.41421))
+    local r_max = math.max(2, math.floor((leg - 2 - inset) / 3.41421))
     local r_out = math.max(2, math.floor(r_max * 0.80))
-    local cx    = x + r_out + 1
-    local cy    = y + r_out + 1
+    local cx    = x + inset + r_out + 1
+    local cy    = y + inset + r_out + 1
     local r_in  = math.max(1, math.floor(r_out * 0.5))
     bb:paintCircle(cx, cy, r_out, Blitbuffer.COLOR_WHITE)
     bb:paintCircle(cx, cy, r_in,  Blitbuffer.COLOR_BLACK)
@@ -1614,6 +1619,7 @@ function SpineWidget:_renderShadowedCard(inner)
         children[#children + 1] = CornerFlag:new{
             width  = card_w,
             height = card_h,
+            inset  = self.bulk_flag_inset or 0,
         }
     end
 

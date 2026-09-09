@@ -68,7 +68,7 @@ M.TEMPLATE_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
 <!-- bookshelf:overhang=0 -->
 <!-- bookshelf:night=invert -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
-  <path d="M12 70 H48 L43 100 H17 Z" fill="#a4512c"/>
+  <path d="M12 70 H48 L43 97 A13 2.8 0 0 1 17 97 Z" fill="#a4512c"/>
   <ellipse cx="30" cy="68" rx="19" ry="4" fill="#3a2114"/>
   <path d="M30 70 C22 54 8 50 6 36 C20 36 30 46 30 70 Z" fill="#3f8a45"/>
   <path d="M30 70 C38 52 52 48 54 32 C40 34 30 46 30 70 Z" fill="#2f7237"/>
@@ -83,7 +83,7 @@ M.CACTUS_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
 <!-- bookshelf:overhang=0 -->
 <!-- bookshelf:night=invert -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
-  <path d="M14 74 H46 L42 100 H18 Z" fill="#a4512c"/>
+  <path d="M14 74 H46 L42 97 A12 2.6 0 0 1 18 97 Z" fill="#a4512c"/>
   <ellipse cx="30" cy="72" rx="17" ry="3.6" fill="#3a2114"/>
   <rect x="24" y="18" width="12" height="56" rx="6" fill="#3f8a45"/>
   <path d="M30 56 H19 A5 5 0 0 1 14 51 V36" stroke="#3f8a45" stroke-width="8" stroke-linecap="round" fill="none"/>
