@@ -173,7 +173,7 @@ end)
 
 t.test("render caches, inverts for night, and evicts with a real free", function()
     local O = fresh()
-    O.CACHE_MAX = 3
+    O.CACHE_MAX = 4
     local made, freed = 0, 0
     O._render = function(path, w, h)
         made = made + 1
@@ -191,9 +191,13 @@ t.test("render caches, inverts for night, and evicts with a real free", function
     local n = O.render(e, 10, 10, true)
     assert(n.inverted, "night render of colour artwork is pre-inverted (faithful)")
     local chalk = { path = "/o/c.svg", name = "c.svg", aspect = 1, overhang = 0, night_invert = true }
+    O._has_color = false
     local c = O.render(chalk, 10, 10, true)
-    assert(not c.inverted, "a night=invert ornament is left alone so it displays inverted")
-    O.render(e, 20, 20, false)     -- fourth key: evicts the oldest
+    assert(not c.inverted, "on grayscale a night=invert ornament is left alone so it displays inverted")
+    O._has_color = true
+    local c2 = O.render(chalk, 11, 11, true)
+    assert(c2.inverted, "on a colour panel the flag is ignored: colours stay faithful")
+    O.render(e, 20, 20, false)     -- fifth key: evicts the oldest
     eq(freed, 1, "eviction frees the bb the cache owned")
 end)
 

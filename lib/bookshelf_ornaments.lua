@@ -53,28 +53,27 @@ M.TEMPLATE_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
   - The shelf is seen from slightly above (about 12 degrees), so anything
     with a top -- a pot, a box, a cup -- shows its opening as a shallow
     ellipse about a fifth as tall as it is wide. Match that and it belongs.
-  - Bold, solid shapes read best on e-ink. No text, no filters, no masks:
-    the renderer is small and they will not show. Transparent background,
-    so the shelf shows through.
+  - Use colour. Colour screens show it as drawn; grey e-ink shows it as
+    shades of grey, so keep the tones fairly dark and distinct from each
+    other, or it turns to mush. Bold, solid shapes read best. No text, no
+    filters, no masks: the renderer is small and they will not show.
+    Transparent background, so the shelf shows through.
   - Height follows the shelf; width follows your aspect ratio. Aim for
     something about as tall as a book and no wider than two or three.
-  - In night mode, colour artwork keeps its colours (like the book covers).
-    A dark silhouette looks better turned light, like the spine titles, so
-    the night line below asks for that; delete it for colour artwork.
+  - Night mode: colour screens always show your colours as drawn. On a grey
+    e-ink screen a dark shape would sit dark on the black night shelf, so
+    the night line below asks for it to be shown light instead, like the
+    spine titles. Keep it unless your ornament relies on being dark.
 -->
 <!-- bookshelf:overhang=0 -->
 <!-- bookshelf:night=invert -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
-  <!-- pot body, tapered -->
-  <path d="M12 70 H48 L43 100 H17 Z" fill="#333"/>
-  <!-- the opening: a shallow ellipse (diameter x sin 12deg), dark inside -->
-  <ellipse cx="30" cy="68" rx="19" ry="4" fill="#161616"/>
-  <!-- leaves rise from inside the opening -->
-  <path d="M30 70 C22 54 8 50 6 36 C20 36 30 46 30 70 Z" fill="#222"/>
-  <path d="M30 70 C38 52 52 48 54 32 C40 34 30 46 30 70 Z" fill="#222"/>
-  <path d="M30 70 C28 48 30 30 30 12 C34 30 34 50 30 70 Z" fill="#111"/>
-  <!-- front half of the rim, drawn last so it hides the leaf bases -->
-  <path d="M11 68 A19 4 0 0 0 49 68 V72 A19 4 0 0 1 11 72 Z" fill="#555"/>
+  <path d="M12 70 H48 L43 100 H17 Z" fill="#a4512c"/>
+  <ellipse cx="30" cy="68" rx="19" ry="4" fill="#3a2114"/>
+  <path d="M30 70 C22 54 8 50 6 36 C20 36 30 46 30 70 Z" fill="#3f8a45"/>
+  <path d="M30 70 C38 52 52 48 54 32 C40 34 30 46 30 70 Z" fill="#2f7237"/>
+  <path d="M30 70 C28 48 30 30 30 12 C34 30 34 50 30 70 Z" fill="#245a2b"/>
+  <path d="M11 68 A19 4 0 0 0 49 68 V72 A19 4 0 0 1 11 72 Z" fill="#c8693d"/>
 </svg>
 ]==]
 
@@ -84,16 +83,13 @@ M.CACTUS_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
 <!-- bookshelf:overhang=0 -->
 <!-- bookshelf:night=invert -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
-  <path d="M14 74 H46 L42 100 H18 Z" fill="#333"/>
-  <ellipse cx="30" cy="72" rx="17" ry="3.6" fill="#161616"/>
-  <!-- stem -->
-  <rect x="24" y="18" width="12" height="56" rx="6" fill="#222"/>
-  <!-- arms: pipes that leave the stem, bend at an elbow, and rise clear of it -->
-  <path d="M30 56 H19 A5 5 0 0 1 14 51 V36" stroke="#222" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <path d="M30 44 H41 A5 5 0 0 0 46 39 V28" stroke="#222" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <!-- pale spines -->
-  <path d="M27 26 l-3 -2 M33 26 l3 -2 M27 40 l-3 -2 M33 40 l3 -2 M27 64 l-3 -2 M33 64 l3 -2 M12 42 l-3 -1 M48 34 l3 -1" stroke="#ddd" stroke-width="1.2" fill="none"/>
-  <path d="M13 72 A17 3.6 0 0 0 47 72 V76 A17 3.6 0 0 1 13 76 Z" fill="#555"/>
+  <path d="M14 74 H46 L42 100 H18 Z" fill="#a4512c"/>
+  <ellipse cx="30" cy="72" rx="17" ry="3.6" fill="#3a2114"/>
+  <rect x="24" y="18" width="12" height="56" rx="6" fill="#3f8a45"/>
+  <path d="M30 56 H19 A5 5 0 0 1 14 51 V36" stroke="#3f8a45" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <path d="M30 44 H41 A5 5 0 0 0 46 39 V28" stroke="#3f8a45" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <path d="M27 26 l-3 -2 M33 26 l3 -2 M27 40 l-3 -2 M33 40 l3 -2 M27 64 l-3 -2 M33 64 l3 -2 M12 42 l-3 -1 M48 34 l3 -1" stroke="#f3e9b8" stroke-width="1.2" fill="none"/>
+  <path d="M13 72 A17 3.6 0 0 0 47 72 V76 A17 3.6 0 0 1 13 76 Z" fill="#c8693d"/>
 </svg>
 ]==]
 
@@ -108,6 +104,17 @@ M.SEED_FILES = {
 M._data_dir = nil          -- override for the data dir
 M._lfs      = nil          -- lazily required
 M._render   = nil          -- function(path, w, h) -> bb, default RenderImage
+M._has_color = nil         -- override for Device:hasColorScreen()
+
+function M.hasColorScreen()
+    if M._has_color ~= nil then return M._has_color end
+    local ok, Device = pcall(require, "device")
+    if ok and Device and Device.hasColorScreen then
+        local ok2, v = pcall(Device.hasColorScreen, Device)
+        return ok2 and v or false
+    end
+    return false
+end
 
 local function lfs()
     if not M._lfs then
@@ -277,10 +284,13 @@ function M.render(entry, w, h, night)
     bb = res
     -- Night mode inverts the whole display. Pre-inverting here keeps the
     -- artwork's colours faithful on screen (what covers do); an ornament
-    -- flagged night=invert skips that and so DISPLAYS inverted -- a dark
-    -- silhouette becomes chalk on the black shelf, like the spine titles.
-    -- RGB32 invert keeps the alpha channel: the shelf still shows through.
-    if night and not entry.night_invert and bb.invertRect then
+    -- flagged night=invert skips that on a GRAYSCALE panel and so DISPLAYS
+    -- inverted -- a dark silhouette becomes chalk on the black shelf, like
+    -- the spine titles. RGB32 invert keeps the alpha: the shelf shows through.
+    -- Colour panels always get the colours as drawn: an inverted green plant
+    -- would be magenta. The chalk look is a grayscale-panel affair.
+    local chalk = entry.night_invert and not M.hasColorScreen()
+    if night and not chalk and bb.invertRect then
         pcall(function() bb:invertRect(0, 0, bb:getWidth(), bb:getHeight()) end)
     end
     M._cache[key] = bb
