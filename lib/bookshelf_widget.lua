@@ -8112,11 +8112,11 @@ function BookshelfWidget:_previewBook(book, tap_t)
         return
     end
     -- Snapshot the preview≠lastfile state BEFORE we update the preview
-    -- so we can decide whether the chip strip needs rebuilding. The
+    -- so we can decide whether the chip strip needs restyling. The
     -- "currently reading" action chip's *selected* state flips between
     -- preview-matches-lastfile (selected) and preview-is-different
-    -- (unselected); rendering that flip needs a chip-strip rebuild
-    -- since _swapHeroInPlace only touches the hero card.
+    -- (unselected); _swapHeroInPlace only touches the hero card, so the
+    -- flip is rendered separately (in-place bar restyle, below).
     -- Path only - both diff checks below compare filepaths; this runs on
     -- every preview tap, directly in the tap-latency path.
     local lastfile_fp = Repo.currentFilepath and Repo.currentFilepath()
@@ -8155,9 +8155,11 @@ function BookshelfWidget:_previewBook(book, tap_t)
     -- selection after any shelf load crosses this boundary (preview nil ->
     -- set), every fresh shelf's first tap felt slow (device report). The
     -- tap now takes the fast path immediately -- hero swap + the two
-    -- spines' repaint -- and the chip restyles a frame later, with the
-    -- refresh scoped to the strip alone (the deferred rebuild's hero and
-    -- shelves are pixel-identical to what the swap just painted).
+    -- spines' repaint -- and the chip bar re-renders its own row in place
+    -- (ChipBar:setCurrentSelected) so the chip flips in the SAME cycle as
+    -- the hero. A deferred full rebuild here made the chip visibly lag the
+    -- hero by a beat, and on a cold post-restart cache the rebuild itself
+    -- froze the tap (device report, round two).
     if was_diff ~= is_diff then
         local can_swap = self._hero_parent and self._hero_dims
                          and self._inner_vgroup and self._shelf_dims
@@ -8165,22 +8167,44 @@ function BookshelfWidget:_previewBook(book, tap_t)
             self:_swapHeroInPlace()
             self:_repaintSelectionHighlight(
                 prior_preview_fp, self._preview_book.filepath)
-            if self._chip_bar then
+            local bar = self._chip_bar
+            if bar then
                 -- No chip strip mounted = nothing visible flips; skip.
-                local expected_fp = self._preview_book.filepath
-                UIManager:tickAfterNext(function()
-                    if BookshelfWidget.live ~= self then return end
-                    -- A later tap moved the preview on: its own boundary
-                    -- handling (or fast path) owns the strip now.
-                    if not (self._preview_book
-                            and self._preview_book.filepath == expected_fp) then
-                        return
+                -- Mirrors the current_in_hero predicate at bar build:
+                -- micro/expanded exited earlier, preview is set, so the
+                -- chip is selected exactly when preview == lastfile.
+                local sel = (lastfile_fp
+                             and self._preview_book.filepath == lastfile_fp)
+                            and true or false
+                local restyled = bar.setCurrentSelected
+                                 and bar:setCurrentSelected(sel)
+                if restyled then
+                    local band = self:_chipStripFlashBand()
+                    if band then
+                        UIManager:setDirty(self, function()
+                            return "ui", band, self.dithered
+                        end)
+                    else
+                        UIManager:setDirty(self, "ui")
                     end
-                    self:_rebuildRefreshChipStrip()
-                end)
+                elseif restyled == nil then
+                    -- Bar shape we can't restyle in place: defer the full
+                    -- restyle so the tap itself stays fast.
+                    local expected_fp = self._preview_book.filepath
+                    UIManager:tickAfterNext(function()
+                        if BookshelfWidget.live ~= self then return end
+                        -- A later tap moved the preview on: its own boundary
+                        -- handling (or fast path) owns the strip now.
+                        if not (self._preview_book
+                                and self._preview_book.filepath == expected_fp) then
+                            return
+                        end
+                        self:_rebuildRefreshChipStrip()
+                    end)
+                end
             end
             logger.dbg(string.format(
-                "[bookshelf perf] _previewBook: branch=swap+chipdefer tap_gap=%.0fms TOTAL=%.0fms",
+                "[bookshelf perf] _previewBook: branch=swap+chipinplace tap_gap=%.0fms TOTAL=%.0fms",
                 _perf_gap_ms, (_gettime() - _perf_t0) * 1000))
         else
             self:_rebuild()
@@ -9465,31 +9489,38 @@ end
 -- band from the top down to the bottom of the chip strip, so the shelves and
 -- footer don't flash. Falls back to a full refresh if the chip strip's
 -- painted geometry isn't available (e.g. chips hidden).
+-- _chipStripFlashBand() — the dirty band for a currently-reading chip
+-- restyle: the chip's cell (bar-relative x from _chip_dimens) extended
+-- upward past the up-pointer, which paints ABOVE the strip's frame
+-- (overlap_offset -pointer_h) — a band clipped to the strip left the
+-- triangle unrefreshed on e-ink and it never showed (device report).
+-- Falls back to the whole strip when the cell rect isn't available
+-- (breadcrumb mode tracks zones, not chip dimens).
+function BookshelfWidget:_chipStripFlashBand()
+    local bar  = self._chip_bar
+    local band = bar and bar.dimen and bar.dimen:copy()
+    if not band then return nil end
+    local cell = bar._chip_dimens and bar._chip_dimens["current"]
+    if cell and cell.w then
+        band.x = band.x + cell.x
+        band.w = cell.w + Screen:scaleBySize(3)
+    end
+    local lift = math.max(Screen:scaleBySize(5),
+                          math.floor((bar.height or band.h) * 0.25))
+                 + Screen:scaleBySize(2)
+    band.y = band.y - lift
+    band.h = band.h + lift + Screen:scaleBySize(4)
+    return band
+end
+
 -- _rebuildRefreshChipStrip() — rebuild the tree but flash ONLY the
--- "currently reading" chip's cell. For deferred restyles where everything
--- else on screen is already pixel-correct (the preview boundary: the swap
--- painted the hero and spines; the only strip change is that chip's fill
--- and its up-pointer). The pointer paints ABOVE the strip's frame
--- (overlap_offset -pointer_h), so the band must extend upward past the
--- strip's top edge — a band clipped to the strip left the triangle
--- unrefreshed on e-ink and it never showed (device report).
+-- "currently reading" chip's cell. Fallback for strip restyles where the
+-- bar can't re-render in place (ChipBar:setCurrentSelected returned nil)
+-- but everything else on screen is already pixel-correct.
 function BookshelfWidget:_rebuildRefreshChipStrip()
     -- Geometry comes from the OUTGOING bar; the current chip keeps its slot
     -- across the rebuild (leftmost, fixed width), so old cell == new cell.
-    local bar  = self._chip_bar
-    local band = bar and bar.dimen and bar.dimen:copy()
-    if band then
-        local cell = bar._chip_dimens and bar._chip_dimens["current"]
-        if cell and cell.w then
-            band.x = band.x + cell.x
-            band.w = cell.w + Screen:scaleBySize(3)
-        end
-        local lift = math.max(Screen:scaleBySize(5),
-                              math.floor((bar.height or band.h) * 0.25))
-                     + Screen:scaleBySize(2)
-        band.y = band.y - lift
-        band.h = band.h + lift + Screen:scaleBySize(4)
-    end
+    local band = self:_chipStripFlashBand()
     self:_rebuild()
     if band then
         UIManager:setDirty(self, function()

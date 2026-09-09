@@ -1021,6 +1021,39 @@ function ChipBar:_gotoPage(p)
     if self.on_page_change then self.on_page_change() end
 end
 
+-- setCurrentSelected(sel): flip the currently-reading action chip's fill
+-- (and its up-pointer) in place, rebuilding just this bar's row -- the
+-- same in-place pattern _gotoPage uses. Lets the host restyle the strip
+-- at a preview boundary without a full shelf rebuild, in the SAME cycle
+-- as the hero swap (the deferred rebuild made the chip visibly lag the
+-- hero). Does NOT paint or refresh; the caller owns that.
+-- Returns true when the row was re-rendered, false when the state already
+-- matched (nothing to paint), nil when this bar has no such chip or was
+-- never rendered in a re-enterable mode (caller should fall back to a
+-- full restyle).
+function ChipBar:setCurrentSelected(sel)
+    sel = sel and true or false
+    local target
+    for _, c in ipairs(self.chips or {}) do
+        if c.action and c.key == "current" then
+            target = c
+            break
+        end
+    end
+    if not target then return nil end
+    if (target.selected and true or false) == sel then return false end
+    target.selected = sel
+    if self.breadcrumb_path and #self.breadcrumb_path > 0 then
+        self:_initBreadcrumb()
+    elseif self._flex_indices then
+        self:_buildChipRow()
+    else
+        target.selected = not sel
+        return nil
+    end
+    return true
+end
+
 -- warmKeys(): nav (flex) chip keys worth pre-warming from where we are now --
 -- the current page plus the next one (forward-swipe bias). Single-page bars
 -- return every nav chip (same set the old all-chips warm used). Action chips
