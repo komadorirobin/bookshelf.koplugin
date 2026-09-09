@@ -9465,16 +9465,33 @@ end
 -- band from the top down to the bottom of the chip strip, so the shelves and
 -- footer don't flash. Falls back to a full refresh if the chip strip's
 -- painted geometry isn't available (e.g. chips hidden).
--- _rebuildRefreshChipStrip() — rebuild the tree but flash ONLY the chip
--- strip. For deferred restyles where everything else on screen is already
--- pixel-correct (the preview boundary: the swap painted the hero and
--- spines; only the "currently reading" chip's fill flipped).
+-- _rebuildRefreshChipStrip() — rebuild the tree but flash ONLY the
+-- "currently reading" chip's cell. For deferred restyles where everything
+-- else on screen is already pixel-correct (the preview boundary: the swap
+-- painted the hero and spines; the only strip change is that chip's fill
+-- and its up-pointer). The pointer paints ABOVE the strip's frame
+-- (overlap_offset -pointer_h), so the band must extend upward past the
+-- strip's top edge — a band clipped to the strip left the triangle
+-- unrefreshed on e-ink and it never showed (device report).
 function BookshelfWidget:_rebuildRefreshChipStrip()
-    local chip = self._chip_bar
-    local band = chip and chip.dimen and chip.dimen:copy()
+    -- Geometry comes from the OUTGOING bar; the current chip keeps its slot
+    -- across the rebuild (leftmost, fixed width), so old cell == new cell.
+    local bar  = self._chip_bar
+    local band = bar and bar.dimen and bar.dimen:copy()
+    if band then
+        local cell = bar._chip_dimens and bar._chip_dimens["current"]
+        if cell and cell.w then
+            band.x = band.x + cell.x
+            band.w = cell.w + Screen:scaleBySize(3)
+        end
+        local lift = math.max(Screen:scaleBySize(5),
+                              math.floor((bar.height or band.h) * 0.25))
+                     + Screen:scaleBySize(2)
+        band.y = band.y - lift
+        band.h = band.h + lift + Screen:scaleBySize(4)
+    end
     self:_rebuild()
     if band then
-        band.h = band.h + Screen:scaleBySize(4)
         UIManager:setDirty(self, function()
             return "ui", band, self.dithered
         end)
