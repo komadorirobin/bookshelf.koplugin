@@ -1032,10 +1032,16 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         end)
     end
 
-    -- Title, rotated, in whatever run is left.
+    -- Title, rotated, in whatever run is left. The face scales with spine
+    -- width but caps at the size an AVERAGE book (unknown page count) gets
+    -- on this shelf: a 1000-page spine grew its title far past its
+    -- neighbours and truncated harder for it (bigger glyphs, same run).
+    -- Thin spines still shrink below the cap as before.
     local run = bottom - cur_top
     if run > 0 and e.label and e.label ~= "" then
-        local tsize = math.max(8, math.min(18, math.floor(w_dp * 0.5)))
+        local tcap  = math.max(8, math.min(18,
+                          math.floor((e.ref_w_dp or 22) * 0.5)))
+        local tsize = math.max(8, math.min(tcap, math.floor(w_dp * 0.5)))
         local author = (self.show_author ~= false) and e.author or nil
         _paintRotatedTitle(bb, x, cur_top, run, spine_w, e.label, tsize,
                            e.look, night, author)
@@ -1353,6 +1359,18 @@ function SpineShelf.plan(items, opts)
         px_per_dp > 0 and (budget / px_per_dp) or nil)
     local book_gap  = opts.gap or 0
     local group_gap = opts.group_gap or book_gap
+    -- Title-size reference: the width an AVERAGE book (unknown page count)
+    -- gets under this shelf's thickness modifiers. The title face scales
+    -- with spine width, so long books grew their font far past the rest of
+    -- the shelf and truncated harder (user report); the paint site caps the
+    -- face at this book's size while thin spines still shrink below it.
+    local ref_w_dp = SpineLayout.spineWidthDp(nil) * auto_thick
+    do
+        local t = tonumber(opts.thickness_pct)
+        if t and t >= 40 and t <= 300 and t ~= 100 then
+            ref_w_dp = ref_w_dp * t / 100
+        end
+    end
     -- Face-out policy: which books stand cover-forward. Mode string from
     -- the chip editor's picker; the old boolean pins normalise onto it
     -- (true/nil were "favourites face out: yes", false was "no").
@@ -1654,7 +1672,8 @@ function SpineShelf.plan(items, opts)
         end
         entries[#entries + 1] = {
             book = bk, item = f.item, item_idx = f.item_idx,
-            w = w, h = h, w_dp = w_dp, look = look, depth = depth,
+            w = w, h = h, w_dp = w_dp, ref_w_dp = ref_w_dp,
+            look = look, depth = depth,
             face_out = face_out, favourite = fav, label = label,
             author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
