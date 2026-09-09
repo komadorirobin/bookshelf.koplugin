@@ -156,6 +156,51 @@ t.test("the CACHED shape the comparator sees carries an author too", function()
     assert(meta:match("author_sort%s*="), "books_meta drops author_sort")
 end)
 
+-- ── Author cards: the co-author flip side ───────────────────────────────────
+
+t.test("an author card sorts under its own name, not its book's first author", function()
+    -- "Battle of the Big Bang" by Niayesh Afshordi & Phil Halper: a member
+    -- record's `author` field is the book's FIRST author, so the modal
+    -- member author of the "Phil Halper" card is Afshordi -- and the card
+    -- sorted under A, glued to its co-author's card on the shelf (device
+    -- report). The card's own name, carried as shape.author, must outrank
+    -- the members.
+    local card = {
+        kind        = "author",
+        series_name = "Phil Halper",
+        author      = "Phil Halper",
+        books_meta  = { { author  = "Niayesh Afshordi",
+                          authors = { "Niayesh Afshordi", "Phil Halper" } } },
+    }
+    eq(surname(card), "halper", "the card sorted under its book's first author")
+    -- The display-name form the author_format setting produces must sort the
+    -- same way ("Halper, Phil" is what a last_first library carries).
+    card.author = "Halper, Phil"
+    card._surname_cache = nil
+    eq(surname(card), "halper", "the last_first display form mis-sorted")
+end)
+
+t.test("the author-card producer carries the card's name as author", function()
+    -- Source-shape, same rationale as the two producer tests above: the
+    -- behavioural test feeds the comparator a hand-built shape, so it can
+    -- pass forever against a producer that never sets the field.
+    local src = {}
+    for line in io.lines("lib/bookshelf_book_repository.lua") do
+        if not line:match("^%s*%-%-") then src[#src + 1] = line end
+    end
+    src = table.concat(src, "\n")
+    -- Several producers append to a `shapes` list; anchor to the group-shape
+    -- cache (the one getAuthors/getGenres sort) before matching the table.
+    local body = src:match("local function _cacheGroupShapes%(list, kind%)(.-)\nend")
+    assert(body, "_cacheGroupShapes moved or was renamed")
+    local shape = body:match("shapes%[#shapes %+ 1%] = {(.-)}")
+    assert(shape, "the cached group shape moved or was renamed")
+    assert(shape:match('author%s*=%s*kind%s*==%s*"author"'),
+        "author cards no longer carry their own name as the sort author, so "
+        .. "a co-authored book files the second author's card under the "
+        .. "first author's surname")
+end)
+
 t.test("groupAuthor reads both member field names", function()
     -- A live group has `books`; the cached shape has `books_meta`. Reading one
     -- name only is what made the fix a no-op on the shelf it was written for.

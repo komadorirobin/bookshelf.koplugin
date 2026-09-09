@@ -5076,6 +5076,15 @@ local function _cacheGroupShapes(list, kind)
         shapes[#shapes + 1] = {
             kind         = kind,
             series_name  = group.series_name,
+            -- An AUTHOR card sorts under the author it is NAMED AFTER, so
+            -- carry that name as the shape's own author. Without it the
+            -- comparator falls back to the modal MEMBER author -- and a
+            -- member's `author` field is the book's FIRST author, so a
+            -- co-authored book filed the second author's card under the
+            -- first author's surname, right next to it on the shelf
+            -- (device report: "Halper, Phil" sorted between the A's,
+            -- glued to "Afshordi").
+            author       = kind == "author" and group.series_name or nil,
             filepaths    = fps,
             books_meta   = books_meta,
             latest       = group.latest,
