@@ -5103,6 +5103,11 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
         rows[r] = SpineShelf.rowWidget{
             plan              = plan,
             row               = plan.rows[r],
+            -- For an empty row's ornament seed: the page's identity + the
+            -- row's index (see rowWidget).
+            row_index         = r,
+            page_key          = plan.entries[1] and plan.entries[1].book
+                                and plan.entries[1].book.filepath or nil,
             width             = content_w,
             height            = shelf_h,
             gap               = gap,

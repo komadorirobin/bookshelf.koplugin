@@ -1737,6 +1737,36 @@ function SpineShelf.rowWidget(opts)
     local dimen = Geom:new{ w = opts.width, h = opts.height }
     local plank = ShelfPlank:new{ dimen = Geom:new{ w = opts.width, h = opts.height } }
     if not opts.row then
+        -- A bare plank under a half-filled page sometimes takes an ornament
+        -- too (user ask: an empty shelf looked unfinished). Same pool, same
+        -- odds, standing at a seeded spot along the plank; the seed is the
+        -- page's first book plus the row index, so it holds still on the
+        -- page and moves between pages.
+        local ornament
+        pcall(function()
+            local Orn = require("lib/bookshelf_ornaments")
+            Orn.ensureTemplate()
+            local b       = SpineShelf.plankUnit(opts.height)
+            local inset   = math.floor(b * 0.8)
+            local stand_h = math.max(1, opts.height - b - inset)
+            local margin  = SpineShelf.endMargin(opts.height)
+            local seed    = tostring(opts.page_key or "") .. "|empty|"
+                            .. tostring(opts.row_index or 0)
+            local pl = Orn.pick(seed, opts.width - 2 * margin, stand_h, nil, {
+                min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
+                min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
+                max_below = inset + b,
+            })
+            if not pl then return end
+            local span = math.max(0, opts.width - 2 * margin - pl.w)
+            local x = margin + math.floor(span * ((Orn.hash(seed .. "|x") % 1000) / 1000))
+            local w_ = Orn.Ornament:new{ placement = pl, night = _nightMode() }
+            w_.overlap_offset = { x, stand_h - pl.above }
+            ornament = w_
+        end)
+        if ornament then
+            return OverlapGroup:new{ dimen = dimen, plank, ornament }
+        end
         return OverlapGroup:new{ dimen = dimen, plank }
     end
 
