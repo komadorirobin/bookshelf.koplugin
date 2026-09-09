@@ -68,6 +68,14 @@ SpineShelf.GROUP_GAP_DP = 12
 SpineShelf.TILT_FACE_SCALE = 0.806   -- cos(38 deg) / cos(12 deg)
 SpineShelf.TILT_TOP_SCALE  = 2.96    -- sin(38 deg) / sin(12 deg)
 SpineShelf.TILT_TOP_SIN    = 0.616   -- sin(38 deg): tipped top = thickness * this
+-- The STANDING books' visible tops, from the same camera: a horizontal depth
+-- d projects to d * sin(ALPHA) of screen height. What that depth IS differs
+-- by how the book stands (user ruling): a face-out shows its THICKNESS above
+-- the cover (page count), a spine-out shows its COVER WIDTH above the spine
+-- (the book is turned 90 degrees, so its depth into the shelf is the cover).
+-- Before this the face-out used an arbitrary 0.3 x thickness and the spine a
+-- flat 5% of its height, so face-outs read as thick as spines were wide.
+SpineShelf.VIEW_SIN        = 0.208   -- sin(12 deg)
 
 -- The gap a FACE-OUT needs against anything it isn't serially attached to:
 -- covers standing 2dp apart read as one slab (obvious once "All books"
@@ -889,8 +897,14 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         -- Sized above with the face, from the same tip angles.
         edge_h = tilt_edge
     elseif spine_h >= Screen:scaleBySize(60) then
-        edge_h = math.floor(spine_h * 0.05)
-        local e_min, e_max = Screen:scaleBySize(5), Screen:scaleBySize(14)
+        -- The spine-out book's depth into the shelf is its COVER WIDTH
+        -- (height over aspect), foreshortened by the camera's pitch (see
+        -- VIEW_SIN) -- not a fraction of its height, which made every spine
+        -- show the same thin sliver regardless of the book behind it.
+        local aspect = (e.look and e.look.aspect) or SpineLayout.DEFAULT_ASPECT
+        if not aspect or aspect <= 0 then aspect = SpineLayout.DEFAULT_ASPECT end
+        edge_h = math.floor((spine_h / aspect) * SpineShelf.VIEW_SIN)
+        local e_min, e_max = Screen:scaleBySize(5), math.floor(spine_h * 0.2)
         if edge_h < e_min then edge_h = e_min end
         if edge_h > e_max then edge_h = e_max end
     end
@@ -1647,11 +1661,12 @@ function SpineShelf.plan(items, opts)
             if t and t >= 40 and t <= 300 and t ~= 100 then
                 depth_dp = depth_dp * t / 100
             end
-            -- A face-out book shows far less depth than a spine-out one (in
-            -- 3D you are looking at its thin edge above the cover): a third
-            -- of the spine width, tightly capped.
-            depth = math.floor(Screen:scaleBySize(depth_dp) * 0.3)
-            local d_max = math.min(math.floor(h * 0.10), Screen:scaleBySize(14))
+            -- The visible top is the thickness foreshortened by the camera's
+            -- pitch (see VIEW_SIN): a fat book shows a broad page block above
+            -- its cover, a novella a sliver. Only the cover's own height caps
+            -- it, so the cover stays the point.
+            depth = math.floor(Screen:scaleBySize(depth_dp) * SpineShelf.VIEW_SIN)
+            local d_max = math.floor(h * 0.15)
             if depth > d_max then depth = d_max end
             if depth < Screen:scaleBySize(3) then depth = Screen:scaleBySize(3) end
             w = SpineLayout.faceOutWidth(h - depth, aspect)
