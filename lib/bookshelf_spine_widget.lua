@@ -1793,6 +1793,33 @@ function SpineWidget:_renderCover(bb)
             return self:_wrapCoverInCard(
                 ImageWidget:new(img_args), card_w, card_h, border)
         end
+        -- NEAR-size cache entry: any layout change that grows the slot by a
+        -- few pixels (rows count, hero height, a new footer) used to strand
+        -- the WHOLE disk cache just under the strict >= test above, and
+        -- every cover on every fresh page fell through to a full BIM decode
+        -- (~37ms each on a PW5 -- the "covers feel slow vs spine/list"
+        -- report: 402 cached covers at 206x299 against a 210x303 slot).
+        -- Growing the cached bb by up to ~10% with bb:scale (Lua nearest-
+        -- neighbour, Kindle-safe in BOTH directions, unlike MuPDF upscale)
+        -- is imperceptible at these ratios and costs a fraction of the
+        -- decode. The grown bb replaces the cache entry (prefer-larger put,
+        -- with disk write-back), so each book heals once.
+        if cached and self.cover_fill
+                and cached:getWidth()  >= math.floor(img_w * 0.9)
+                and cached:getHeight() >= math.floor(img_h * 0.9) then
+            if bb and ((self.cover_bb == nil) or self.cover_bb_disposable) then
+                bb:free()
+            end
+            local grown = _coverFillBB(cached, img_w, img_h)
+            local effective = ScaledCoverCache:put(fp, grown)
+            return self:_wrapCoverInCard(
+                ImageWidget:new{
+                    image            = effective,
+                    image_disposable = false,   -- cache owns lifetime
+                    width            = img_w,
+                    height           = img_h,
+                }, card_w, card_h, border)
+        end
     end
 
     -- No usable cached bb. We need a source bb to scale or paint at
