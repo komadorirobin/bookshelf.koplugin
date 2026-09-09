@@ -5456,6 +5456,10 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     if self:_isSpineMode() then
         can_step_forward = self:_pageForwardPossible()
     end
+    -- Remembered so a page turn can tell whether any chevron's enabled state
+    -- flipped (first/last page reached or left): only then does the footer
+    -- need refreshing beyond the page label (see _swapShelvesInPlace).
+    self._footer_nav_state = { back = can_step_back, fwd = can_step_forward }
     local first = Button:new{
         icon = "chevron.first", icon_width = chev_size, icon_height = chev_size,
         width      = slot(SLOT_EDGE),
@@ -6348,7 +6352,26 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- wrapped in its screen-anchor BottomContainer. Swap it into the
     -- overlap_group at the stashed footer_overlap_idx.
     local BottomContainer = require("ui/widget/container/bottomcontainer")
+    -- Footer geometry from the OUTGOING footer (same layout as the incoming
+    -- one): the row's painted band and the page label's slot. With these the
+    -- turn's refresh can stop at the footer's top edge and repaint only the
+    -- label -- rebuilding the footer every turn had the chevrons and the
+    -- modules button flashing on every page (device report, list view).
+    local prev_anchor  = self._overlap_group and self._overlap_group[d.footer_overlap_idx]
+    local prev_row     = prev_anchor and prev_anchor[1]
+    local footer_band  = prev_row and prev_row.dimen and prev_row.dimen:copy() or nil
+    local label_rect   = self._page_text_button and self._page_text_button.dimen
+                         and self._page_text_button.dimen:copy() or nil
+    local prev_nav     = self._footer_nav_state
     local new_footer_row = self:_buildFooterRow(d.content_w, total_pages, d.FOOTER_H)
+    local new_nav = self._footer_nav_state
+    local nav_changed = not (prev_nav and new_nav)
+                        or prev_nav.back ~= new_nav.back
+                        or prev_nav.fwd  ~= new_nav.fwd
+    -- What the footer needs refreshed: the label slot when only the range
+    -- text moved, the whole band when a chevron lit up or went dark. nil =
+    -- geometry unknown (first paint), fall back to the old full band.
+    local footer_rect = footer_band and (nav_changed and footer_band or label_rect) or nil
     local new_footer_anchor = BottomContainer:new{
         dimen = Geom:new{ w = self.width, h = self.height - d.FOOTER_BOTTOM_MARGIN },
         new_footer_row,
@@ -6520,7 +6543,13 @@ function BookshelfWidget:_swapShelvesInPlace()
     local wiped = false
     if anim_steps then
         local ry = math.max(0, shelf_top - (d and d.PAD or 0))
-        local region = Geom:new{ x = 0, y = ry, w = self.width, h = self.height - ry }
+        -- Rows only when the footer's band is known: the footer is handled
+        -- separately below so its icons don't wipe on every turn.
+        local rh = self.height - ry
+        if footer_rect and footer_band and footer_band.y > ry then
+            rh = footer_band.y - ry
+        end
+        local region = Geom:new{ x = 0, y = ry, w = self.width, h = rh }
         wiped = pcall(function()
             -- Paint the new page OFFSCREEN and leave the screen showing the old
             -- one, so the wipe can reveal over it. Painting into the
@@ -6540,6 +6569,14 @@ function BookshelfWidget:_swapShelvesInPlace()
                                           Screen.bb:getType())
             self:paintTo(new_bb, 0, 0)
             PageWipe.run(Screen, new_bb, region, _wipe_dir > 0, anim_steps)
+            if footer_rect and footer_band and footer_band.y > ry then
+                -- The wipe left the footer showing the OLD page's label; copy
+                -- just the changed part across and refresh it, no widget
+                -- repaint (widget nil = refresh only).
+                local r = footer_rect
+                Screen.bb:blitFrom(new_bb, r.x, r.y, r.x, r.y, r.w, r.h)
+                UIManager:setDirty(nil, "ui", r)
+            end
             new_bb:free()
         end)
     end
@@ -6555,8 +6592,16 @@ function BookshelfWidget:_swapShelvesInPlace()
             -- hearts reported on reader return. Starting the region a PAD
             -- higher sweeps them.
             local ry = math.max(0, shelf_top - (d and d.PAD or 0))
-            UIManager:setDirty(self, "ui", Geom:new{
-                x = 0, y = ry, w = self.width, h = self.height - ry })
+            if footer_rect and footer_band and footer_band.y > ry then
+                -- Rows band + only the changed part of the footer. The
+                -- widget repaint covers both; the flash covers just these.
+                UIManager:setDirty(self, "ui", Geom:new{
+                    x = 0, y = ry, w = self.width, h = footer_band.y - ry })
+                UIManager:setDirty(nil, "ui", footer_rect)
+            else
+                UIManager:setDirty(self, "ui", Geom:new{
+                    x = 0, y = ry, w = self.width, h = self.height - ry })
+            end
         else
             UIManager:setDirty(self, "ui")
         end
