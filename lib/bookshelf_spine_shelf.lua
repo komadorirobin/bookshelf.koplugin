@@ -1334,6 +1334,22 @@ function ShelfPlank:paintTo(bb, x, y)
     local line = math.max(1, Screen:scaleBySize(1))
     bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.55))
     bb:paintRectRGB32(x, front_y, w, fh, _plankLit(0.12))
+    -- Chamfered ends: a board's corners are eased, not sliced square at the
+    -- screen's edge (user report: the ends looked harshly cut off). A 45deg
+    -- bevel the height of the face at each corner of the band -- far edge
+    -- and front-bottom, both ends -- painted back to the row's ground
+    -- (paper white in pre-invert space, which is what night displays as the
+    -- shelf's black background).
+    local c = math.max(2, fh)
+    local band_top = front_y - surf_h
+    local ground = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+    for i = 0, c - 1 do
+        local run = c - i
+        bb:paintRectRGB32(x, band_top + i, run, 1, ground)
+        bb:paintRectRGB32(x + w - run, band_top + i, run, 1, ground)
+        bb:paintRectRGB32(x, y + h - 1 - i, run, 1, ground)
+        bb:paintRectRGB32(x + w - run, y + h - 1 - i, run, 1, ground)
+    end
 end
 
 -- _folderIsSingleBook(path) -> true when the folder holds exactly ONE book
