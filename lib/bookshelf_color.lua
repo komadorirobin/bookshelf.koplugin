@@ -39,6 +39,7 @@ local DEFAULT_HEX = {
     border      = "#000000",
     invert      = "#FFFFFF",
     metro_fill  = "#000000",
+    plank       = "#B08050",  -- the spine shelf's wood: light oak (see cover_progress DEFAULT_PLANK)
     text_color  = nil,        -- "book text color" — clear rather than default
     symbol_color = nil,       -- "match text" — clear rather than default
     -- Cover-indicator colors (bookshelf-specific). bookmark matches

@@ -543,7 +543,7 @@ local DEFAULT_BORDER            = { hex = "#000000" }
 -- the cover sits on, and it was never mode-switched.
 local DEFAULT_SELECTION         = { hex = "#000000" }
 local DEFAULT_CARD_SHADOW       = { hex = "#808080" }   -- gray(0.5)
-local DEFAULT_PLANK             = { hex = "#8C8C8C" }   -- the spine shelf's wood
+local DEFAULT_PLANK             = { hex = "#B08050" }   -- the spine shelf's wood
 
 -- Night-mode defaults: chosen so the on-screen appearance approximates
 -- the day defaults AFTER KOReader's framebuffer inversion. The framework
@@ -573,7 +573,7 @@ local NIGHT_DEFAULT_FAVORITE_HEART    = { hex = "#00493E" }
 local NIGHT_DEFAULT_BORDER            = { hex = "#FAFAFA" }
 local NIGHT_DEFAULT_SELECTION         = { hex = "#000000" }
 local NIGHT_DEFAULT_CARD_SHADOW       = { hex = "#262626" }  -- gray(0.15)
-local NIGHT_DEFAULT_PLANK             = { hex = "#8C8C8C" }  -- same wood day and night (plank paints constantInNight)
+local NIGHT_DEFAULT_PLANK             = { hex = "#B08050" }  -- light oak, same wood day and night (plank paints constantInNight)
 
 -- Memoised resolvers. resolvedColors() is called multiple times per
 -- cover paint (once per active indicator type per cover), and each call

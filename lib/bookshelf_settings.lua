@@ -1823,7 +1823,7 @@ function Settings:_colorsSubItems()
             end,
             help_text = _("Color of the shelf plank the Spines style stands"
                 .. " its books on. The lit top surface and shaded front edge"
-                .. " are both tinted from this one color. Default mid gray."),
+                .. " are both tinted from this one color. Default light oak."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("spine_plank_color", "plank", 45,

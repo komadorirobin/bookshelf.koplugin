@@ -472,11 +472,13 @@ local function _rampF(col, w)
 end
 
 -- The plank's base colour: the user's "Shelf plank" pick from the Colors
--- menu, mid grey when unset. Returned as plain rgb so the shading tints
--- can be computed from it. Used by the plank AND by the slots' foot
+-- menu, light oak when unset -- a shelf should look like wood (user ruling;
+-- on a grey panel this oak lands at about the same mid grey the old default
+-- painted, so nothing changes there). Returned as plain rgb so the shading
+-- tints can be computed from it. Used by the plank AND by the slots' foot
 -- chamfers, which reveal the plank surface behind the book.
 local function _plankRGB()
-    local r, g, b = 0x8C, 0x8C, 0x8C
+    local r, g, b = 0xB0, 0x80, 0x50
     pcall(function()
         local c = CoverProgress.resolvedColors().plank
         local rgb = c and c.getColorRGB32 and c:getColorRGB32()
