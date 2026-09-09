@@ -1133,6 +1133,13 @@ function HeroCard:_renderFull()
     -- Off = the historical full-height 2:3 box.
     local sw_w = self.cover_w - 2 * SHADOW_OFFSET
     local sw_h = cover_h - 2 * SHADOW_OFFSET
+    -- Register the hero region's height with the hero tier, so shelf tiles
+    -- know what height to stash pre-decoded copies at (first-preview warm).
+    -- The pre-true-aspect region height, deliberately: it's layout-stable,
+    -- while the true-aspect box varies per book.
+    pcall(function()
+        require("lib/bookshelf_hero_tier").target_h = sw_h
+    end)
     if BookshelfSettings.isTrue("true_cover_aspect") then
         local fit_h = SpineWidget.trueAspectBoxHeight(sw_w, self.book)
         if fit_h <= sw_h then

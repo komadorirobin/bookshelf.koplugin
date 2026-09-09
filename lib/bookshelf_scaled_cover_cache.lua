@@ -359,6 +359,12 @@ function ScaledCoverCache:drop(filepath)
         pcall(D.drop, filepath)
         self._disk_miss[filepath] = true
     end
+    -- The hero tier stashes hero-height copies of the same source bytes;
+    -- every drop() caller means "re-decode next time", so a stashed copy
+    -- would resurrect the old art. One funnel keeps the two in step.
+    pcall(function()
+        require("lib/bookshelf_hero_tier"):drop(filepath)
+    end)
     if self._cache[filepath] == nil then return end
     self._bytes = self._bytes - (self._sizes[filepath] or 0)
     if self._bytes < 0 then self._bytes = 0 end

@@ -13,6 +13,7 @@ local BD              = require("ui/bidi")
 local Blitbuffer      = require("ffi/blitbuffer")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+local HeroTier         = require("lib/bookshelf_hero_tier")
 local BFont           = require("lib/bookshelf_fonts")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -1829,13 +1830,33 @@ function SpineWidget:_renderCover(bb)
     -- We own the returned bb; mark img_disposable accordingly.
     local img_disposable = (self.cover_bb == nil) or self.cover_bb_disposable
     if not bb then
-        bb = fp and _getRepo().getCoverBB(fp)
+        -- Hero tier first, for HERO-sized consumers only: a hero-height
+        -- copy stashed when the shelf decoded this cover earlier. take()
+        -- transfers ownership, so it flows through the scale-and-free path
+        -- below like any source. Shelf-sized consumers skip it -- they'd
+        -- consume (and waste) the copy the hero is waiting for.
+        if fp and HeroTier.target_h
+                and img_h >= math.floor(HeroTier.target_h * 0.9) then
+            bb = HeroTier:take(fp)
+        end
+        if not bb then
+            bb = fp and _getRepo().getCoverBB(fp)
+        end
         if not bb then
             -- BIM has no usable cover row. Fall back to the no-cover
             -- render so the slot doesn't crash on bb:getWidth() below.
             return self:_renderFallback()
         end
         img_disposable = true
+    end
+    -- Fresh full-size source in hand: stash a hero-height copy so the
+    -- FIRST preview of this book skips its BIM decode (~90ms on a PW5).
+    -- One extra bb:scale on top of work that already paid the decode.
+    -- Skipped when this consumer is itself hero-sized -- its scaled
+    -- result lands in ScaledCoverCache and already serves repeats.
+    if fp and img_disposable and HeroTier.target_h
+            and img_h < math.floor(HeroTier.target_h * 0.9) then
+        HeroTier:noteSource(fp, bb)
     end
 
     -- ImageWidget's internal MuPDF scaler corrupts on UPSCALE on Kindle
