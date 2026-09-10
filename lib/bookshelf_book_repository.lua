@@ -2821,19 +2821,28 @@ local function _lightMetaPersist()
     return ok_new and p or nil
 end
 
--- Returns the persisted raw row map when the BIM db hasn't changed since it
--- was saved, else nil.
+-- Returns the persisted raw row map and whether it is FRESH (the BIM db is
+-- unchanged since it was saved). A snapshot of the same FORMAT version whose
+-- db fingerprint has moved comes back too, flagged stale: the caller serves
+-- it at once and refreshes in the background (see _scheduleLightMetaRefresh).
+-- Stale rows are right for every book that didn't change, and a book the
+-- rows don't know falls back to the per-book path anyway; what they must
+-- never be is an OLDER FORMAT -- those rows lack columns the fast paths
+-- read -- so a version-prefix mismatch is nil, not stale.
 local function _loadRowSnapshot()
     local fingerprint = _bimDbFingerprint()
     if not fingerprint then return nil end
     local p = _lightMetaPersist()
     if not p then return nil end
     local ok, t = pcall(p.load, p)
-    if ok and type(t) == "table"
-            and t.fingerprint == fingerprint
-            and type(t.rows) == "table" then
-        return t.rows
+    if not (ok and type(t) == "table" and type(t.rows) == "table"
+            and type(t.fingerprint) == "string") then
+        return nil
     end
+    if t.fingerprint == fingerprint then return t.rows, true end
+    local want_v = fingerprint:match("^(v%d+):")
+    local have_v = t.fingerprint:match("^(v%d+):")
+    if want_v and have_v and want_v == have_v then return t.rows, false end
     return nil
 end
 
@@ -2844,6 +2853,47 @@ local function _saveRowSnapshot(rows)
     local p = _lightMetaPersist()
     if not p then return end
     pcall(p.save, p, { fingerprint = fingerprint, rows = rows })
+end
+
+-- Background refresh of a stale snapshot. The batch SELECT over a big
+-- bookinfo table is the one launch cost we have seen reach 15 seconds (slow
+-- SD / colour panels' larger cover blobs, issue 262), and the snapshot only
+-- dodges it while the db is untouched -- any cover extraction between boots
+-- brought it straight back onto the launch path. Now the shelf opens on the
+-- stale rows and this runs a little later on the UI loop: it still blocks
+-- for the read's duration when it runs, but after the first paint and the
+-- first taps, not before them. One refresh in flight at a time; the fresh
+-- rows are saved and the derived map dropped, so the next reader loads the
+-- fresh snapshot (a zstd load, not a table scan).
+local LIGHTMETA_REFRESH_DELAY_S = 2
+local _lightmeta_refresh_pending = false
+-- The rows a completed refresh produced, this session. _getLightMetaCache
+-- prefers them over anything on disk, so the fresh map does NOT depend on
+-- the snapshot save succeeding -- a read-only data dir or a full disk would
+-- otherwise leave the stale snapshot in place and re-arm a full table read
+-- every two seconds for the whole session. Set once: a session refreshes
+-- at most once.
+local _lightmeta_fresh_rows = nil
+local function _scheduleLightMetaRefresh()
+    if _lightmeta_refresh_pending or _lightmeta_fresh_rows then return end
+    local ok_um, UIManager = pcall(require, "ui/uimanager")
+    if not (ok_um and type(UIManager) == "table" and UIManager.scheduleIn) then
+        return   -- no event loop (standalone/tests): the stale rows stand
+    end
+    _lightmeta_refresh_pending = true
+    UIManager:scheduleIn(LIGHTMETA_REFRESH_DELAY_S, function()
+        _lightmeta_refresh_pending = false
+        local _t0 = _gettime()
+        local ok, rows = pcall(_loadBatchBookInfoFromBim)
+        if ok and rows then
+            _lightmeta_fresh_rows = rows
+            pcall(_saveRowSnapshot, rows)   -- best effort; memory is authoritative now
+            Repo.invalidateLightMeta()
+            logger.dbg(string.format(
+                "[bookshelf perf] light_meta: background refresh %.0fms rows=%d",
+                (_gettime() - _t0) * 1000, (function() local n = 0 for _ in pairs(rows) do n = n + 1 end return n end)()))
+        end
+    end)
 end
 
 -- _getLightMetaCache(home, depth) — returns a fp → light-record map for every
@@ -2872,12 +2922,21 @@ local function _getLightMetaCache(home, depth)
     local _t0 = _gettime()
     -- Disk snapshot first: skips the blob-page-heavy SELECT entirely when
     -- the BIM db is unchanged since last save (the common cold boot).
-    local snapshot = _loadRowSnapshot()
+    -- Rows a completed background refresh left in memory outrank the disk
+    -- snapshot (see _lightmeta_fresh_rows); then the snapshot; then the live
+    -- batch, saved for next time.
+    local snapshot, fresh
+    if _lightmeta_fresh_rows then
+        snapshot, fresh = _lightmeta_fresh_rows, true
+    else
+        snapshot, fresh = _loadRowSnapshot()
+    end
     local _t_load = _gettime()
     local row_map = snapshot or _loadBatchBookInfoFromBim()
     if row_map and not snapshot then
         _saveRowSnapshot(row_map)
     end
+    local stale = (snapshot ~= nil) and not fresh
     local meta_map
     local count = 0
     local skipped = 0
@@ -2966,7 +3025,9 @@ local function _getLightMetaCache(home, depth)
         "[bookshelf perf] light_meta: MISS build=%.0fms (read=%.0f map=%.0f) cached=%d source=%s",
         (_gettime() - _t0) * 1000, (_t_load - _t0) * 1000,
         (_gettime() - _t_load) * 1000, count,
-        snapshot and "snapshot" or (row_map and "batch" or "fallback")))
+        snapshot and (fresh and "snapshot" or "stale-snapshot")
+                 or (row_map and "batch" or "fallback")))
+    if stale then _scheduleLightMetaRefresh() end
     return meta_map
 end
 
