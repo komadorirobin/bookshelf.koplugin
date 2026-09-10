@@ -1779,8 +1779,13 @@ function SpineWidget:_renderCover(bb)
     -- fall through to the source-bb path which uses bb:scale (Lua
     -- nearest-neighbour, corruption-free in both directions) and the
     -- result will replace the cache entry per the put policy.
+    -- Whatever the cache holds for this book, at any size: the decode
+    -- fallback below grows it rather than show a placeholder when BIM has
+    -- nothing to decode.
+    local cached_any
     if fp then
         local cached = ScaledCoverCache:get(fp)
+        cached_any = cached
         if cached
                 and cached:getWidth()  >= img_w
                 and cached:getHeight() >= img_h then
@@ -1848,9 +1853,39 @@ function SpineWidget:_renderCover(bb)
         if not bb then
             bb = fp and _getRepo().getCoverBB(fp)
         end
+        if not bb and cached_any then
+            -- BIM has nothing to decode for this book right now (row gone
+            -- after a re-sync, re-extraction pending or failed, cover
+            -- ignored) while the shelf still paints one from the cache. A
+            -- grown copy of that beats a placeholder (device report: covers
+            -- on the shelf, none in the hero). Owned by this widget and
+            -- never put in the cache: a real decode later must win, and
+            -- prefer-larger would otherwise pin the blurry copy for good.
+            local grown
+            local ok_g = pcall(function()
+                if self.cover_fill then
+                    grown = _coverFillBB(cached_any, img_w, img_h)
+                else
+                    local sw, sh = cached_any:getWidth(), cached_any:getHeight()
+                    local f = math.min(img_w / sw, img_h / sh)
+                    grown = cached_any:scale(math.max(1, math.floor(sw * f)),
+                                             math.max(1, math.floor(sh * f)))
+                end
+            end)
+            if ok_g and grown then
+                return self:_wrapCoverInCard(ImageWidget:new{
+                    image            = grown,
+                    image_disposable = true,
+                    width            = grown:getWidth(),
+                    height           = grown:getHeight(),
+                    scale_factor     = 1,
+                }, card_w, card_h, border)
+            end
+        end
         if not bb then
-            -- BIM has no usable cover row. Fall back to the no-cover
-            -- render so the slot doesn't crash on bb:getWidth() below.
+            -- BIM has no usable cover row and the cache has nothing either.
+            -- Fall back to the no-cover render so the slot doesn't crash on
+            -- bb:getWidth() below.
             return self:_renderFallback()
         end
         img_disposable = true
