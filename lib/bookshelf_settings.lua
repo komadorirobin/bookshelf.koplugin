@@ -3525,12 +3525,19 @@ function Settings:_advancedSubItems()
         },
         {
             text = _("BETA: Read calibre metadata.calibre"),
+            -- Says what the code does. The previous wording promised the
+            -- opposite ("Calibre data only fills gaps"), which is how a
+            -- Calibre library built from filenames ended up overriding
+            -- correct metadata with a chapter title as the author (#381).
             help_text = _("For users with a Calibre-managed library. "
-                .. "Reads the metadata.calibre JSON file at home_dir to "
-                .. "cover title / authors / series / tags / language for "
-                .. "every book in the library — no per-book extraction "
-                .. "needed. BIM-cached metadata still wins per field; "
-                .. "Calibre data only fills gaps."),
+                .. "Reads the metadata.calibre file in your home folder to "
+                .. "fill in title, authors, series, tags, language and "
+                .. "description for every book at once, with no per-book "
+                .. "extraction. Calibre's values take priority over the "
+                .. "metadata KOReader extracted from the book file itself. "
+                .. "Anything you have edited in Book information still wins "
+                .. "over both. Covers and page counts always come from "
+                .. "KOReader."),
             checked_func   = function()
                 return BookshelfSettings.read("calibre_metadata") == true
             end,
