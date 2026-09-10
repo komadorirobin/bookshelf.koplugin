@@ -112,17 +112,30 @@ end)
 t.test("a wide ornament shrinks to the gap", function()
     local O = fresh()
     O.CHANCE = 1.0
-    local p = O.pick("s", 120, 300, { POOL[2] }, { min_gap = 48, min_h = 10 })
+    local p = O.pick("s", 120, 300, { POOL[2] }, { min_gap = 48, min_h = 10, min_h_frac = 0 })
     assert(p, "expected a placement")
     eq(p.w, 120, "capped at the gap")
     eq(p.h, 80,  "height follows the cap through the aspect")
+end)
+
+t.test("a gap that would shrink the ornament to a speck stays bare", function()
+    -- Ornaments scale with the shelf: shrunk to fit a narrow gap, an 80px
+    -- plant beside 300px books read as a toy (device report). Below 45% of
+    -- the stand height the shelf stays empty instead.
+    local O = fresh()
+    O.CHANCE = 1.0
+    assert(O.pick("s", 120, 300, { POOL[2] }, { min_gap = 48, min_h = 10 }) == nil,
+        "80px against a 300px stand is under the 45% floor")
+    -- A gap that holds it at 45% or more is fine.
+    local p = O.pick("s", 210, 300, { POOL[2] }, { min_gap = 48, min_h = 10 })
+    assert(p and p.h >= 135, "210px wide at aspect 1.5 is 140px tall: placed")
 end)
 
 t.test("the overhang never reaches past the plank's front", function()
     local O = fresh()
     O.CHANCE = 1.0
     -- 25% overhang on a 240px ornament would be 60px; only 20px allowed.
-    local p = O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 10, max_below = 20 })
+    local p = O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 10, max_below = 20, min_h_frac = 0 })
     assert(p, "expected a placement")
     eq(p.below, 20)
     eq(p.h, 80, "shrunk so 25% of it is the allowed overhang")
@@ -132,7 +145,7 @@ end)
 t.test("too small after shrinking is not placed", function()
     local O = fresh()
     O.CHANCE = 1.0
-    assert(O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 100, max_below = 20 }) == nil)
+    assert(O.pick("s", 1000, 300, { POOL[2] }, { min_gap = 48, min_h = 100, max_below = 20, min_h_frac = 0 }) == nil)
 end)
 
 t.test("ensureTemplate creates the folder with the template, once", function()

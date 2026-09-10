@@ -30,6 +30,9 @@ M.SUBDIR        = "bookshelf.ornaments"
 M.TEMPLATE_NAME = "template.svg"
 M.MIN_GAP_DP    = 48     -- a gap narrower than this stays empty
 M.MIN_H_DP      = 28     -- and an ornament that would come out smaller isn't placed
+M.MIN_H_FRAC    = 0.45   -- ...nor one shrunk (to fit a narrow gap) below this share
+                         -- of the books' height: ornaments scale with the shelf,
+                         -- a speck beside tall books looked wrong (user report)
 M.HEIGHT_FRAC   = 0.8    -- height as a fraction of the books' stand height
 M.CHANCE        = 0.5    -- fraction of eligible gaps that get an ornament
 M.CACHE_MAX     = 12     -- rendered bitmaps kept (path x size x night)
@@ -229,7 +232,8 @@ end
 --   gap_px  : free width at the row's end, already net of margins/padding
 --   stand_h : the books' stand height (feet at y = stand_h in row coords)
 --   entries : pool (default M.list())
---   o.min_gap, o.min_h : px floors; o.max_below : how far below the feet the
+--   o.min_gap, o.min_h : px floors; o.min_h_frac : floor as a share of
+--   stand_h (default M.MIN_H_FRAC); o.max_below : how far below the feet the
 --   overhang may reach (the plank's surface strip + front face)
 -- Deterministic for a seed. placement = { entry, w, h, above, below, side }.
 function M.pick(seed, gap_px, stand_h, entries, o)
@@ -254,7 +258,9 @@ function M.pick(seed, gap_px, stand_h, entries, o)
             width  = math.floor(height * entry.aspect)
         end
     end
-    if height < (o.min_h or 1) or width < 1 then return nil end
+    local frac  = o.min_h_frac or M.MIN_H_FRAC
+    local min_h = math.max(o.min_h or 1, math.floor((stand_h or 0) * frac))
+    if height < min_h or width < 1 then return nil end
     local below = math.floor(height * entry.overhang)
     return {
         entry = entry, w = width, h = height,
