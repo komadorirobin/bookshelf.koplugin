@@ -272,101 +272,135 @@ end)
 
 -- ── the spine shelf ────────────────────────────────────────────────────────
 --
--- Worse here, and the case the report was actually about. A spine shelf's
--- expanded row count is not the pin: the pin sets the COLLAPSED shelf height
--- and expanding fills the freed space with more rows at that height, so the
--- expanded count runs at roughly twice the pin and one whole step halves it.
--- Measured on a 1236x1648 panel: pins 1, 2, 3, 4 give 2, 3, 5, 7 rows, and
--- the halves fill in 4 and 6.
+-- Its expanded row count is NOT the pin. The pin sets the collapsed shelf
+-- height and expanding fills the freed space with more rows at that height,
+-- so the expanded count runs at roughly twice the pin -- measured on a
+-- 1236x1648 panel, pins of 1, 2, 3 and 4 give 2, 3, 5 and 7 rows.
+--
+-- So the two states keep two numbers. Zooming the expanded shelf must not
+-- write the pin, or collapsing stops bringing back the shelf the reader set
+-- up there. The rule, from the device request: two rows collapsed, four
+-- expanded, zoom to three, and collapsing still gives two.
 
-local SPINE_ROWS = { [1] = 2, [1.5] = 2, [2] = 3, [2.5] = 4,
-                     [3] = 5, [3.5] = 6, [4] = 7, [4.5] = 8, [5] = 8, [6] = 8 }
+local DERIVED_ROWS = { [1] = 2, [2] = 3, [3] = 5, [4] = 7, [5] = 8, [6] = 8 }
 
-local spineHalfBody = bodyOf("_spineRowsHalfStep")
+local spineNudgeBody = bodyOf("_nudgeSpineRows", "delta")
+local spineExpandedBody = bodyOf("_spineExpandedRows")
 
 local function spineShelf(opts)
     opts = opts or {}
-    local pin = opts.pin
+    local store = { spine_rows = opts.pin,
+                    spine_rows_expanded = opts.expanded_pin }
     local s = { _expanded = opts.expanded ~= false, _nav_dirty = false,
-                rebuilds = 0 }
+                rebuilds = 0, writes = {} }
     function s:_isSpineMode() return opts.covers ~= true end
-    function s:_chipListValue(key)
-        if key == "spine_rows" then return pin end
-        return nil
+    function s:_chipListValue(key) return store[key] end
+    function s:_setChipDensity(key, v)
+        store[key] = v
+        self.writes[#self.writes + 1] = key
     end
-    function s:_setChipDensity(key, v) if key == "spine_rows" then pin = v end end
-    function s:_baseShelves() return math.max(1, math.min(6, math.floor(pin or 1))) end
-    function s:_spineRowsHalfStep()
-        return compile("local self = ...\n" .. spineHalfBody,
-            { _halfStepOf = halfOf, tonumber = tonumber, math = math, type = type },
-            "spineHalf")(self)
+    function s:_baseShelves()
+        return math.max(1, math.min(6, math.floor(store.spine_rows or 1)))
+    end
+    function s:_spineExpandedRows()
+        return compile("local self = ...\n" .. spineExpandedBody,
+            { tonumber = tonumber }, "spineExpanded")(self)
     end
     function s:_nShelves()
-        if not self._expanded then return self:_baseShelves() end
-        return SPINE_ROWS[pin] or 2
+        local base = self:_baseShelves()
+        if not self._expanded then return base end
+        local n = self:_spineExpandedRows() or DERIVED_ROWS[base] or 2
+        return math.max(base + 1, math.min(math.floor(n), 8))
     end
     function s:_scheduleNavFlush() end
     function s:_clearDpadFocus() end
     function s:_rebuild() self.rebuilds = self.rebuilds + 1 end
-    function s:_pin() return pin end
+    s._store = store
     return s
 end
 
-local spineNudgeBody = bodyOf("_nudgeSpineRows", "delta")
 local function spineNudge(s, delta)
     return compile("local self, delta = ...\n" .. spineNudgeBody,
         { UIManager = { setDirty = function() end },
           math = math, tonumber = tonumber, pcall = pcall }, "spineNudge")(s, delta)
 end
 
-t.test("the spine half is only read on the expanded spine shelf", function()
-    eq(spineShelf({ pin = 2.5 }):_spineRowsHalfStep(), true, "expanded spine")
-    assert(not spineShelf({ pin = 2.5, expanded = false }):_spineRowsHalfStep(),
-        "collapsed shows whole shelves")
-    assert(not spineShelf({ pin = 2.5, covers = true }):_spineRowsHalfStep(),
-        "the cover grid has its own half")
-    assert(not spineShelf({ pin = 2 }):_spineRowsHalfStep(), "a whole pin")
-    assert(not spineShelf({ pin = 6.5 }):_spineRowsHalfStep(), "above the clamp")
+t.test("zooming the expanded shelf leaves the collapsed pin alone", function()
+    local s = spineShelf({ pin = 3 })
+    eq(s:_nShelves(), 5, "the derived expanded fill")
+    spineNudge(s, -1)
+    eq(s:_nShelves(), 4, "one row fewer")
+    eq(s._store.spine_rows, 3, "the collapsed pin must not move")
+    eq(s._store.spine_rows_expanded, 4, "the expanded count is what moved")
+    eq(table.concat(s.writes, ","), "spine_rows_expanded", "only one setting written")
 end)
 
-t.test("the spine ladder reaches every row count", function()
-    -- Whole pins alone give 7, 5, 3, 2 -- every even count above two is
-    -- unreachable, which is the "4 rows jumps to 2" report.
-    local s = spineShelf({ pin = 4 })
+t.test("collapse and expand come back to what each state was set to", function()
+    -- The device request, verbatim: three rows collapsed, five expanded,
+    -- zoom to four, collapse gives three again, expanding gives four.
+    local s = spineShelf({ pin = 3 })
+    eq(s:_nShelves(), 5, "expanded")
+    spineNudge(s, -1)
+    eq(s:_nShelves(), 4, "zoomed")
+    s._expanded = false
+    eq(s:_nShelves(), 3, "collapsing returns the collapsed shelf")
+    s._expanded = true
+    eq(s:_nShelves(), 4, "expanding returns the zoomed shelf")
+end)
+
+t.test("every expanded row count is reachable", function()
+    -- Whole pins alone gave 2, 3, 5, 7: four and six were unreachable, which
+    -- is what "4 rows jumps to 2" was.
+    local s = spineShelf({ pin = 3 })
     local rows = {}
-    for _i = 1, 7 do
+    for _i = 1, 6 do
         rows[#rows + 1] = s:_nShelves()
         spineNudge(s, -1)
     end
-    eq(table.concat(rows, ","), "7,6,5,4,3,2,2", "the spine row ladder")
+    eq(table.concat(rows, ","), "5,4,4,4,4,4", "clamped at one more than collapsed")
+    local up = spineShelf({ pin = 3 })
+    local out = {}
+    for _i = 1, 5 do
+        out[#out + 1] = up:_nShelves()
+        spineNudge(up, 1)
+    end
+    eq(table.concat(out, ","), "5,6,7,8,8", "and up to eight")
 end)
 
-t.test("a spine step that changes nothing steps again", function()
-    -- At a pin of 1 the "one more row than collapsed" guarantee already
-    -- provides the row a half would buy, so 1 and 1.5 draw the same shelf.
-    local s = spineShelf({ pin = 1 })
-    spineNudge(s, 1)
-    assert(s:_pin() > 1.5, "expected the dead half to be stepped past, got "
-        .. tostring(s:_pin()))
-    eq(s:_nShelves(), 3, "and the shelf actually changed")
+t.test("the expanded count keeps the one-more-row-than-collapsed guarantee", function()
+    -- Set deliberately low, then read back: expanding must still reveal more
+    -- than collapsing did, which is what the swipe-up promises.
+    local s = spineShelf({ pin = 4, expanded_pin = 2 })
+    eq(s:_nShelves(), 5, "clamped up to base + 1")
+    -- And a remembered count survives the pin changing under it rather than
+    -- needing to be cleared.
+    s._store.spine_rows = 2
+    eq(s:_nShelves(), 3, "still one more than the new collapsed count")
 end)
 
-t.test("collapsed, the spine pinch keeps whole shelves", function()
+t.test("collapsed, the pinch still moves the pin", function()
     local s = spineShelf({ pin = 3, expanded = false })
     spineNudge(s, -1)
-    eq(s:_pin(), 2, "one whole shelf")
-    local s2 = spineShelf({ pin = 2.5, expanded = false })
-    spineNudge(s2, -1)
-    eq(s2:_pin(), 1, "a stored half floors before stepping")
+    eq(s._store.spine_rows, 2, "the collapsed shelf's own setting")
+    eq(s._store.spine_rows_expanded, nil, "and not the expanded one")
 end)
 
-t.test("the spine ladder is clamped", function()
+t.test("the first expanded zoom starts from what is on screen", function()
+    -- Not from the pin: the reader is looking at the derived fill, and a
+    -- first zoom that jumped somewhere else would read as a glitch.
+    local s = spineShelf({ pin = 2 })
+    eq(s:_nShelves(), 3, "derived fill for a pin of 2")
+    spineNudge(s, 1)
+    eq(s._store.spine_rows_expanded, 4, "stepped from 3, not from the pin")
+end)
+
+t.test("both ends are clamped", function()
     local s = spineShelf({ pin = 1 })
-    spineNudge(s, -1)
-    eq(s:_pin(), 1, "cannot go below one shelf")
+    for _i = 1, 4 do spineNudge(s, -1) end
+    eq(s:_nShelves(), 2, "never fewer than one more than collapsed")
     local s2 = spineShelf({ pin = 6 })
-    spineNudge(s2, 1)
-    eq(s2:_pin(), 6, "cannot go above six")
+    for _i = 1, 6 do spineNudge(s2, 1) end
+    eq(s2:_nShelves(), 8, "never more than eight")
 end)
 
 -- ── wiring ─────────────────────────────────────────────────────────────────
@@ -384,19 +418,20 @@ t.test("the expanded row count pays for the half", function()
         "the extra row belongs on the natural fit, not on the collapsed count")
 end)
 
-t.test("the expanded spine count pays for the half", function()
+t.test("the expanded spine count is read by the row count", function()
     local body = src:match("\nfunction BookshelfWidget:_nShelves%(%)\n(.-)\nend\n")
-    assert(body:match("_spineRowsHalfStep"),
-        "the expanded spine branch must add the half step's row")
+    assert(body:match("_spineExpandedRows"),
+        "the expanded spine branch must consult the reader's own count")
 end)
 
-t.test("the spine pin is floored everywhere else", function()
-    -- _baseShelves is what the COLLAPSED shelf and the chip editor read; a
-    -- fraction reaching it would change the shelf height the pin is for.
-    local body = src:match("\nfunction BookshelfWidget:_baseShelves%(%)\n(.-)\nend\n")
-    assert(body, "_baseShelves is gone or was renamed")
-    assert(body:match("math%.floor%(n%)"),
-        "_baseShelves must floor the spine pin")
+t.test("the expanded zoom writes the expanded key, never the pin", function()
+    -- The whole point: a body that wrote spine_rows while expanded would put
+    -- the collapsed shelf back to one row, which is what this replaced.
+    local body = src:match("\nfunction BookshelfWidget:_nudgeSpineRows%(delta%)\n(.-)\nend\n")
+    assert(body, "_nudgeSpineRows is gone or was renamed")
+    assert(body:match("spine_rows_expanded"), "must know the expanded key")
+    assert(body:match("self%._expanded"),
+        "must choose the key by which shelf is on screen")
 end)
 
 t.test("nothing else has to know about the fraction", function()

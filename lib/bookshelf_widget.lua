@@ -10555,10 +10555,12 @@ function BookshelfWidget:_nShelves()
             local available = self.height - PAD - strip_minimum
                             - Size.padding.large - chip_h - PAD - footer_h
             local n = math.floor(available / (shelf_h_c + PAD))
-            -- A half step on the pin asks for one more row than fits at that
-            -- height; the rows are laid out by dividing the band by the count,
-            -- so they simply come out shorter (see _spineRowsHalfStep).
-            n = n + (self:_spineRowsHalfStep() and 1 or 0)
+            -- The reader's own expanded count wins over the derived fill.
+            -- The rows are laid out by dividing the band by the count, so a
+            -- count above the fill comes out shorter and one below it taller
+            -- (see _spineExpandedRows).
+            local own = self:_spineExpandedRows()
+            if own then n = math.floor(own) end
             -- Expanding must always reveal at least one more row than
             -- collapsed (the cover grid's guarantee, and what the swipe-up
             -- gesture visibly promises): when the collapsed-height fill
@@ -10588,23 +10590,24 @@ local function _halfStepOf(v, lo, hi)
     return (v - math.floor(v)) >= 0.5
 end
 
--- _spineRowsHalfStep() — the same half, on the spine shelf's row pin.
+-- _spineExpandedRows() — the reader's own row count for the EXPANDED spine
+-- shelf, or nil when they have never zoomed it.
 --
--- Worse there than on the cover grid, and it is what the device report was
--- actually about. A spine shelf's EXPANDED row count is not the pin: the pin
--- sets the COLLAPSED shelf height, and expanding fills the freed space with
--- more rows at that height (see _nShelves). So the expanded count runs at
--- roughly twice the pin, and stepping the pin by one halves it -- measured on
--- a 1236x1648 panel, a pin of 2 shows four rows expanded and a pin of 1 shows
--- two. Every odd row count was unreachable.
+-- Two numbers, one per state, both per chip. A spine shelf's expanded row
+-- count is not the pin: the pin sets the COLLAPSED shelf height, and
+-- expanding fills the freed space with more rows at that height, so the
+-- expanded count runs at roughly twice the pin. Zooming the expanded shelf
+-- therefore must not write the pin -- that is the collapsed shelf's setting,
+-- and moving it means collapsing no longer brings back the shelf the reader
+-- set up there. The rule, from the device request: two rows collapsed, four
+-- expanded, zoom to three, and collapsing still gives two.
 --
--- A pin of 1.5 means "the shelf height a pin of 1 gives, with one more row
--- than fits" -- which is three rows, the one the reader was asking for. The
--- pin itself is floored by _baseShelves, so the collapsed shelf is untouched.
-function BookshelfWidget:_spineRowsHalfStep()
-    if not self._expanded then return false end
-    if not self:_isSpineMode() then return false end
-    return _halfStepOf(tonumber(self:_chipListValue("spine_rows")), 1, 6)
+-- Clamped by its consumer to the same "at least one more row than collapsed"
+-- guarantee the derived fill honours, so a remembered count stays sane when
+-- the pin itself changes rather than having to be cleared.
+function BookshelfWidget:_spineExpandedRows()
+    if not self:_isSpineMode() then return nil end
+    return tonumber(self:_chipListValue("spine_rows_expanded"))
 end
 
 -- _gridColsHalfStep() — is the stored column count carrying a HALF?
@@ -12366,37 +12369,35 @@ end
 -- No draft regrid: spines re-render from their module cache keyed by
 -- size, so a full rebuild IS the cheap path here.
 function BookshelfWidget:_nudgeSpineRows(delta)
-    local cur = tonumber(self:_chipListValue("spine_rows"))
-    if not cur then
-        local ok, n = pcall(self._baseShelves, self)
-        cur = ok and n or 1
+    -- Which number the gesture moves depends on which shelf is on screen.
+    -- Expanded it is the expanded row count, stored apart from the pin
+    -- precisely so that collapsing restores the collapsed shelf (see
+    -- _spineExpandedRows). Every count between "one more than collapsed" and
+    -- eight is reachable directly, so there is nothing to half-step here.
+    local key, cur, lo, hi
+    if self._expanded then
+        key = "spine_rows_expanded"
+        lo, hi = self:_baseShelves() + 1, 8
+        -- Unset: start from the count actually on screen, so the first zoom
+        -- steps from what the reader is looking at rather than from a number
+        -- they have never seen.
+        cur = self:_spineExpandedRows() or self:_nShelves()
+    else
+        key = "spine_rows"
+        lo, hi = 1, 6
+        cur = tonumber(self:_chipListValue("spine_rows"))
+        if not cur then
+            local ok, n = pcall(self._baseShelves, self)
+            cur = ok and n or 1
+        end
     end
-    -- Half steps on the expanded shelf, whole ones collapsed. Expanded, the
-    -- half is the only way to reach an odd row count (see
-    -- _spineRowsHalfStep); collapsed it would change nothing on screen, so
-    -- the pin normalises to a whole shelf first.
-    local step = self._expanded and 0.5 or 1
-    if step == 1 then cur = math.floor(cur) end
-    cur = math.max(1, math.min(6, cur))
-    local new = math.max(1, math.min(6, cur + delta * step))
+    cur = math.max(lo, math.min(hi, math.floor(cur)))
+    local new = math.max(lo, math.min(hi, cur + delta))
     -- A no-op at the limit still CONSUMES the gesture (same reasoning as
     -- the list nudge: falling through hands the pinch to whatever is
     -- underneath).
     if new == cur then return true end
-    -- What the shelf draws now, so a step that would draw the same thing can
-    -- step again rather than read as a dropped gesture. One place it happens:
-    -- at a pin of 1 the "always one more row than collapsed" guarantee
-    -- already provides the row a half step would have bought, so 1 and 1.5
-    -- are the same shelf (measured: 2 rows either way).
-    local was_rows = self:_nShelves()
-    self:_setChipDensity("spine_rows", new)
-    if self:_nShelves() == was_rows then
-        local more = math.max(1, math.min(6, new + delta * step))
-        if more ~= new then
-            new = more
-            self:_setChipDensity("spine_rows", new)
-        end
-    end
+    self:_setChipDensity(key, new)
     self._nav_dirty = true
     self:_scheduleNavFlush()
     self:_clearDpadFocus()
