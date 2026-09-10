@@ -5192,11 +5192,25 @@ function BookshelfWidget:_buildSpineRows(items, content_w, shelf_h, PAD, n_rows)
         self._spine_hist = {}
         self._spine_hist_chip = self.chip
     end
+    -- The empty strip above each row, which a selected book may rise into
+    -- rather than shrinking to fit its own slot (user ruling: "we can go
+    -- into/overlap the padding for this selection effect"). Row 1 has the
+    -- pad under the chip bar above it; the rest have the inter-row gap.
+    -- One hairline is kept back so a lifted book never touches what is
+    -- above it. The selection repaint dirties this strip (see
+    -- _repaintSpineSelection), and nothing else paints in it.
+    -- NOT the PAD argument: _buildSpineRows is handed the BOOK gap under that
+    -- name (see the call site), and the strip above a row is the layout's
+    -- row gap, which is several times wider.
+    local layout_pad = select(1, self:_layoutPrimitives())
+    local lift_head = math.max(0, self:_rowGap(layout_pad) - Screen:scaleBySize(2))
+    self._spine_lift_headroom = lift_head
     local rows = {}
     for r = 1, n_rows do
         rows[r] = SpineShelf.rowWidget{
             plan              = plan,
             row               = plan.rows[r],
+            lift_headroom     = lift_head,
             -- For an empty row's ornament seed: the page's identity + the
             -- row's index (see rowWidget).
             row_index         = r,
@@ -7153,7 +7167,12 @@ function BookshelfWidget:_repaintSpineSelection(old_fp, new_fp)
         return
     end
     if changed > 0 and union then
-        local pad = Screen:scaleBySize(12)
+        -- Upward by the lift's full reach: a book as tall as the shelf allows
+        -- rises into the strip above its row rather than shrinking (see
+        -- SpineBookSlot's paintTo), and a dirty band that stopped at the
+        -- slot would leave the head of it on screen after a deselect.
+        local pad = math.max(Screen:scaleBySize(12),
+                             self._spine_lift_headroom or 0)
         union.y = math.max(0, union.y - pad)
         union.h = union.h + pad
         UIManager:setDirty(self, function() return "ui", union, self.dithered end)

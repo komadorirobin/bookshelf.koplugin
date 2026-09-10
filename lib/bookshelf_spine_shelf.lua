@@ -721,6 +721,8 @@ local SpineBookSlot = InputContainer:extend{
     height     = nil,   -- row height px (spine stands on the bottom edge)
     callbacks  = nil,   -- the _shelfCallbacks table (on_book_tap, on_series_tap, ...)
     show_series = true,
+    lift_headroom = 0, -- px of empty strip above the row a selected
+                       -- book may rise into before it has to shrink
 }
 
 -- Route a gesture to the callback the item's kind wants -- the same
@@ -881,11 +883,19 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             -- selected one rises a little further.
             clear = clear + Screen:scaleBySize(4)
         end
-        if spine_h > self.height - clear then
-            spine_h = math.max(Screen:scaleBySize(40), self.height - clear)
+        -- The empty strip above this row -- the gap between shelves, or the
+        -- pad under the chip bar for the first one. A book as tall as the
+        -- shelf allows has no headroom inside its own slot, so it used to
+        -- shrink while held; it rises into that strip instead, which is
+        -- empty by construction and which the selection repaint already
+        -- dirties (user ruling: "we can go into/overlap the padding for this
+        -- selection effect"). Only a lift that STILL does not fit squashes.
+        local head = self.lift_headroom or 0
+        if spine_h > self.height + head - clear then
+            spine_h = math.max(Screen:scaleBySize(40), self.height + head - clear)
         end
         top = y + self.height - spine_h - clear
-        if top < y then top = y end
+        if top < y - head then top = y - head end
         lifted = true
     end
 
@@ -2137,6 +2147,9 @@ function SpineShelf.rowWidget(opts)
                     entry       = e,
                     width       = e.w,
                     height      = stand_h,
+                    -- How far a selected book may rise above the shelf
+                    -- before it has to shrink (see the lift in paintTo).
+                    lift_headroom = opts.lift_headroom,
                     callbacks   = opts.callbacks,
                     show_author = opts.show_author,
                     is_selected = is_sel,
