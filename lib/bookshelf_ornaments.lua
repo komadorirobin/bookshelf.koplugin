@@ -35,6 +35,9 @@ M.MIN_H_FRAC    = 0.45   -- ...nor one shrunk (to fit a narrow gap) below this s
                          -- a speck beside tall books looked wrong (user report)
 M.HEIGHT_FRAC   = 0.8    -- height as a fraction of the books' stand height
 M.CHANCE        = 0.5    -- fraction of eligible gaps that get an ornament
+M.GROUP_CHANCE  = 0.18   -- ...and of the gaps BETWEEN sections on a grouping
+                         -- chip, which are far more numerous: the same odds
+                         -- there would put a plant between every other series
 M.CACHE_MAX     = 12     -- rendered bitmaps kept (path x size x night)
 
 M.TEMPLATE_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
@@ -235,15 +238,47 @@ end
 --   o.min_gap, o.min_h : px floors; o.min_h_frac : floor as a share of
 --   stand_h (default M.MIN_H_FRAC); o.max_below : how far below the feet the
 --   overhang may reach (the plank's surface strip + front face)
+-- rotationFor(seed, count) -> which ornament this seed gets.
+--
+-- A ROTATION rather than a hash of the seed. With two or three files in the
+-- folder a hashed choice clusters badly -- the same one turns up several
+-- times running while another goes unseen for pages (user report: "I've not
+-- seen the cacti for a while") -- because the hash is spread over gaps, not
+-- over the handful of ornaments it indexes. Handing them out in turn gives
+-- every file an equal share by construction.
+--
+-- Stable per seed, because pick() runs again on every repaint of the same row
+-- and an ornament that changed between repaints would flicker: a seed keeps
+-- the place it was given, and only a seed never seen before advances the
+-- rotation. Bounded, because page turns mint new seeds forever; on overflow
+-- the map is dropped, which at worst re-rolls ornaments the reader has
+-- paged away from.
+M._rot   = {}
+M._rot_n = 0
+M.ROT_MAX = 512
+function M.rotationFor(seed, count)
+    if not count or count <= 1 then return 1 end
+    local key = tostring(seed)
+    local had = M._rot[key]
+    if had then return ((had - 1) % count) + 1 end
+    if M._rot_n >= M.ROT_MAX then M._rot, M._rot_n = {}, 0 end
+    local idx = (M._rot_n % count) + 1
+    M._rot[key] = idx
+    M._rot_n = M._rot_n + 1
+    return idx
+end
+
 -- Deterministic for a seed. placement = { entry, w, h, above, below, side }.
+-- o.chance overrides M.CHANCE (the between-sections gaps use lower odds).
 function M.pick(seed, gap_px, stand_h, entries, o)
     o = o or {}
     entries = entries or M.list()
     if #entries == 0 then return nil end
     if (gap_px or 0) < (o.min_gap or 0) then return nil end
     local h = M.hash(tostring(seed))
-    if (h % 100) >= math.floor(M.CHANCE * 100) then return nil end
-    local entry = entries[(math.floor(h / 100) % #entries) + 1]
+    local chance = o.chance or M.CHANCE
+    if (h % 100) >= math.floor(chance * 100) then return nil end
+    local entry = entries[M.rotationFor(seed, #entries)]
     local height = math.floor((stand_h or 0) * M.HEIGHT_FRAC)
     local width  = math.floor(height * entry.aspect)
     if width > gap_px then

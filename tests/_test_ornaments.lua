@@ -214,4 +214,61 @@ t.test("render caches, inverts for night, and evicts with a real free", function
     eq(freed, 1, "eviction frees the bb the cache owned")
 end)
 
+-- ── which ornament: a rotation, not a hash ─────────────────────────────────
+
+t.test("the rotation hands every ornament an equal share", function()
+    -- A hashed choice clusters over a handful of files -- the same one turns
+    -- up several times running while another goes unseen for pages (device
+    -- report: "I've not seen the cacti for a while"). Turn-taking makes the
+    -- share equal by construction.
+    local O = fresh()
+    O._rot, O._rot_n = {}, 0
+    local seen = {}
+    for i = 1, 12 do
+        local idx = O.rotationFor("seed" .. i, 3)
+        seen[idx] = (seen[idx] or 0) + 1
+    end
+    eq(seen[1], 4, "first ornament")
+    eq(seen[2], 4, "second")
+    eq(seen[3], 4, "third")
+end)
+
+t.test("a seed keeps the ornament it was given", function()
+    -- pick() runs again on every repaint of the same row; an ornament that
+    -- changed between repaints would flicker.
+    local O = fresh()
+    O._rot, O._rot_n = {}, 0
+    local first = O.rotationFor("a", 2)
+    O.rotationFor("b", 2)
+    O.rotationFor("c", 2)
+    eq(O.rotationFor("a", 2), first, "same seed, same ornament")
+end)
+
+t.test("the rotation map is bounded", function()
+    -- Page turns mint new seeds forever.
+    local O = fresh()
+    O._rot, O._rot_n = {}, 0
+    local was = O.ROT_MAX
+    O.ROT_MAX = 4
+    for i = 1, 6 do O.rotationFor("s" .. i, 2) end
+    assert(O._rot_n <= 4, "the map was dropped rather than growing without end")
+    O.ROT_MAX = was
+end)
+
+t.test("one ornament in the folder needs no rotation", function()
+    local O = fresh()
+    eq(O.rotationFor("anything", 1), 1)
+    eq(O.rotationFor("anything", 0), 1, "and an empty folder does not divide by zero")
+end)
+
+t.test("pick takes a per-call chance", function()
+    local O = fresh()
+    -- The gaps BETWEEN sections are far more numerous than the one at a row's
+    -- end, so they run at lower odds.
+    local always = { chance = 1, min_gap = 0, min_h = 0 }
+    local never  = { chance = 0, min_gap = 0, min_h = 0 }
+    assert(O.pick("s", 1000, 400, POOL, always), "chance 1 always places")
+    assert(not O.pick("s", 1000, 400, POOL, never), "chance 0 never does")
+end)
+
 t.done()

@@ -551,6 +551,11 @@ end
 -- the look-coloured boards). paintBorder flattens colour to luminance, so
 -- borders paint as four colour-safe rects.
 local BOARD_SHADE = 0.45
+-- How far the cover boards rise above the page block at the head -- the
+-- binding's "square" -- as a fraction of the visible top edge. A real
+-- hardback's is small; too much of one and the boards read as ears rather
+-- than as the cover standing slightly proud of the paper.
+local BOARD_LIP_FRAC = 0.10
 
 local function _boardColor(look, night)
     local r = look.r * BOARD_SHADE
@@ -959,7 +964,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         end
     end
     if edge_h > 0 then
-        local lip     = math.max(2, math.floor(edge_h * 0.22))
+        local lip     = math.max(1, math.floor(edge_h * BOARD_LIP_FRAC))
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
                                              math.floor(spine_w * 0.1)))
         local function tone(v)
@@ -989,6 +994,15 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         local bc = _boardColor(e.look, night)
         bb:paintRectRGB32(x, top, board_w, edge_h, bc)
         bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h, bc)
+        -- The joint: where the boards meet the spine they are thicker than
+        -- along their length, so the page block's bottom inside corners take
+        -- a pixel of board. One pixel each side is enough to read as the
+        -- binding turning in rather than as paper meeting a clean edge.
+        if sw_edge > 2 and sh_edge > 1 then
+            local jy = sy0 + sh_edge - hairline
+            bb:paintRectRGB32(sx0, jy, hairline, hairline, bc)
+            bb:paintRectRGB32(sx0 + sw_edge - hairline, jy, hairline, hairline, bc)
+        end
     end
     -- The top corners come off too, matching the chamfered feet (user
     -- ruling) -- in page ground rather than plank shade, since that is
@@ -1438,6 +1452,30 @@ function SpineShelf.plan(items, opts)
     local face_mode = opts.face_out
     if face_mode == nil or face_mode == true then face_mode = "favorites" end
     if face_mode == false then face_mode = "none" end
+    -- Ornaments BETWEEN sections, on a grouping chip. Decided here rather
+    -- than at paint time because the space has to be RESERVED: fillRows packs
+    -- the row out of these gaps, so an ornament conjured later would stand on
+    -- top of a book. The geometry is derived from the row height exactly as
+    -- rowWidget derives it, so the width booked here is the width painted.
+    local orn = nil
+    if opts.row_h and opts.row_h > 0 then
+        local ok_o, Orn = pcall(require, "lib/bookshelf_ornaments")
+        if ok_o and Orn then
+            local b     = SpineShelf.plankUnit(opts.row_h)
+            local fh    = SpineShelf.plankFace(opts.row_h)
+            local inset = math.floor(b * 0.8)
+            orn = {
+                mod       = Orn,
+                stand_h   = math.max(1, opts.row_h - fh - inset),
+                pad       = math.max(book_gap, b),
+                max_below = inset + fh,
+                -- Never more than a quarter of the row: a section break is
+                -- an aside, not an exhibit.
+                budget    = math.floor((opts.content_w or 0) * 0.25),
+            }
+            pcall(Orn.ensureTemplate)
+        end
+    end
 
     -- ── Flatten ─────────────────────────────────────────────────────────
     -- A group that carries its member records (series stack, author /
@@ -1712,6 +1750,7 @@ function SpineShelf.plan(items, opts)
         -- a face-out lifts anything smaller to FACE_GAP (see the constant),
         -- except against its own run's spines.
         local gap_before = 0
+        local ornament_here = nil
         if j > 1 then
             local prev   = flat[j - 1]
             local prev_e = entries[#entries]
@@ -1724,6 +1763,24 @@ function SpineShelf.plan(items, opts)
             else
                 if prev.in_group or f.in_group then
                     gap_before = group_gap
+                    -- Now and then the break between two sections widens
+                    -- enough for something to stand in it.
+                    if orn then
+                        local seed = "grp|"
+                            .. tostring(prev_e and prev_e.book
+                                        and prev_e.book.filepath or prev.item_idx)
+                            .. "|" .. tostring(src.filepath or label or f.item_idx)
+                        local pl = orn.mod.pick(seed, orn.budget, orn.stand_h, nil, {
+                            min_gap   = Screen:scaleBySize(orn.mod.MIN_GAP_DP),
+                            min_h     = Screen:scaleBySize(orn.mod.MIN_H_DP),
+                            max_below = orn.max_below,
+                            chance    = orn.mod.GROUP_CHANCE,
+                        })
+                        if pl then
+                            ornament_here = pl
+                            gap_before = gap_before + 2 * orn.pad + pl.w
+                        end
+                    end
                 else
                     gap_before = book_gap
                 end
@@ -1740,6 +1797,9 @@ function SpineShelf.plan(items, opts)
             author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
             in_group = f.in_group or nil,
+            -- An ornament standing in the gap this spine carries (see the
+            -- reservation above); rowWidget paints it.
+            ornament = ornament_here,
         }
         logger.dbg(string.format(
             "[bookshelf perf] spine plan: %-24s w_dp=%.1f pages=%s aspect=%s rgb=%d,%d,%d sampled=%s fav=%s face_out=%s item=%d",
@@ -1865,6 +1925,7 @@ function SpineShelf.rowWidget(opts)
     -- extent in row coordinates) so ShelfBadges can hang its name off the
     -- plank beneath it.
     local cursor, badge_spans = lead, {}
+    local gap_ornaments = {}
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
         if e then
@@ -1873,10 +1934,24 @@ function SpineShelf.rowWidget(opts)
                 -- run, wider across a group boundary. The row's first spine
                 -- carries none (fillRows dropped it from the arithmetic too;
                 -- the end margin span is group[1]).
-                group[#group + 1] = HorizontalSpan:new{
-                    width = e.gap_before or opts.gap,
-                }
-                cursor = cursor + (e.gap_before or opts.gap)
+                local gap_w = e.gap_before or opts.gap
+                -- The section break's ornament, standing centred in the gap
+                -- the plan widened for it. Only here, where the gap is real:
+                -- a boundary that landed at a row's start carries no gap, and
+                -- fillRows dropped the reservation with it.
+                if e.ornament then
+                    pcall(function()
+                        local Orn = require("lib/bookshelf_ornaments")
+                        local pl  = e.ornament
+                        local w_  = Orn.Ornament:new{ placement = pl,
+                                                      night = _nightMode() }
+                        w_.overlap_offset = { cursor + math.floor((gap_w - pl.w) / 2),
+                                              stand_h - pl.above }
+                        gap_ornaments[#gap_ornaments + 1] = w_
+                    end)
+                end
+                group[#group + 1] = HorizontalSpan:new{ width = gap_w }
+                cursor = cursor + gap_w
             end
             if e.item and e.item.books then
                 -- Every GROUP gets a badge, single-member ones included --
@@ -2107,6 +2182,9 @@ function SpineShelf.rowWidget(opts)
         ornament = w_
     end)
     local children = { dimen = dimen, plank, group }
+    for _i = 1, #gap_ornaments do
+        children[#children + 1] = gap_ornaments[_i]
+    end
     if ornament then children[#children + 1] = ornament end
     if #badge_spans > 0 then
         children[#children + 1] = ShelfBadges:new{
