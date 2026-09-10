@@ -1,6 +1,7 @@
 -- tests/_test_grid_zoom_ladder.lua
--- The cover grid's zoom ladder: what a pinch or a spread does to the density,
--- and the HALF step the expanded shelf carries behind the column count.
+-- The zoom ladder on both expanded shelves: what a pinch or a spread does to
+-- the density, and the HALF step each carries behind its own whole number --
+-- the cover grid's column count, the spine shelf's row pin.
 --
 -- Rows are not a setting in cover mode, they fall out of the column count,
 -- so the ladder is coarse and its steps land differently on every device.
@@ -43,6 +44,14 @@ local function compile(code, env, chunkname)
     return assert(load(code, chunkname, "t", env))
 end
 
+-- _halfStepOf is a file local shared by BOTH predicates; their extracted
+-- bodies name it, so the harness supplies the real one rather than a
+-- re-implementation that could disagree about the clamp.
+local halfOfBody = src:match("\nlocal function _halfStepOf%(v, lo, hi%)\n(.-)\nend\n")
+assert(halfOfBody, "_halfStepOf is gone or was renamed")
+local halfOf = compile("local v, lo, hi = ...\n" .. halfOfBody,
+                       { math = math, type = type }, "_halfStepOf")
+
 local COLUMNS_MIN, COLUMNS_MAX = 2, 6
 
 -- Rows that FIT at natural cover height, measured on the device. The widget
@@ -58,7 +67,7 @@ local function halfStep(self, store)
     local env = {
         BookshelfSettings = { read = function(k) return store[k] end },
         COLUMNS_MIN = COLUMNS_MIN, COLUMNS_MAX = COLUMNS_MAX,
-        math = math, type = type,
+        _halfStepOf = halfOf, math = math, type = type,
     }
     return compile("local self = ...\n" .. halfStepBody, env, "half")(self)
 end
@@ -261,6 +270,105 @@ t.test("every step asks for a repaint", function()
     assert(s._nav_dirty, "the deferred write must be flagged for the nav flush")
 end)
 
+-- ── the spine shelf ────────────────────────────────────────────────────────
+--
+-- Worse here, and the case the report was actually about. A spine shelf's
+-- expanded row count is not the pin: the pin sets the COLLAPSED shelf height
+-- and expanding fills the freed space with more rows at that height, so the
+-- expanded count runs at roughly twice the pin and one whole step halves it.
+-- Measured on a 1236x1648 panel: pins 1, 2, 3, 4 give 2, 3, 5, 7 rows, and
+-- the halves fill in 4 and 6.
+
+local SPINE_ROWS = { [1] = 2, [1.5] = 2, [2] = 3, [2.5] = 4,
+                     [3] = 5, [3.5] = 6, [4] = 7, [4.5] = 8, [5] = 8, [6] = 8 }
+
+local spineHalfBody = bodyOf("_spineRowsHalfStep")
+
+local function spineShelf(opts)
+    opts = opts or {}
+    local pin = opts.pin
+    local s = { _expanded = opts.expanded ~= false, _nav_dirty = false,
+                rebuilds = 0 }
+    function s:_isSpineMode() return opts.covers ~= true end
+    function s:_chipListValue(key)
+        if key == "spine_rows" then return pin end
+        return nil
+    end
+    function s:_setChipDensity(key, v) if key == "spine_rows" then pin = v end end
+    function s:_baseShelves() return math.max(1, math.min(6, math.floor(pin or 1))) end
+    function s:_spineRowsHalfStep()
+        return compile("local self = ...\n" .. spineHalfBody,
+            { _halfStepOf = halfOf, tonumber = tonumber, math = math, type = type },
+            "spineHalf")(self)
+    end
+    function s:_nShelves()
+        if not self._expanded then return self:_baseShelves() end
+        return SPINE_ROWS[pin] or 2
+    end
+    function s:_scheduleNavFlush() end
+    function s:_clearDpadFocus() end
+    function s:_rebuild() self.rebuilds = self.rebuilds + 1 end
+    function s:_pin() return pin end
+    return s
+end
+
+local spineNudgeBody = bodyOf("_nudgeSpineRows", "delta")
+local function spineNudge(s, delta)
+    return compile("local self, delta = ...\n" .. spineNudgeBody,
+        { UIManager = { setDirty = function() end },
+          math = math, tonumber = tonumber, pcall = pcall }, "spineNudge")(s, delta)
+end
+
+t.test("the spine half is only read on the expanded spine shelf", function()
+    eq(spineShelf({ pin = 2.5 }):_spineRowsHalfStep(), true, "expanded spine")
+    assert(not spineShelf({ pin = 2.5, expanded = false }):_spineRowsHalfStep(),
+        "collapsed shows whole shelves")
+    assert(not spineShelf({ pin = 2.5, covers = true }):_spineRowsHalfStep(),
+        "the cover grid has its own half")
+    assert(not spineShelf({ pin = 2 }):_spineRowsHalfStep(), "a whole pin")
+    assert(not spineShelf({ pin = 6.5 }):_spineRowsHalfStep(), "above the clamp")
+end)
+
+t.test("the spine ladder reaches every row count", function()
+    -- Whole pins alone give 7, 5, 3, 2 -- every even count above two is
+    -- unreachable, which is the "4 rows jumps to 2" report.
+    local s = spineShelf({ pin = 4 })
+    local rows = {}
+    for _i = 1, 7 do
+        rows[#rows + 1] = s:_nShelves()
+        spineNudge(s, -1)
+    end
+    eq(table.concat(rows, ","), "7,6,5,4,3,2,2", "the spine row ladder")
+end)
+
+t.test("a spine step that changes nothing steps again", function()
+    -- At a pin of 1 the "one more row than collapsed" guarantee already
+    -- provides the row a half would buy, so 1 and 1.5 draw the same shelf.
+    local s = spineShelf({ pin = 1 })
+    spineNudge(s, 1)
+    assert(s:_pin() > 1.5, "expected the dead half to be stepped past, got "
+        .. tostring(s:_pin()))
+    eq(s:_nShelves(), 3, "and the shelf actually changed")
+end)
+
+t.test("collapsed, the spine pinch keeps whole shelves", function()
+    local s = spineShelf({ pin = 3, expanded = false })
+    spineNudge(s, -1)
+    eq(s:_pin(), 2, "one whole shelf")
+    local s2 = spineShelf({ pin = 2.5, expanded = false })
+    spineNudge(s2, -1)
+    eq(s2:_pin(), 1, "a stored half floors before stepping")
+end)
+
+t.test("the spine ladder is clamped", function()
+    local s = spineShelf({ pin = 1 })
+    spineNudge(s, -1)
+    eq(s:_pin(), 1, "cannot go below one shelf")
+    local s2 = spineShelf({ pin = 6 })
+    spineNudge(s2, 1)
+    eq(s2:_pin(), 6, "cannot go above six")
+end)
+
 -- ── wiring ─────────────────────────────────────────────────────────────────
 
 t.test("the expanded row count pays for the half", function()
@@ -274,6 +382,21 @@ t.test("the expanded row count pays for the half", function()
     assert(body:match("_maxRows%(%)%s*%+%s*half")
             or body:match("half%s*%+%s*self:_maxRows%(%)"),
         "the extra row belongs on the natural fit, not on the collapsed count")
+end)
+
+t.test("the expanded spine count pays for the half", function()
+    local body = src:match("\nfunction BookshelfWidget:_nShelves%(%)\n(.-)\nend\n")
+    assert(body:match("_spineRowsHalfStep"),
+        "the expanded spine branch must add the half step's row")
+end)
+
+t.test("the spine pin is floored everywhere else", function()
+    -- _baseShelves is what the COLLAPSED shelf and the chip editor read; a
+    -- fraction reaching it would change the shelf height the pin is for.
+    local body = src:match("\nfunction BookshelfWidget:_baseShelves%(%)\n(.-)\nend\n")
+    assert(body, "_baseShelves is gone or was renamed")
+    assert(body:match("math%.floor%(n%)"),
+        "_baseShelves must floor the spine pin")
 end)
 
 t.test("nothing else has to know about the fraction", function()
