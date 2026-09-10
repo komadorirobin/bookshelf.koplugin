@@ -2485,7 +2485,7 @@ function BookshelfWidget:_rebuild()
         end
         local mode = self:_isSpineMode() and "spines"
                      or (self:_isListMode() and "list" or "covers")
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] shelf open: total=%.0fms (hero=%.0f fetch=%.0f"
             .. " shelves=%.0f assemble=%.0f builds=%d/%.0fms covers=%d)"
             .. " mode=%s chip=%s",
@@ -6504,15 +6504,15 @@ function BookshelfWidget:_swapShelvesInPlace()
         (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
         self._total_items or 0, self.chip))
     if not self:_isSpineMode() then
-        -- The same always-on turn summary the spine mode gets (below): one
-        -- INFO line per page turn, so a slow device report is diagnosable
-        -- from a stock crash.log without enabling debug. It earned its keep
-        -- the first day it existed.
+        -- The same turn summary the spine mode gets (below): one line per
+        -- page turn at DEBUG level -- diagnosable with debug logging on (or
+        -- a diagnostics build), never a disk write per turn in a release
+        -- (user ruling). It earned its keep the first day it existed.
         local _builds_n, _builds_ms, _covers_n = 0, 0, 0
         if Repo.drainBuildStats then
             _builds_n, _builds_ms, _covers_n = Repo.drainBuildStats()
         end
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] shelf turn: build=%.0fms (fetch=%.0f rows=%.0f"
             .. " builds=%d/%.0fms covers=%d) mode=%s chip=%s",
             (_gettime() - _perf_t0) * 1000,
@@ -6523,8 +6523,8 @@ function BookshelfWidget:_swapShelvesInPlace()
             tostring(self.chip)))
     end
     if self:_isSpineMode() then
-        -- Always-on (info level) turn summary, so a slow device page turn
-        -- is diagnosable from a stock crash.log without enabling debug: the
+        -- Turn summary at DEBUG level (a release must not write a log line
+        -- per page turn -- user ruling; a diagnostics build raises it): the
         -- build half now, the paint half (renders + cover samples) drained
         -- on the tick after the repaint.
         local swap_ms = (_gettime() - _perf_t0) * 1000
@@ -6537,7 +6537,7 @@ function BookshelfWidget:_swapShelvesInPlace()
         if ok_ss and SS and SS.drainTileStats then
             tiles_ms, tiles_n = SS.drainTileStats()
         end
-        logger.info(string.format(
+        logger.dbg(string.format(
             "[bookshelf perf] spine turn: build=%.0fms (fetch=%.0f rows=%.0f"
             .. " tiles=%.0f/%d kick=%.0f plan=%.0f hydrate=%.0f/%d"
             .. " pages=%.0f look=%.0f) chip=%s",
@@ -6552,7 +6552,7 @@ function BookshelfWidget:_swapShelvesInPlace()
         UIManager:nextTick(function()
             if ok_ss and SS and SS.drainRenderStats then
                 local n, ms, samples = SS.drainRenderStats()
-                logger.info(string.format(
+                logger.dbg(string.format(
                     "[bookshelf perf] spine turn paint: renders=%d %.0fms samples=%d",
                     n, ms, samples))
             end

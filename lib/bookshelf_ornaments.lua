@@ -159,7 +159,7 @@ function M.ensureTemplate()
         local f = io.open(d .. "/" .. seed.name, "w")
         if f then f:write(seed.svg); f:close() end
     end
-    logger.info("[bookshelf] ornaments folder created:", d)
+    logger.dbg("[bookshelf] ornaments folder created:", d)
 end
 
 -- parseHeader(text) -> aspect (w/h) or nil, overhang fraction (0..1),
