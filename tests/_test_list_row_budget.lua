@@ -414,6 +414,10 @@ local function bandPlan(o, expanded, hide_chips, rows_setting)
             if not rows_setting then return nil end
             return math.max(1, math.min(rows_setting, max_rows or rows_setting))
         end,
+        -- The EXPANDED shelf's own row count, which these baselines never
+        -- set: what they pin is the default layout, and the reader's expanded
+        -- count is exercised by _test_grid_zoom_ladder.
+        _listRowsExpanded = function() return nil end,
     }
     return methodOf("_listBandPlanUncached", env)(self, expanded, hide_chips)
 end
@@ -1284,8 +1288,12 @@ t.test("the pinch moves the row count and nothing else", function()
     local body = src:match("\nfunction BookshelfWidget:_nudgeListRows%(delta%)\n(.-)\nend\n")
     assert(body, "_nudgeListRows is gone or was renamed")
     body = body:gsub("%-%-[^\n]*", "")
-    assert(body:match("_setChipListRows"),
-        "the pinch must write the row count")
+    -- Whichever shelf is on screen: the collapsed count and the expanded one
+    -- are two settings now, so that collapsing brings back the shelf the
+    -- reader set up there (see _test_grid_zoom_ladder).
+    assert(body:match("list_rows"), "the pinch must write a row count")
+    assert(body:match("list_rows_expanded"),
+        "the expanded shelf must get its own count, not the collapsed one")
     assert(not body:match("list_font_scale"),
         "the pinch must not touch the font scale any more -- that is the "
         .. "whole point of separating them")
@@ -1487,9 +1495,14 @@ local function rowHeightFor(o, rows_setting, natural, min_row)
             if not rows_setting then return nil end
             return math.max(1, math.min(rows_setting, max_rows or rows_setting))
         end,
+        -- Same as the band plan's: these baselines pin the DEFAULT height, so
+        -- the expanded shelf has no count of its own here.
+        _listRowsExpanded = function() return nil end,
     }
-    return compile(bodyOf("_listRowHeightUncached"), env,
-                   "_listRowHeightUncached")()
+    -- The body takes the state it is solving for: with an expanded count set,
+    -- the expanded shelf solves against its own band. Collapsed here, which
+    -- is the state every baseline below is measured in.
+    return methodOf("_listRowHeightUncached", env)(env.self, false)
 end
 
 t.test("no row count saved means the layout does not move", function()

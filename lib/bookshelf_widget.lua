@@ -4678,6 +4678,25 @@ function BookshelfWidget:_listRows(max_rows)
     return n
 end
 
+-- _listRowsExpanded() — the reader's own row count for the EXPANDED list, or
+-- nil when they have never zoomed it. The spine shelf's rule (see
+-- _spineExpandedRows), applied here: the two states keep two numbers, so
+-- zooming one cannot rewrite the other.
+--
+-- The consequence for list mode is that the row HEIGHT now differs between
+-- the two states once this is set, which the single-height rule below
+-- deliberately avoided. That rule's point was that expanding should reveal
+-- more rows rather than grow the ones already there, and it still holds for
+-- the default: only a reader who has zoomed the expanded shelf themselves
+-- gets a second height, and they got it by asking for a row count that band
+-- cannot hold at the collapsed height.
+function BookshelfWidget:_listRowsExpanded()
+    local n = tonumber(self:_chipListValue("list_rows_expanded"))
+    if not n then return nil end
+    n = math.floor(n)
+    return n >= 1 and n or nil
+end
+
 -- _chipListValue(key) -> the density number in force here.
 --
 -- The chip's own override first -- set by a pinch or by the chip's
@@ -4690,16 +4709,6 @@ function BookshelfWidget:_chipListValue(key)
     local own = tab and tab[key]
     if type(own) == "number" then return own end
     return BookshelfSettings.read(key)
-end
-
--- _setChipListRows(n) — write the row count onto THIS chip.
---
--- Deferred, like the column nudge: a synchronous flush is hundreds of
--- milliseconds on Kindle flash and would land between the gesture and the
--- repaint. The in-memory tab updates immediately, so the rebuild that follows
--- already sees the new count.
-function BookshelfWidget:_setChipListRows(n)
-    self:_setChipDensity("list_rows", n)
 end
 
 -- _setChipDensity(key, n) -- write a density number onto THIS chip, deferred.
@@ -4726,20 +4735,30 @@ end
 -- shelf reveals more rows rather than growing the ones already there. A row
 -- height that moved when the hero collapsed would undo the whole point of
 -- setting it once.
-function BookshelfWidget:_listRowHeight()
-    return self:_listGeomMemo("row_h", function()
-        return self:_listRowHeightUncached()
+function BookshelfWidget:_listRowHeight(expanded)
+    if expanded == nil then expanded = self._expanded and true or false end
+    -- Keyed by state: one rebuild computes BOTH band plans (the collapsed one
+    -- for the hero split, the expanded one for the row budget), so a single
+    -- "row_h" entry would hand the second plan the first plan's height.
+    return self:_listGeomMemo("row_h:" .. (expanded and 1 or 0), function()
+        return self:_listRowHeightUncached(expanded)
     end)
 end
 
-function BookshelfWidget:_listRowHeightUncached()
+function BookshelfWidget:_listRowHeightUncached(expanded)
     local ListGeom = require("lib/bookshelf_list_geom")
-    local b   = self:_listBand(false, self._chip_bar_hidden)
+    -- The expanded shelf solves against its OWN band and count, but only once
+    -- the reader has zoomed it (see _listRowsExpanded). Otherwise everything
+    -- is solved against the collapsed band, so expanding reveals more rows of
+    -- the same height rather than growing the ones already there.
+    local own = expanded and self:_listRowsExpanded() or nil
+    local b   = self:_listBand(own and true or false, self._chip_bar_hidden)
     local gap = self:_listRowGap()
     local min_row = self:_listMinRowHeight()
     local max_rows = ListGeom.rowsThatFit(b.band - 2 * b.min_edge_pad,
                                           min_row, gap)
-    local rows = self:_listRows(max_rows)
+    local rows = own and math.max(1, math.min(max_rows, own))
+                  or self:_listRows(max_rows)
     if not rows then return self:_listNaturalRowHeight() end
     -- The standard pad at each end comes off FIRST, then the rest is divided.
     -- Dividing the whole band and letting the margins be the remainder is what
@@ -10285,13 +10304,19 @@ function BookshelfWidget:_listBandPlanUncached(expanded, hide_chip_bar)
     local layout_top_pad = b.layout_top_pad
     local base_top_pad   = b.base_top_pad
     local min_edge_pad   = b.min_edge_pad
-    local row_h   = self:_listRowHeight()
+    local row_h   = self:_listRowHeight(expanded)
     local row_gap = self:_listRowGap()
     local rows = ListGeom.rowsThatFit(band - 2 * min_edge_pad, row_h, row_gap)
     -- Collapsed, the reader's count is the answer as long as it fits -- and it
     -- is what row_h was solved against, so it does. Expanded, the hero has
     -- shrunk to a strip and the extra band shows MORE rows of the same height.
-    if not expanded then
+    if expanded then
+        -- The reader's own expanded count, when they have zoomed this shelf.
+        -- row_h above was solved for exactly this count against this band, so
+        -- the clamp only ever absorbs rounding.
+        local own = self:_listRowsExpanded()
+        if own then rows = math.max(1, math.min(rows, own)) end
+    else
         rows = self:_listRows(rows) or rows
     end
     local block = rows * row_h + (rows - 1) * row_gap
@@ -10555,12 +10580,17 @@ function BookshelfWidget:_nShelves()
             local available = self.height - PAD - strip_minimum
                             - Size.padding.large - chip_h - PAD - footer_h
             local n = math.floor(available / (shelf_h_c + PAD))
-            -- The reader's own expanded count wins over the derived fill.
-            -- The rows are laid out by dividing the band by the count, so a
-            -- count above the fill comes out shorter and one below it taller
-            -- (see _spineExpandedRows).
+            -- The reader's own expanded count, when they have zoomed this
+            -- shelf, and it is taken as given: the rows are laid out by
+            -- dividing the band by the count, so a count above the fill comes
+            -- out shorter and one below it taller. It is NOT held to the
+            -- "one more row than collapsed" floor below -- that floor exists
+            -- so the swipe-up always visibly does something, and a reader who
+            -- has asked for two big rows has already said what they want.
+            -- Holding an explicit count to base + 1 made two rows unreachable
+            -- on any shelf pinned to two or more (device report).
             local own = self:_spineExpandedRows()
-            if own then n = math.floor(own) end
+            if own then return math.max(1, math.min(math.floor(own), 8)) end
             -- Expanding must always reveal at least one more row than
             -- collapsed (the cover grid's guarantee, and what the swipe-up
             -- gesture visibly promises): when the collapsed-height fill
@@ -10570,24 +10600,9 @@ function BookshelfWidget:_nShelves()
         end
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
-        -- A half step on the column count buys one more row than fits, by the
-        -- same squash (see _gridColsHalfStep).
-        local half = self:_gridColsHalfStep() and 1 or 0
-        return math.max(self:_maxRows() + half, self:_baseShelves() + 1)
+        return math.max(self:_maxRows(), self:_baseShelves() + 1)
     end
     return self:_baseShelves()
-end
-
--- _halfStepOf(v, lo, hi) — does this density value carry the HALF that an
--- expanded shelf reads as "one more row than fits"? Shared by the cover
--- grid's column count and the spine shelf's row pin, because both are floored
--- everywhere else, so the fraction can only ever mean this one thing. False
--- outside the clamp: past the end the value is clamped back, and the extra
--- row would shrink the books for nothing.
-local function _halfStepOf(v, lo, hi)
-    if type(v) ~= "number" then return false end
-    if v >= hi or v < lo then return false end
-    return (v - math.floor(v)) >= 0.5
 end
 
 -- _spineExpandedRows() — the reader's own row count for the EXPANDED spine
@@ -10601,42 +10616,9 @@ end
 -- and moving it means collapsing no longer brings back the shelf the reader
 -- set up there. The rule, from the device request: two rows collapsed, four
 -- expanded, zoom to three, and collapsing still gives two.
---
--- Clamped by its consumer to the same "at least one more row than collapsed"
--- guarantee the derived fill honours, so a remembered count stays sane when
--- the pin itself changes rather than having to be cleared.
 function BookshelfWidget:_spineExpandedRows()
     if not self:_isSpineMode() then return nil end
     return tonumber(self:_chipListValue("spine_rows_expanded"))
-end
-
--- _gridColsHalfStep() — is the stored column count carrying a HALF?
---
--- Rows are not a setting in cover mode: they fall out of the column count,
--- because a slot's width decides its height. That makes the density ladder
--- coarse, and where its steps land depends on the device. Measured on a
--- 1236x1648 panel, the expanded shelf goes 6 columns/5 rows, 5/4, 4/3, 3/2,
--- 2/2 -- but the boundaries move with the chip bar's height, so one reader
--- zooming in from four rows gets three and another gets two (device report).
---
--- So bookshelf_columns may hold a half: 4.5 means "four columns, with one
--- more row than fits at natural cover height". The extra row squashes the
--- covers, which narrows them (2:3 is preserved) and leaves the slack spread
--- between them. That is not a new mechanism -- it is how a 2-column expanded
--- shelf already shows two rows where only one fits. Every other consumer
--- floors the value (see _gridCols), so the fraction is invisible everywhere
--- else, including the Columns/Rows editor, which keeps whole numbers.
---
--- EXPANDED ONLY, and deliberately: SHELF_PACK_FLOOR records the opposite
--- ruling for the collapsed shelf, where cramming an extra row steals from the
--- hero and the empty space either side is worse than a slightly bigger hero.
--- Expanded there is no hero to spend the slack on, and the layout already
--- crams rather than leave a band empty.
-function BookshelfWidget:_gridColsHalfStep()
-    if not self._expanded then return false end
-    if self:_isListMode() or self:_isSpineMode() then return false end
-    return _halfStepOf(BookshelfSettings.read("bookshelf_columns"),
-                       COLUMNS_MIN, COLUMNS_MAX)
 end
 
 -- _nCols() — columns per shelf row, DPI-independent.
@@ -12227,17 +12209,28 @@ local LIST_SCALE_MAX  = 300
 -- the only precedence that keeps the gesture alive on a chip that has one.
 function BookshelfWidget:_nudgeListRows(delta)
     local ListGeom = require("lib/bookshelf_list_geom")
-    local b   = self:_listBand(false, self._chip_bar_hidden)
+    -- Which number the gesture moves depends on which shelf is on screen, the
+    -- same rule the spine shelf follows (see _spineExpandedRows): collapsing
+    -- has to bring back the shelf the reader set up there. Each state is
+    -- measured against its OWN band, so each is capped by what that band can
+    -- actually hold.
+    local expanded = self._expanded and true or false
+    local b   = self:_listBand(expanded, self._chip_bar_hidden)
     local gap = self:_listRowGap()
     local max_rows = ListGeom.rowsThatFit(b.band - 2 * b.min_edge_pad,
                                           self:_listMinRowHeight(), gap)
     -- Where the count stands today: the reader's if they have one, otherwise
-    -- what the configured lines naturally give, so the first pinch steps from
-    -- what is on screen rather than from a number nobody chose.
-    local cur = self:_listRows(max_rows)
-    if not cur then
-        cur = ListGeom.rowsThatFit(b.band - 2 * b.min_edge_pad,
-                                   self:_listNaturalRowHeight(), gap)
+    -- what is on screen, so the first pinch steps from what they are looking
+    -- at rather than from a number nobody chose.
+    local cur
+    if expanded then
+        cur = self:_listRowsExpanded() or self:_nShelves()
+    else
+        cur = self:_listRows(max_rows)
+        if not cur then
+            cur = ListGeom.rowsThatFit(b.band - 2 * b.min_edge_pad,
+                                       self:_listNaturalRowHeight(), gap)
+        end
     end
     -- delta > 0 is the pinch: denser, so MORE rows -- the same sign convention
     -- the column nudge uses.
@@ -12246,7 +12239,7 @@ function BookshelfWidget:_nudgeListRows(delta)
     -- hand the pinch to whatever is underneath, which at the edge of the range
     -- is the last thing the reader expects.
     if new == cur then return true end
-    self:_setChipListRows(new)
+    self:_setChipDensity(expanded and "list_rows_expanded" or "list_rows", new)
     self._nav_dirty = true
     self:_scheduleNavFlush()
     self:_clearDpadFocus()
@@ -12279,39 +12272,23 @@ function BookshelfWidget:_nudgeColumns(delta)
     -- The GLOBAL, matching _gridCols: cover columns shape the whole screen
     -- (hero size, chip bar position), so they cannot be per chip and the
     -- pinch moves the one shared count.
+    -- Whole columns, always. The pinch is the cover SIZE knob here (rows fall
+    -- out of the width), and a fractional column would have to be paid for by
+    -- squashing the covers and spreading the slack -- which is exactly the
+    -- "5x5 looks wrong for covers" the maintainer rejected. Spine and list
+    -- mode, whose knob really is a row count, split their two states instead
+    -- (see _spineExpandedRows).
     local cur = BookshelfSettings.read("bookshelf_columns")
     if type(cur) ~= "number" then cur = self:_nCols() end
-    -- Half steps on the expanded shelf, whole ones collapsed. See
-    -- _gridColsHalfStep: expanded, the half buys a squashed extra row, which
-    -- is the only way to land between two column counts; collapsed, the
-    -- fraction would change nothing on screen, so the value normalises to a
-    -- whole column first and the gesture always moves something visible.
-    local step = self._expanded and 0.5 or 1
-    if step == 1 then cur = math.floor(cur) end
-    cur = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur))
-    local new = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur + delta * step))
+    cur = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, math.floor(cur)))
+    local new = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur + delta))
     if new == cur then return true end
-    -- What the shelf draws now, so a step that would draw the same thing can
-    -- be skipped below rather than reading as a dropped gesture. Two ways a
-    -- step lands on an identical layout: at the bottom of the ladder the
-    -- "always one more row than collapsed" guarantee already forces the extra
-    -- row a half step would have bought (2.5 columns and 2 draw the same
-    -- shelf), and in landscape _gridCols raises the count to a floor, so a
-    -- setting below that floor moves nothing.
-    local was_cols, was_rows = self:_gridCols(), self:_nShelves()
     -- DEFERRED write, not save(): a synchronous full bookshelf.lua flush here
     -- (~hundreds of ms on Kindle flash) blocked the pinch before the regrid
     -- repainted, so each zoom step felt laggy. saveDeferred still updates the
     -- in-memory value, so the _rebuild below reads the new count; durability
     -- rides the shared nav-flush debounce and every close / suspend boundary.
     BookshelfSettings.saveDeferred("bookshelf_columns", new)
-    if self:_gridCols() == was_cols and self:_nShelves() == was_rows then
-        local more = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, new + delta * step))
-        if more ~= new then
-            new = more
-            BookshelfSettings.saveDeferred("bookshelf_columns", new)
-        end
-    end
     self._nav_dirty = true
     self:_scheduleNavFlush()
     self:_clearDpadFocus()
@@ -12377,7 +12354,10 @@ function BookshelfWidget:_nudgeSpineRows(delta)
     local key, cur, lo, hi
     if self._expanded then
         key = "spine_rows_expanded"
-        lo, hi = self:_baseShelves() + 1, 8
+        -- The full range, not base + 1: see _nShelves. Zooming the expanded
+        -- shelf down to two big rows has to be possible whatever the
+        -- collapsed shelf is pinned to.
+        lo, hi = 1, 8
         -- Unset: start from the count actually on screen, so the first zoom
         -- steps from what the reader is looking at rather than from a number
         -- they have never seen.
