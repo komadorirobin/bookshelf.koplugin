@@ -151,7 +151,8 @@ local function spineShelf(opts)
     end
     function s:_nShelves()
         if not self._expanded then return self:_baseShelves() end
-        return math.max(1, math.min(8,
+        -- Expanding always shows more rows than collapsing.
+        return math.max(self:_baseShelves() + 1, math.min(8,
             self:_spineDerivedRows() + self:_spineExpandedOffset()))
     end
     function s:_scheduleNavFlush() end
@@ -202,20 +203,26 @@ t.test("the expanded shelf still follows the collapsed one", function()
     eq(s:_nShelves(), 6, "fill of 7 for the new pin, still one fewer")
 end)
 
-t.test("the expanded shelf can be zoomed below the collapsed count", function()
-    -- The floor used to be the collapsed pin plus one, which made two rows
-    -- unreachable on any shelf pinned to two or more (device report). That
-    -- guarantee protects the DEFAULT fill; an adjustment the reader made
-    -- themselves is taken as given.
-    local s = spineShelf({ pin = 4 })
+t.test("expanding always shows more rows than collapsing", function()
+    -- A one-row shelf expanding to one row reads as the gesture having
+    -- failed (seen on a device). The floor holds however far down the reader
+    -- zooms, and it holds for the DEFAULT fill too.
+    local s = spineShelf({ pin = 1 })
+    eq(s:_nShelves(), 2, "one row collapsed, two expanded")
+    for _i = 1, 4 do spineNudge(s, -1) end
+    eq(s:_nShelves(), 2, "and zooming cannot take it back down to one")
+    s._expanded = false
+    eq(s:_nShelves(), 1, "the collapsed shelf is still one row")
+end)
+
+t.test("the zoom range starts one row above the collapsed shelf", function()
+    local s = spineShelf({ pin = 3 })
     local rows = {}
-    for _i = 1, 7 do
+    for _i = 1, 4 do
         rows[#rows + 1] = s:_nShelves()
         spineNudge(s, -1)
     end
-    eq(table.concat(rows, ","), "7,6,5,4,3,2,1", "all the way down")
-    s._expanded = false
-    eq(s:_nShelves(), 4, "and the collapsed shelf is untouched by all of it")
+    eq(table.concat(rows, ","), "5,4,4,4", "floored at the pin plus one")
 end)
 
 t.test("the collapsed spine pinch still moves the pin", function()
@@ -228,7 +235,7 @@ end)
 t.test("the spine ladder is clamped at both ends", function()
     local s = spineShelf({ pin = 1, offset = -1 })
     spineNudge(s, -1)
-    eq(s:_nShelves(), 1, "never fewer than one")
+    eq(s:_nShelves(), 2, "never below one more than the collapsed shelf")
     local s2 = spineShelf({ pin = 6, offset = 4 })
     spineNudge(s2, 1)
     eq(s2:_nShelves(), 8, "never more than eight")
@@ -281,6 +288,10 @@ local function listShelf(opts)
     end
     function s:_listDerivedExpandedRows()
         return ListGeom.rowsThatFit(EXPANDED_BAND, self:_listRowHeight(false), 0)
+    end
+    function s:_listCollapsedRows()
+        return self:_listRows(math.floor(COLLAPSED_BAND / MIN_ROW))
+               or ListGeom.rowsThatFit(COLLAPSED_BAND, NATURAL_ROW, 0)
     end
     function s:_listExpandedOffset()
         return compile("local self = ...\n" .. listOffsetBody, env, "listOffset")(self)
@@ -357,6 +368,18 @@ t.test("the collapsed list pinch still moves the collapsed count", function()
     eq(s._store.list_expanded_offset, nil, "and not the offset")
 end)
 
+t.test("the expanded list always shows more rows than the collapsed one", function()
+    -- The same guarantee, and it has to hold for the DEFAULT layout too: a
+    -- tall collapsed row can fill the expanded band with the same number of
+    -- rows it filled the collapsed one.
+    local s = listShelf({ rows = 4 })
+    assert(s:_nShelves() > 4, "the default expanded list must show more than 4")
+    for _i = 1, 20 do listNudge(s, -1) end
+    eq(s:_nShelves(), 5, "and zooming stops one above the collapsed count")
+    s._expanded = false
+    eq(s:_nShelves(), 4, "the collapsed list is untouched")
+end)
+
 t.test("the expanded list is capped by what its band can hold", function()
     local s = listShelf({ rows = 4 })
     for _i = 1, 60 do listNudge(s, 1) end
@@ -364,7 +387,8 @@ t.test("the expanded list is capped by what its band can hold", function()
     assert(rows <= math.floor(EXPANDED_BAND / MIN_ROW), string.format(
         "%d rows will not fit at the minimum row height", rows))
     for _i = 1, 80 do listNudge(s, -1) end
-    eq(s:_nShelves(), 1, "and never fewer than one")
+    eq(s:_nShelves(), s:_listCollapsedRows() + 1,
+        "and never below one more than the collapsed list")
 end)
 
 -- ── wiring ─────────────────────────────────────────────────────────────────
