@@ -5455,6 +5455,128 @@ test("kindleFilepaths is NOT folded into getAllFilepaths", function()
     package.loaded["lib/bookshelf_kindle_source"] = nil
 end)
 
+-- ── BIM handle recovery ─────────────────────────────────────────────────────
+-- A failed BookInfoManager:openDbConnection (a full volume makes SQLite throw
+-- on prepare) leaves db_conn set and the cached statements dead, so every
+-- later read raises "object is closed" until KOReader restarts. Repo resets
+-- the handle and retries once, rate-limited. Tests drive the exported entry
+-- point with a fake BIM rather than the module-cached one, so they describe
+-- the recovery itself and nothing about which BIM the repo found.
+
+-- Fake BIM in the poisoned state: reads throw until the connection is reset.
+local function poisoned_bim(opts)
+    opts = opts or {}
+    local bim = {
+        db_conn      = { open = true },
+        closes       = 0,
+        reads        = 0,
+        heals_on_reset = opts.heals ~= false,
+    }
+    function bim:getBookInfo(_fp, _with_cover)
+        self.reads = self.reads + 1
+        if self.db_conn then
+            error("common/lua-ljsqlite3/init.lua:60: ljsqlite3[misuse] object is closed", 0)
+        end
+        return { title = "recovered" }
+    end
+    function bim:closeDbConnection()
+        self.closes = self.closes + 1
+        if opts.close_raises then
+            error("ljsqlite3[misuse] object is closed", 0)
+        end
+        if self.heals_on_reset then self.db_conn = nil end
+    end
+    return bim
+end
+
+-- The cooldown is wall-clock; move time rather than sleep.
+local _real_time = os.time
+local function at_time(t, fn)
+    os.time = function() return t end
+    local ok, err = pcall(fn)
+    os.time = _real_time
+    if not ok then error(err, 0) end
+end
+
+test("bimGetBookInfo is exported", function()
+    -- The widget's own BIM reads route through this; a missing export would
+    -- only show up as a runtime nil call on a device.
+    assert(type(Repo.bimGetBookInfo) == "function", "Repo.bimGetBookInfo missing")
+end)
+
+test("a poisoned handle is reset and the read retried", function()
+    local bim = poisoned_bim()
+    at_time(1000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info and info.title == "recovered", "read did not recover")
+        assert(err == nil, "no error should be reported after recovery")
+    end)
+    assert(bim.closes == 1, "expected exactly one reset, got " .. bim.closes)
+    assert(bim.reads == 2, "expected one failed read and one retry, got " .. bim.reads)
+end)
+
+test("a healthy read never touches the connection", function()
+    local bim = poisoned_bim()
+    bim.db_conn = nil               -- reads succeed
+    at_time(2000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info and info.title == "recovered")
+        assert(err == nil)
+    end)
+    assert(bim.closes == 0, "a successful read must not reset anything")
+end)
+
+test("resets are rate-limited: a dead DB is not reset per book", function()
+    -- The case this guards: the volume is full, so the reopen fails too. One
+    -- reset per cooldown; the rest of the page reports failure without
+    -- hammering SQLite on the slowest device we run on.
+    local bim = poisoned_bim({ heals = false })
+    at_time(3000, function()
+        for _i = 1, 25 do Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end
+    end)
+    assert(bim.closes == 1, "expected 1 reset inside the window, got " .. bim.closes)
+    -- Past the cooldown, it is allowed to try again: the disk may have been
+    -- freed up, and the alternative is a session that never recovers.
+    at_time(3000 + 60, function() Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end)
+    assert(bim.closes == 2, "expected a second reset after the cooldown, got " .. bim.closes)
+end)
+
+test("a failed read reports the error rather than a missing row", function()
+    -- Callers distinguish these: "BIM has no row" queues an extraction,
+    -- "BIM is not answering" must not.
+    local bim = poisoned_bim({ heals = false })
+    at_time(5000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info == nil, "no info on failure")
+        assert(type(err) == "string" and err:find("closed"), "error text passed back")
+    end)
+end)
+
+test("closeDbConnection raising still clears the handle", function()
+    -- ljsqlite3 close() raises on an already-closed connection, and BIM nils
+    -- db_conn only after close() returns -- so the reset has to clear it
+    -- itself or openDbConnection keeps taking its early return forever.
+    local bim = poisoned_bim({ close_raises = true })
+    at_time(7000, function() Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end)
+    assert(bim.db_conn == nil, "db_conn must be cleared even when close() throws")
+end)
+
+test("getCoverBB returns nil (not a crash) while BIM is unhealthy", function()
+    -- The device symptom: the shelf keeps painting cached covers while every
+    -- fresh decode fails. It must degrade, not throw.
+    local original = package.loaded["bookinfomanager"]
+    package.loaded["bookinfomanager"] = {
+        getBookInfo = function() error("ljsqlite3[misuse] object is closed", 0) end,
+        closeDbConnection = function() end,
+    }
+    Repo.invalidateWalkCache()
+    local ok, bb = pcall(Repo.getCoverBB, "/lib/a.epub")
+    package.loaded["bookinfomanager"] = original
+    Repo.invalidateWalkCache()
+    assert(ok, "getCoverBB must not propagate a BIM error")
+    assert(bb == nil, "no cover to return")
+end)
+
 -- ============================================================================
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

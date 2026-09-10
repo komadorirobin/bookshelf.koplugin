@@ -442,6 +442,84 @@ local function getBookInfoMgr()
     return _bim_cache or nil
 end
 
+-- ─── BIM handle recovery ─────────────────────────────────────────────────────
+-- BookInfoManager:openDbConnection() is not atomic: it assigns self.db_conn
+-- and only THEN prepares the three statements it caches. When one of those
+-- prepares throws -- SQLite cannot grow its WAL on a full volume, and a PW5
+-- with 0 bytes free on /mnt/us raises "disk I/O error" right there -- db_conn
+-- is left SET while get_stmt still points at the previous connection's
+-- (already closed) statement. Every getBookInfo after that takes the early
+-- return in openDbConnection and binds the dead statement:
+-- "ljsqlite3[misuse] object is closed", once per book, for the rest of the
+-- session. Measured on a device: one transient I/O error, then 247 failures.
+--
+-- What the user sees is not an error but missing art: covers already in our
+-- own cache keep painting, so the shelf looks healthy, and only the paths
+-- that need a FRESH decode come back empty -- the hero above all. That is
+-- the "books with covers on the shelf that show no cover in the hero"
+-- report this exists for.
+--
+-- closeDbConnection() nils db_conn, so the next call re-opens and re-prepares
+-- from scratch. One reset per cooldown window: when the volume really is
+-- full the reopen fails again, and resetting per book would turn a broken
+-- database into a reset storm on the slowest devices we run on.
+local BIM_RESET_COOLDOWN_S = 5
+local _bim_reset_at
+local _bim_fail_logged_at
+
+local function _resetBimConnection(bim)
+    if not bim or type(bim.closeDbConnection) ~= "function" then return false end
+    local now = os.time()
+    if _bim_reset_at and (now - _bim_reset_at) < BIM_RESET_COOLDOWN_S then
+        return false
+    end
+    _bim_reset_at = now
+    local ok = pcall(function() bim:closeDbConnection() end)
+    if not ok then
+        -- ljsqlite3's close() raises on an already-closed handle, and
+        -- closeDbConnection only nils db_conn once close() has returned.
+        -- Clear it here too, or openDbConnection keeps taking its early
+        -- return and the session never recovers. The three cached statements
+        -- are deliberately left alone: openDbConnection overwrites all of
+        -- them, and a nil there would crash BIM's own unguarded call sites.
+        bim.db_conn = nil
+    end
+    return true
+end
+
+-- One warn per cooldown window, then debug. A poisoned handle fails once per
+-- book, and 247 warnings with tracebacks is both unreadable and a stream of
+-- writes to a volume that, in the case this recovers from, has no room left.
+local function _logBimFailure(what, filepath, err)
+    local now = os.time()
+    if not _bim_fail_logged_at or (now - _bim_fail_logged_at) >= BIM_RESET_COOLDOWN_S then
+        _bim_fail_logged_at = now
+        logger.warn("[bookshelf] BIM", what, "failed for", tostring(filepath),
+                    ":", tostring(err))
+    else
+        logger.dbg("[bookshelf] BIM", what, "failed for", tostring(filepath),
+                   ":", tostring(err))
+    end
+end
+
+-- getBookInfo with that recovery around it. Returns the info table (nil when
+-- BIM has no row) and, on failure, the error message. Never raises.
+local function _bimGetBookInfo(bim, filepath, want_cover, what)
+    if not bim or type(bim.getBookInfo) ~= "function" then return nil end
+    local ok, res = pcall(bim.getBookInfo, bim, filepath, want_cover)
+    if ok then return res end
+    if _resetBimConnection(bim) then
+        local ok2, res2 = pcall(bim.getBookInfo, bim, filepath, want_cover)
+        if ok2 then
+            logger.info("[bookshelf] BIM connection reset; read recovered")
+            return res2
+        end
+        res = res2
+    end
+    _logBimFailure(what or "getBookInfo", filepath, res)
+    return nil, res
+end
+
 local _hardcover_cache
 local function getHardcover()
     if _hardcover_cache ~= nil then
@@ -907,12 +985,7 @@ function Repo.buildBookMeta(filepath, opts)
         info = _batchInfoFor(filepath)
     end
     if not info then
-        local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, want_cover)
-        if not ok_bim then
-            logger.warn("[bookshelf] BIM getBookInfo failed for", filepath, ":",
-                        tostring(info_or_err))
-        end
-        info = (ok_bim and info_or_err) or {}
+        info = _bimGetBookInfo(bim, filepath, want_cover) or {}
     end
     -- Sticky-record cache. BIM's getBookInfo SELECT has a "WHERE
     -- in_progress=0" guard, so a row that's mid-extraction returns
@@ -1115,15 +1188,19 @@ function Repo.getCoverBB(filepath)
     if type(filepath) == "string" and filepath:find("^OPDS://") then return nil end
     local bim = getBookInfoMgr()
     if not bim then return nil end
-    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, filepath, true)
-    if not ok_bim then
-        logger.warn("[bookshelf] BIM getBookInfo (cover only) failed for",
-                    filepath, ":", tostring(info_or_err))
-        return nil
-    end
-    local info = info_or_err or {}
+    local info = _bimGetBookInfo(bim, filepath, true, "getBookInfo (cover only)")
+    if not info then return nil end
     if info.ignore_cover then return nil end
     return info.cover_bb
+end
+
+-- Exported so the widget's own BIM reads (extraction queueing, the
+-- post-extraction poll) share this recovery and its throttled log rather
+-- than each carrying a bare pcall. Returns info, err -- err is set only when
+-- the read genuinely failed, which callers use to tell "BIM has no row for
+-- this book" from "BIM is not answering right now".
+function Repo.bimGetBookInfo(bim, filepath, want_cover, what)
+    return _bimGetBookInfo(bim, filepath, want_cover, what)
 end
 
 -- Text-only metadata for the library walk phases of getSeriesGroups /
@@ -1261,13 +1338,8 @@ local function _buildBookMetaLight(fp)
     if not fp then return nil end
     local bim  = getBookInfoMgr()
     if not bim then return nil end  -- CoverBrowser disabled (#49)
-    -- pcall-guarded; see buildBookMeta for rationale (#63/#71).
-    local ok_bim, info_or_err = pcall(bim.getBookInfo, bim, fp, false)
-    if not ok_bim then
-        logger.warn("[bookshelf] BIM getBookInfo (light) failed for", fp, ":",
-                    tostring(info_or_err))
-    end
-    local info = (ok_bim and info_or_err) or {}
+    -- Guarded; see buildBookMeta for rationale (#63/#71).
+    local info = _bimGetBookInfo(bim, fp, false, "getBookInfo (light)") or {}
     return _buildLightMetaFromInfo(fp, info)
 end
 
@@ -3613,12 +3685,7 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
                     -- whole prefetch sweep -- fall back to filename for the
                     -- failing entry and keep going. get_cover=false skips
                     -- the zstd decompression + Blitbuffer allocation.
-                    local ok, fresh = pcall(bim.getBookInfo, bim, e.fp, false)
-                    if ok and fresh then
-                        info = fresh
-                    elseif not ok then
-                        logger.warn("[bookshelf] getBookInfo failed for", e.fp, ":", fresh)
-                    end
+                    info = _bimGetBookInfo(bim, e.fp, false) or info
                 end
                 if info then
                     if needs.title and not e.doc_props then

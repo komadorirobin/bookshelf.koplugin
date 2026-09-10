@@ -2622,16 +2622,16 @@ function BookshelfWidget:_kickOffMissingMetaExtractionNow(items, slot_w, slot_h,
         -- by the same guard.
         if self:_isRemoteRecord(fp) then return end
         seen[fp] = true
-        -- pcall-guarded: BIM can throw a SQLite error when its DB is being
-        -- recreated mid-import (issue #71, same family as #63). Without this
-        -- the error escapes _rebuild and crashes KOReader.
-        local ok_bim, info_or_err = pcall(BIM.getBookInfo, BIM, fp, false)
-        if not ok_bim then
-            logger.warn("[bookshelf] BIM getBookInfo failed for", fp, ":",
-                        tostring(info_or_err))
-            return
-        end
-        local info = info_or_err
+        -- Guarded: BIM can throw a SQLite error when its DB is being
+        -- recreated mid-import (issue #71, same family as #63), or when its
+        -- connection has been poisoned by a failed open (a full volume --
+        -- see Repo's BIM handle recovery). Without this the error escapes
+        -- _rebuild and crashes KOReader. A FAILED read is not evidence about
+        -- this book, so skip it: treating it as "no row" would queue an
+        -- extraction for every book on the page while BIM is unable to
+        -- answer, which is exactly when extraction cannot succeed either.
+        local info, bim_err = Repo.bimGetBookInfo(BIM, fp, false)
+        if bim_err then return end
         local needs   = false
         local reason  = "?"
         local inprog  = tonumber(info and info.in_progress) or 0
@@ -2937,13 +2937,8 @@ function BookshelfWidget:_pollExtraction()
     local still_pending = {}
     local gave_up_count = 0
     for _i, f in ipairs(files) do
-        -- pcall-guarded; see maybe_queue comment for rationale (#71/#63).
-        local ok_bim, info_or_err = pcall(BIM.getBookInfo, BIM, f.filepath, false)
-        if not ok_bim then
-            logger.warn("[bookshelf] BIM getBookInfo (poll) failed for",
-                        f.filepath, ":", tostring(info_or_err))
-        end
-        local info = ok_bim and info_or_err or nil
+        -- Guarded; see maybe_queue comment for rationale (#71/#63).
+        local info = Repo.bimGetBookInfo(BIM, f.filepath, false, "getBookInfo (poll)")
         local inprog = tonumber(info and info.in_progress) or 0
         local meta_ready = info and info.has_meta == "Y"
         -- Cover-readiness check: matters for *re-extractions*. A pre-existing
