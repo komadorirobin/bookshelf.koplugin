@@ -5455,6 +5455,202 @@ test("kindleFilepaths is NOT folded into getAllFilepaths", function()
     package.loaded["lib/bookshelf_kindle_source"] = nil
 end)
 
+-- ── KOReader custom metadata (issue #381) ──────────────────────────────────
+-- KOReader lets any of title / authors / series / series_index / language /
+-- keywords / description be overwritten per book from Book information, and
+-- shows the overwritten value everywhere. The shelf read only `keywords`, so
+-- a corrected title or author was ignored here and nowhere else -- reported
+-- against CBZ comics, whose metadata a ComicInfo plugin writes into exactly
+-- this field.
+--
+-- These drive the REAL gate (a sibling .sdr found through a directory
+-- listing), because the gate is what decides whether the file is read at all.
+
+local _real_lfs_attributes = package.loaded["libs/libkoreader-lfs"].attributes
+local _real_docsettings    = package.loaded["docsettings"]
+
+-- fp -> custom_props table
+local function with_custom_props(fp, props, fn)
+    local base   = fp:match("^(.*)%.") or fp
+    local parent, stem = base:match("^(.*/)([^/]+)$")
+    local sdr    = parent .. stem .. ".sdr"
+    local cmf    = sdr .. "/custom_metadata.lua"
+    local leaf   = fp:match("([^/]+)$")
+    -- The gate asks with a trailing slash ("/lib/"), the library walk without
+    -- it ("/lib"). Both have to answer, or the walk decides the folder is a
+    -- file and finds no books at all. Declared BEFORE the stubs below: a
+    -- closure that names it later resolves it as a nil global, not an upvalue.
+    local parent_bare = parent:gsub("/+$", "")
+    local function is_parent(path) return path == parent or path == parent_bare end
+
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        if key == "mode" then
+            if is_parent(path) or path == sdr then return "directory" end
+            if path == cmf then return "file" end
+            -- Anything else the walk asks about is a book file.
+            return "file"
+        end
+        return _real_lfs_attributes(path, key)
+    end
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        -- The book AND its sidecar dir: the gate looks for the .sdr here and
+        -- the library walk looks for the book.
+        local entries = is_parent(path) and { ".", "..", leaf, stem .. ".sdr" }
+                                          or { ".", ".." }
+        local i = 0
+        return function() i = i + 1; return entries[i] end
+    end
+    package.loaded["docsettings"] = setmetatable({
+        findCustomMetadataFile = function(_self, f) return f == fp and cmf or nil end,
+        openSettingsFile = function(f)
+            return { readSetting = function(_s, key)
+                if key == "custom_props" then return props end
+                return nil
+            end }
+        end,
+    }, { __index = _real_docsettings })
+
+    -- The gate memoises its directory listings and its location decision.
+    Repo.invalidateWalkCache()
+    local ok, err = pcall(fn)
+
+    package.loaded["libs/libkoreader-lfs"].attributes = _real_lfs_attributes
+    package.loaded["libs/libkoreader-lfs"].dir = nil
+    package.loaded["docsettings"] = _real_docsettings
+    Repo.invalidateWalkCache()
+    if not ok then error(err, 0) end
+end
+
+local CFP = "/lib/comic.cbz"
+
+local function bim_row(row)
+    _G._test_bim_data = { [CFP] = row }
+end
+
+test("custom title wins over the extracted one", function()
+    bim_row({ title = "comic Vol.2024 #04", authors = "Not An Author" })
+    with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.title == "The Last Amazon, Part 4 of 5",
+            "expected the custom title, got " .. tostring(b.title))
+    end)
+end)
+
+test("custom authors win, and split on newlines like the extracted field", function()
+    bim_row({ title = "T", authors = "The Last Amazon, Part 4 of 5 (March, 2025)" })
+    with_custom_props(CFP, { authors = "Kelly Thompson\nHayden Sherman" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.author == "Kelly Thompson", "primary author: " .. tostring(b.author))
+        assert(#b.authors == 2 and b.authors[2] == "Hayden Sherman",
+            "expected both authors, got " .. tostring(#b.authors))
+    end)
+end)
+
+test("custom series and index win, as name plus number", function()
+    bim_row({ title = "T", series = "Wrong Series #9" })
+    with_custom_props(CFP, { series = "Absolute Wonder Woman", series_index = "4" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.series_name == "Absolute Wonder Woman", "series: " .. tostring(b.series_name))
+        assert(b.series_num == "4", "index: " .. tostring(b.series_num))
+    end)
+end)
+
+test("a custom series with only an extracted index keeps that index", function()
+    -- A real combination: the user fixed the series name and never touched
+    -- the number, so the name and the number come from different sources.
+    bim_row({ title = "T", series = "Wrong Series #7" })
+    with_custom_props(CFP, { series = "Absolute Wonder Woman" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.series_name == "Absolute Wonder Woman", "series: " .. tostring(b.series_name))
+        assert(b.series_num == "7", "index should fall back to BIM, got " .. tostring(b.series_num))
+    end)
+end)
+
+test("custom language and description win", function()
+    bim_row({ title = "T", language = "eng", description = "extracted blurb" })
+    with_custom_props(CFP, { language = "fra", description = "my own blurb" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.lang == "fra", "lang: " .. tostring(b.lang))
+        assert(b.description == "my own blurb", "description: " .. tostring(b.description))
+    end)
+end)
+
+test("custom metadata beats Calibre, which beats the extracted row", function()
+    -- Calibre's default filename import splits "Title - Author", which is how
+    -- the reporter's comics ended up with a chapter title as their author.
+    -- The user's own correction has to outrank that.
+    local CalibreMeta = package.loaded["lib/calibre_metadata"]
+    local real_entry = CalibreMeta.entryFor
+    CalibreMeta.entryFor = function(fp)
+        if fp ~= CFP then return nil end
+        return { title = "comic Vol.2024 #04",
+                 authors = { "The Last Amazon, Part 4 of 5 (March, 2025)" } }
+    end
+    bim_row({ title = "extracted", authors = "Extracted Author" })
+    local ok, err = pcall(function()
+        with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5",
+                                 authors = "Kelly Thompson" }, function()
+            local b = Repo.buildBookMeta(CFP)
+            assert(b.title == "The Last Amazon, Part 4 of 5", "title: " .. tostring(b.title))
+            assert(b.author == "Kelly Thompson", "author: " .. tostring(b.author))
+        end)
+        -- And with no custom metadata, Calibre still wins over the row: the
+        -- existing behaviour this fix must not have inverted.
+        local b2 = Repo.buildBookMeta(CFP)
+        assert(b2.title == "comic Vol.2024 #04", "calibre title: " .. tostring(b2.title))
+    end)
+    CalibreMeta.entryFor = real_entry
+    if not ok then error(err, 0) end
+end)
+
+test("cleared keywords still read as no genres", function()
+    -- Our own genre editor writes "" to mean cleared, and that must not fall
+    -- back to the file's own keywords. The one field with nil-vs-empty
+    -- semantics; generalising the reader must not have flattened it.
+    bim_row({ title = "T", keywords = "Comics" })
+    with_custom_props(CFP, { keywords = "" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.genres == nil or #b.genres == 0,
+            "expected no genres, got " .. tostring(b.genres and b.genres[1]))
+    end)
+end)
+
+test("no custom metadata leaves the chain alone", function()
+    bim_row({ title = "Extracted Title", authors = "Extracted Author" })
+    local b = Repo.buildBookMeta(CFP)
+    assert(b.title == "Extracted Title", "title: " .. tostring(b.title))
+    assert(b.author == "Extracted Author", "author: " .. tostring(b.author))
+end)
+
+test("the author chip uses the custom author too", function()
+    -- buildBookMeta feeds the shelf; the light builder feeds the author,
+    -- series and genre chips. Each carried its own copy of the resolution
+    -- chain, which is how a book ends up filed under one author and displayed
+    -- with another. Assert the chip, since that is what a reader browses.
+    bim_row({ title = "extracted", authors = "Extracted Author",
+              series = "Wrong Series #9" })
+    Repo.invalidateSeriesCache()
+    with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5",
+                             authors = "Kelly Thompson",
+                             series = "Absolute Wonder Woman",
+                             series_index = "4" }, function()
+        _G._test_settings.home_dir = "/lib"
+        _G._test_settings.bookshelf_latest_walk_depth = 1
+        Repo.invalidateSeriesCache()
+        local groups = Repo.getAuthors(10, 0) or {}
+        assert(#groups == 1, "expected one author group, got " .. #groups)
+        assert(groups[1].series_name == "Kelly Thompson"
+                or groups[1].name == "Kelly Thompson",
+            "author group should be the custom author, got " ..
+            tostring(groups[1].series_name or groups[1].name))
+        local heavy = Repo.buildBookMeta(CFP)
+        assert(heavy.author == "Kelly Thompson", "shelf record disagrees")
+    end)
+    _G._test_settings.home_dir = nil
+    _G._test_settings.bookshelf_latest_walk_depth = nil
+    Repo.invalidateSeriesCache()
+end)
+
 -- ── BIM handle recovery ─────────────────────────────────────────────────────
 -- A failed BookInfoManager:openDbConnection (a full volume makes SQLite throw
 -- on prepare) leaves db_conn set and the cached statements dead, so every

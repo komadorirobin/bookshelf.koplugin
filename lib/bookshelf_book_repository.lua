@@ -228,11 +228,27 @@ local function _customMetaPossible(filepath)
     return false
 end
 
--- The KOReader custom Keywords override (.sdr custom_props.keywords) for a book,
--- or nil when none is set. An explicit empty string is preserved (the user
--- cleared the keywords) so the embedded source reads as "no genres", not a
--- fall-back to the file's own keywords.
-local function _customKeywords(filepath)
+-- KOReader's custom metadata for a book (.sdr custom_metadata.lua's
+-- custom_props table), or nil when the book has none.
+--
+-- KOReader lets any of title / authors / series / series_index / language /
+-- keywords / description be overwritten per book from Book information, and
+-- marks each overwritten field with a pencil. Every stock view shows those
+-- values: extendProps merges custom_props over the document's own props, and
+-- BIM stores the merged result at extraction time. Plugins that import
+-- metadata KOReader cannot read itself (a ComicInfo importer for CBZ files,
+-- issue #381) write here too, which is the whole reason the mechanism exists.
+--
+-- This is the most explicit statement of what a book is that we have, so it
+-- outranks both Calibre and BIM in _resolveTextMeta below. Only `keywords`
+-- was read before, which left the shelf as the one place in KOReader still
+-- showing a title the user had already corrected everywhere else.
+--
+-- Values are non-empty strings: KOReader's editor refuses an empty one and
+-- removes the key instead. `keywords` is the exception -- our own genre
+-- editor writes "" to mean "cleared" -- so that field keeps nil-vs-empty
+-- semantics and the others test for a non-empty string.
+local function _customPropsFor(filepath)
     if not filepath then return nil end
     local ok, DocSettings = pcall(require, "docsettings")
     if not (ok and DocSettings and DocSettings.findCustomMetadataFile) then return nil end
@@ -268,8 +284,14 @@ local function _customKeywords(filepath)
     local ok2, cp = pcall(function()
         return DocSettings.openSettingsFile(cmf):readSetting("custom_props")
     end)
-    if ok2 and type(cp) == "table" and cp.keywords ~= nil then return cp.keywords end
+    if ok2 and type(cp) == "table" then return cp end
     return nil
+end
+
+-- A custom prop that is worth using: KOReader stores non-empty strings only.
+local function _cpText(cp, key)
+    local v = cp and cp[key]
+    return (type(v) == "string" and v ~= "") and v or nil
 end
 
 -- Per-source genre lists (each nil when that source has none for this book).
@@ -277,8 +299,11 @@ local function _calibreGenres(cb)
     if cb and type(cb.tags) == "table" and #cb.tags > 0 then return splitGenreTags(cb.tags) end
     return nil
 end
-local function _embeddedGenres(filepath, info)
-    local kw = _customKeywords(filepath)
+local function _embeddedGenres(filepath, info, cp)
+    -- nil vs "" matters here (see _customPropsFor): "" is the user clearing
+    -- the keywords, which must read as "no genres" rather than falling back
+    -- to the file's own.
+    local kw = cp and cp.keywords
     if kw == nil then kw = info and info.keywords end
     if kw and kw ~= "" then return splitGenreTags(kw) end
     return nil
@@ -290,15 +315,95 @@ end
 -- Hardcover.enrichBook then overrides (and stamps sources.hardcover). No
 -- preference = auto priority calibre > embedded (the previous behaviour).
 -- Returns: resolved_list, sources_table { calibre=, embedded= }.
-local function genreData(filepath, cb, info)
+local function genreData(filepath, cb, info, cp)
     local calibre  = _calibreGenres(cb)
-    local embedded = _embeddedGenres(filepath, info)
+    local embedded = _embeddedGenres(filepath, info, cp)
     local pref = BookshelfSettings.genreSource and BookshelfSettings.genreSource(filepath)
     local resolved
     if pref == "calibre"  and calibre  then resolved = calibre
     elseif pref == "embedded" and embedded then resolved = embedded
     else resolved = calibre or embedded end
     return resolved, { calibre = calibre, embedded = embedded }
+end
+
+-- ─── textual metadata resolution ─────────────────────────────────────────────
+-- One place where a book's title / authors / series / language are decided,
+-- for BOTH record builders (buildBookMeta and _buildLightMetaFromInfo). They
+-- carried a copy of this chain each, and a copy that drifts is exactly how the
+-- shelf and the chips built from it end up disagreeing about the same book.
+--
+-- Priority: KOReader custom metadata > Calibre > BIM > filename.
+--
+--   * custom metadata is the user (or a plugin acting for them) saying what
+--     this book IS -- the only source here that is a statement rather than an
+--     extraction, and the one every other KOReader view already shows.
+--   * Calibre next, when the beta is on: a curated library beats what
+--     crengine could scrape out of the file.
+--   * BIM, then the filename, unchanged.
+--
+-- Returns a table so callers can pick what they need; every field may be nil
+-- except title, which always resolves (filename last).
+local function _resolveTextMeta(filepath, cb, info, cp)
+    info = info or {}
+    local out = {}
+
+    -- Series. BIM stores it as "<name> #<n>" with series_index alongside;
+    -- Calibre and KOReader's editor both store a bare name plus an index.
+    local cp_series = _cpText(cp, "series")
+    local cb_series = cb and type(cb.series) == "string" and cb.series ~= "" and cb.series
+    if cp_series then
+        out.series_name = cp_series
+    elseif cb_series then
+        out.series_name = cb_series
+    elseif info.series then
+        -- Guard empty / whitespace / name-less ("#3") embedded series: the
+        -- Calibre branch above already drops cb.series == "", so mirror it
+        -- here. Without this an empty series_name bucketed the book into a
+        -- junk single-book series stack even though KOReader's book info
+        -- shows the series as N/A (issue #127, non-Calibre libraries).
+        local sname = info.series:gsub(" #%d+$", "")
+        sname = sname:match("^%s*(.-)%s*$")  -- trim
+        if sname ~= "" then out.series_name = sname end
+        out.series_num = info.series:match(" #(%d+)$")
+    end
+    -- The number is resolved independently of the name: a custom or Calibre
+    -- name with BIM still holding the only index is a real combination.
+    local cp_index = _cpText(cp, "series_index")
+    if cp_index then
+        out.series_num = cp_index
+    elseif cb and type(cb.series_index) == "number" then
+        out.series_num = tostring(cb.series_index)
+    elseif info.series_index then
+        out.series_num = tostring(info.series_index)
+    elseif info.series and not out.series_num then
+        out.series_num = info.series:match(" #(%d+)$")
+    end
+
+    -- Authors. Custom and BIM store one string (newline-separated for
+    -- several); Calibre stores an array.
+    local cp_authors = _cpText(cp, "authors")
+    if cp_authors then
+        out.authors = splitAuthors(cp_authors, filepath)
+    elseif cb and type(cb.authors) == "table" and #cb.authors > 0 then
+        out.authors = {}
+        for _i, name in ipairs(cb.authors) do
+            out.authors[#out.authors + 1] = name
+        end
+    else
+        out.authors = splitAuthors(info.authors, filepath)
+    end
+
+    out.filename = (filepath:match("([^/]+)$") or filepath):gsub("%.[^.]+$", "")
+    out.title = _cpText(cp, "title")
+                 or (cb and type(cb.title) == "string" and cb.title ~= "" and cb.title)
+                 or (info.title and info.title ~= "" and info.title)
+                 or out.filename
+
+    out.lang = _cpText(cp, "language")
+                or (cb and type(cb.languages) == "table" and cb.languages[1])
+                or info.language
+
+    return out
 end
 
 -- Write an edit of the embedded genres to KOReader's custom Keywords override
@@ -1015,59 +1120,24 @@ function Repo.buildBookMeta(filepath, opts)
     -- page_count. Where Calibre has no entry for a book (non-Calibre
     -- libraries, or new books not yet imported), we fall back to BIM.
     local cb = _calibreMetadataFor(filepath)
+    -- One read of the book's custom metadata, shared by the text resolution
+    -- and the genre source below (the genre path used to make this read on
+    -- its own, so this is the same I/O, not more).
+    local cp = _customPropsFor(filepath)
 
-    -- Series — KOReader's BIM stores `info.series` as "<name> #<n>"
-    -- with series_index as the bare number; Calibre stores series +
-    -- series_index as separate fields. Prefer Calibre when present.
-    local series_name, series_num
-    local cb_series = cb and type(cb.series) == "string" and cb.series ~= "" and cb.series
-    if cb_series then
-        series_name = cb_series
-    elseif info.series then
-        -- Guard empty / whitespace / name-less ("#3") embedded series: the
-        -- Calibre branch above already drops cb.series == "", so mirror it
-        -- here. Without this an empty series_name bucketed the book into a
-        -- junk single-book series stack even though KOReader's book info
-        -- shows the series as N/A (issue #127, non-Calibre libraries).
-        local sname = info.series:gsub(" #%d+$", "")
-        sname = sname:match("^%s*(.-)%s*$")  -- trim
-        if sname ~= "" then series_name = sname end
-        series_num = info.series:match(" #(%d+)$")
-    end
-    if cb and type(cb.series_index) == "number" then
-        series_num = tostring(cb.series_index)
-    elseif info.series_index then
-        series_num = tostring(info.series_index)
-    elseif info.series and not series_num then
-        series_num = info.series:match(" #(%d+)$")
-    end
-
-    -- Authors
-    local authors
-    if cb and type(cb.authors) == "table" and #cb.authors > 0 then
-        authors = {}
-        for _i, name in ipairs(cb.authors) do
-            authors[#authors + 1] = name
-        end
-    else
-        authors = splitAuthors(info.authors, filepath)
-    end
-
-    local filename = (filepath:match("([^/]+)$") or filepath):gsub("%.[^.]+$", "")
-    -- Title chain: Calibre → BIM → filename
-    local title
-    if cb and type(cb.title) == "string" and cb.title ~= "" then
-        title = cb.title
-    elseif info.title and info.title ~= "" then
-        title = info.title
-    else
-        title = filename
-    end
+    -- Title / authors / series / language: custom metadata > Calibre > BIM >
+    -- filename, resolved in _resolveTextMeta so the light-meta builder cannot
+    -- disagree with this one.
+    local text = _resolveTextMeta(filepath, cb, info, cp)
+    local series_name, series_num = text.series_name, text.series_num
+    local authors  = text.authors
+    local filename = text.filename
+    local title    = text.title
 
     -- Genres honour the per-book source preference (calibre / embedded /
     -- hardcover); with none set, auto priority Calibre > embedded. The Hardcover
     -- override (when chosen, or auto + sync) is applied later by enrichBook.
-    local genres, genre_sources = genreData(filepath, cb, info)
+    local genres, genre_sources = genreData(filepath, cb, info, cp)
 
     local book = {
         filepath    = filepath,
@@ -1106,13 +1176,14 @@ function Repo.buildBookMeta(filepath, opts)
         -- e.g. "1072x1448". Used by the Hardcover enricher to decide whether
         -- the embedded cover is lower resolution than Hardcover's.
         cover_sizetag = info.cover_sizetag,
-        lang        = (cb and type(cb.languages) == "table" and cb.languages[1])
-                       or info.language,
-        -- A description the OPDS download flow saved for this file wins: the
-        -- catalog's blurb is why the user can see one at all for a Gutenberg
-        -- book (its embedded EPUB description is usually empty). Falls through
-        -- to Calibre comments, then BIM's extracted description.
-        description = _opdsDownloadDescription(filepath)
+        lang        = text.lang,
+        -- A description the user wrote themselves wins outright. Then the one
+        -- the OPDS download flow saved for this file: the catalog's blurb is
+        -- why the user can see one at all for a Gutenberg book (its embedded
+        -- EPUB description is usually empty). Falls through to Calibre
+        -- comments, then BIM's extracted description.
+        description = _cpText(cp, "description")
+                       or _opdsDownloadDescription(filepath)
                        or ((cb and type(cb.comments) == "string" and cb.comments ~= "")
                            and cb.comments)
                        or (info.description and info.description ~= ""
@@ -1226,49 +1297,18 @@ end
 local function _buildLightMetaFromInfo(fp, info)
     info = info or {}
     local cb = _calibreMetadataFor(fp)
+    local cp = _customPropsFor(fp)
 
-    local series_name, series_num
-    local cb_series = cb and type(cb.series) == "string" and cb.series ~= "" and cb.series
-    if cb_series then
-        series_name = cb_series
-    elseif info.series then
-        -- Guard empty / whitespace / name-less ("#3") embedded series: the
-        -- Calibre branch above already drops cb.series == "", so mirror it
-        -- here. Without this an empty series_name bucketed the book into a
-        -- junk single-book series stack even though KOReader's book info
-        -- shows the series as N/A (issue #127, non-Calibre libraries).
-        local sname = info.series:gsub(" #%d+$", "")
-        sname = sname:match("^%s*(.-)%s*$")  -- trim
-        if sname ~= "" then series_name = sname end
-        series_num = info.series:match(" #(%d+)$")
-    end
-    if cb and type(cb.series_index) == "number" then
-        series_num = tostring(cb.series_index)
-    elseif info.series_index then
-        series_num = tostring(info.series_index)
-    elseif info.series and not series_num then
-        series_num = info.series:match(" #(%d+)$")
-    end
+    -- Same resolution as buildBookMeta, from the same function: the chips are
+    -- built from these records and the shelf from those, so a book that is
+    -- "Kelly Thompson" in one has to be "Kelly Thompson" in the other.
+    local text = _resolveTextMeta(fp, cb, info, cp)
+    local series_name, series_num = text.series_name, text.series_num
+    local authors  = text.authors
+    local filename = text.filename
+    local title    = text.title
 
-    local authors
-    if cb and type(cb.authors) == "table" and #cb.authors > 0 then
-        authors = {}
-        for _i, name in ipairs(cb.authors) do authors[#authors + 1] = name end
-    else
-        authors = splitAuthors(info.authors, fp)
-    end
-
-    local genres, genre_sources = genreData(fp, cb, info)
-
-    local filename = (fp:match("([^/]+)$") or fp):gsub("%.[^.]+$", "")
-    local title
-    if cb and type(cb.title) == "string" and cb.title ~= "" then
-        title = cb.title
-    elseif info.title and info.title ~= "" then
-        title = info.title
-    else
-        title = filename
-    end
+    local genres, genre_sources = genreData(fp, cb, info, cp)
 
     -- filename is also returned so callers like searchBooks can include
     -- it in their search haystack without paying for the heavy
@@ -1320,8 +1360,7 @@ local function _buildLightMetaFromInfo(fp, info)
         genres      = genres,
         genre_sources = genre_sources,
         title       = title,
-        lang        = (cb and type(cb.languages) == "table" and cb.languages[1])
-                       or info.language,
+        lang        = text.lang,
     }
     -- Apply the global "Use Hardcover metadata" override here too, so the
     -- genre / author / series chips (built from these light records) switch
