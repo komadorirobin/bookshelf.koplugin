@@ -10564,9 +10564,46 @@ function BookshelfWidget:_nShelves()
         end
         -- Expanding (swipe-up, hero -> strip) must always reveal at least one
         -- more row than collapsed; covers squash via ShelfRow to make room.
-        return math.max(self:_maxRows(), self:_baseShelves() + 1)
+        -- A half step on the column count buys one more row than fits, by the
+        -- same squash (see _gridColsHalfStep).
+        local half = self:_gridColsHalfStep() and 1 or 0
+        return math.max(self:_maxRows() + half, self:_baseShelves() + 1)
     end
     return self:_baseShelves()
+end
+
+-- _gridColsHalfStep() — is the stored column count carrying a HALF?
+--
+-- Rows are not a setting in cover mode: they fall out of the column count,
+-- because a slot's width decides its height. That makes the density ladder
+-- coarse, and where its steps land depends on the device. Measured on a
+-- 1236x1648 panel, the expanded shelf goes 6 columns/5 rows, 5/4, 4/3, 3/2,
+-- 2/2 -- but the boundaries move with the chip bar's height, so one reader
+-- zooming in from four rows gets three and another gets two (device report).
+--
+-- So bookshelf_columns may hold a half: 4.5 means "four columns, with one
+-- more row than fits at natural cover height". The extra row squashes the
+-- covers, which narrows them (2:3 is preserved) and leaves the slack spread
+-- between them. That is not a new mechanism -- it is how a 2-column expanded
+-- shelf already shows two rows where only one fits. Every other consumer
+-- floors the value (see _gridCols), so the fraction is invisible everywhere
+-- else, including the Columns/Rows editor, which keeps whole numbers.
+--
+-- EXPANDED ONLY, and deliberately: SHELF_PACK_FLOOR records the opposite
+-- ruling for the collapsed shelf, where cramming an extra row steals from the
+-- hero and the empty space either side is worse than a slightly bigger hero.
+-- Expanded there is no hero to spend the slack on, and the layout already
+-- crams rather than leave a band empty.
+function BookshelfWidget:_gridColsHalfStep()
+    if not self._expanded then return false end
+    if self:_isListMode() or self:_isSpineMode() then return false end
+    local cols = BookshelfSettings.read("bookshelf_columns")
+    if type(cols) ~= "number" then return false end
+    -- Inside the clamp only. A half above the maximum (or below the minimum)
+    -- would buy a row against a column count that was clamped back, so the
+    -- covers would shrink for nothing.
+    if cols >= COLUMNS_MAX or cols < COLUMNS_MIN then return false end
+    return (cols - math.floor(cols)) >= 0.5
 end
 
 -- _nCols() — columns per shelf row, DPI-independent.
@@ -12211,15 +12248,37 @@ function BookshelfWidget:_nudgeColumns(delta)
     -- pinch moves the one shared count.
     local cur = BookshelfSettings.read("bookshelf_columns")
     if type(cur) ~= "number" then cur = self:_nCols() end
-    cur = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, math.floor(cur)))
-    local new = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur + delta))
+    -- Half steps on the expanded shelf, whole ones collapsed. See
+    -- _gridColsHalfStep: expanded, the half buys a squashed extra row, which
+    -- is the only way to land between two column counts; collapsed, the
+    -- fraction would change nothing on screen, so the value normalises to a
+    -- whole column first and the gesture always moves something visible.
+    local step = self._expanded and 0.5 or 1
+    if step == 1 then cur = math.floor(cur) end
+    cur = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur))
+    local new = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, cur + delta * step))
     if new == cur then return true end
+    -- What the shelf draws now, so a step that would draw the same thing can
+    -- be skipped below rather than reading as a dropped gesture. Two ways a
+    -- step lands on an identical layout: at the bottom of the ladder the
+    -- "always one more row than collapsed" guarantee already forces the extra
+    -- row a half step would have bought (2.5 columns and 2 draw the same
+    -- shelf), and in landscape _gridCols raises the count to a floor, so a
+    -- setting below that floor moves nothing.
+    local was_cols, was_rows = self:_gridCols(), self:_nShelves()
     -- DEFERRED write, not save(): a synchronous full bookshelf.lua flush here
     -- (~hundreds of ms on Kindle flash) blocked the pinch before the regrid
     -- repainted, so each zoom step felt laggy. saveDeferred still updates the
     -- in-memory value, so the _rebuild below reads the new count; durability
     -- rides the shared nav-flush debounce and every close / suspend boundary.
     BookshelfSettings.saveDeferred("bookshelf_columns", new)
+    if self:_gridCols() == was_cols and self:_nShelves() == was_rows then
+        local more = math.max(COLUMNS_MIN, math.min(COLUMNS_MAX, new + delta * step))
+        if more ~= new then
+            new = more
+            BookshelfSettings.saveDeferred("bookshelf_columns", new)
+        end
+    end
     self._nav_dirty = true
     self:_scheduleNavFlush()
     self:_clearDpadFocus()
