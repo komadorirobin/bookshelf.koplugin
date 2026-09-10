@@ -116,44 +116,49 @@ t.test("every cover step asks for a repaint", function()
     assert(s._nav_dirty, "the deferred write must be flagged for the nav flush")
 end)
 
--- ── spine mode: two states, two numbers ────────────────────────────────────
+-- ── spine mode ─────────────────────────────────────────────────────────────
 --
--- Its expanded row count is NOT the pin. The pin sets the collapsed shelf
--- height and expanding fills the freed space with more rows at that height,
--- so the expanded count runs at roughly twice the pin -- measured, pins of 1,
--- 2, 3 and 4 give 2, 3, 5 and 7 rows.
+-- ONE rule: the collapsed count is the setting, and expanding fills the freed
+-- space with more rows AT THE SAME HEIGHT, so a swipe up reveals more books
+-- without resizing anything. Zooming the EXPANDED shelf picks its count
+-- directly, and the collapsed count follows only where it has to.
+--
+-- Measured fills on a 1236x1648 panel: a collapsed shelf of 1, 2, 3, 4 rows
+-- expands to 2, 4, 6, 8.
 
-local DERIVED_ROWS = { [1] = 2, [2] = 3, [3] = 5, [4] = 7, [5] = 8, [6] = 8 }
+local FILL = { [1] = 2, [2] = 4, [3] = 6, [4] = 8, [5] = 8, [6] = 8 }
 
-local spineNudgeBody  = bodyOf("_nudgeSpineRows", "delta")
-local spineOffsetBody = bodyOf("_spineExpandedOffset")
+local spineNudgeBody     = bodyOf("_nudgeSpineRows", "delta")
+local spineExpandedBody  = bodyOf("_spineExpandedRows")
+local spineCollapsedBody = bodyOf("_spineCollapsedFor", "m")
 
 local function spineShelf(opts)
     opts = opts or {}
     local store = { spine_rows = opts.pin,
-                    spine_expanded_offset = opts.offset }
-    local s = { _expanded = opts.expanded ~= false, _nav_dirty = false,
+                    spine_rows_expanded = opts.expanded }
+    local s = { _expanded = opts.collapsed ~= true, _nav_dirty = false,
                 rebuilds = 0, writes = {} }
     function s:_isSpineMode() return true end
     function s:_chipListValue(key) return store[key] end
     function s:_setChipDensity(key, v)
         store[key] = v
-        self.writes[#self.writes + 1] = key
+        self.writes[#self.writes + 1] = key .. "=" .. tostring(v)
     end
     function s:_baseShelves()
         return math.max(1, math.min(6, math.floor(store.spine_rows or 1)))
     end
-    -- The measured fill, standing in for the real geometry.
-    function s:_spineDerivedRows() return DERIVED_ROWS[self:_baseShelves()] or 2 end
-    function s:_spineExpandedOffset()
-        return compile("local self = ...\n" .. spineOffsetBody,
-            { tonumber = tonumber, math = math }, "spineOffset")(self)
+    function s:_spineFillFor(base) return FILL[base] or 8 end
+    function s:_spineExpandedRows()
+        return compile("local self = ...\n" .. spineExpandedBody,
+            { tonumber = tonumber, math = math }, "spineExpanded")(self)
+    end
+    function s:_spineCollapsedFor(m)
+        return compile("local self, m = ...\n" .. spineCollapsedBody,
+            { math = math }, "spineCollapsedFor")(self, m)
     end
     function s:_nShelves()
         if not self._expanded then return self:_baseShelves() end
-        -- Expanding always shows more rows than collapsing.
-        return math.max(self:_baseShelves() + 1, math.min(8,
-            self:_spineDerivedRows() + self:_spineExpandedOffset()))
+        return self:_spineExpandedRows() or self:_spineFillFor(self:_baseShelves())
     end
     function s:_scheduleNavFlush() end
     function s:_clearDpadFocus() end
@@ -168,106 +173,119 @@ local function spineNudge(s, delta)
           math = math, tonumber = tonumber, pcall = pcall }, "spineNudge")(s, delta)
 end
 
-t.test("zooming the expanded spine shelf leaves the pin alone", function()
-    local s = spineShelf({ pin = 3 })
-    eq(s:_nShelves(), 5, "the derived fill")
-    spineNudge(s, -1)
-    eq(s:_nShelves(), 4, "one row fewer")
-    eq(s._store.spine_rows, 3, "the collapsed pin must not move")
-    eq(s._store.spine_expanded_offset, -1, "the distance is what was stored")
-    eq(table.concat(s.writes, ","), "spine_expanded_offset", "one setting written")
+t.test("expanding fills at the collapsed shelf's own height", function()
+    -- The default, and the reason the swipe up does not resize anything: the
+    -- expanded count is whatever fits at the height the collapsed shelf uses.
+    for pin = 1, 4 do
+        local s = spineShelf({ pin = pin })
+        eq(s:_nShelves(), FILL[pin], "pin " .. pin)
+        s._expanded = false
+        eq(s:_nShelves(), pin, "collapsed, pin " .. pin)
+    end
 end)
 
-t.test("collapse and expand return each state to its own shelf", function()
-    local s = spineShelf({ pin = 3 })
+t.test("nudging the expanded shelf from 4 rows to 3 leaves the collapsed shelf at 2", function()
+    -- The maintainer's own example, verbatim.
+    local s = spineShelf({ pin = 2 })
+    eq(s:_nShelves(), 4, "two rows collapsed expands to four")
     spineNudge(s, -1)
-    eq(s:_nShelves(), 4, "zoomed")
+    eq(s:_nShelves(), 3, "zoomed to three")
+    eq(s._store.spine_rows, 2, "and the collapsed shelf is still two")
     s._expanded = false
-    eq(s:_nShelves(), 3, "collapsing returns the collapsed shelf")
-    s._expanded = true
-    eq(s:_nShelves(), 4, "expanding returns the zoomed shelf")
+    eq(s:_nShelves(), 2, "which is what collapsing shows")
 end)
 
-t.test("the expanded shelf still follows the collapsed one", function()
-    -- The whole point of storing a distance rather than a second row count:
-    -- the two must stay linked, not divorced. Change the collapsed shelf and
-    -- the expanded one moves with it, keeping the reader's adjustment.
-    local s = spineShelf({ pin = 3 })
-    spineNudge(s, -1)
-    eq(s:_nShelves(), 4, "fill of 5, one fewer")
+t.test("only sizing the full shelf to 2 rows takes the collapsed shelf to 1", function()
+    local s = spineShelf({ pin = 2 })
+    spineNudge(s, -1)   -- 4 -> 3
+    spineNudge(s, -1)   -- 3 -> 2
+    eq(s:_nShelves(), 2, "zoomed to two")
+    eq(s._store.spine_rows, 1, "now the collapsed shelf drops to one")
     s._expanded = false
-    spineNudge(s, 1)                      -- the collapsed shelf gets denser
-    eq(s._store.spine_rows, 4, "the pin moved")
-    eq(s._store.spine_expanded_offset, -1, "the adjustment is untouched")
+    eq(s:_nShelves(), 1, "which is what collapsing shows")
+end)
+
+t.test("the zoomed count comes back on the next expand", function()
+    local s = spineShelf({ pin = 2 })
+    spineNudge(s, -1)
+    s._expanded = false
+    eq(s:_nShelves(), 2, "collapsed")
     s._expanded = true
-    eq(s:_nShelves(), 6, "fill of 7 for the new pin, still one fewer")
+    eq(s:_nShelves(), 3, "expanded again")
+end)
+
+t.test("setting the collapsed shelf puts the expanded one back to filling", function()
+    -- The reader has just said what shelf they want; a count zoomed against
+    -- the old one no longer describes it.
+    local s = spineShelf({ pin = 2 })
+    spineNudge(s, -1)
+    eq(s._store.spine_rows_expanded, 3, "zoomed")
+    s._expanded = false
+    spineNudge(s, 1)
+    eq(s._store.spine_rows, 3, "the collapsed shelf moved")
+    eq(s._store.spine_rows_expanded, nil, "and the zoom was cleared")
+    s._expanded = true
+    eq(s:_nShelves(), FILL[3], "so the expanded shelf fills again")
 end)
 
 t.test("expanding always shows more rows than collapsing", function()
-    -- A one-row shelf expanding to one row reads as the gesture having
-    -- failed (seen on a device). The floor holds however far down the reader
-    -- zooms, and it holds for the DEFAULT fill too.
-    local s = spineShelf({ pin = 1 })
-    eq(s:_nShelves(), 2, "one row collapsed, two expanded")
-    for _i = 1, 4 do spineNudge(s, -1) end
-    eq(s:_nShelves(), 2, "and zooming cannot take it back down to one")
-    s._expanded = false
-    eq(s:_nShelves(), 1, "the collapsed shelf is still one row")
+    -- Not a rule on top: the collapsed count that goes with an expanded count
+    -- is never as large as it, so it falls out of the mapping.
+    for pin = 1, 4 do
+        local s = spineShelf({ pin = pin })
+        for _i = 1, 8 do
+            assert(s:_nShelves() > s:_baseShelves(), string.format(
+                "pin %d: expanded %d is not more than collapsed %d",
+                pin, s:_nShelves(), s:_baseShelves()))
+            spineNudge(s, -1)
+        end
+    end
 end)
 
-t.test("the zoom range starts one row above the collapsed shelf", function()
+t.test("a stale zoom is ignored rather than shrinking the expanded shelf", function()
+    -- The shelf-style dialog writes the collapsed count without going through
+    -- the pinch, so a zoom from before can be left describing a shelf that no
+    -- longer exists.
+    local s = spineShelf({ pin = 4, expanded = 2 })
+    eq(s:_nShelves(), FILL[4], "the stale count is dropped for the fill")
+end)
+
+t.test("the expanded ladder reaches every count down to two", function()
     local s = spineShelf({ pin = 3 })
     local rows = {}
-    for _i = 1, 4 do
+    for _i = 1, 6 do
         rows[#rows + 1] = s:_nShelves()
         spineNudge(s, -1)
     end
-    eq(table.concat(rows, ","), "5,4,4,4", "floored at the pin plus one")
-end)
-
-t.test("the collapsed spine pinch still moves the pin", function()
-    local s = spineShelf({ pin = 3, expanded = false })
-    spineNudge(s, -1)
-    eq(s._store.spine_rows, 2, "the collapsed shelf's own setting")
-    eq(s._store.spine_expanded_offset, nil, "and not the offset")
-end)
-
-t.test("the spine ladder is clamped at both ends", function()
-    local s = spineShelf({ pin = 1, offset = -1 })
-    spineNudge(s, -1)
-    eq(s:_nShelves(), 2, "never below one more than the collapsed shelf")
-    local s2 = spineShelf({ pin = 6, offset = 4 })
-    spineNudge(s2, 1)
-    eq(s2:_nShelves(), 8, "never more than eight")
+    eq(table.concat(rows, ","), "6,5,4,3,2,2", "one row at a time, floored at two")
 end)
 
 -- ── list mode: the same rule ───────────────────────────────────────────────
 --
--- List rows have a height rather than an aspect, so each state solves its own
--- height against its own band and its own count.
+-- Its bands are closer together than the spine shelf's, so the mapping bites
+-- at the bottom: a one-row collapsed list can fill the expanded band with one
+-- row, and the collapsed shelf has to give way for two to be reachable.
 
 local ListGeom = require("lib/bookshelf_list_geom")
-local listNudgeBody  = bodyOf("_nudgeListRows", "delta")
-local listOffsetBody = bodyOf("_listExpandedOffset")
-local listRowsBody   = bodyOf("_listExpandedRows")
+local listNudgeBody     = bodyOf("_nudgeListRows", "delta")
+local listExpandedBody  = bodyOf("_listRowsExpanded")
+local listCollapsedBody = bodyOf("_listCollapsedFor", "m")
 
-local COLLAPSED_BAND, EXPANDED_BAND = 900, 1800
-local NATURAL_ROW, MIN_ROW = 200, 50
+local COLLAPSED_BAND, EXPANDED_BAND = 900, 1500
+local NATURAL_ROW, MIN_ROW = 300, 100
 
 local function listShelf(opts)
     opts = opts or {}
-    local store = { list_rows = opts.rows,
-                    list_expanded_offset = opts.offset }
-    local s = { _expanded = opts.expanded ~= false, _nav_dirty = false,
+    local store = { list_rows = opts.rows, list_rows_expanded = opts.expanded }
+    local s = { _expanded = opts.collapsed ~= true, _nav_dirty = false,
                 drafts = 0, writes = {} }
-    local env = { require = function() return ListGeom end,
-                  tonumber = tonumber, math = math }
     function s:_isListMode() return true end
     function s:_chipListValue(key) return store[key] end
     function s:_setChipDensity(key, v)
         store[key] = v
-        self.writes[#self.writes + 1] = key
+        self.writes[#self.writes + 1] = key .. "=" .. tostring(v)
     end
+    function s:_setChipListRows(n) self:_setChipDensity("list_rows", n) end
     function s:_listBand(expanded)
         return { band = expanded and EXPANDED_BAND or COLLAPSED_BAND,
                  min_edge_pad = 0, base_top_pad = 0 }
@@ -275,36 +293,39 @@ local function listShelf(opts)
     function s:_listRowGap() return 0 end
     function s:_listMinRowHeight() return MIN_ROW end
     function s:_listNaturalRowHeight() return NATURAL_ROW end
-    function s:_listRowHeight(expanded)
-        -- The collapsed band divided by the collapsed count, which is what
-        -- the expanded fill is measured against.
-        local n = self:_listRows(math.floor(COLLAPSED_BAND / MIN_ROW))
-        return n and math.floor(COLLAPSED_BAND / n) or NATURAL_ROW
+    function s:_listSolveRowHeight(b, rows)
+        return math.max(MIN_ROW, math.floor(b.band / rows))
     end
     function s:_listRows(max_rows)
         local n = store.list_rows
         if type(n) ~= "number" then return nil end
         return math.max(1, math.min(max_rows or n, math.floor(n)))
     end
-    function s:_listDerivedExpandedRows()
-        return ListGeom.rowsThatFit(EXPANDED_BAND, self:_listRowHeight(false), 0)
-    end
-    function s:_listCollapsedRows()
+    function s:_listCollapsedRowsNow()
         return self:_listRows(math.floor(COLLAPSED_BAND / MIN_ROW))
                or ListGeom.rowsThatFit(COLLAPSED_BAND, NATURAL_ROW, 0)
     end
-    function s:_listExpandedOffset()
-        return compile("local self = ...\n" .. listOffsetBody, env, "listOffset")(self)
+    function s:_listFillFor(n)
+        -- The same floor the real one carries: expanding reveals more rows.
+        return math.max(n + 1, ListGeom.rowsThatFit(EXPANDED_BAND,
+            self:_listSolveRowHeight({ band = COLLAPSED_BAND }, n), 0))
     end
-    function s:_listExpandedRows()
-        return compile("local self = ...\n" .. listRowsBody, env, "listRows")(self)
+    function s:_listExpandedCount()
+        return self:_listRowsExpanded()
+               or self:_listFillFor(self:_listCollapsedRowsNow())
+    end
+    function s:_listRowsExpanded()
+        return compile("local self = ...\n" .. listExpandedBody,
+            { tonumber = tonumber, math = math }, "listExpanded")(self)
+    end
+    function s:_listCollapsedFor(m)
+        return compile("local self, m = ...\n" .. listCollapsedBody,
+            { require = function() return ListGeom end, math = math },
+            "listCollapsedFor")(self, m)
     end
     function s:_nShelves()
-        if not self._expanded then
-            return self:_listRows(math.floor(COLLAPSED_BAND / MIN_ROW))
-                   or math.floor(COLLAPSED_BAND / NATURAL_ROW)
-        end
-        return self:_listExpandedRows() or self:_listDerivedExpandedRows()
+        if not self._expanded then return self:_listCollapsedRowsNow() end
+        return self:_listExpandedCount()
     end
     function s:_clearDpadFocus() end
     function s:_draftRebuild() self.drafts = self.drafts + 1 end
@@ -326,118 +347,107 @@ local function listNudge(s, delta)
     }, "listNudge")(s, delta)
 end
 
-t.test("zooming the expanded list leaves the collapsed count alone", function()
-    local s = listShelf({ rows = 4 })
-    local before = s:_nShelves()
-    listNudge(s, -1)
-    eq(s._store.list_rows, 4, "the collapsed count must not move")
-    eq(s._store.list_expanded_offset, -1, "the distance is what was stored")
-    eq(s:_nShelves(), before - 1, "one row fewer")
-    eq(table.concat(s.writes, ","), "list_expanded_offset", "one setting written")
+t.test("the expanded list fills at the collapsed list's own height", function()
+    local s = listShelf({ rows = 3 })
+    eq(s:_nShelves(), 5, "three rows of 300 fill 1500 with five")
+    s._expanded = false
+    eq(s:_nShelves(), 3, "collapsed is still three")
 end)
 
-t.test("collapse and expand return each list state to its own shelf", function()
-    local s = listShelf({ rows = 4 })
+t.test("zooming the expanded list moves the collapsed one only where it must", function()
+    local s = listShelf({ rows = 3 })
     listNudge(s, -1)
+    eq(s:_nShelves(), 4, "zoomed to four")
+    eq(s._store.list_rows, 3, "the collapsed list has not moved")
+    listNudge(s, -1)
+    eq(s:_nShelves(), 3, "zoomed to three")
+    eq(s._store.list_rows, 2, "now it has")
+end)
+
+t.test("the zoomed list count comes back on the next expand", function()
+    local s = listShelf({ rows = 3 })
     listNudge(s, -1)
     local zoomed = s:_nShelves()
     s._expanded = false
-    eq(s:_nShelves(), 4, "collapsing returns the collapsed list")
+    local collapsed = s:_nShelves()
     s._expanded = true
     eq(s:_nShelves(), zoomed, "expanding returns the zoomed list")
+    assert(collapsed < zoomed, "and it is still more rows than collapsing")
 end)
 
-t.test("the expanded list still follows the collapsed one", function()
-    local s = listShelf({ rows = 4 })
+t.test("setting the collapsed list puts the expanded one back to filling", function()
+    local s = listShelf({ rows = 3 })
     listNudge(s, -1)
-    local zoomed = s:_nShelves()
     s._expanded = false
-    listNudge(s, 1)                     -- the collapsed list gets denser
-    eq(s._store.list_rows, 5, "the collapsed count moved")
-    eq(s._store.list_expanded_offset, -1, "the adjustment is untouched")
-    s._expanded = true
-    assert(s:_nShelves() > zoomed, string.format(
-        "the expanded list should have moved with the collapsed one: %d then %d",
-        zoomed, s:_nShelves()))
-end)
-
-t.test("the collapsed list pinch still moves the collapsed count", function()
-    local s = listShelf({ rows = 4, expanded = false })
-    listNudge(s, -1)
-    eq(s._store.list_rows, 3, "the collapsed list's own setting")
-    eq(s._store.list_expanded_offset, nil, "and not the offset")
+    listNudge(s, 1)
+    eq(s._store.list_rows_expanded, nil, "the zoom was cleared")
 end)
 
 t.test("the expanded list always shows more rows than the collapsed one", function()
-    -- The same guarantee, and it has to hold for the DEFAULT layout too: a
-    -- tall collapsed row can fill the expanded band with the same number of
-    -- rows it filled the collapsed one.
-    local s = listShelf({ rows = 4 })
-    assert(s:_nShelves() > 4, "the default expanded list must show more than 4")
-    for _i = 1, 20 do listNudge(s, -1) end
-    eq(s:_nShelves(), 5, "and zooming stops one above the collapsed count")
-    s._expanded = false
-    eq(s:_nShelves(), 4, "the collapsed list is untouched")
+    for rows = 1, 4 do
+        local s = listShelf({ rows = rows })
+        for _i = 1, 8 do
+            assert(s:_nShelves() > s:_listCollapsedRowsNow(), string.format(
+                "rows %d: expanded %d is not more than collapsed %d",
+                rows, s:_nShelves(), s:_listCollapsedRowsNow()))
+            listNudge(s, -1)
+        end
+    end
 end)
 
-t.test("the expanded list is capped by what its band can hold", function()
-    local s = listShelf({ rows = 4 })
-    for _i = 1, 60 do listNudge(s, 1) end
-    local rows = s:_nShelves()
-    assert(rows <= math.floor(EXPANDED_BAND / MIN_ROW), string.format(
-        "%d rows will not fit at the minimum row height", rows))
-    for _i = 1, 80 do listNudge(s, -1) end
-    eq(s:_nShelves(), s:_listCollapsedRows() + 1,
-        "and never below one more than the collapsed list")
+t.test("a stale list zoom is ignored", function()
+    local s = listShelf({ rows = 4, expanded = 2 })
+    assert(s:_nShelves() > 2, "the stale count is dropped for the fill")
 end)
 
 -- ── wiring ─────────────────────────────────────────────────────────────────
 
-t.test("the expanded row counts are read where the rows are decided", function()
+t.test("the expanded counts are read where the rows are decided", function()
     local body = src:match("\nfunction BookshelfWidget:_nShelves%(%)\n(.-)\nend\n")
     assert(body, "_nShelves is gone or was renamed")
-    assert(body:match("_spineExpandedOffset"),
-        "the expanded spine branch must add the reader's own adjustment")
-    assert(body:match("_spineDerivedRows"),
-        "and it must start from the fill the pin gives, so the two stay linked")
+    assert(body:match("_spineExpandedRows"),
+        "the expanded spine branch must consult the count the reader zoomed to")
+    assert(body:match("_spineFillFor"),
+        "and fall back to the fill at the collapsed height")
     local plan = src:match(
         "\nfunction BookshelfWidget:_listBandPlanUncached%(expanded, hide_chip_bar%)\n(.-)\nend\n")
     assert(plan, "_listBandPlanUncached is gone or was renamed")
-    assert(plan:match("_listExpandedRows"),
-        "the expanded list plan must consult the reader's own adjustment")
+    assert(plan:match("_listExpandedCount"),
+        "the expanded list plan must take the count the expanded list shows, "
+        .. "which is the zoom when there is one and the fill otherwise")
 end)
 
-t.test("each nudge writes the key for the shelf on screen", function()
-    -- The whole point: a body that wrote the collapsed key while expanded
-    -- would put the collapsed shelf somewhere the reader never asked for.
+t.test("each nudge writes for the shelf on screen and clears the other", function()
     local want = {
-        _nudgeSpineRows = "spine_expanded_offset",
-        _nudgeListRows  = "list_expanded_offset",
+        _nudgeSpineRows = { "spine_rows_expanded", "_spineCollapsedFor" },
+        _nudgeListRows  = { "list_rows_expanded",  "_listCollapsedFor"  },
     }
-    for name, key in pairs(want) do
+    for name, keys in pairs(want) do
         local body = src:match("\nfunction BookshelfWidget:" .. name
             .. "%(delta%)\n(.-)\nend\n")
         assert(body, name .. " is gone or was renamed")
-        assert(body:match(key), name .. " must reference " .. key)
         assert(body:match("self%._expanded"),
-            name .. " must choose the key by which shelf is on screen")
+            name .. " must choose by which shelf is on screen")
+        for _, k in ipairs(keys) do
+            assert(body:match(k), name .. " must reference " .. k)
+        end
+        assert(body:match("_rows_expanded\", nil%)"),
+            name .. " must clear the zoom when the collapsed shelf is set")
     end
 end)
 
 t.test("the list row height is solved per state", function()
-    -- Two counts mean two heights: the expanded band divided by the expanded
-    -- count. A single cached height would hand one state the other's rows.
     local body = src:match(
         "\nfunction BookshelfWidget:_listRowHeight%(expanded%)\n(.-)\nend\n")
     assert(body, "_listRowHeight lost its state argument")
     assert(body:match('"row_h:"'), "the memo key must carry the state")
 end)
 
-t.test("cover mode keeps no expanded row count", function()
-    -- Its pinch is the cover size knob; rows follow the width. A second
-    -- number here would be the 5x5 layout that was rejected.
+t.test("cover mode keeps no row count of its own", function()
+    -- Its pinch is the cover size knob; rows follow the width. A row pin here
+    -- would be the 5x5 layout that was rejected.
     assert(not src:match("cover_rows_expanded"), "covers must not grow a row pin")
-    assert(not src:match("_gridColsHalfStep"), "the column half step is gone")
+    assert(not src:match("_gridColsHalfStep"), "no half step on the column count")
 end)
 
 t.done()
