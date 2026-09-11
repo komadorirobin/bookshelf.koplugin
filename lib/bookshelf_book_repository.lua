@@ -1431,6 +1431,36 @@ end
 -- as their own (free) category before probing anything heavier.
 Repo.pageCountFromFilename = pageCountFromFilename
 
+-- _scannedPageCount(filepath) -> the count the "Extract page counts" scan
+-- found for this book, or nil.
+--
+-- The scan persists into the shelf's own page-count store rather than into the
+-- book's sidecar, deliberately: a count for a never-opened book must not be
+-- the reason a sidecar appears, since stock KOReader reads one as "this has
+-- been read". (The publisher-list case is the exception -- it also writes
+-- pagemap_doc_pages, the key ReaderPageMap owns.) So for most books that store
+-- is the ONLY place a scanned count lives, and anything answering "how many
+-- pages" has to look there. Without this the scan showed up in the spine
+-- widths, which read the store directly, and nowhere else -- device report:
+-- "our page count scan worked for book spine width but doesn't populate the
+-- page_count token".
+--
+-- Required lazily: the shelf module requires this one back, and a load-time
+-- pair would be a cycle. By the time anything asks for a page count both are
+-- loaded. Costs a table lookup; the store only stats a sidecar to validate
+-- entries that came FROM one, which a scanned count did not.
+local function _scannedPageCount(filepath)
+    if not filepath then return nil end
+    local ok, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
+    if not ok or type(SpineShelf) ~= "table"
+            or type(SpineShelf.cachedProgress) ~= "function" then
+        return nil
+    end
+    local ok2, pages = pcall(SpineShelf.cachedProgress, filepath)
+    return ok2 and tonumber(pages) or nil
+end
+
+
 -- opts is forwarded verbatim to buildBookMeta; opts.want_cover=false skips
 -- BIM's zstd decode and Blitbuffer allocation for callers that never look at
 -- the cover. The in-reader status line rebuilds this record far more often
@@ -1510,7 +1540,13 @@ function Repo.buildBook(filepath, opts)
     -- sidecar-derived count (unopened reflowable books). ds-or-filename also
     -- seeds the progress cache below, so it must match what readProgress
     -- computes (which never sees BIM's count).
+    -- ...then the scan's store, which is where "Extract page counts" leaves
+    -- everything but a publisher count. The hero builds its book HERE rather
+    -- than through the lazy resolver the shelf rows use, so without this the
+    -- scan reached the rows and not the hero -- device report: a page_count
+    -- token added to the hero stayed empty for most books.
     local fallback_page_count = ds_page_count or pageCountFromFilename(filepath)
+                                or _scannedPageCount(filepath)
     if not book.page_count then
         book.page_count = fallback_page_count
     end
@@ -2369,35 +2405,6 @@ end
 -- Deliberately NOT wired into any fetch path. This is a lazy per-rendered-item
 -- lookup, bounded by PROGRESS_CACHE_TTL, not a fifth field for buildBookMeta
 -- to populate across the whole library.
--- _scannedPageCount(filepath) -> the count the "Extract page counts" scan
--- found for this book, or nil.
---
--- The scan persists into the shelf's own page-count store rather than into the
--- book's sidecar, deliberately: a count for a never-opened book must not be
--- the reason a sidecar appears, since stock KOReader reads one as "this has
--- been read". (The publisher-list case is the exception -- it also writes
--- pagemap_doc_pages, the key ReaderPageMap owns.) So for most books that store
--- is the ONLY place a scanned count lives, and anything answering "how many
--- pages" has to look there. Without this the scan showed up in the spine
--- widths, which read the store directly, and nowhere else -- device report:
--- "our page count scan worked for book spine width but doesn't populate the
--- page_count token".
---
--- Required lazily: the shelf module requires this one back, and a load-time
--- pair would be a cycle. By the time anything asks for a page count both are
--- loaded. Costs a table lookup; the store only stats a sidecar to validate
--- entries that came FROM one, which a scanned count did not.
-local function _scannedPageCount(filepath)
-    if not filepath then return nil end
-    local ok, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
-    if not ok or type(SpineShelf) ~= "table"
-            or type(SpineShelf.cachedProgress) ~= "function" then
-        return nil
-    end
-    local ok2, pages = pcall(SpineShelf.cachedProgress, filepath)
-    return ok2 and tonumber(pages) or nil
-end
-
 function Repo.progressFor(filepath)
     if not filepath then return nil, nil, nil, nil, false end
     if _hasSidecar(filepath) then

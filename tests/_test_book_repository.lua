@@ -5488,6 +5488,31 @@ test("a scanned page count reaches progressFor for an unopened book", function()
     end)
 end)
 
+test("the HERO's record gets the scanned count too", function()
+    -- The hero builds its book through buildBook, not through the lazy
+    -- resolver the shelf rows use, so the two paths have to consult the store
+    -- separately (device report: a page_count token on the hero stayed empty).
+    _G._test_bim_data = { ["/lib/heroscan.epub"] = { title = "Hero" } }
+    with_scan_store({ ["/lib/heroscan.epub"] = 377 }, function()
+        local b = Repo.buildBook("/lib/heroscan.epub")
+        assert(b, "buildBook returned nothing")
+        assert(b.page_count == 377,
+            "expected the scan's count on the hero record, got "
+            .. tostring(b.page_count))
+    end)
+end)
+
+test("BIM's own count still wins over the scan store", function()
+    -- The store is a fallback, not an override: a book BIM has counted knows
+    -- better than a scan estimate.
+    _G._test_bim_data = { ["/lib/haspages.epub"] = { title = "P", pages = 512 } }
+    with_scan_store({ ["/lib/haspages.epub"] = 999 }, function()
+        local b = Repo.buildBook("/lib/haspages.epub")
+        assert(b.page_count == 512,
+            "expected BIM's count, got " .. tostring(b.page_count))
+    end)
+end)
+
 test("a filename marker still outranks the scan store", function()
     -- p(N) in the name is free and authoritative; the store often holds a
     -- persisted echo of that same number.
