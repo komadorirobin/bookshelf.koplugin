@@ -30,6 +30,81 @@ local _gettime = require("lib/bookshelf_gettime")
 
 local Editor = {}
 
+-- _highAnchor(get_dialog) -> an `anchor` function for ButtonDialog.
+--
+-- Puts the dialog HIGH on the screen, over the hero, so the shelf rows it is
+-- about stay visible underneath. The shelf-style picker had this to itself;
+-- every chip-editor picker now shares it, because the reason is the same
+-- everywhere: a setting about the shelf is chosen by looking at the shelf
+-- (maintainer request). get_dialog is a getter rather than the dialog because
+-- the dialog does not exist yet when this is passed to its own constructor.
+--
+-- prefers_pop_down (the second return) is required: MovableContainer places
+-- content ABOVE its anchor by default, which for a near-top anchor means
+-- clamping back to y=0 and covering the status bar too.
+--
+-- EVERY FIELD A NUMBER, deliberately. MovableContainer fills in a missing
+-- x/y/w/h -- centring horizontally when x is nil -- only since KOReader
+-- v2026.07; v2026.03 and earlier read them raw, so a nil x arrives at
+-- `if left < 0` in ensureAnchor and takes the whole app down. Release 4.2.0
+-- did exactly that on opening the style picker. The centring the older
+-- versions will not do for us is done here instead, which is also the same
+-- placement on both.
+local function _highAnchor(get_dialog)
+    return function()
+        local d  = get_dialog()
+        -- The width comes off the LAID-OUT dialog: MovableContainer sets its
+        -- dimen from the content size on the line before it evaluates the
+        -- anchor, so by now it is the real rendered width. ButtonDialog's own
+        -- `width` is the fallback -- that is the width it ASKED for, which a
+        -- scrollable dialog can exceed.
+        local mv = d and d.movable
+        local dw = (mv and mv.dimen and mv.dimen.w) or (d and d.width) or 0
+        return {
+            -- Not clamped to 0: ensureAnchor already does `if left < 0 then
+            -- left = 0`, and clamping here first would instead trip its
+            -- `left + content_w > screen_w` branch, hanging a too-wide dialog
+            -- off the LEFT edge (title first) rather than the right.
+            x = math.floor((Screen:getWidth() - dw) / 2),
+            y = Screen:scaleBySize(96),
+            -- w matches the dialog so a mirrored (RTL) layout, which takes the
+            -- other branch (left = x + w - content_w), lands on that same
+            -- centred x instead of a dialog's width to the left of it. h stays
+            -- 0: with prefers_pop_down the top edge is y + h, and y is already
+            -- where we want the top.
+            w = dw,
+            h = 0,
+        }, true
+    end
+end
+
+-- _helpParagraph(text) -> a TextBoxWidget for ButtonDialog's _added_widgets.
+--
+-- ButtonDialog appends _added_widgets to its title group, each at its own
+-- face, so a bold `title` heading and this body-size paragraph read at two
+-- distinct sizes. Width mirrors ButtonDialog's internal maths (default
+-- width_factor 0.9, then strip the border/button/title insets) so the help
+-- aligns with the heading instead of widening the dialog.
+--
+-- UI modules are lazy-required: this runs only on-device, and a top-level
+-- require would break the headless test.
+local function _helpParagraph(text)
+    local Font_          = require("ui/font")
+    local TextBoxWidget_ = require("ui/widget/textboxwidget")
+    local Size_          = require("ui/size")
+    local Screen_        = require("device").screen
+    local dlg_w  = math.floor(math.min(Screen_:getWidth(), Screen_:getHeight()) * 0.9)
+    local bt_w   = dlg_w - 2 * Size_.border.window - 2 * Size_.padding.button
+    local help_w = bt_w - 2 * (Size_.padding.large + Size_.margin.title)
+    local w = TextBoxWidget_:new{
+        text  = text,
+        face  = Font_:getFace("x_smallinfofont"),
+        width = help_w,
+    }
+    w.not_focusable = true  -- non-interactive; keep it out of dpad nav
+    return w
+end
+
 -- The chip's view-mode pin, as words. lib/bookshelf_view_mode.lua deliberately
 -- holds no strings and no gettext -- it is a pure resolver, testable headless --
 -- so the wording lives here, where every other chip-editor label already does.
@@ -42,6 +117,7 @@ function Editor._chipModeLabel(value)
     if v == ViewMode.LIST   then return _("List")   end
     if v == ViewMode.COVERS then return _("Covers") end
     if v == ViewMode.AUTO   then return _("Auto")   end
+    if v == ViewMode.SPINES then return _("Spines") end
     return nil
 end
 
@@ -233,13 +309,20 @@ local function _applySourceDefaults(draft)
             draft.filter.formats = formats
         end
     end
-    -- QoL: if the chip's label is still the default "New chip" (i.e.
+    -- QoL: if the chip's label is still the default "New shelf" (i.e.
     -- the user hasn't customised it), rename it to match the picked
     -- source — e.g. picking "Genres" sets the label to "Genres",
     -- picking a specific author sets it to that author's name. Only
     -- the untouched default is replaced; user-edited labels are
     -- preserved as-is.
-    if draft.label == _("New chip") and draft.source then
+    -- "New chip" was this sentinel's wording before the shelf rename. A tab
+    -- saved under the old name still carries that literal label, so accept it
+    -- too or those chips silently lose the auto-rename. English only: a
+    -- translated old label cannot be recognised without keeping the retired
+    -- msgid alive purely to compare against, which is not worth a string in
+    -- every locale for a label the reader can change in two taps.
+    if (draft.label == _("New shelf") or draft.label == "New chip")
+            and draft.source then
         local fresh
         if draft.source.id and draft.source.id ~= "" then
             -- Specific-X sources (folder, single_series, etc.): use the
@@ -478,6 +561,12 @@ function Editor:editTab(tab_id, opts)
         -- this dialog end up in the same place.
         override.list_rows    = draft.list_rows
         override.list_columns = draft.list_columns
+        -- The spine pins, same nil-means-default semantics. spine_face_out
+        -- is the one tri-state: nil = the default (yes), false = no.
+        override.spine_rows          = draft.spine_rows
+        override.spine_thickness_pct = draft.spine_thickness_pct
+        override.spine_face_out      = draft.spine_face_out
+        override.spine_show_author   = draft.spine_show_author
         TabModel.setOverride(tab_id, override)
         if opts.on_change then opts.on_change() end
     end
@@ -570,7 +659,7 @@ function Editor:editTab(tab_id, opts)
                         if label_dialog then
                             label_dialog.deny_keyboard_hiding = true
                         end
-                        -- Chip labels render literally (no token
+                        -- Shelf labels render literally (no token
                         -- expansion), so dynamic %tokens are excluded.
                         IconsLibrary:show(function(glyph)
                             if label_dialog then
@@ -600,7 +689,7 @@ function Editor:editTab(tab_id, opts)
                 end,
             }
             label_dialog = InputDialog:new{
-                title           = _("Chip label"),
+                title           = _("Shelf label"),
                 input           = draft.label or "",
                 allow_newline   = false,
                 text_height     = Screen:scaleBySize(40),
@@ -858,7 +947,7 @@ function Editor:editTab(tab_id, opts)
                     bordersize     = 0,
                     callback   = function()
                         UIManager:show(ConfirmBox:new{
-                            text       = _("Delete this chip? This cannot be undone."),
+                            text       = _("Delete this shelf? This cannot be undone."),
                             ok_text    = _("Delete"),
                             ok_callback = function()
                                 -- Deleting a tab changes the list of tabs,
@@ -1000,7 +1089,7 @@ function Editor:editTab(tab_id, opts)
                         -- origin.
                         TabModel.insertAfter(fresh, tab_id, {
                             id            = new_id,
-                            label         = _("New chip"),
+                            label         = _("New shelf"),
                             icon          = nil,
                             source        = { kind = "all" },
                             filter        = {},
@@ -1048,7 +1137,7 @@ function Editor:editTab(tab_id, opts)
         -- button below is being edited. Falls back to a generic string
         -- when the label is empty / nil. with_bottom_line is off so the
         -- titlebar separator doesn't double with the top_row's top border.
-        local title_text = _("Edit chip")
+        local title_text = _("Edit shelf")
         if draft.label and draft.label ~= "" then
             title_text = _("Editing: ") .. draft.label
         end
@@ -1172,7 +1261,7 @@ function Editor:editTab(tab_id, opts)
     -- A chip that has just been created has no source the user chose: it holds
     -- the placeholder every new chip starts from. Picking one is the first
     -- thing to do and it is also what names the chip (_applySourceDefaults
-    -- renames a label still reading "New chip"), so the editor would otherwise
+    -- renames a label still reading "New shelf"), so the editor would otherwise
     -- open on a chip presenting a Home (folders) source and a generic name as
     -- though they had been decided.
     --
@@ -1405,6 +1494,15 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
             radio(_("Covers"), mode == ViewMode.COVERS, pick(function()
                 draft[ViewMode.CHIP_KEY] = ViewMode.COVERS
             end)),
+            -- Spines: books edge-on, a real bookcase. Never chosen by Auto;
+            -- an explicit pin only, like the others but purely for fun. Not
+            -- offered for OPDS catalogues -- remote records have nothing for
+            -- the style to stand on, and the widget degrades a stored pin to
+            -- covers there.
+            (not (chrome and chrome.is_opds)) and
+            radio(_("Spines"), mode == ViewMode.SPINES, pick(function()
+                draft[ViewMode.CHIP_KEY] = ViewMode.SPINES
+            end)) or nil,
         }
 
         -- Which density rows to offer. LIST numbers only: cover columns are
@@ -1414,8 +1512,10 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
         -- Columns/Rows editor and under the cover grid's own pinch. List
         -- columns and rows divide nothing but the shelf band, which is what
         -- makes them safe to vary per chip.
-        local show_covers = (mode ~= ViewMode.LIST)
-        local show_list   = (mode ~= ViewMode.COVERS)
+        local show_covers = (mode ~= ViewMode.LIST and mode ~= ViewMode.SPINES)
+        local show_list   = (mode ~= ViewMode.COVERS and mode ~= ViewMode.SPINES)
+        local show_spines = (mode == ViewMode.SPINES)
+                            and not (chrome and chrome.is_opds)
         local bw = chrome and chrome.bw
 
         -- nudgeRow: [-]  Label: value  [+], writing draft[key].
@@ -1459,6 +1559,138 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
                                            bw._chip_bar_hidden)
                     return ok and plan and plan.rows or 4
                 end)
+        end
+
+        if show_spines then
+            -- The spine view's own density. Rows like the list's; height as
+            -- a percentage of the row so a single-shelf chip can pull the
+            -- books down to a size whose titles stay readable.
+            rows[#rows + 1] = nudgeRow(_("Spine rows"), "spine_rows", 1, 6,
+                bw and function()
+                    local ok, n = pcall(bw._nShelves, bw)
+                    return ok and n or 2
+                end)
+            -- Percent rows step by 10 and treat auto_value as the stored
+            -- absence (nil = "follow the default"), so both settings keep
+            -- the dialog's nil-means-default semantics.
+            local function pctRow(label, key, lo, hi, auto_value)
+                local step_sz = 10
+                local function shown()
+                    local v = draft[key]
+                    return label .. ": "
+                           .. (v and (tostring(v) .. "%") or _("Auto"))
+                end
+                local function step(delta)
+                    return pick(function()
+                        local cur = draft[key] or auto_value
+                        local n = cur + delta * step_sz
+                        if n > hi then n = hi end
+                        if n < lo then n = lo end
+                        if n == auto_value then draft[key] = nil
+                        else draft[key] = n end
+                    end)
+                end
+                return {
+                    { text = "\u{2212}", callback = step(-1) },
+                    { text_func = shown, enabled = false },
+                    { text = "+", callback = step(1) },
+                }
+            end
+            -- Spine thickness: a multiplier on the page-count width.
+            -- (No height row: book height IS rows over available space,
+            -- with the hero pinned to the cover grid's standard size.)
+            rows[#rows + 1] = pctRow(_("Spine thickness"), "spine_thickness_pct",
+                                     60, 200, 100)
+            -- Yes/No toggles, default YES; stored as false only, nil meaning
+            -- the default, the same absence semantics as every other key.
+            local function toggleRow(label, key)
+                return {{
+                    text_func = function()
+                        local v = draft[key]
+                        if v == nil then v = true end
+                        return label .. ": " .. (v and _("Yes") or _("No"))
+                    end,
+                    callback = pick(function()
+                        local cur = draft[key]
+                        if cur == nil then cur = true end
+                        if cur then
+                            draft[key] = false
+                        else
+                            draft[key] = nil
+                        end
+                    end),
+                }}
+            end
+            -- Face out (front cover, bookstore style): WHICH books stand
+            -- cover-forward. Five values, so a submenu rather than a
+            -- cycling button (user ruling). Stored back-compatibly: nil =
+            -- favourites (the default the old Yes toggle meant), false =
+            -- none (the old No), else the mode string.
+            local FACE_LABELS = {
+                none      = _("None"),
+                favorites = _("Favorites"),
+                first     = _("First in series"),
+                reading   = _("Currently reading"),
+                all       = _("All books"),
+            }
+            local function faceOutShown()
+                local v = draft.spine_face_out
+                if v == false then v = "none" end
+                if v == nil or v == true then v = "favorites" end
+                return _("Face out") .. ": "
+                       .. (FACE_LABELS[v] or FACE_LABELS.favorites)
+            end
+            rows[#rows + 1] = {{
+                text_func = faceOutShown,
+                callback = function()
+                    UIManager:close(d)
+                    local sub
+                    local sub_rows = {}
+                    for _i, m in ipairs({ "favorites", "first", "reading",
+                                          "all", "none" }) do
+                        sub_rows[#sub_rows + 1] = {{
+                            text = FACE_LABELS[m],
+                            callback = function()
+                                if m == "favorites" then
+                                    draft.spine_face_out = nil
+                                elseif m == "none" then
+                                    draft.spine_face_out = false
+                                else
+                                    draft.spine_face_out = m
+                                end
+                                if on_change then on_change() end
+                                UIManager:close(sub)
+                                show()
+                            end,
+                        }}
+                    end
+                    sub_rows[#sub_rows + 1] = {{
+                        text = _("Cancel"),
+                        callback = function()
+                            UIManager:close(sub)
+                            show()
+                        end,
+                    }}
+                    -- Heading and one line of explanation. Five bare
+                    -- labels -- "Favorites", "First in series" -- do not say
+                    -- what they are choosing BETWEEN once the row that named
+                    -- the setting has closed behind them (maintainer request).
+                    sub = ButtonDialog:new{
+                        title          = _("Face out"),
+                        title_align    = "left",
+                        use_info_style = false,
+                        _added_widgets = { _helpParagraph(_(
+                            "Choose which covers to show face out on this shelf.")) },
+                        buttons        = sub_rows,
+                        -- Same placement as its parent: this is the one pick
+                        -- in the group that redraws the shelf under it.
+                        anchor         = _highAnchor(function() return sub end),
+                    }
+                    UIManager:show(sub)
+                end,
+            }}
+            -- Author on the spine, below the title like a printed spine.
+            rows[#rows + 1] = toggleRow(_("Author on spine"), "spine_show_author")
         end
 
         -- Folder tiles: ONE row that cycles through the styles, live-previewed
@@ -1513,48 +1745,10 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
             title       = _("Shelf style"),
             title_align = "center",
             buttons     = rows,
-            -- HIGH, over the hero rather than the shelf. The dialog exists to
-            -- show a change to folder tiles, so covering them defeats it; the
-            -- hero is the part of the screen this setting has no effect on.
-            -- prefers_pop_down is required - MovableContainer places content
-            -- ABOVE its anchor by default, which for a near-top anchor means
-            -- clamping back to y=0 and covering the status bar too.
+            -- HIGH, over the hero rather than the shelf: the dialog exists
+            -- to show a change to folder tiles, so covering them defeats it.
+            anchor      = _highAnchor(function() return d end),
             tap_close_callback = restoreChrome,
-            -- EVERY FIELD A NUMBER, deliberately. MovableContainer fills in a
-            -- missing x/y/w/h - centring horizontally when x is nil - only
-            -- since KOReader v2026.07; v2026.03 and earlier read them raw, so
-            -- a nil x arrives at `if left < 0` in ensureAnchor and takes the
-            -- whole app down. Release 4.2.0 did exactly that on opening this
-            -- picker. The centring the older versions won't do for us is done
-            -- here instead, which is also the same placement on both.
-            --
-            -- The width comes off the laid-out dialog: MovableContainer sets
-            -- its dimen from the content size on the line before it evaluates
-            -- the anchor, so by now it is the real rendered width.
-            -- ButtonDialog's own `width` is the fallback - that is the width
-            -- it ASKED for, which a scrollable dialog can exceed.
-            anchor = function()
-                local mv = d and d.movable
-                local dw = (mv and mv.dimen and mv.dimen.w) or (d and d.width) or 0
-                return {
-                    -- Not clamped to 0: ensureAnchor already does `if left < 0
-                    -- then left = 0`, and clamping here first would instead
-                    -- trip its `left + content_w > screen_w` branch, hanging a
-                    -- too-wide dialog off the LEFT edge (title first) rather
-                    -- than the right. Unreachable while ButtonDialog caps its
-                    -- width at 0.9 of the screen's smaller side, but the
-                    -- shorter expression is also the better-behaved one.
-                    x = math.floor((Screen:getWidth() - dw) / 2),
-                    y = Screen:scaleBySize(96),
-                    -- w matches the dialog so a mirrored (RTL) layout, which
-                    -- takes the other branch (left = x + w - content_w), lands
-                    -- on that same centred x instead of a dialog's width to
-                    -- the left of it. h stays 0: with prefers_pop_down the top
-                    -- edge is y + h, and y is already where we want the top.
-                    w = dw,
-                    h = 0,
-                }, true
-            end,
         }
         UIManager:show(d)
     end
@@ -2119,7 +2313,11 @@ function Editor:_pickSource(draft, on_close)
     if ok_kindle and KindleSource and KindleSource.isAvailable() then
         table.insert(rows, #rows, { btn("kindle", _("Kindle Virtual Library")) })
     end
-    d = ButtonDialog:new{ title = _("Chip source"), buttons = rows }
+    d = ButtonDialog:new{
+        title   = _("Shelf source"),
+        buttons = rows,
+        anchor  = _highAnchor(function() return d end),
+    }
     UIManager:show(d)
 end
 -- Filters list: one row per dimension showing its current selection, plus a
@@ -2190,33 +2388,15 @@ function Editor:_openFilters(draft, on_close)
         end },
         { text = _("Done"), callback = function() UIManager:close(d); on_close() end },
     }
-    -- Custom header: a bold "Filters" heading (title) plus a body-size help
-    -- paragraph as an added widget below it. ButtonDialog appends _added_widgets
-    -- to its title group, each at its own face/width, so the heading and the
-    -- explanation read at two distinct sizes. UI modules are lazy-required (this
-    -- runs only on-device; a top-level require would break the headless test).
-    local Font_         = require("ui/font")
-    local TextBoxWidget_ = require("ui/widget/textboxwidget")
-    local Size_         = require("ui/size")
-    local Screen_       = require("device").screen
-    -- Match ButtonDialog's own title-group width so the help text aligns with
-    -- the heading and doesn't widen the dialog (mirrors its internal maths:
-    -- default width_factor 0.9, then strip the border/button/title insets).
-    local dlg_w  = math.floor(math.min(Screen_:getWidth(), Screen_:getHeight()) * 0.9)
-    local bt_w   = dlg_w - 2 * Size_.border.window - 2 * Size_.padding.button
-    local help_w = bt_w - 2 * (Size_.padding.large + Size_.margin.title)
-    local help_widget = TextBoxWidget_:new{
-        text  = _("Pick filters to narrow the shelf. Several picks in the same row match any of them, so picking two genres shows books in either. Picks in different rows must all match, so adding a 5-star rating then limits those to 5-star books only. Numbers below filter choices show how many books currently match based on other selected filters."),
-        face  = Font_:getFace("x_smallinfofont"),
-        width = help_w,
-    }
-    help_widget.not_focusable = true  -- non-interactive; keep it out of dpad nav
+    -- A bold "Filters" heading plus a body-size help paragraph below it.
+    local help_widget = _helpParagraph(_("Pick filters to narrow the shelf. Several picks in the same row match any of them, so picking two genres shows books in either. Picks in different rows must all match, so adding a 5-star rating then limits those to 5-star books only. Numbers below filter choices show how many books currently match based on other selected filters."))
     d = ButtonDialog:new{
         title          = _("Filters"),
         title_align    = "left",
         use_info_style = false,        -- bold heading, distinct from the body text
         _added_widgets = { help_widget },
         buttons        = rows,
+        anchor         = _highAnchor(function() return d end),
     }
     UIManager:show(d)
 end
@@ -2264,6 +2444,7 @@ function Editor:_pickChoiceFilter(draft, dim_key, on_close)
         title             = _("Series filter"),
         title_align       = "center",
         buttons           = buttons,
+        anchor            = _highAnchor(function() return d end),
         tap_close_callback = function() on_close() end,
     }
     UIManager:show(d)
@@ -2442,7 +2623,11 @@ function Editor:_pickMultiFilter(draft, dim_key, on_close)
     end
     rows[#rows + 1] = { { text = _("Done"), callback = function() UIManager:close(d); on_close() end } }
 
-    d = ButtonDialog:new{ title = title, buttons = rows }
+    d = ButtonDialog:new{
+        title   = title,
+        buttons = rows,
+        anchor  = _highAnchor(function() return d end),
+    }
     UIManager:show(d)
 end
 
@@ -2501,7 +2686,11 @@ function Editor:_pickFolderFilter(draft, on_close)
     }
     rows[#rows + 1] = { { text = _("Done"), callback = function() UIManager:close(d); on_close() end } }
 
-    d = ButtonDialog:new{ title = _("Folder filter"), buttons = rows }
+    d = ButtonDialog:new{
+        title   = _("Folder filter"),
+        buttons = rows,
+        anchor  = _highAnchor(function() return d end),
+    }
     UIManager:show(d)
 end
 
@@ -2623,6 +2812,7 @@ function Editor:_pickSortLevel(draft, level_index, on_close)
     d = ButtonDialog:new{
         title   = title,
         buttons = rows,
+        anchor  = _highAnchor(function() return d end),
     }
     UIManager:show(d)
 end

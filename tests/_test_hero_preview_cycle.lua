@@ -45,6 +45,9 @@ local function swipe(direction, opts)
         _preview_book = opts.preview,
         _cursor       = opts.cursor,
         _viewSize     = function() return opts.view or 8 end,
+        -- Spine mode hands the cycle its own flattened page list; these
+        -- tests pin the item-window behaviour, so the stub answers covers.
+        _isSpineMode  = function() return false end,
         _fetchChipItems = function(_self, n)
             assert(n == 400, "expected the 400-item ceiling, got " .. tostring(n))
             return opts.items, opts.total

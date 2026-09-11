@@ -100,6 +100,16 @@ local function _chipCase(label)
     return (ok_util and util.fixUtf8) and util.fixUtf8(label, "?") or label
 end
 
+-- Icon glyphs ALWAYS render in the passthrough "symbols" face, never the
+-- user's Bookshelf UI font: the nerd-font PUA codepoints (search, the
+-- currently-reading book, chip icons) only exist in glyph fonts, and a
+-- custom text font without them painted its missing-glyph box in their
+-- place (user report, via a shared screenshot). Text segments keep
+-- following the UI font -- that is what the setting is for.
+local function _iconFace(size)
+    return BFont:getFace("symbols", size)
+end
+
 local function _buildLabelContent(label, size, max_w, ink)
     ink = ink or Blitbuffer.COLOR_BLACK
     local segments = TextSegments.labelSegments(_chipCase(label))
@@ -113,7 +123,12 @@ local function _buildLabelContent(label, size, max_w, ink)
         }
     end
     if #segments == 1 then
-        local one_face, one_bold = BFont:getFace("infofont", size, { bold = segments[1].class == "text" })
+        local one_face, one_bold
+        if segments[1].class == "text" then
+            one_face, one_bold = BFont:getFace("infofont", size, { bold = true })
+        else
+            one_face, one_bold = _iconFace(size)
+        end
         return TextWidget:new{
             text      = segments[1].text,
             face      = one_face,
@@ -133,7 +148,7 @@ local function _buildLabelContent(label, size, max_w, ink)
     local icon_w = 0
     for _i, seg in ipairs(segments) do
         if seg.class ~= "text" then
-            local iw_face, iw_bold = BFont:getFace("infofont", size)
+            local iw_face, iw_bold = _iconFace(size)
             local tw = TextWidget:new{
                 text = seg.text,
                 face = iw_face,
@@ -147,7 +162,12 @@ local function _buildLabelContent(label, size, max_w, ink)
     local hg = HorizontalGroup:new{ align = "center" }
     for _i, seg in ipairs(segments) do
         local is_text = (seg.class == "text")
-        local seg_face, seg_bold = BFont:getFace("infofont", size, { bold = is_text })
+        local seg_face, seg_bold
+        if is_text then
+            seg_face, seg_bold = BFont:getFace("infofont", size, { bold = true })
+        else
+            seg_face, seg_bold = _iconFace(size)
+        end
         hg[#hg + 1] = TextWidget:new{
             text      = seg.text,
             face      = seg_face,
@@ -166,7 +186,12 @@ local function _measureLabel(label, size)
     local total = 0
     local segments = TextSegments.labelSegments(_chipCase(label))
     for _i, seg in ipairs(segments) do
-        local m_face, m_bold = BFont:getFace("infofont", size, { bold = seg.class == "text" })
+        local m_face, m_bold
+        if seg.class == "text" then
+            m_face, m_bold = BFont:getFace("infofont", size, { bold = true })
+        else
+            m_face, m_bold = _iconFace(size)
+        end
         local tw = TextWidget:new{
             text = seg.text,
             face = m_face,
@@ -373,7 +398,7 @@ local function arrowPillFrame(label, h, chained, glyph)
     -- sees "[search] SEARCH RESULTS" instead of just the bare icon.
     local content_widget, content_w, content_h
     if glyph and label and label ~= "" then
-        local icon_face, icon_bold = BFont:getFace("infofont", _scaled(18), { bold = true })
+        local icon_face, icon_bold = _iconFace(_scaled(18))
         local icon_tw = TextWidget:new{
             text    = glyph,
             face    = icon_face,
@@ -400,7 +425,7 @@ local function arrowPillFrame(label, h, chained, glyph)
         local label_text, face, bold
         if glyph then
             label_text = glyph
-            face, bold = BFont:getFace("infofont", _scaled(18), { bold = true })
+            face, bold = _iconFace(_scaled(18))
         else
             label_text = _chipCase(label)
             face, bold = BFont:getFace("infofont", _scaled(16), { bold = true })
@@ -542,7 +567,7 @@ local CHEVRON_NEXT = "\xEF\x81\x94"
 local function measureNatural(chip, height, scaled_fn)
     local pad = Size.padding.large
     if chip.nerd_glyph then
-        local ng_face, ng_bold = BFont:getFace("infofont", scaled_fn(18))
+        local ng_face, ng_bold = _iconFace(scaled_fn(18))
         local tw = TextWidget:new{
             text = chip.nerd_glyph,
             face = ng_face,
@@ -839,7 +864,7 @@ function ChipBar:_buildChipRow(flex_indices, flex_naturals, action_w, separator_
         local has_custom = (type(fill_c) ~= "nil")
         local ink = ink_c or Blitbuffer.COLOR_BLACK
         if chip.nerd_glyph then
-            local cc_face, cc_bold = BFont:getFace("infofont", _scaled(18))
+            local cc_face, cc_bold = _iconFace(_scaled(18))
             cell_content = TextWidget:new{
                 text    = chip.nerd_glyph,
                 face    = cc_face,
@@ -996,6 +1021,39 @@ function ChipBar:_gotoPage(p)
     if self.on_page_change then self.on_page_change() end
 end
 
+-- setCurrentSelected(sel): flip the currently-reading action chip's fill
+-- (and its up-pointer) in place, rebuilding just this bar's row -- the
+-- same in-place pattern _gotoPage uses. Lets the host restyle the strip
+-- at a preview boundary without a full shelf rebuild, in the SAME cycle
+-- as the hero swap (the deferred rebuild made the chip visibly lag the
+-- hero). Does NOT paint or refresh; the caller owns that.
+-- Returns true when the row was re-rendered, false when the state already
+-- matched (nothing to paint), nil when this bar has no such chip or was
+-- never rendered in a re-enterable mode (caller should fall back to a
+-- full restyle).
+function ChipBar:setCurrentSelected(sel)
+    sel = sel and true or false
+    local target
+    for _, c in ipairs(self.chips or {}) do
+        if c.action and c.key == "current" then
+            target = c
+            break
+        end
+    end
+    if not target then return nil end
+    if (target.selected and true or false) == sel then return false end
+    target.selected = sel
+    if self.breadcrumb_path and #self.breadcrumb_path > 0 then
+        self:_initBreadcrumb()
+    elseif self._flex_indices then
+        self:_buildChipRow()
+    else
+        target.selected = not sel
+        return nil
+    end
+    return true
+end
+
 -- warmKeys(): nav (flex) chip keys worth pre-warming from where we are now --
 -- the current page plus the next one (forward-swipe bias). Single-page bars
 -- return every nav chip (same set the old all-chips warm used). Action chips
@@ -1062,7 +1120,7 @@ function ChipBar:_initBreadcrumb()
         local inner_h = outer_h - 2 * b  -- so FrameContainer's borders sit INSIDE outer_h
         current_w = math.floor(outer_h * 1.6)
         local inner_w = current_w - 2 * b
-        local glyph_face, glyph_bold = BFont:getFace("infofont", _scaled(18))
+        local glyph_face, glyph_bold = _iconFace(_scaled(18))
         -- Action chips (currently reading / search / micro-modules) use the same
         -- selected language as the chips, so they honour the same colour (#294).
         local act_fill, act_ink

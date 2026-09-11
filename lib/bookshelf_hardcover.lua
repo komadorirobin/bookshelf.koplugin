@@ -658,6 +658,49 @@ local function _mirrorExternalLink(filepath, config)
     _notifyLoadedHardcoverSettings(filepath, config, original)
 end
 
+-- linkedFiles() -> { filepath, ... }
+-- Every locally-linked book, from the Hardcover plugin's own link store.
+-- The bulk details refresh walks this list (refreshBook re-fetches one
+-- book's enrichment and re-caches it).
+function Hardcover.linkedFiles()
+    local out = {}
+    pcall(function()
+        local settings = _openHardcoverSettingsObject()
+        local books = settings and settings:readSetting("books")
+        if type(books) ~= "table" then return end
+        for fp, cfg in pairs(books) do
+            if type(fp) == "string" and type(cfg) == "table" and cfg.book_id then
+                out[#out + 1] = fp
+            end
+        end
+        table.sort(out)
+    end)
+    return out
+end
+
+-- linkedPages() -> { [filepath] = pages }
+-- The Hardcover plugin stores the matched edition's page count per linked
+-- book (that is how it reports reading progress as print pages). For the
+-- shelf that is a STABLE page count one local read away -- no network, no
+-- document render -- so the bulk page-count scan harvests these before
+-- paying the heavy per-book pagination (user insight). Empty table when
+-- the plugin or its settings are absent.
+function Hardcover.linkedPages()
+    local out = {}
+    pcall(function()
+        local settings = _openHardcoverSettingsObject()
+        local books = settings and settings:readSetting("books")
+        if type(books) ~= "table" then return end
+        for fp, cfg in pairs(books) do
+            local p = type(cfg) == "table" and tonumber(cfg.pages) or nil
+            if p and p > 0 and type(fp) == "string" then
+                out[fp] = math.floor(p)
+            end
+        end
+    end)
+    return out
+end
+
 function Hardcover.invalidate()
     _links = nil
     _external_links = nil
@@ -1128,6 +1171,17 @@ function Hardcover.autoDecideFlags(book, enrichment)
                 local ew, eh = _parseSizetag(book.cover_sizetag)
                 local hw = tonumber(enrichment.cover_width)
                 local hh = tonumber(enrichment.cover_height)
+                if not (hw and hh) and type(enrichment.cover_path) == "string" then
+                    -- Hardcover usually reports the image's dimensions; when
+                    -- it does not, read them from the file we just downloaded
+                    -- rather than falling through to "keep the embedded
+                    -- cover" on a missing number.
+                    local ok_img, ImageSource =
+                        pcall(require, "lib/bookshelf_image_source")
+                    if ok_img and ImageSource.probeSize then
+                        hw, hh = ImageSource.probeSize(enrichment.cover_path)
+                    end
+                end
                 if ew and eh and hw and hh then
                     adopt = (hw * hh) > (ew * eh)
                 end
@@ -1429,6 +1483,13 @@ end
 -- Author / series extraction from a hydrated Hardcover search hit, mirroring
 -- the vendored search_dialog.lua (contributions may be a single .author string
 -- or an array of { author = { name } }; book_series[1].series.name is series).
+--
+-- ONLY plain authorship counts. cached_contributors lists every credited
+-- contributor with a role string ("Narrator", "Translator", "Illustrator",
+-- ... nil/empty for the authors themselves); joining them all put audiobook
+-- narrators into the author field, and the Authors shelf then grew a
+-- second one-book card per affected title (device report: Never Flinch
+-- under Stephen King AND under his narrator).
 local function _candidateAuthor(b)
     local c = b and b.contributions
     if type(c) ~= "table" then return nil end
@@ -1437,7 +1498,10 @@ local function _candidateAuthor(b)
     for _, a in ipairs(c) do
         if type(a) == "table" and type(a.author) == "table"
                 and type(a.author.name) == "string" then
-            names[#names + 1] = a.author.name
+            local role = a.contribution
+            if role == nil or role == "" or role == "Author" then
+                names[#names + 1] = a.author.name
+            end
         end
     end
     return #names > 0 and table.concat(names, ", ") or nil
@@ -1883,7 +1947,7 @@ local function _downloadImage(url, key, force)
     end
 
     local ok_require, http, ltn12, socket, socketutil = pcall(function()
-        return require("socket/http"),
+        return require("socket.http"),
                require("ltn12"),
                require("socket"),
                require("socketutil")
@@ -1939,6 +2003,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 contributions: cached_contributors
                 cached_tags
                 book_series { position series { name } }
+                pages
                 rating
                 ratings_count
                 reviews_count
@@ -1947,6 +2012,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 id
                 title
                 cached_image
+                pages
               }
             }
         ]]
@@ -1969,6 +2035,7 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
                 contributions: cached_contributors
                 cached_tags
                 book_series { position series { name } }
+                pages
                 rating
                 ratings_count
                 reviews_count
@@ -2017,6 +2084,11 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
         series_name = _candidateSeries(data.book),
         series_position = _candidateSeriesPosition(data.book),
         genres = _candidateGenres(data.book),
+        -- Page count rides the same query for free: the linked edition's
+        -- print pages when known, the book's canonical count otherwise.
+        -- refreshBook writes it back into the link store, which is where
+        -- linkedPages() / the bulk page-count scan read from.
+        pages = tonumber(edition and edition.pages) or tonumber(data.book.pages),
         fetched_at = os.time(),
     }
 end
@@ -2040,6 +2112,31 @@ function Hardcover.refreshBook(book, opts)
     if not ok then return false, payload end
     _cachePut("enrich", _cacheKey(link.book_id, link.edition_id), payload)
     _backfillRatingEntry(link.book_id, payload)
+    -- Everything in the enrichment CACHE row was just replaced wholesale
+    -- (authors, genres, series, description, ratings -- corrections on
+    -- Hardcover flow in automatically). The two fields living OUTSIDE that
+    -- row are in the plugin's link store: pages (what linkedPages() and
+    -- the bulk page-count scan read) and the display title the sync
+    -- plugin shows. Refresh heals both; link identity is untouched.
+    do
+        local upd = {}
+        if tonumber(payload.pages) then
+            upd.pages = math.floor(tonumber(payload.pages))
+        end
+        if type(payload.title) == "string" and payload.title ~= "" then
+            upd.title = payload.title
+        end
+        if next(upd) then
+            pcall(function()
+                local settings = _openHardcoverSettingsObject()
+                if settings then
+                    local original = _applyExternalBookSetting(settings,
+                        book.filepath, upd)
+                    _notifyLoadedHardcoverSettings(book.filepath, upd, original)
+                end
+            end)
+        end
+    end
     -- First-link defaults for the per-book cover/description overrides. Guarded
     -- internally to fire once (only on undecided flags) -- safe to call on every
     -- refresh.

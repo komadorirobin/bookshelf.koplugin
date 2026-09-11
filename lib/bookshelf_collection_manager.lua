@@ -311,7 +311,7 @@ function CollectionManager.show(opts)
     -- Edit-collection 2x2 menu. Title spells out which collection
     -- you're editing ("Edit collection: To Be Read") so a long-pressed
     -- row makes its target obvious. Rows:
-    --   [ Rename       ] [ Pin to chip bar ]
+    --   [ Rename       ] [ Pin to shelf menu ]
     --   [ ✕ Delete     ] [ Cancel          ]
     -- For protected collections (Favourites, To Be Read), the rename /
     -- delete actions collapse to a single Pin / Cancel row -- the
@@ -402,7 +402,7 @@ function CollectionManager.show(opts)
             buttons = {
                 {
                     { text = _("Rename"),          callback = doRename },
-                    { text = _("Pin to chip bar"), callback = doPin    },
+                    { text = _("Pin to shelf menu"), callback = doPin    },
                 },
                 {
                     { text = "\xE2\x9C\x95 " .. _("Delete"),
@@ -413,7 +413,7 @@ function CollectionManager.show(opts)
         else
             buttons = {
                 {
-                    { text = _("Pin to chip bar"), callback = doPin    },
+                    { text = _("Pin to shelf menu"), callback = doPin    },
                     { text = _("Cancel"),          callback = hclose   },
                 },
             }
@@ -686,7 +686,7 @@ function CollectionManager.show(opts)
         local mintro_face, mintro_bold = BFont:getFace("infofont", 16)
         content[#content + 1] = TextBoxWidget:new{
             text  = _("Tap a custom collection to rename, delete, or pin "
-                .. "it to the chip bar. Long-press a book on the shelf "
+                .. "it to the shelf menu. Long-press a book on the shelf "
                 .. "and tap Collections… to add or remove it from "
                 .. "collections."),
             face  = mintro_face,

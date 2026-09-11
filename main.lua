@@ -320,6 +320,60 @@ function Bookshelf:init()
     Fonts.maybeSeedFreshInstall()
     Fonts.ensureInstalled()
 
+    -- Version marker, written every init. v5 is the FIRST build that
+    -- writes it, which makes it the upgrade detector: settings present
+    -- but marker absent = this install ran a pre-v5 build. Future
+    -- migrations get the stored version to compare against instead of
+    -- inventing their own flags.
+    local prior_version   = BookshelfSettings.read("last_run_version")
+    local was_fresh       = not BookshelfSettings.wasPresent()
+    local pre_v5_upgrade  = (not was_fresh) and prior_version == nil
+    do
+        local v = "unknown"
+        pcall(function()
+            local meta = dofile(self.path .. "/_meta.lua")
+            if type(meta) == "table" and meta.version then v = meta.version end
+        end)
+        BookshelfSettings.save("last_run_version", v)
+    end
+
+    -- One-time upgrade notice: enrichment cached before v5 could carry
+    -- narrators/translators in the author field (Hardcover's
+    -- cached_contributors joined role-blind), which split books across
+    -- extra author cards. The fix only applies to FRESH fetches, so users
+    -- with an existing cache are offered the bulk details refresh once.
+    -- Gated to PRE-V5 UPGRADERS: a fresh v5 install's cache was built
+    -- with the role filter and never needs the prompt, and future
+    -- upgrades carry the version marker so it can never re-fire. The
+    -- prompt itself does no network -- the refresh only runs if the
+    -- user asks (no-auto-network rule); either answer retires the notice.
+    if pre_v5_upgrade
+            and not BookshelfSettings.isTrue("hardcover_author_roles_notice") then
+        UIManager:scheduleIn(3, function()
+            pcall(function()
+                local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                local affected = ok_hc and Hardcover
+                    and Hardcover.isAvailable and Hardcover.isAvailable()
+                    and Hardcover.hasData and Hardcover.hasData()
+                if not affected then return end
+                BookshelfSettings.save("hardcover_author_roles_notice", true)
+                local ConfirmBox = require("ui/widget/confirmbox")
+                UIManager:show(ConfirmBox:new{
+                    text = _("Bookshelf update: cached Hardcover book details from earlier versions can list audiobook narrators and translators as authors, which shows extra author cards.\n\nRefresh the details for your linked books now? (Contacts Hardcover, rate-limited, cancellable. Also available later under Hardcover > Manage Hardcover data.)"),
+                    ok_text = _("Refresh now"),
+                    cancel_text = _("Later"),
+                    ok_callback = function()
+                        UIManager:nextTick(function()
+                            pcall(function()
+                                self:refreshHardcoverDetails()
+                            end)
+                        end)
+                    end,
+                })
+            end)
+        end)
+    end
+
     -- Cache update-related settings on the instance for the menu's text_func
     -- closures. Defaults match bookends: branch empty, source = "release",
     -- background check OFF (opt-in via the menu toggle).
@@ -734,7 +788,7 @@ function Bookshelf:buildMenuItems(menu_items)
     }
 
     menu_items.bookshelf_shelf_tabs = {
-        text                = _("Bookshelf chips\xE2\x80\xA6"),
+        text                = _("Bookshelf shelves\xE2\x80\xA6"),
         sub_item_table_func = function()
             S._bw = _live_widget
             return S:_tabsMenuItems()
@@ -1105,25 +1159,25 @@ function Bookshelf:onDispatcherRegisterActions()
     Dispatcher:registerAction("bookshelf_next_tab", {
         category = "none",
         event    = "BookshelfNextChip",
-        title    = _("Bookshelf: next chip"),
+        title    = _("Bookshelf: next shelf"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_prev_tab", {
         category = "none",
         event    = "BookshelfPrevChip",
-        title    = _("Bookshelf: previous chip"),
+        title    = _("Bookshelf: previous shelf"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_next_chip_page", {
         category = "none",
         event    = "BookshelfNextChipPage",
-        title    = _("Bookshelf: next page of chips"),
+        title    = _("Bookshelf: next page of shelves"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_prev_chip_page", {
         category = "none",
         event    = "BookshelfPrevChipPage",
-        title    = _("Bookshelf: previous page of chips"),
+        title    = _("Bookshelf: previous page of shelves"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_toggle_hero", {
@@ -2947,6 +3001,344 @@ function Bookshelf:scanAllMetadata()
             Repo.invalidateBookCache("scanAllMetadata")
         end
     end)
+end
+
+-- scanPageCounts() — bulk page-count extraction for books that have never
+-- been opened (the spine shelf's widths come from page counts, and an
+-- unopened reflowable has none until KOReader renders it). Each candidate
+-- is opened and rendered IN A SUBPROCESS (Trapper:dismissableRunInSubprocess,
+-- the same isolation BIM's extraction uses): a book that crashes the engine
+-- kills its own fork, not KOReader, and the progress dialog's dismiss
+-- cancels the pass between books. Counts land in the spine shelf's
+-- persisted progress table -- deliberately NOT in a sidecar, because
+-- creating one marks the book as opened. The count reflects crengine's
+-- default layout rather than the user's exact font settings; for a spine's
+-- thickness that is the right kind of true.
+function Bookshelf:scanPageCounts()
+    local Repo       = require("lib/bookshelf_book_repository")
+    local SpineShelf = require("lib/bookshelf_spine_shelf")
+    local Trapper    = require("ui/trapper")
+    local T          = require("ffi/util").template
+    local InfoMessage = require("ui/widget/infomessage")
+
+    -- Classify the library up front (user spec, in priority order):
+    --   skip   books that already have a count (opened, or a prior scan),
+    --   count  p(N) filename markers (free -- readProgress serves them live),
+    --   probe  the rest: publisher page list, then Hardcover, then render.
+    local fps = Repo.getAllFilepaths and Repo.getAllFilepaths() or {}
+    local skipped = 0
+    local fn_list, todo = {}, {}
+    for _i, fp in ipairs(fps) do
+        local fn = Repo.pageCountFromFilename
+                   and Repo.pageCountFromFilename(fp)
+        local pp = select(1, SpineShelf.cachedProgress(fp))
+        local _p, _s, _r, pc = Repo.readProgress(fp)
+        -- The filename marker outranks a persisted echo of itself: the
+        -- spine plan persists whatever readProgress answers when a page
+        -- is shown, so a never-opened p(N) book usually arrives here
+        -- already holding N -- that is still a filename count, not an
+        -- "opened" one. A count that DISAGREES with the marker came from
+        -- a sidecar or a real scan and wins.
+        if fn and (pc == nil or pc == fn) and (pp == nil or pp == fn) then
+            fn_list[#fn_list + 1] = fp
+        elseif pp or pc then
+            skipped = skipped + 1
+        else
+            todo[#todo + 1] = fp
+        end
+    end
+    if #todo == 0 and #fn_list == 0 then
+        UIManager:show(InfoMessage:new{
+            text    = _("Every book already has a page count."),
+            timeout = 3,
+        })
+        return
+    end
+
+    -- Report names: the light record's title when the batch knows the
+    -- book (one map hit), else the de-extensioned filename.
+    local function nameFor(fp)
+        local rec = Repo.lightMetaFor and Repo.lightMetaFor(fp)
+        if rec and type(rec.title) == "string" and rec.title ~= "" then
+            return rec.title
+        end
+        return (fp:match("([^/]+)$") or fp):gsub("%.[^%.]+$", "")
+    end
+
+    -- persist(fp, pages, is_publisher): the count lands in the spine
+    -- shelf's store (served library-wide through readProgress's fallback),
+    -- and a PUBLISHER count is additionally written into the book's
+    -- sidecar as pagemap_doc_pages -- the key ReaderPageMap owns and every
+    -- token consumer already reads -- but only when a sidecar EXISTS and
+    -- knows no count of its own: sidecars are never created (stock
+    -- KOReader treats their existence as "book opened"), and a sidecar
+    -- that already answers is never second-guessed.
+    local function persist(fp, pages, is_publisher)
+        local _p2, st = Repo.readProgress(fp)
+        SpineShelf.persistProgress(fp, pages, st)
+        if is_publisher then
+            pcall(function()
+                local DocSettings = require("docsettings")
+                if not DocSettings:hasSidecarFile(fp) then return end
+                local ds = DocSettings:open(fp)
+                local stats = ds:readSetting("stats")
+                if ds:readSetting("pagemap_doc_pages")
+                        or (type(stats) == "table" and stats.pages) then
+                    return
+                end
+                ds:saveSetting("pagemap_doc_pages", pages)
+                ds:flush()
+            end)
+        end
+    end
+
+    local report = {
+        skipped   = skipped,
+        filename  = {},
+        publisher = {},
+        hardcover = {},
+        rendered  = {},
+        failed    = {},
+    }
+    for _i, fp in ipairs(fn_list) do
+        report.filename[#report.filename + 1] = nameFor(fp)
+    end
+
+    local function showReport()
+        SpineShelf.flushPersist()
+        Repo.invalidateProgressCache()
+        local ok_tok, Tokens = pcall(require, "lib/bookshelf_tokens")
+        if not (ok_tok and Tokens and Tokens.pageCountReportHtml) then return end
+        local Screen = require("device").screen
+        UIManager:show(require("lib/bookshelf_reviews_modal"):new{
+            title     = _("Page count report"),
+            html_body = Tokens.pageCountReportHtml(report),
+            width  = math.floor(Screen:getWidth() * 0.92),
+            height = math.floor(Screen:getHeight() * 0.86),
+        })
+    end
+
+    Trapper:wrap(function()
+        -- Phase A: publisher page numbers straight from each EPUB's zip
+        -- (bookshelf_pagemap_probe) -- the truest count there is, and
+        -- milliseconds per book. Dismissing the progress message cancels.
+        report.cancelled = false
+        do
+            local ok_probe, Probe = pcall(require, "lib/bookshelf_pagemap_probe")
+            if ok_probe and Probe then
+                local rest = {}
+                for i, fp in ipairs(todo) do
+                    if report.cancelled then
+                        rest[#rest + 1] = fp
+                    else
+                        if i % 20 == 1 then
+                            if not Trapper:info(T(_(
+                                    "Checking publisher page numbers\xe2\x80\xa6 %1 of %2"),
+                                    i, #todo)) then
+                                report.cancelled = true
+                                rest[#rest + 1] = fp
+                            end
+                        end
+                        if not report.cancelled then
+                            local n = Probe.publisherPages(fp)
+                            if n and n > 0 then
+                                persist(fp, n, true)
+                                report.publisher[#report.publisher + 1] =
+                                    { name = nameFor(fp), pages = n }
+                            else
+                                rest[#rest + 1] = fp
+                            end
+                        end
+                    end
+                end
+                todo = rest
+            end
+        end
+        -- Phase B: Hardcover-linked books carry their matched edition's
+        -- page count in the plugin's own settings -- one local read for
+        -- the whole library (user insight).
+        if not report.cancelled then
+            pcall(function()
+                local HC = require("lib/bookshelf_hardcover")
+                if not (HC and HC.linkedPages) then return end
+                local linked = HC.linkedPages()
+                if not next(linked) then return end
+                local rest = {}
+                for _i, fp in ipairs(todo) do
+                    if linked[fp] then
+                        persist(fp, linked[fp], false)
+                        report.hardcover[#report.hardcover + 1] =
+                            { name = nameFor(fp), pages = linked[fp] }
+                    else
+                        rest[#rest + 1] = fp
+                    end
+                end
+                todo = rest
+            end)
+        end
+        SpineShelf.flushPersist()
+        if report.cancelled or #todo == 0 then
+            report.remaining = #todo
+            Trapper:clear()
+            showReport()
+            return
+        end
+
+        -- Phase C: everything still unknown gets opened and paginated by
+        -- the reading engine, one subprocess per book (a crashing book
+        -- kills its fork, not KOReader; dismiss cancels between books).
+        local go_on = Trapper:confirm(T(_(
+            "%1 books have no page source.\n\nPaginate them the slow way?\n\nEach one is opened in the background; this can take a while. You can cancel between books by tapping the progress message."),
+            #todo), _("Skip"), _("Paginate"))
+        if not go_on then
+            report.remaining = #todo
+            Trapper:clear()
+            showReport()
+            return
+        end
+        local processed = 0
+        local _gettime = require("lib/bookshelf_gettime")
+        for i, fp in ipairs(todo) do
+            local name = fp:match("([^/]+)$") or fp
+            -- Up to one retry per book: a dismissal within a second of the
+            -- trap widget appearing is the LAUNCH tap bleeding onto it (the
+            -- same ghost runPacedScan arms against -- Trapper overwrites
+            -- the widget's dismiss_callback, so arming isn't possible
+            -- here), not the user cancelling a scan they just started.
+            -- Device report: tapping Paginate produced an instant
+            -- "report (cancelled)" with no book attempted.
+            local completed, pages_s
+            for attempt = 1, 2 do
+                local t0 = _gettime()
+                completed, pages_s = Trapper:dismissableRunInSubprocess(
+                function()
+                    local ok_pc, pc = pcall(function()
+                        local DocumentRegistry = require("document/documentregistry")
+                        local doc = DocumentRegistry:openDocument(fp)
+                        if not doc then return nil end
+                        if doc.loadDocument then doc:loadDocument() end
+                        if doc.render then doc:render() end
+                        local n = doc:getPageCount()
+                        pcall(function() doc:close() end)
+                        return n
+                    end)
+                    return tostring(ok_pc and pc or "")
+                end,
+                T(_("Paginating\xe2\x80\xa6 %1 of %2\n%3"), i, #todo, name),
+                true)
+                if completed or (_gettime() - t0) > 1.0 then break end
+            end
+            if not completed then
+                report.cancelled = true
+                break
+            end
+            processed = i
+            local pages = tonumber(pages_s)
+            if pages and pages > 0 then
+                -- A render count is layout-derived, not publisher truth:
+                -- it stays out of sidecars (persist() only writes those
+                -- for publisher counts).
+                persist(fp, pages, false)
+                report.rendered[#report.rendered + 1] =
+                    { name = nameFor(fp), pages = pages }
+            else
+                report.failed[#report.failed + 1] = nameFor(fp)
+            end
+            -- Flush every few books: a mid-scan crash or battery death
+            -- should not cost the finished work.
+            if #report.rendered % 10 == 0 then SpineShelf.flushPersist() end
+        end
+        report.remaining = #todo - processed
+        Trapper:clear()
+        showReport()
+    end)
+end
+
+-- refreshHardcoverDetails() — re-fetch cached enrichment for every linked
+-- book, one paced query per book (Hardcover's ~60/min limit). Reached from
+-- Manage Hardcover data and from the one-time post-upgrade notice (the
+-- pre-v5 cache could hold narrators/translators in the author field; the
+-- role filter only applies to fresh fetches). Cancellable via the progress
+-- message; same armed-dismiss guard as the settings module's paced scans
+-- (the launching tap can bleed onto the fresh message).
+function Bookshelf:refreshHardcoverDetails()
+    local InfoMessage = require("ui/widget/infomessage")
+    local T = require("ffi/util").template
+    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+    if not ok_hc or not Hardcover
+            or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
+        UIManager:show(InfoMessage:new{
+            text = _("Hardcover plugin is not available"), timeout = 3 })
+        return
+    end
+    local files = Hardcover.linkedFiles and Hardcover.linkedFiles() or {}
+    if #files == 0 then
+        UIManager:show(InfoMessage:new{
+            text = _("No linked books to refresh"), timeout = 3 })
+        return
+    end
+    local st = { i = 0, refreshed = 0, errors = 0, cancelled = false }
+    local armed = false
+    UIManager:scheduleIn(0.6, function() armed = true end)
+    local info
+    local function closeInfo()
+        if info then
+            info.dismiss_callback = nil
+            UIManager:close(info)
+            info = nil
+        end
+    end
+    local function refresh()
+        closeInfo()
+        info = InfoMessage:new{
+            text = T(_("Refreshing Hardcover details\xe2\x80\xa6 %1 of %2"),
+                     st.i, #files),
+            dismiss_callback = function()
+                if armed then st.cancelled = true end
+            end,
+        }
+        UIManager:show(info)
+    end
+    -- A paced multi-minute scan must hold the device awake: without this
+    -- the screensaver cut in at scan end and the reader woke to an
+    -- apparently unchanged shelf (device report).
+    pcall(function() UIManager:preventStandby() end)
+    local step
+    step = function()
+        if st.cancelled or st.i >= #files then
+            closeInfo()
+            pcall(function() UIManager:allowStandby() end)
+            pcall(function()
+                local Repo = require("lib/bookshelf_book_repository")
+                Repo.invalidateLightMeta()
+                Repo.invalidateBookCache("hardcover-details-refresh")
+            end)
+            -- The refreshed metadata must reach the SCREEN, not just the
+            -- caches: rebuild the live shelf (its own fetch cache first --
+            -- the 30s TTL would happily serve the stale page back).
+            pcall(function()
+                if _live_widget and UIManager:isWidgetShown(_live_widget) then
+                    _live_widget._spine_fetch_cache = nil
+                    _live_widget:_rebuild()
+                    UIManager:setDirty(_live_widget, "ui")
+                end
+            end)
+            UIManager:show(InfoMessage:new{
+                text = T(_("Hardcover details refreshed for %1 of %2 linked books."),
+                         st.refreshed, #files),
+                timeout = 4,
+            })
+            return
+        end
+        st.i = st.i + 1
+        local ok = pcall(Hardcover.refreshBook, { filepath = files[st.i] }, {})
+        if ok then st.refreshed = st.refreshed + 1
+        else st.errors = st.errors + 1 end
+        refresh()
+        UIManager:scheduleIn(1.2, step)
+    end
+    refresh()
+    UIManager:nextTick(step)
 end
 
 -- Clear dev branch + install latest stable release. Used when escaping a

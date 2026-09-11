@@ -735,6 +735,55 @@ function Settings:_coverDisplaySubItems()
                 markDirty()
             end,
         },
+        -- Issue #330: how tall a cover may get before it is trimmed. Presets
+        -- rather than a free number, which is what the reporter asked for -- the
+        -- useful range is narrow and the arithmetic behind it (how many rows
+        -- still fit) is not something to hand a reader a spinner for.
+        --
+        -- Enabled only alongside True cover aspect ratio: with uniform covers
+        -- every one is 1.5 by definition and a cap has nothing to act on.
+        (function()
+            local CAPS = { 1.4, 1.5, 1.55, 1.65, 1.8 }
+            local function capRow(v)
+                return {
+                    text_func = function()
+                        local label = string.format("%.2f", v):gsub("0$", "")
+                        if v == 1.55 then label = label .. " " .. _("(default)") end
+                        return label
+                    end,
+                    checked_func = function()
+                        local SpineWidget = require("lib/bookshelf_spine_widget")
+                        return math.abs(SpineWidget.coverAspectCap() - v) < 0.001
+                    end,
+                    radio = true,
+                    keep_menu_open = true,
+                    callback = function()
+                        BookshelfSettings.save("cover_aspect_cap", v)
+                        BookshelfSettings.flush()
+                        markDirty()
+                    end,
+                }
+            end
+            local rows = {}
+            for _i = 1, #CAPS do rows[#rows + 1] = capRow(CAPS[_i]) end
+            return {
+                text_func = function()
+                    local SpineWidget = require("lib/bookshelf_spine_widget")
+                    return _("Tallest cover shape") .. ": "
+                        .. (string.format("%.2f", SpineWidget.coverAspectCap()):gsub("0$", ""))
+                end,
+                help_text = _("How tall a cover may be, relative to its width,"
+                    .. " before the extra height is trimmed. Taller values show"
+                    .. " more of an unusually tall cover; they also make every"
+                    .. " row taller, so fewer rows fit on the shelf. Only"
+                    .. " applies with True cover aspect ratio on."),
+                enabled_func = function()
+                    return BookshelfSettings.isTrue("true_cover_aspect")
+                end,
+                keep_menu_open = true,
+                sub_item_table = rows,
+            }
+        end)(),
         {
             text = _("Square cover corners"),
             help_text = _("Draw covers with square corners instead of the "
@@ -787,8 +836,8 @@ function Settings:_coverDisplaySubItems()
                 return _("Default folder style: ") .. SD.labelFor(SD.defaultMode())
             end,
             help_text = _("How folders and stacks are drawn on any shelf that "
-                .. "has not chosen its own. Long-press a chip to override it "
-                .. "for that shelf."),
+                .. "has not chosen its own. Long-press a shelf to override "
+                .. "it there."),
             sub_item_table_func = function()
                 return Settings:_groupDisplaySubItems()
             end,
@@ -1219,7 +1268,7 @@ function Settings:_listViewSubItems()
             enabled = false,
         },
         {
-            text = _("long-press a chip, then open Shelf style."),
+            text = _("long-press a shelf, then open Shelf style."),
             enabled = false,
             separator = true,
         },
@@ -1735,6 +1784,59 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
+                return _("Selection outline color") .. ": " .. valueLabel("selection")
+            end,
+            help_text = _("Color of the ring drawn around the selected book"
+                .. " or the one you are currently reading. Default black."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("selection_color", "selection", 100,
+                    _("Selection outline color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("selection_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
+                return _("Cover shadow color") .. ": " .. valueLabel("card_shadow")
+            end,
+            help_text = _("Color of the drop shadow behind book covers and"
+                .. " folder cards. Has no effect where the shadow is switched"
+                .. " off. Default mid gray, and darker in night mode."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("card_shadow_color", "card_shadow", 50,
+                    _("Cover shadow color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("card_shadow_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
+                return _("Shelf plank color") .. ": " .. valueLabel("plank")
+            end,
+            help_text = _("Color of the shelf plank the Spines style stands"
+                .. " its books on. The lit top surface and shaded front edge"
+                .. " are both tinted from this one color. Default light oak."),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                pickColor("spine_plank_color", "plank", 45,
+                    _("Shelf plank color (% black)"), touchmenu_instance)
+            end,
+            hold_callback = function(touchmenu_instance)
+                deleteModeKey("spine_plank_color")
+                markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
+            text_func = function()
                 return _("Folder overlay background") .. ": " .. valueLabel("folder_bg")
             end,
             keep_menu_open = true,
@@ -1769,16 +1871,16 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
-                return _("Selected chip fill") .. ": " .. valueLabel("chip_selected_bg")
+                return _("Selected shelf fill") .. ": " .. valueLabel("chip_selected_bg")
             end,
-            help_text = _("Fill behind the selected chip in the chip bar."
-                .. " Left unset, the selected chip is drawn by inverting the"
-                .. " chip -- the fastest path and identical on every device."
+            help_text = _("Fill behind the selected shelf in the shelf menu."
+                .. " Left unset, the selected shelf is drawn by inverting"
+                .. " it -- the fastest path and identical on every device."
                 .. " Setting a color paints it instead. Long-press to clear."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("chip_selected_bg", "chip_selected_bg", 100,
-                    _("Selected chip fill (% black)"), touchmenu_instance,
+                    _("Selected shelf fill (% black)"), touchmenu_instance,
                     refreshChipBar, chipBarAnchor)
             end,
             hold_callback = function(touchmenu_instance)
@@ -1789,14 +1891,14 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
-                return _("Selected chip text") .. ": " .. valueLabel("chip_selected_fg")
+                return _("Selected shelf text") .. ": " .. valueLabel("chip_selected_fg")
             end,
-            help_text = _("Label color on the selected chip. Defaults to"
+            help_text = _("Label color on the selected shelf. Defaults to"
                 .. " paper white over the fill. Long-press to clear."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("chip_selected_fg", "chip_selected_fg", 0,
-                    _("Selected chip text (% black)"), touchmenu_instance,
+                    _("Selected shelf text (% black)"), touchmenu_instance,
                     refreshChipBar, chipBarAnchor)
             end,
             hold_callback = function(touchmenu_instance)
@@ -1819,6 +1921,8 @@ function Settings:_colorsSubItems()
                     "bookmark_color", "complete_bookmark_color",
                     "favorite_star_color", "favorite_heart_color",
                     "badge_fg", "badge_bg", "border_color",
+                    "selection_color", "card_shadow_color",
+                    "spine_plank_color",
                     "folder_overlay_bg", "folder_overlay_fg",
                     "chip_selected_bg", "chip_selected_fg",
                 }
@@ -1983,7 +2087,7 @@ function Settings:_settingsSubItems()
             if f then label = f:gsub("^.*/", ""):gsub("%.%w+$", "") end  -- basename, no extension
             return T(_("Bookshelf UI font: %1"), label)
         end,
-        help_text = _("The font Bookshelf uses for its own UI text (chips, "
+        help_text = _("The font Bookshelf uses for its own UI text (shelf names, "
             .. "labels, metadata). Pick any installed font (same picker as the "
             .. "hero card); '(Default)' follows your KOReader UI font. The hero "
             .. "title and author have their own fonts in the hero card editor."),
@@ -2007,7 +2111,7 @@ function Settings:_settingsSubItems()
         end,
         help_text = _("Where micro-modules appear. Each surface is independent:"
             .. " In start menu shows module cards in the start-menu launcher; In"
-            .. " hero area gives a chip that swaps the hero card for the grid;"
+            .. " hero area adds a shelf-menu entry that swaps the hero card for the grid;"
             .. " Full-screen button adds a footer button opening a full-screen"
             .. " grid. The hero and full-screen surfaces keep their own module"
             .. " lists. Turn all three off to disable micro-modules entirely."),
@@ -2431,7 +2535,7 @@ function Settings:_hardcoverSubItems()
                 local n = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
                 return T(_("Hardcover genres used: %1"), tostring(n))
             end,
-            help_text = _("How many of a linked book's Hardcover genres to use -- for the tag pills and the genre chips/stacks -- when Use Hardcover metadata is on. 0 uses none."),
+            help_text = _("How many of a linked book's Hardcover genres to use -- for the tag pills and the genre shelves/stacks -- when Use Hardcover metadata is on. 0 uses none."),
             enabled_func = function()
                 return BookshelfSettings.isTrue("hardcover_use_metadata")
             end,
@@ -2441,7 +2545,7 @@ function Settings:_hardcoverSubItems()
                 local cur = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
                 UIManager:show(SpinWidget:new{
                     title_text     = _("Hardcover genres used"),
-                    info_text      = _("How many of a book's Hardcover genres to use for tag pills and the genre chips/stacks."),
+                    info_text      = _("How many of a book's Hardcover genres to use for tag pills and the genre shelves/stacks."),
                     value          = cur,
                     value_min      = 0,
                     value_max      = 20,
@@ -2469,7 +2573,7 @@ function Settings:_hardcoverSubItems()
                     -- keeps the public ratings current as they drift on
                     -- Hardcover (one batched query, no per-book covers/text).
                     text = _("Refresh ratings only"),
-                    help_text = _("Fetch up-to-date public ratings and review counts for linked Hardcover books. Covers and descriptions are fetched when a book is linked, so this only updates the ratings."),
+                    help_text = _("Fetch up-to-date public ratings and review counts for every linked book in one quick batched request -- seconds, even for a large library. Ratings drift daily; for the rarely-changing details (author, genres, series, description, pages) use Refresh linked book details instead."),
                     callback = function(touchmenu_instance)
                         if touchmenu_instance then
                             UIManager:close(touchmenu_instance)
@@ -2492,6 +2596,23 @@ function Settings:_hardcoverSubItems()
                                          tostring(stats.rated or 0),
                                          tostring(stats.linked or 0)), 4)
                             end)
+                        end)
+                    end,
+                },
+                {
+                    -- Full details re-fetch for every linked book: the path
+                    -- that heals stale cached enrichment in place (e.g. the
+                    -- pre-v5 author strings that included narrators and
+                    -- translators). Links untouched; one query per book,
+                    -- paced under Hardcover's rate limit.
+                    text = _("Refresh linked book details"),
+                    help_text = _("Re-fetch the cached details (author, description, series, genres, page count, ratings) for every linked book, one rate-limited request per book -- minutes on a large library, cancellable. Use after an upgrade note asks for it, or when cached data looks stale; for just the ratings, Refresh ratings only is much faster."),
+                    callback = function(touchmenu_instance)
+                        if touchmenu_instance then
+                            UIManager:close(touchmenu_instance)
+                        end
+                        UIManager:nextTick(function()
+                            self._plugin:refreshHardcoverDetails()
                         end)
                     end,
                 },
@@ -2700,12 +2821,12 @@ function Settings:_performanceSubItems()
             end,
         },
         {
-            text = _("Pre-warm chip cache"),
-            help_text = _("Warms each chip's data in the background shortly"
-                .. " after launch so switching chips is instant. On a large"
-                .. " library with many chips this adds a few seconds of work"
+            text = _("Pre-warm shelf cache"),
+            help_text = _("Warms each shelf's data in the background shortly"
+                .. " after launch so switching shelves is instant. On a large"
+                .. " library with many shelves this adds a few seconds of work"
                 .. " after startup; turn it off for a quicker, lighter launch"
-                .. " (chips then load on first use)."),
+                .. " (shelves then load on first use)."),
             checked_func = function()
                 return BookshelfSettings.nilOrTrue("prewarm_chip_cache")
             end,
@@ -2932,7 +3053,7 @@ function Settings:_behaviourSubItems()
                     .. " shows when it opens: the book you're currently"
                     .. " reading, or a grid of micro-modules (clock, quote,"
                     .. " random book, reading goals…). You can also switch"
-                    .. " between them with the chips above the shelves."),
+                    .. " between them from the shelf menu."),
                 sub_item_table_func = function()
                     return {
                         optionRow("currently_reading", labels.currently_reading),
@@ -3014,7 +3135,7 @@ function Settings:_behaviourSubItems()
         separator = true,
     }
     items[#items + 1] = animRow(_("Page turn animation"), "shelf_page_animation",
-        _("Animate shelf page turns and chip-bar paging with a wipe "
+        _("Animate shelf page turns and shelf-menu paging with a wipe "
         .. "effect. E-ink only (the effect relies on the panel's "
         .. "refresh, so it does nothing on LCD screens). Fast / Medium "
         .. "/ Slow trade snappiness for smoothness. Slow looks "
@@ -3063,10 +3184,23 @@ function Settings:_librarySubItems()
                 UIManager:nextTick(function() plugin:scanAllMetadata() end)
             end,
         },
+        {
+            text      = _("Extract page counts"),
+            help_text = _("Paginate books that have never been opened, so"
+                .. " spine thickness and page-count badges reflect their real"
+                .. " length. Each book is rendered in the background; this"
+                .. " can take a while on a large library."),
+            callback  = function(touchmenu_instance)
+                if touchmenu_instance then
+                    UIManager:close(touchmenu_instance)
+                end
+                UIManager:nextTick(function() plugin:scanPageCounts() end)
+            end,
+        },
     {
         text     = _("Manage collections\xE2\x80\xA6"),
         help_text = _("Create, rename, reorder and delete collections."
-            .. " Also reachable from collection chips and stacks."),
+            .. " Also reachable from collection shelves and stacks."),
         callback = function()
             local CollectionManager = require("lib/bookshelf_collection_manager")
             CollectionManager.show{
@@ -3121,7 +3255,7 @@ function Settings:_librarySubItems()
                 return _("Author name formatting") .. ": " .. label
             end,
             help_text = _("How author names are displayed on the Authors"
-                .. " chip. Auto keeps whichever form was first found"
+                .. " shelf. Auto keeps whichever form was first found"
                 .. " (\"Richard Osman\" or \"Osman, Richard\"). First Last"
                 .. " and Last, First force every author card into the same"
                 .. " shape regardless of how each book stored the name."),
@@ -3354,20 +3488,20 @@ function Settings:_advancedSubItems()
             separator = true,
         },
         {
-            text     = _("Reset chip bar to defaults"),
-            help_text = _("Clears your custom chip layout (which chips are "
+            text     = _("Reset shelf menu to defaults"),
+            help_text = _("Clears your custom shelf menu (which shelves are "
                 .. "shown, their order, their labels and icons, their "
                 .. "sources and filters and sorts) and restores the "
-                .. "fresh-install chip set: Home / Recent / Series / "
+                .. "fresh-install set: Home / Recent / Series / "
                 .. "Favorites enabled, the rest available to toggle on. "
-                .. "Also returns the active chip to Home and the page "
+                .. "Also returns the active shelf to Home and the page "
                 .. "indicator to 1. Other settings (hero text, fonts, "
                 .. "colors) are unaffected."),
             callback = function(touchmenu_instance)
                 local ConfirmBox = require("ui/widget/confirmbox")
                 UIManager:show(ConfirmBox:new{
-                    text = _("Reset the chip bar to default settings?\n\n"
-                        .. "All custom chips you have created or edited "
+                    text = _("Reset the shelf menu to default settings?\n\n"
+                        .. "All custom shelves you have created or edited "
                         .. "will be lost. Other Bookshelf settings (hero "
                         .. "text, fonts, colors) are unaffected."),
                     ok_text = _("Reset"),
@@ -3406,13 +3540,13 @@ function Settings:_advancedSubItems()
             help_text = _("Clears your hero/book-detail customizations and "
                 .. "restores the fresh-install detail layout, including the "
                 .. "bundled title (Inter ExtraBold) and author (Caveat) fonts. "
-                .. "The Bookshelf UI font and chip bar are unaffected."),
+                .. "The Bookshelf UI font and shelf menu are unaffected."),
             callback = function(touchmenu_instance)
                 local ConfirmBox = require("ui/widget/confirmbox")
                 UIManager:show(ConfirmBox:new{
                     text = _("Reset the book detail area to default settings?\n\n"
                         .. "All hero/detail text and font customizations will be "
-                        .. "lost. The Bookshelf UI font and chip bar are unaffected."),
+                        .. "lost. The Bookshelf UI font and shelf menu are unaffected."),
                     ok_text = _("Reset"),
                     ok_callback = function()
                         local Regions = require("lib/bookshelf_hero_regions")
@@ -3431,12 +3565,19 @@ function Settings:_advancedSubItems()
         },
         {
             text = _("BETA: Read calibre metadata.calibre"),
+            -- Says what the code does. The previous wording promised the
+            -- opposite ("Calibre data only fills gaps"), which is how a
+            -- Calibre library built from filenames ended up overriding
+            -- correct metadata with a chapter title as the author (#381).
             help_text = _("For users with a Calibre-managed library. "
-                .. "Reads the metadata.calibre JSON file at home_dir to "
-                .. "cover title / authors / series / tags / language for "
-                .. "every book in the library — no per-book extraction "
-                .. "needed. BIM-cached metadata still wins per field; "
-                .. "Calibre data only fills gaps."),
+                .. "Reads the metadata.calibre file in your home folder to "
+                .. "fill in title, authors, series, tags, language and "
+                .. "description for every book at once, with no per-book "
+                .. "extraction. Calibre's values take priority over the "
+                .. "metadata KOReader extracted from the book file itself. "
+                .. "Anything you have edited in Book information still wins "
+                .. "over both. Covers and page counts always come from "
+                .. "KOReader."),
             checked_func   = function()
                 return BookshelfSettings.read("calibre_metadata") == true
             end,
@@ -3463,9 +3604,9 @@ function Settings:_advancedSubItems()
     -- off-Kobo). Toggling rebuilds so the chip appears/disappears immediately.
     items[#items + 1] = {
         text = _("BETA: Kobo library shelf"),
-        help_text = _("Adds a \"Kobo\" chip that surfaces your Kobo "
+        help_text = _("Adds a \"Kobo\" shelf that surfaces your Kobo "
             .. "virtual library (the books managed by the Kobo store / "
-            .. "OGKevin's kobo.koplugin) as a Bookshelf shelf. Read-only; "
+            .. "OGKevin's kobo.koplugin). Read-only; "
             .. "covers and opening depend on that plugin. Kobo devices only."),
         checked_func = function()
             return BookshelfSettings.read("kobo_shelf") == true
@@ -3665,6 +3806,30 @@ function Settings:_openLayoutEditor(touchmenu_instance)
 
     local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
 
+    -- Preview the thing being edited. These are the COVER GRID's rows and
+    -- columns whatever style is on screen (see the readers below), so over a
+    -- list or spine shelf the reader was adjusting one set of numbers and
+    -- watching another change. Held for the dialog's life and released once,
+    -- in close(), which both exits funnel through -- the dialog is
+    -- dismissable = false, so there is no third way out.
+    local unpinned = false
+    local function unpinCovers()
+        if unpinned then return end
+        unpinned = true
+        if bw and bw.unpinCoverPreview then bw:unpinCoverPreview() end
+        if bw and bw._rebuild then
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end
+    end
+    if bw and bw.pinCoverPreview then
+        bw:pinCoverPreview()
+        if bw._rebuild then
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end
+    end
+
     -- Effective current grid, reading through the widget so an unset (legacy)
     -- value still shows the real column/row count being rendered.
     --
@@ -3720,6 +3885,7 @@ function Settings:_openLayoutEditor(touchmenu_instance)
     end
     local function close()
         UIManager:close(dialog)
+        unpinCovers()
         restoreMenu()
     end
     -- Both exits force the full-quality covers immediately (cancelling the
@@ -3740,9 +3906,29 @@ function Settings:_openLayoutEditor(touchmenu_instance)
         close()
     end
 
+    -- What these two numbers really set is how the screen is DIVIDED, which
+    -- neither label says on its own -- and the shelf switching to covers under
+    -- the dialog needs a reason on screen, or it reads as a bug.
+    local Font_          = require("ui/font")
+    local TextBoxWidget_ = require("ui/widget/textboxwidget")
+    local Size_          = require("ui/size")
+    local Screen_        = require("device").screen
+    local dlg_w  = math.floor(math.min(Screen_:getWidth(), Screen_:getHeight()) * 0.6)
+    local help_w = dlg_w - 2 * Size_.border.window - 2 * Size_.padding.button
+                   - 2 * (Size_.padding.large + Size_.margin.title)
+    local help_widget = TextBoxWidget_:new{
+        text  = _("Rows and columns set how much of the screen the shelf takes; the hero area above fills whatever is left. List and spine shelves use that same space with their own row counts, so covers are shown here while you adjust it."),
+        face  = Font_:getFace("x_smallinfofont"),
+        width = help_w,
+    }
+    help_widget.not_focusable = true
+
     dialog = ButtonDialog:new{
         dismissable = false,  -- explicit Cancel/Accept; tap-outside disabled
         title = _("Edit shelf size"),
+        title_align = "left",
+        use_info_style = false,
+        _added_widgets = { help_widget },
         width_factor = 0.6,
 
         buttons = {
@@ -3951,7 +4137,7 @@ function Settings:_pickChipFontScale(touchmenu_instance)
         dismissable = false,  -- nudge-dialog lockdown; see _pickCoverBadgeFontScale
         -- Open below the chip bar, not over it: this dialog resizes the strip.
         anchor = self:_chipBarAnchor(),
-        title = _("Chip bar font scale"),
+        title = _("Shelf menu font scale"),
         buttons = {
             {
                 { text = "-10",  callback = function() nudge(-10) end },
@@ -4748,7 +4934,7 @@ end
 -- _textSizeSubItems() -- single home for every font-scale knob in the
 -- plugin (issue #60). Pre-#60 these were scattered: Hero in Edit hero
 -- card, Cover badges in Cover display, Expanded shelf labels in
--- Expanded shelf, Chip bar in Tabs..., and stack/folder labels weren't
+-- Expanded shelf, Shelf menu in Tabs..., and stack/folder labels weren't
 -- configurable at all. Bringing them under one Settings menu makes the
 -- "where do I dial X smaller?" question single-answer.
 function Settings:_textSizeSubItems()
@@ -4781,7 +4967,7 @@ function Settings:_textSizeSubItems()
         row(_("Cover labels"),          "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
         row(_("Cover badges"),          "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
         row(_("Stack & folder labels"), "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
-        row(_("Chip bar"),              "chip_font_scale",           100, "_pickChipFontScale"),
+        row(_("Shelf menu"),              "chip_font_scale",           100, "_pickChipFontScale"),
         -- Adjacent to the chip bar because a list row is built to the same
         -- shape -- same face, same base size, same band arithmetic
         -- (lib/bookshelf_band_metrics.lua) -- and at 100 on both they render
@@ -5250,12 +5436,12 @@ function Settings:_tabsMenuItems()
         UIManager_ref:close(container, "ui")
     end
 
-    -- Chip bar font scale moved to Settings -> Text size (#60).
+    -- Shelf menu font scale moved to Settings -> Text size (#60).
     local items = {
         {
-            text = _("Flexible chip widths"),
-            help_text = _("Off: every chip gets the same width. On: each "
-                .. "chip is sized to its label, so single-icon chips stay "
+            text = _("Flexible shelf widths"),
+            help_text = _("Off: every shelf gets the same width. On: each "
+                .. "shelf is sized to its label, so single-icon shelves stay "
                 .. "narrow and longer text labels get more room. Falls "
                 .. "back to equal widths when natural sizes don't fit."),
             checked_func   = function()
@@ -5270,7 +5456,7 @@ function Settings:_tabsMenuItems()
         },
         {
             text = _("Uppercase labels"),
-            help_text = _("On: chip labels and the drill breadcrumb are shown"
+            help_text = _("On: shelf names and the drill breadcrumb are shown"
                 .. " in capitals, the default look. Off: each label reads"
                 .. " exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."),
             checked_func   = function()
@@ -5329,7 +5515,7 @@ function Settings:_tabsMenuItems()
 
     -- Footer: add a new custom tab and open its editor immediately.
     items[#items + 1] = {
-        text = _("+ Add new chip"),
+        text = _("+ Add new shelf"),
         callback = function(touchmenu_instance)
             -- Generate a unique custom_N id.
             local fresh = TabModel.load()
@@ -5346,7 +5532,7 @@ function Settings:_tabsMenuItems()
             local new_id = "custom_" .. n
             local new_tab = {
                 id            = new_id,
-                label         = _("New chip"),
+                label         = _("New shelf"),
                 icon          = nil,
                 source        = { kind = "all" },
                 filter        = {},

@@ -29,7 +29,8 @@ local MAX_QUOTES = 200 -- total highlights collected across those books
 local MAX_CHARS  = 280 -- long quotes truncated on a word boundary
 
 -- Cache keyed by a refresh-mode string (see cacheKey): the sidecar walk runs
--- once per key. data = { text, title, author, filepath, page, pos0, legacy }
+-- once per key. data = { text, title, author, filepath, page, pos0, legacy,
+--                          chapter, page_display }
 -- or false for "no highlights".
 local _cache    -- { key = <string>, data = <quote table> | false }
 local _nonce    = 0   -- session nonce; reroll() bumps it (in-memory only)
@@ -86,7 +87,12 @@ local function _collectFromSidecar(fp, quotes)
                 if not title then
                     title = (fp:match("([^/]+)$") or fp):gsub("%.[^.]+$", "")
                 end
-                local function add(text, page, pos0, legacy)
+                -- chapter: KOReader records the TOC title on each annotation,
+                -- so %quote_chapter costs nothing to carry. Sanitised like the
+                -- rest -- it is book metadata and reaches a TextWidget. Legacy
+                -- highlight sidecars predate the field and pass nil, which the
+                -- token renders as empty.
+                local function add(text, page, pos0, legacy, chapter, page_display)
                     if #quotes < MAX_QUOTES and type(text) == "string"
                             and text ~= "" then
                         quotes[#quotes + 1] = {
@@ -96,6 +102,21 @@ local function _collectFromSidecar(fp, quotes)
                             author = author and SafeText.safe(author) or nil,
                             filepath = fp, page = page, pos0 = pos0,
                             legacy = legacy,
+                            chapter = (type(chapter) == "string" and chapter ~= "")
+                                      and SafeText.safe(chapter) or nil,
+                            -- A page fit to PRINT, which `page` above is not:
+                            -- KOReader stores the highlight's LOCATION there,
+                            -- and for a reflowable book that is an xPointer
+                            -- ("/body/DocFragment[12]/..."), not a number.
+                            -- %quote_page rendered it verbatim.
+                            --
+                            -- pageref is the stable label and pageno the
+                            -- continuous number; preferring the label matches
+                            -- what %page_count and %page_num report, so a
+                            -- template mixing them stays in one scale.
+                            -- Number-only, so nothing unprintable can reach a
+                            -- template again.
+                            page_display = tonumber(page_display),
                         }
                     end
                 end
@@ -105,7 +126,8 @@ local function _collectFromSidecar(fp, quotes)
                         -- `drawer` set = real highlight; bookmarks (no drawer)
                         -- carry auto-filler text we must not quote.
                         if type(a) == "table" and a.drawer then
-                            add(a.text, a.page, a.pos0)
+                            add(a.text, a.page, a.pos0, false, a.chapter,
+                                a.pageref or a.pageno)
                         end
                     end
                 else
@@ -123,8 +145,10 @@ local function _collectFromSidecar(fp, quotes)
                             if type(list) == "table" then
                                 for _j, h in ipairs(list) do
                                     if type(h) == "table" then
+                                        -- Legacy sidecars key highlights BY
+                                        -- page, so the key is the number.
                                         add(h.text, tonumber(page) or page,
-                                            h.pos0, true)
+                                            h.pos0, true, nil, tonumber(page))
                                     end
                                 end
                             end
@@ -223,7 +247,8 @@ function Quotes.ofTheDay()
             text = truncateQuote(pick.text), title = pick.title,
             author = pick.author,
             filepath = pick.filepath, page = pick.page, pos0 = pick.pos0,
-            legacy = pick.legacy,
+            legacy = pick.legacy, chapter = pick.chapter,
+            page_display = pick.page_display,
         }
     end
     _cache = { key = key, data = data }
@@ -270,7 +295,8 @@ function Quotes.forBook(filepath)
             text = truncateQuote(pick.text), title = pick.title,
             author = pick.author,
             filepath = pick.filepath, page = pick.page, pos0 = pick.pos0,
-            legacy = pick.legacy,
+            legacy = pick.legacy, chapter = pick.chapter,
+            page_display = pick.page_display,
         }
     end
     _book_cache = { key = key, data = data }

@@ -49,7 +49,7 @@ local ShelfRow = {}
 -- true-aspect is on (so the tallest untrimmed cover still fits its row).
 local function _natAspect()
     return BookshelfSettings.isTrue("true_cover_aspect")
-        and SpineWidget.COVER_ASPECT_CAP or 1.5
+        and SpineWidget.coverAspectCap() or 1.5
 end
 
 -- _renderDottedRule(width, thickness)

@@ -40,6 +40,25 @@ t.test("the rounded shadow repaint is skipped when the shadow is off", function(
         .. "shadow on open")
 end)
 
+t.test("a spine-shelf face-out opens with the shelf-perspective tilt", function()
+    -- Face-out tiles set flat_thumb for the chrome (square corners, no
+    -- shadow), which routed them to the list thumbnail's flat squash; the
+    -- straight-on trapezoid flex read wrong too, because the shelf views
+    -- its books from slightly above (user reports, both). They tip
+    -- forward through the spine shelf's own painter instead.
+    assert(body:match("spine_face_out") and body:match("paintFaceOutTilt"),
+        "spine_face_out tiles must route to SpineShelf.paintFaceOutTilt, or "
+        .. "shelf face-outs open with a straight-on grid effect")
+end)
+
+t.test("a spine-mode open without a tapped tile hands off to the spine effect", function()
+    -- Opens from a bare spine have no cover tile to flex; the spine tilt +
+    -- hero flex live in _paintSpineOpeningEffect.
+    assert(body:match("_paintSpineOpeningEffect"),
+        "the no-tapped-tile branch must route spine-mode opens to "
+        .. "_paintSpineOpeningEffect, or spines open with no feedback")
+end)
+
 t.test("the effect asks the tapped spine, not the settings directly", function()
     -- The spine knows about flat_thumb too: a list-view thumbnail is already
     -- flat whatever the grid preference says. Reading the settings here would

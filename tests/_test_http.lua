@@ -35,7 +35,7 @@ package.loaded["ltn12"] = {
         end,
     },
 }
-package.loaded["socket/http"] = {
+package.loaded["socket.http"] = {
     request = function(req)
         seen.url, seen.headers = req.url, req.headers
         if http_state.body then req.sink(http_state.body) end
@@ -145,7 +145,7 @@ end)
 
 t.test("LuaSocket absent entirely -> curl leg still works", function()
     -- Force the four-module pcall-require to fail on the first one.
-    package.loaded["socket/http"] = nil
+    package.loaded["socket.http"] = nil
     package.preload["socket/http"] = function() error("no luasocket") end
     stub_popen()
     popen_body = '{"ok":true}'

@@ -94,6 +94,14 @@ local ScaledCoverCache = {
     _hits     = 0,     -- perf: cache hits this session
     _puts     = 0,     -- perf: cache misses (scales) this session
     _evictions= 0,     -- perf: evictions this session
+    -- Bytes of bbs this cache has DROPPED ITS REFERENCE TO without freeing
+    -- (evictions, prefer-larger replacements, drop, clear). Those bbs are C
+    -- heap LuaJIT's GC cannot see -- it only sees a tiny cdata handle -- so
+    -- they sit unreclaimed until a full collect that nothing on the page-turn
+    -- path used to trigger. Rapid paging piled up tens of MB of them and
+    -- ground a PW5 into swap (60s stall, then the OOM killer). The widget
+    -- reads this after each turn and forces a collect past a threshold.
+    _orphan_bytes = 0,
     -- Disk backing (see the block comment above _disk).
     _disk_miss  = {},  -- filepath → true, books known not to be on disk
     _disk_hits  = 0,   -- perf: covers served from disk this session
@@ -174,6 +182,7 @@ function ScaledCoverCache:_evictIfNeeded()
         self._cache[key] = nil
         self._bytes = self._bytes - (self._sizes[key] or 0)
         if self._bytes < 0 then self._bytes = 0 end
+        self._orphan_bytes = self._orphan_bytes + (self._sizes[key] or 0)
         self._sizes[key] = nil
         self._evictions = self._evictions + 1
         if _PERF_LOG then logger.dbg(string.format(
@@ -290,6 +299,7 @@ function ScaledCoverCache:put(filepath, bb, from_disk)
         self:_removeKey(filepath)
         self._bytes = self._bytes - (self._sizes[filepath] or 0)
         if self._bytes < 0 then self._bytes = 0 end
+        self._orphan_bytes = self._orphan_bytes + (self._sizes[filepath] or 0)
         self._sizes[filepath] = nil
     end
     self._cache[filepath] = bb
@@ -347,9 +357,16 @@ function ScaledCoverCache:drop(filepath)
         pcall(D.drop, filepath)
         self._disk_miss[filepath] = true
     end
+    -- The hero tier stashes hero-height copies of the same source bytes;
+    -- every drop() caller means "re-decode next time", so a stashed copy
+    -- would resurrect the old art. One funnel keeps the two in step.
+    pcall(function()
+        require("lib/bookshelf_hero_tier"):drop(filepath)
+    end)
     if self._cache[filepath] == nil then return end
     self._bytes = self._bytes - (self._sizes[filepath] or 0)
     if self._bytes < 0 then self._bytes = 0 end
+    self._orphan_bytes = self._orphan_bytes + (self._sizes[filepath] or 0)
     self._cache[filepath] = nil
     self._sizes[filepath] = nil
     self:_removeKey(filepath)
@@ -358,6 +375,17 @@ end
 -- Backwards-compatible alias used by fork code predating upstream's drop().
 function ScaledCoverCache:remove(filepath)
     return self:drop(filepath)
+end
+
+-- orphanBytes() -- bytes of bbs dropped-but-not-freed since the last
+-- resetOrphanBytes(). See the field comment: the widget's post-turn reclaim
+-- forces a full collect once this passes its threshold.
+function ScaledCoverCache:orphanBytes()
+    return self._orphan_bytes or 0
+end
+
+function ScaledCoverCache:resetOrphanBytes()
+    self._orphan_bytes = 0
 end
 
 -- clear — drop the cache's references. Same lifetime contract as put:
@@ -373,6 +401,9 @@ function ScaledCoverCache:clear()
     -- the next launch.
     local D = _disk()
     if D then pcall(D.clear) end
+    -- Every resident bb is now dropped-but-not-freed; count it so the next
+    -- reclaim pass collects rather than waits.
+    self._orphan_bytes = (self._orphan_bytes or 0) + (self._bytes or 0)
     self._cache     = {}
     self._order     = {}
     self._sizes     = {}

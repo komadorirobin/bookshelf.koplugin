@@ -146,7 +146,7 @@ end
 -- a band that cannot hold it.
 --
 -- NOT the same WEIGHT as a chip, and that is a ruling rather than an
--- oversight. Chip labels are bold -- _buildLabelContent asks for
+-- oversight. Shelf labels are bold -- _buildLabelContent asks for
 -- `{ bold = <segment is text> }` (bookshelf_chip_bar.lua:114 and :148), so
 -- every non-icon run of a chip label renders bold, and the breadcrumb pills
 -- say so outright at :966. Rows are not. Measured on a Paperwhite 5 capture

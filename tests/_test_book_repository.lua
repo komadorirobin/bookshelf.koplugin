@@ -1022,6 +1022,75 @@ test("countFinishedBooks: counts Finished sidecars across the walk", function()
     Repo.invalidateWalkCache()
 end)
 
+-- The spine plan mutates the SHARED light-meta record (bakes the sidecar's
+-- status + a checked flag onto it so paints skip DocSettings). A status edit
+-- fires invalidateProgressCache, which must strip those fields too -- or the
+-- plan's `if src.status == nil` guard keeps serving the old status until
+-- restart: the stale reading-glyph bug on the spine shelf.
+test("invalidateProgressCache strips spine-plan fields from shared light records", function()
+    Repo.invalidateWalkCache()
+    Repo.invalidateLightMeta()
+    Repo.invalidateBookCache("test")
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = { ["/lib/spine.epub"] = { title = "Spine" } }
+    local lfs_stub = package.loaded["libs/libkoreader-lfs"]
+    local prev_dir, prev_attributes = lfs_stub.dir, lfs_stub.attributes
+    lfs_stub.dir = function(path)
+        local files = (path == "/lib") and { ".", "..", "spine.epub" } or {}
+        local i = 0
+        return function() i = i + 1; return files[i] end
+    end
+    lfs_stub.attributes = function(_fp, key)
+        if key == "mode" then return "file" end
+        if key == "modification" then return 0 end
+        if key == "size" then return 1 end
+    end
+    -- Give the BIM stub the batch-SELECT surface so _getLightMetaCache
+    -- builds the shared memoised map -- the sharing under test. Column-major
+    -- arrays, ljsqlite3 exec shape.
+    local bim = package.loaded["bookinfomanager"]
+    local prev_open, prev_conn = bim.openDbConnection, bim.db_conn
+    bim.openDbConnection = function() end
+    bim.db_conn = { exec = function()
+        return { { "/lib/" }, { "spine.epub" }, { "Spine" },
+                 { "A. Author" }, {}, {}, {}, {} }
+    end }
+
+    -- A custom sort routes the library kind through the predicate path,
+    -- which serves the memoised light records (the device shape: the Home
+    -- chip sorts by date added).
+    local sortp = { { key = "date_added", reverse = true } }
+    local function fetch()
+        Repo.spine_light = true
+        local page = Repo.getBySource({ kind = "library" }, nil, sortp, 0, 10)
+        Repo.spine_light = false
+        return page and page[1]
+    end
+    local rec = fetch()
+    assert(rec and rec.filepath == "/lib/spine.epub", "fetch must find the book")
+    -- Bake the plan's mutations, then prove the harness really shares the
+    -- record -- a fresh-record harness would pass the final assertions
+    -- against the bug.
+    rec.status = "reading"
+    rec._spine_status_checked = true
+    local rec_again = fetch()
+    assert(rec_again == rec, "harness must serve the SHARED light record")
+    Repo.invalidateProgressCache(rec.filepath)
+    local rec_after = fetch()
+    assert(rec_after == rec, "still the shared record after invalidation")
+    assert(rec_after.status == nil,
+        "status edit must strip the plan-baked status, got " .. tostring(rec_after.status))
+    assert(rec_after._spine_status_checked == nil,
+        "the checked flag must clear so the plan re-reads the sidecar")
+
+    bim.openDbConnection, bim.db_conn = prev_open, prev_conn
+    lfs_stub.dir, lfs_stub.attributes = prev_dir, prev_attributes
+    _G._test_settings = {}
+    _G._test_bim_data = nil
+    Repo.invalidateWalkCache()
+    Repo.invalidateLightMeta()
+end)
+
 -- KOReader's "Folders and files mixed" (collate_mixed) on the home view:
 -- OFF partitions folders before books, ON interleaves them by the sort key.
 test("getAll honours collate_mixed in both positions", function()
@@ -1286,7 +1355,14 @@ test("getAuthors: batch light metadata carries description for filename-author f
         { "Min kamp" },                               -- series
         { 5 },                                        -- series_index
         { nil },                                      -- keywords
+        { nil },                                      -- language
+        { nil },                                      -- pages
         { "Femte delen av Karl Ove Knausgårds roman." }, -- description
+        { "Y" },                                    -- has_meta
+        { "N" },                                    -- has_cover
+        { nil },                                      -- ignore_cover
+        { nil },                                      -- ignore_meta
+        { nil },                                      -- cover_sizetag
     }
     local authors = Repo.getAuthors(10, 0)
     _G._test_bim_batch_rows = nil
@@ -1798,6 +1874,50 @@ test("findGroup: returns hydrated group for known author", function()
     assert(g ~= nil, "expected a group record")
     assert(g.series_name == "Frank Herbert")
     assert(#g.books == 2, "expected 2 books, got " .. #g.books)
+end)
+
+test("getAuthors: spine_light serves light copies, no full builds", function()
+    -- Spine mode flattens groups into member spines, so the front-book cover
+    -- is never rendered -- yet every page turn paid a full buildBookMeta per
+    -- group (device report: paging the author shelf felt slow).
+    Repo.invalidateWalkCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib") and {".", "..", "dune.epub", "dune2.epub"} or {".", ".."}
+        local i = 0; return function() i=i+1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        if key == "mode" then return "file" end; return 0
+    end
+    _G._test_settings = { home_dir = "/lib", bookshelf_latest_walk_depth = 1 }
+    _G._test_bim_data = {
+        ["/lib/dune.epub"]  = { title = "Dune",         authors = "Frank Herbert" },
+        ["/lib/dune2.epub"] = { title = "Dune Messiah", authors = "Frank Herbert" },
+    }
+    Repo.invalidateSeriesCache()
+    local orig_build = Repo.buildBookMeta
+    local builds = 0
+    Repo.buildBookMeta = function(...) builds = builds + 1; return orig_build(...) end
+    Repo.spine_light = true
+    local ok, err = pcall(function()
+        local groups = Repo.getAuthors(10, 0)
+        assert(#groups == 1, "expected one author group")
+        local g = groups[1]
+        assert(#g.books == 2, "expected both members hydrated")
+        assert(g.books[1].title == "Dune", "light copy lost its title")
+        assert(builds == 0,
+            "spine_light must not pay a full buildBookMeta, got " .. builds)
+        -- The spine plan BAKES status onto the records it renders; the light
+        -- copies must isolate the cached shape from that (the stale-glyph
+        -- lesson, e7559e6: shared records smear one render's status into the
+        -- next fetch).
+        g.books[1].status = "reading"
+        local again = Repo.getAuthors(10, 0)
+        assert(again[1].books[1].status == nil,
+            "a baked status leaked into the cached shape")
+    end)
+    Repo.spine_light = nil
+    Repo.buildBookMeta = orig_build
+    if not ok then error(err) end
 end)
 
 -- ============================================================================
@@ -6002,6 +6122,441 @@ test("kindleFilepaths is NOT folded into getAllFilepaths", function()
         assert(fp ~= "/k/only.kfx", "a Kindle path leaked into the walked library")
     end
     package.loaded["lib/bookshelf_kindle_source"] = nil
+end)
+
+-- ── the page count scan reaches every consumer ─────────────────────────────
+--
+-- "Extract page counts" persists what it finds into the shelf's own store,
+-- not into the book's sidecar: a count for a never-opened book must not be
+-- the reason a sidecar appears. progressFor is what every lazy consumer asks
+-- (the Pages column, the %page_count token, the sort key), so it has to look
+-- there too, or the scan shows up in the spine widths -- which read the store
+-- directly -- and nowhere else.
+
+local function with_scan_store(counts, fn)
+    local previous = package.loaded["lib/bookshelf_spine_shelf"]
+    package.loaded["lib/bookshelf_spine_shelf"] = {
+        cachedProgress = function(fp)
+            local n = counts[fp]
+            if not n then return nil, nil, false end
+            return n, nil, false
+        end,
+    }
+    local ok, err = pcall(fn)
+    package.loaded["lib/bookshelf_spine_shelf"] = previous
+    if not ok then error(err, 0) end
+end
+
+test("a scanned page count reaches progressFor for an unopened book", function()
+    _G._test_docsettings_data = nil          -- no sidecar: never opened
+    with_scan_store({ ["/lib/scanned.epub"] = 412 }, function()
+        local _pct, _status, _rating, pages, opened =
+            Repo.progressFor("/lib/scanned.epub")
+        assert(pages == 412, "expected the scan's count, got " .. tostring(pages))
+        assert(opened == false, "the book is still unopened")
+    end)
+end)
+
+test("the HERO's record gets the scanned count too", function()
+    -- The hero builds its book through buildBook, not through the lazy
+    -- resolver the shelf rows use, so the two paths have to consult the store
+    -- separately (device report: a page_count token on the hero stayed empty).
+    _G._test_bim_data = { ["/lib/heroscan.epub"] = { title = "Hero" } }
+    with_scan_store({ ["/lib/heroscan.epub"] = 377 }, function()
+        local b = Repo.buildBook("/lib/heroscan.epub")
+        assert(b, "buildBook returned nothing")
+        assert(b.page_count == 377,
+            "expected the scan's count on the hero record, got "
+            .. tostring(b.page_count))
+    end)
+end)
+
+test("BIM's own count still wins over the scan store", function()
+    -- The store is a fallback, not an override: a book BIM has counted knows
+    -- better than a scan estimate.
+    _G._test_bim_data = { ["/lib/haspages.epub"] = { title = "P", pages = 512 } }
+    with_scan_store({ ["/lib/haspages.epub"] = 999 }, function()
+        local b = Repo.buildBook("/lib/haspages.epub")
+        assert(b.page_count == 512,
+            "expected BIM's count, got " .. tostring(b.page_count))
+    end)
+end)
+
+test("one function owns the end of the page-count ladder", function()
+    -- Three consumers ask the same question -- the hero through buildBook, the
+    -- rows through progressFor, the spine plan for its widths -- and each had
+    -- grown its own ending. Two of them got patched separately in two days.
+    assert(type(Repo.pageCountFor) == "function", "Repo.pageCountFor missing")
+    with_scan_store({ ["/lib/x.epub"] = 300 }, function()
+        assert(Repo.pageCountFor("/lib/x.epub", 512) == 512,
+            "what the caller already knows wins")
+        assert(Repo.pageCountFor("/lib/x.epub", nil) == 300, "then the store")
+        assert(Repo.pageCountFor("/lib/y p(88).epub", nil) == 88,
+            "and the filename marker comes before the store")
+        assert(Repo.pageCountFor("/lib/z.epub", 0) == nil,
+            "a zero is not a count")
+        assert(Repo.pageCountFor(nil, nil) == nil, "no path, no answer")
+    end)
+end)
+
+test("an opened book with no committed total still gets the marker", function()
+    -- The sidecar branch of progressFor used to skip the filename marker and
+    -- go straight to the store, so an opened reflowable named p(N) with no
+    -- total yet answered differently from the same book unopened.
+    _G._test_docsettings_data = { ["/lib/opened p(415).epub"] = { percent_finished = 0.5 } }
+    with_scan_store({}, function()
+        local _p, _s, _r, pages, opened = Repo.progressFor("/lib/opened p(415).epub")
+        assert(opened == true, "the book has a sidecar")
+        assert(pages == 415, "expected the marker, got " .. tostring(pages))
+    end)
+    _G._test_docsettings_data = nil
+end)
+
+test("a filename marker still outranks the scan store", function()
+    -- p(N) in the name is free and authoritative; the store often holds a
+    -- persisted echo of that same number.
+    with_scan_store({ ["/lib/marked p(250).epub"] = 999 }, function()
+        local _p, _s, _r, pages = Repo.progressFor("/lib/marked p(250).epub")
+        assert(pages == 250, "expected the filename marker, got " .. tostring(pages))
+    end)
+end)
+
+test("no scanned count leaves the answer nil rather than zero", function()
+    with_scan_store({}, function()
+        local _p, _s, _r, pages = Repo.progressFor("/lib/unknown.epub")
+        assert(pages == nil, "expected nil, got " .. tostring(pages))
+    end)
+end)
+
+test("the shelf module missing is not an error", function()
+    -- The repository must load and answer on its own; the shelf requires it
+    -- back, so this lookup is lazy and has to tolerate an absent module.
+    local previous = package.loaded["lib/bookshelf_spine_shelf"]
+    package.loaded["lib/bookshelf_spine_shelf"] = nil
+    local ok, pages = pcall(function()
+        return select(4, Repo.progressFor("/lib/whatever.epub"))
+    end)
+    package.loaded["lib/bookshelf_spine_shelf"] = previous
+    assert(ok, "progressFor must not raise when the shelf module is absent")
+    assert(pages == nil, "expected nil, got " .. tostring(pages))
+end)
+
+-- ── KOReader custom metadata (issue #381) ──────────────────────────────────
+-- KOReader lets any of title / authors / series / series_index / language /
+-- keywords / description be overwritten per book from Book information, and
+-- shows the overwritten value everywhere. The shelf read only `keywords`, so
+-- a corrected title or author was ignored here and nowhere else -- reported
+-- against CBZ comics, whose metadata a ComicInfo plugin writes into exactly
+-- this field.
+--
+-- These drive the REAL gate (a sibling .sdr found through a directory
+-- listing), because the gate is what decides whether the file is read at all.
+
+local _real_lfs_attributes = package.loaded["libs/libkoreader-lfs"].attributes
+local _real_docsettings    = package.loaded["docsettings"]
+
+-- fp -> custom_props table
+local function with_custom_props(fp, props, fn)
+    local base   = fp:match("^(.*)%.") or fp
+    local parent, stem = base:match("^(.*/)([^/]+)$")
+    local sdr    = parent .. stem .. ".sdr"
+    local cmf    = sdr .. "/custom_metadata.lua"
+    local leaf   = fp:match("([^/]+)$")
+    -- The gate asks with a trailing slash ("/lib/"), the library walk without
+    -- it ("/lib"). Both have to answer, or the walk decides the folder is a
+    -- file and finds no books at all. Declared BEFORE the stubs below: a
+    -- closure that names it later resolves it as a nil global, not an upvalue.
+    local parent_bare = parent:gsub("/+$", "")
+    local function is_parent(path) return path == parent or path == parent_bare end
+
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        if key == "mode" then
+            if is_parent(path) or path == sdr then return "directory" end
+            if path == cmf then return "file" end
+            -- Anything else the walk asks about is a book file.
+            return "file"
+        end
+        return _real_lfs_attributes(path, key)
+    end
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        -- The book AND its sidecar dir: the gate looks for the .sdr here and
+        -- the library walk looks for the book.
+        local entries = is_parent(path) and { ".", "..", leaf, stem .. ".sdr" }
+                                          or { ".", ".." }
+        local i = 0
+        return function() i = i + 1; return entries[i] end
+    end
+    package.loaded["docsettings"] = setmetatable({
+        findCustomMetadataFile = function(_self, f) return f == fp and cmf or nil end,
+        openSettingsFile = function(f)
+            return { readSetting = function(_s, key)
+                if key == "custom_props" then return props end
+                return nil
+            end }
+        end,
+    }, { __index = _real_docsettings })
+
+    -- The gate memoises its directory listings and its location decision.
+    Repo.invalidateWalkCache()
+    local ok, err = pcall(fn)
+
+    package.loaded["libs/libkoreader-lfs"].attributes = _real_lfs_attributes
+    package.loaded["libs/libkoreader-lfs"].dir = nil
+    package.loaded["docsettings"] = _real_docsettings
+    Repo.invalidateWalkCache()
+    if not ok then error(err, 0) end
+end
+
+local CFP = "/lib/comic.cbz"
+
+local function bim_row(row)
+    _G._test_bim_data = { [CFP] = row }
+end
+
+test("custom title wins over the extracted one", function()
+    bim_row({ title = "comic Vol.2024 #04", authors = "Not An Author" })
+    with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.title == "The Last Amazon, Part 4 of 5",
+            "expected the custom title, got " .. tostring(b.title))
+    end)
+end)
+
+test("custom authors win, and split on newlines like the extracted field", function()
+    bim_row({ title = "T", authors = "The Last Amazon, Part 4 of 5 (March, 2025)" })
+    with_custom_props(CFP, { authors = "Kelly Thompson\nHayden Sherman" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.author == "Kelly Thompson", "primary author: " .. tostring(b.author))
+        assert(#b.authors == 2 and b.authors[2] == "Hayden Sherman",
+            "expected both authors, got " .. tostring(#b.authors))
+    end)
+end)
+
+test("custom series and index win, as name plus number", function()
+    bim_row({ title = "T", series = "Wrong Series #9" })
+    with_custom_props(CFP, { series = "Absolute Wonder Woman", series_index = "4" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.series_name == "Absolute Wonder Woman", "series: " .. tostring(b.series_name))
+        assert(b.series_num == "4", "index: " .. tostring(b.series_num))
+    end)
+end)
+
+test("a custom series with only an extracted index keeps that index", function()
+    -- A real combination: the user fixed the series name and never touched
+    -- the number, so the name and the number come from different sources.
+    bim_row({ title = "T", series = "Wrong Series #7" })
+    with_custom_props(CFP, { series = "Absolute Wonder Woman" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.series_name == "Absolute Wonder Woman", "series: " .. tostring(b.series_name))
+        assert(b.series_num == "7", "index should fall back to BIM, got " .. tostring(b.series_num))
+    end)
+end)
+
+test("custom language and description win", function()
+    bim_row({ title = "T", language = "eng", description = "extracted blurb" })
+    with_custom_props(CFP, { language = "fra", description = "my own blurb" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.lang == "fra", "lang: " .. tostring(b.lang))
+        assert(b.description == "my own blurb", "description: " .. tostring(b.description))
+    end)
+end)
+
+test("custom metadata beats Calibre, which beats the extracted row", function()
+    -- Calibre's default filename import splits "Title - Author", which is how
+    -- the reporter's comics ended up with a chapter title as their author.
+    -- The user's own correction has to outrank that.
+    local CalibreMeta = package.loaded["lib/calibre_metadata"]
+    local real_entry = CalibreMeta.entryFor
+    CalibreMeta.entryFor = function(fp)
+        if fp ~= CFP then return nil end
+        return { title = "comic Vol.2024 #04",
+                 authors = { "The Last Amazon, Part 4 of 5 (March, 2025)" } }
+    end
+    bim_row({ title = "extracted", authors = "Extracted Author" })
+    local ok, err = pcall(function()
+        with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5",
+                                 authors = "Kelly Thompson" }, function()
+            local b = Repo.buildBookMeta(CFP)
+            assert(b.title == "The Last Amazon, Part 4 of 5", "title: " .. tostring(b.title))
+            assert(b.author == "Kelly Thompson", "author: " .. tostring(b.author))
+        end)
+        -- And with no custom metadata, Calibre still wins over the row: the
+        -- existing behaviour this fix must not have inverted.
+        local b2 = Repo.buildBookMeta(CFP)
+        assert(b2.title == "comic Vol.2024 #04", "calibre title: " .. tostring(b2.title))
+    end)
+    CalibreMeta.entryFor = real_entry
+    if not ok then error(err, 0) end
+end)
+
+test("cleared keywords still read as no genres", function()
+    -- Our own genre editor writes "" to mean cleared, and that must not fall
+    -- back to the file's own keywords. The one field with nil-vs-empty
+    -- semantics; generalising the reader must not have flattened it.
+    bim_row({ title = "T", keywords = "Comics" })
+    with_custom_props(CFP, { keywords = "" }, function()
+        local b = Repo.buildBookMeta(CFP)
+        assert(b.genres == nil or #b.genres == 0,
+            "expected no genres, got " .. tostring(b.genres and b.genres[1]))
+    end)
+end)
+
+test("no custom metadata leaves the chain alone", function()
+    bim_row({ title = "Extracted Title", authors = "Extracted Author" })
+    local b = Repo.buildBookMeta(CFP)
+    assert(b.title == "Extracted Title", "title: " .. tostring(b.title))
+    assert(b.author == "Extracted Author", "author: " .. tostring(b.author))
+end)
+
+test("the author chip uses the custom author too", function()
+    -- buildBookMeta feeds the shelf; the light builder feeds the author,
+    -- series and genre chips. Each carried its own copy of the resolution
+    -- chain, which is how a book ends up filed under one author and displayed
+    -- with another. Assert the chip, since that is what a reader browses.
+    bim_row({ title = "extracted", authors = "Extracted Author",
+              series = "Wrong Series #9" })
+    Repo.invalidateSeriesCache()
+    with_custom_props(CFP, { title = "The Last Amazon, Part 4 of 5",
+                             authors = "Kelly Thompson",
+                             series = "Absolute Wonder Woman",
+                             series_index = "4" }, function()
+        _G._test_settings.home_dir = "/lib"
+        _G._test_settings.bookshelf_latest_walk_depth = 1
+        Repo.invalidateSeriesCache()
+        local groups = Repo.getAuthors(10, 0) or {}
+        assert(#groups == 1, "expected one author group, got " .. #groups)
+        assert(groups[1].series_name == "Kelly Thompson"
+                or groups[1].name == "Kelly Thompson",
+            "author group should be the custom author, got " ..
+            tostring(groups[1].series_name or groups[1].name))
+        local heavy = Repo.buildBookMeta(CFP)
+        assert(heavy.author == "Kelly Thompson", "shelf record disagrees")
+    end)
+    _G._test_settings.home_dir = nil
+    _G._test_settings.bookshelf_latest_walk_depth = nil
+    Repo.invalidateSeriesCache()
+end)
+
+-- ── BIM handle recovery ─────────────────────────────────────────────────────
+-- A failed BookInfoManager:openDbConnection (a full volume makes SQLite throw
+-- on prepare) leaves db_conn set and the cached statements dead, so every
+-- later read raises "object is closed" until KOReader restarts. Repo resets
+-- the handle and retries once, rate-limited. Tests drive the exported entry
+-- point with a fake BIM rather than the module-cached one, so they describe
+-- the recovery itself and nothing about which BIM the repo found.
+
+-- Fake BIM in the poisoned state: reads throw until the connection is reset.
+local function poisoned_bim(opts)
+    opts = opts or {}
+    local bim = {
+        db_conn      = { open = true },
+        closes       = 0,
+        reads        = 0,
+        heals_on_reset = opts.heals ~= false,
+    }
+    function bim:getBookInfo(_fp, _with_cover)
+        self.reads = self.reads + 1
+        if self.db_conn then
+            error("common/lua-ljsqlite3/init.lua:60: ljsqlite3[misuse] object is closed", 0)
+        end
+        return { title = "recovered" }
+    end
+    function bim:closeDbConnection()
+        self.closes = self.closes + 1
+        if opts.close_raises then
+            error("ljsqlite3[misuse] object is closed", 0)
+        end
+        if self.heals_on_reset then self.db_conn = nil end
+    end
+    return bim
+end
+
+-- The cooldown is wall-clock; move time rather than sleep.
+local _real_time = os.time
+local function at_time(t, fn)
+    os.time = function() return t end
+    local ok, err = pcall(fn)
+    os.time = _real_time
+    if not ok then error(err, 0) end
+end
+
+test("bimGetBookInfo is exported", function()
+    -- The widget's own BIM reads route through this; a missing export would
+    -- only show up as a runtime nil call on a device.
+    assert(type(Repo.bimGetBookInfo) == "function", "Repo.bimGetBookInfo missing")
+end)
+
+test("a poisoned handle is reset and the read retried", function()
+    local bim = poisoned_bim()
+    at_time(1000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info and info.title == "recovered", "read did not recover")
+        assert(err == nil, "no error should be reported after recovery")
+    end)
+    assert(bim.closes == 1, "expected exactly one reset, got " .. bim.closes)
+    assert(bim.reads == 2, "expected one failed read and one retry, got " .. bim.reads)
+end)
+
+test("a healthy read never touches the connection", function()
+    local bim = poisoned_bim()
+    bim.db_conn = nil               -- reads succeed
+    at_time(2000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info and info.title == "recovered")
+        assert(err == nil)
+    end)
+    assert(bim.closes == 0, "a successful read must not reset anything")
+end)
+
+test("resets are rate-limited: a dead DB is not reset per book", function()
+    -- The case this guards: the volume is full, so the reopen fails too. One
+    -- reset per cooldown; the rest of the page reports failure without
+    -- hammering SQLite on the slowest device we run on.
+    local bim = poisoned_bim({ heals = false })
+    at_time(3000, function()
+        for _i = 1, 25 do Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end
+    end)
+    assert(bim.closes == 1, "expected 1 reset inside the window, got " .. bim.closes)
+    -- Past the cooldown, it is allowed to try again: the disk may have been
+    -- freed up, and the alternative is a session that never recovers.
+    at_time(3000 + 60, function() Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end)
+    assert(bim.closes == 2, "expected a second reset after the cooldown, got " .. bim.closes)
+end)
+
+test("a failed read reports the error rather than a missing row", function()
+    -- Callers distinguish these: "BIM has no row" queues an extraction,
+    -- "BIM is not answering" must not.
+    local bim = poisoned_bim({ heals = false })
+    at_time(5000, function()
+        local info, err = Repo.bimGetBookInfo(bim, "/lib/a.epub", false)
+        assert(info == nil, "no info on failure")
+        assert(type(err) == "string" and err:find("closed"), "error text passed back")
+    end)
+end)
+
+test("closeDbConnection raising still clears the handle", function()
+    -- ljsqlite3 close() raises on an already-closed connection, and BIM nils
+    -- db_conn only after close() returns -- so the reset has to clear it
+    -- itself or openDbConnection keeps taking its early return forever.
+    local bim = poisoned_bim({ close_raises = true })
+    at_time(7000, function() Repo.bimGetBookInfo(bim, "/lib/a.epub", false) end)
+    assert(bim.db_conn == nil, "db_conn must be cleared even when close() throws")
+end)
+
+test("getCoverBB returns nil (not a crash) while BIM is unhealthy", function()
+    -- The device symptom: the shelf keeps painting cached covers while every
+    -- fresh decode fails. It must degrade, not throw.
+    local original = package.loaded["bookinfomanager"]
+    package.loaded["bookinfomanager"] = {
+        getBookInfo = function() error("ljsqlite3[misuse] object is closed", 0) end,
+        closeDbConnection = function() end,
+    }
+    Repo.invalidateWalkCache()
+    local ok, bb = pcall(Repo.getCoverBB, "/lib/a.epub")
+    package.loaded["bookinfomanager"] = original
+    Repo.invalidateWalkCache()
+    assert(ok, "getCoverBB must not propagate a BIM error")
+    assert(bb == nil, "no cover to return")
 end)
 
 -- ============================================================================

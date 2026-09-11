@@ -1,7 +1,10 @@
 -- tests/_test_custom_metadata_probe.lua
--- _customKeywords asks for a book's custom_metadata.lua once per book during
--- the light-meta build. The sibling ".sdr" fast path answers that with one
--- stat against a path the cached directory listing already proved exists,
+-- _customPropsFor asks for a book's custom_metadata.lua once per book during
+-- the light-meta build. (It was _customKeywords until the whole custom_props
+-- table started being read rather than just the keywords -- issue #381 -- but
+-- the probe it performs, and everything below, is unchanged.) The sibling
+-- ".sdr" fast path answers that with one stat against a path the cached
+-- directory listing already proved exists,
 -- instead of DocSettings:findCustomMetadataFile stat-ing every candidate
 -- location. On a PW5 (243 books, 82% with a sidecar, 11 with custom metadata)
 -- that took the probe from ~190ms to ~130ms of a ~1000ms cold build.
@@ -17,11 +20,11 @@ local helpers = dofile("tests/_helpers.lua")
 local t = helpers.runner()
 
 local src  = io.open("lib/bookshelf_book_repository.lua"):read("*a")
-local ck   = src:match("\nlocal function _customKeywords%(filepath%)\n(.-)\nend\n")
+local ck   = src:match("\nlocal function _customPropsFor%(filepath%)\n(.-)\nend\n")
 local only = src:match("\nlocal function _sidecarIsOnlyLocation%(%)\n(.-)\nend\n")
 
 t.test("the pieces are still there under those names", function()
-    assert(ck, "_customKeywords is gone or was renamed")
+    assert(ck, "_customPropsFor is gone or was renamed")
     assert(only, "_sidecarIsOnlyLocation is gone or was renamed")
     assert(src:match("\nlocal function _siblingSidecarDir%(filepath%)"),
         "_siblingSidecarDir is gone or was renamed")

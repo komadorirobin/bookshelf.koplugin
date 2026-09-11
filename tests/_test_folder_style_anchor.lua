@@ -32,6 +32,13 @@ local body = src:match(
     "\nfunction Editor:_pickGroupDisplay%(draft, on_change, chrome%)\n(.-)\nend\n")
 assert(body, "could not find Editor:_pickGroupDisplay - renamed?")
 
+-- The placement moved out of this function and into a module-local shared by
+-- every chip picker. Extracted too, rather than stubbed: the arithmetic is
+-- what this suite is about, and a stub would pass while the real one crashed
+-- KOReader again.
+local anchor_src = src:match("\n(local function _highAnchor%(get_dialog%)\n.-\nend)\n")
+assert(anchor_src, "could not find _highAnchor - renamed?")
+
 -- A PW5: 1236x1648 at 264 DPI, where scaleBySize(1) is about 2px.
 local SCREEN_W, SCREEN_H = 1236, 1648
 -- What ButtonDialog would lay this dialog out at: its default width factor is
@@ -150,6 +157,18 @@ local env = {
     end,
 }
 env._G = env
+
+-- Compiled in the same environment, so its Screen and math are the test's.
+env._highAnchor = (function()
+    local f
+    if _G.setfenv then
+        f = assert(_G.loadstring(anchor_src .. "\nreturn _highAnchor"))
+        _G.setfenv(f, env)
+    else
+        f = assert(load(anchor_src .. "\nreturn _highAnchor", "_highAnchor", "t", env))
+    end
+    return f()
+end)()
 
 local function compile(code)
     if _G.setfenv then

@@ -1,13 +1,13 @@
 msgid ""
 msgstr ""
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-05 11:45+0100\n"
+"POT-Creation-Date: 2026-09-11 19:47+0100\n"
 "Language: vi\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: _meta.lua:19 lib/bookshelf_action_exec.lua:77 main.lua:566
+#: _meta.lua:19 lib/bookshelf_action_exec.lua:77 main.lua:620
 msgid "Bookshelf"
 msgstr "Bookshelf"
 
@@ -56,12 +56,12 @@ msgstr "Menu kệ sách"
 msgid "Choose an action"
 msgstr "Chọn một hành động"
 
-#: lib/bookshelf_book_repository.lua:4751
-#: lib/bookshelf_book_repository.lua:6820 micromodules/weather.lua:62
+#: lib/bookshelf_book_repository.lua:5306
+#: lib/bookshelf_book_repository.lua:7398 micromodules/weather.lua:62
 msgid "Unknown"
 msgstr "Không xác định"
 
-#: lib/bookshelf_book_repository.lua:5559 lib/bookshelf_chip_editor.lua:1849
+#: lib/bookshelf_book_repository.lua:6130 lib/bookshelf_chip_editor.lua:2043
 #: lib/bookshelf_filter.lua:280
 msgid "Unrated"
 msgstr "Chưa xếp hạng"
@@ -71,34 +71,34 @@ msgstr "Chưa xếp hạng"
 msgid "Edit selected (%d)"
 msgstr "Chỉnh sửađã chọn (%d)"
 
-#: lib/bookshelf_bulk_actions.lua:111 lib/bookshelf_widget.lua:15985
+#: lib/bookshelf_bulk_actions.lua:111 lib/bookshelf_widget.lua:17575
 msgid "Unopened"
 msgstr "Chưa mở"
 
 #: lib/bookshelf_bulk_actions.lua:112 lib/bookshelf_filter.lua:249
 #: lib/bookshelf_filter.lua:267 lib/bookshelf_icons_catalogue.lua:23
-#: lib/bookshelf_tokens.lua:257 lib/bookshelf_widget.lua:15985
+#: lib/bookshelf_tokens.lua:261 lib/bookshelf_widget.lua:17575
 #: micromodules/shelf_size.lua:18
 msgid "Reading"
 msgstr "Đang đọc"
 
 #: lib/bookshelf_bulk_actions.lua:113 lib/bookshelf_filter.lua:250
-#: lib/bookshelf_filter.lua:268 lib/bookshelf_tokens.lua:258
-#: lib/bookshelf_widget.lua:15986 micromodules/random_unread.lua:235
+#: lib/bookshelf_filter.lua:268 lib/bookshelf_tokens.lua:262
+#: lib/bookshelf_widget.lua:17576 micromodules/random_unread.lua:235
 #: micromodules/shelf_size.lua:20
 msgid "On hold"
 msgstr "Đang chờ"
 
 #: lib/bookshelf_bulk_actions.lua:114 lib/bookshelf_filter.lua:250
-#: lib/bookshelf_filter.lua:269 lib/bookshelf_tokens.lua:259
-#: lib/bookshelf_widget.lua:15986 micromodules/random_unread.lua:236
+#: lib/bookshelf_filter.lua:269 lib/bookshelf_tokens.lua:263
+#: lib/bookshelf_widget.lua:17576 micromodules/random_unread.lua:236
 #: micromodules/shelf_size.lua:21
 msgid "Finished"
 msgstr "Hoàn thành"
 
 #: lib/bookshelf_bulk_actions.lua:125 lib/bookshelf_bulk_actions.lua:127
-#: lib/bookshelf_chip_editor.lua:318 lib/bookshelf_filter.lua:35
-#: lib/bookshelf_sort_engine.lua:453
+#: lib/bookshelf_chip_editor.lua:401 lib/bookshelf_filter.lua:35
+#: lib/bookshelf_sort_engine.lua:511
 msgid "Rating"
 msgstr "Đánh giá"
 
@@ -106,38 +106,38 @@ msgstr "Đánh giá"
 msgid "(clear)"
 msgstr "(xóa)"
 
-#: lib/bookshelf_bulk_actions.lua:160 lib/bookshelf_chip_editor.lua:2381
+#: lib/bookshelf_bulk_actions.lua:160 lib/bookshelf_chip_editor.lua:2562
 msgid "Clear"
 msgstr "Xóa"
 
 #: lib/bookshelf_bulk_actions.lua:165 lib/bookshelf_bulk_actions.lua:424
-#: lib/bookshelf_chip_editor.lua:542 lib/bookshelf_chip_editor.lua:885
-#: lib/bookshelf_chip_editor.lua:1603 lib/bookshelf_chip_editor.lua:1653
-#: lib/bookshelf_chip_editor.lua:1789 lib/bookshelf_chip_editor.lua:2115
-#: lib/bookshelf_collection_manager.lua:334
+#: lib/bookshelf_chip_editor.lua:631 lib/bookshelf_chip_editor.lua:974
+#: lib/bookshelf_chip_editor.lua:1674 lib/bookshelf_chip_editor.lua:1797
+#: lib/bookshelf_chip_editor.lua:1847 lib/bookshelf_chip_editor.lua:1983
+#: lib/bookshelf_chip_editor.lua:2309 lib/bookshelf_collection_manager.lua:334
 #: lib/bookshelf_collection_manager.lua:410
 #: lib/bookshelf_collection_manager.lua:417
 #: lib/bookshelf_collection_manager.lua:442
 #: lib/bookshelf_collection_manager.lua:492
 #: lib/bookshelf_collection_manager.lua:517 lib/bookshelf_color_palette.lua:352
 #: lib/bookshelf_folder_picker.lua:61 lib/bookshelf_folder_picker.lua:199
-#: lib/bookshelf_line_editor.lua:516 lib/bookshelf_move_flow.lua:34
+#: lib/bookshelf_line_editor.lua:572 lib/bookshelf_move_flow.lua:34
 #: lib/bookshelf_move_flow.lua:386 lib/bookshelf_opds_catalog_editor.lua:45
-#: lib/bookshelf_settings.lua:1348 lib/bookshelf_settings.lua:1884
-#: lib/bookshelf_settings.lua:2353 lib/bookshelf_settings.lua:2647
-#: lib/bookshelf_settings.lua:3533 lib/bookshelf_settings.lua:3713
-#: lib/bookshelf_settings.lua:3777 lib/bookshelf_settings.lua:3843
-#: lib/bookshelf_settings.lua:3908 lib/bookshelf_settings.lua:3992
-#: lib/bookshelf_settings.lua:4056 lib/bookshelf_settings.lua:4141
-#: lib/bookshelf_settings.lua:4343 lib/bookshelf_settings.lua:4437
-#: lib/bookshelf_settings.lua:4527 lib/bookshelf_start_menu_edit.lua:57
+#: lib/bookshelf_settings.lua:1414 lib/bookshelf_settings.lua:2005
+#: lib/bookshelf_settings.lua:2474 lib/bookshelf_settings.lua:2785
+#: lib/bookshelf_settings.lua:3691 lib/bookshelf_settings.lua:3916
+#: lib/bookshelf_settings.lua:3980 lib/bookshelf_settings.lua:4046
+#: lib/bookshelf_settings.lua:4111 lib/bookshelf_settings.lua:4195
+#: lib/bookshelf_settings.lua:4259 lib/bookshelf_settings.lua:4344
+#: lib/bookshelf_settings.lua:4546 lib/bookshelf_settings.lua:4640
+#: lib/bookshelf_settings.lua:4730 lib/bookshelf_start_menu_edit.lua:57
 #: lib/bookshelf_start_menu_edit.lua:181 lib/bookshelf_start_menu_edit.lua:293
-#: lib/bookshelf_start_menu_edit.lua:358 lib/bookshelf_widget.lua:5673
-#: lib/bookshelf_widget.lua:13130 lib/bookshelf_widget.lua:17357
-#: lib/bookshelf_widget.lua:17437 lib/bookshelf_widget.lua:17482
-#: lib/bookshelf_widget.lua:17550 lib/bookshelf_widget.lua:17598
-#: lib/bookshelf_widget.lua:17604 lib/bookshelf_widget.lua:18635
-#: lib/bookshelf_widget.lua:18791 lib/bookshelf_widget.lua:19325 main.lua:2045
+#: lib/bookshelf_start_menu_edit.lua:358 lib/bookshelf_widget.lua:6370
+#: lib/bookshelf_widget.lua:14663 lib/bookshelf_widget.lua:18947
+#: lib/bookshelf_widget.lua:19027 lib/bookshelf_widget.lua:19072
+#: lib/bookshelf_widget.lua:19140 lib/bookshelf_widget.lua:19188
+#: lib/bookshelf_widget.lua:19194 lib/bookshelf_widget.lua:20225
+#: lib/bookshelf_widget.lua:20381 lib/bookshelf_widget.lua:20915 main.lua:2099
 #: micromodules/action.lua:223 micromodules/countdown.lua:60
 #: micromodules/reading_goal.lua:352 micromodules/weather.lua:254
 msgid "Cancel"
@@ -148,26 +148,26 @@ msgid "Set rating"
 msgstr "Thiết lập đánh giá"
 
 #: lib/bookshelf_bulk_actions.lua:184 lib/bookshelf_bulk_actions.lua:186
-#: lib/bookshelf_bulk_actions.lua:188 lib/bookshelf_widget.lua:16161
+#: lib/bookshelf_bulk_actions.lua:188 lib/bookshelf_widget.lua:17751
 msgid "Favorite"
 msgstr "Yêu thích"
 
-#: lib/bookshelf_bulk_actions.lua:214 lib/bookshelf_chip_editor.lua:303
-#: lib/bookshelf_chip_editor.lua:2087 lib/bookshelf_settings.lua:518
-#: lib/bookshelf_widget.lua:17127
+#: lib/bookshelf_bulk_actions.lua:214 lib/bookshelf_chip_editor.lua:386
+#: lib/bookshelf_chip_editor.lua:2281 lib/bookshelf_settings.lua:535
+#: lib/bookshelf_widget.lua:18717
 msgid "Collections"
 msgstr "Tập hợp"
 
-#: lib/bookshelf_bulk_actions.lua:246 lib/bookshelf_widget.lua:15933
+#: lib/bookshelf_bulk_actions.lua:246 lib/bookshelf_widget.lua:17523
 msgid "Refresh metadata"
 msgstr "Làm mới metadata"
 
-#: lib/bookshelf_bulk_actions.lua:259 lib/bookshelf_widget.lua:15857
-#: lib/bookshelf_widget.lua:16164
+#: lib/bookshelf_bulk_actions.lua:259 lib/bookshelf_widget.lua:17447
+#: lib/bookshelf_widget.lua:17754
 msgid "Remove from history"
 msgstr "Xóa khỏi lịch sử"
 
-#: lib/bookshelf_bulk_actions.lua:278 lib/bookshelf_widget.lua:15894
+#: lib/bookshelf_bulk_actions.lua:278 lib/bookshelf_widget.lua:17484
 msgid "Reset book data…"
 msgstr "Đặt lại dữ liệu sách…"
 
@@ -176,8 +176,8 @@ msgstr "Đặt lại dữ liệu sách…"
 msgid "Reset %d books?"
 msgstr "Đặt lại %d sách?"
 
-#: lib/bookshelf_bulk_actions.lua:285 lib/bookshelf_settings.lua:3316
-#: lib/bookshelf_settings.lua:3359 main.lua:2142
+#: lib/bookshelf_bulk_actions.lua:285 lib/bookshelf_settings.lua:3467
+#: lib/bookshelf_settings.lua:3510 main.lua:2534
 msgid "Reset"
 msgstr "Khởi tạo lại"
 
@@ -187,12 +187,12 @@ msgid "Pending changes discarded"
 msgstr "Thay đổi đang chờ, đã bị bỏ qua"
 
 #: lib/bookshelf_bulk_actions.lua:329 lib/bookshelf_bulk_actions.lua:345
-#: lib/bookshelf_chip_editor.lua:862 lib/bookshelf_chip_editor.lua:1952
+#: lib/bookshelf_chip_editor.lua:951 lib/bookshelf_chip_editor.lua:2146
 #: lib/bookshelf_collection_manager.lua:378
 #: lib/bookshelf_collection_manager.lua:408
-#: lib/bookshelf_opds_catalog_editor.lua:104 lib/bookshelf_settings.lua:1340
-#: lib/bookshelf_start_menu_edit.lua:382 lib/bookshelf_widget.lua:15898
-#: lib/bookshelf_widget.lua:15917 lib/bookshelf_widget.lua:17597
+#: lib/bookshelf_opds_catalog_editor.lua:104 lib/bookshelf_settings.lua:1406
+#: lib/bookshelf_start_menu_edit.lua:382 lib/bookshelf_widget.lua:17488
+#: lib/bookshelf_widget.lua:17507 lib/bookshelf_widget.lua:19187
 msgid "Delete"
 msgstr "Xóa"
 
@@ -211,12 +211,12 @@ msgid "Move to folder…"
 msgstr "Di chuyển đến thư mục…"
 
 #: lib/bookshelf_bulk_actions.lua:461 lib/bookshelf_color_palette.lua:356
-#: lib/bookshelf_settings.lua:1887 lib/bookshelf_settings.lua:2650
-#: lib/bookshelf_settings.lua:3581 lib/bookshelf_settings.lua:3780
-#: lib/bookshelf_settings.lua:3846 lib/bookshelf_settings.lua:3911
-#: lib/bookshelf_settings.lua:3995 lib/bookshelf_settings.lua:4059
-#: lib/bookshelf_settings.lua:4144 lib/bookshelf_settings.lua:4357
-#: lib/bookshelf_settings.lua:4440 lib/bookshelf_settings.lua:4530
+#: lib/bookshelf_settings.lua:2008 lib/bookshelf_settings.lua:2788
+#: lib/bookshelf_settings.lua:3739 lib/bookshelf_settings.lua:3983
+#: lib/bookshelf_settings.lua:4049 lib/bookshelf_settings.lua:4114
+#: lib/bookshelf_settings.lua:4198 lib/bookshelf_settings.lua:4262
+#: lib/bookshelf_settings.lua:4347 lib/bookshelf_settings.lua:4560
+#: lib/bookshelf_settings.lua:4643 lib/bookshelf_settings.lua:4733
 msgid "Apply"
 msgstr "Áp dụng"
 
@@ -255,19 +255,19 @@ msgstr "Cũ hơn"
 msgid "Newer"
 msgstr "Mới hơn"
 
-#: lib/bookshelf_changelog.lua:139 lib/bookshelf_chip_editor.lua:1281
-#: lib/bookshelf_reviews_modal.lua:462 lib/bookshelf_widget.lua:16559
+#: lib/bookshelf_changelog.lua:139 lib/bookshelf_chip_editor.lua:1370
+#: lib/bookshelf_reviews_modal.lua:462 lib/bookshelf_widget.lua:18149
 #: micromodules/quote_of_day.lua:77
 msgid "Refresh"
 msgstr "Làm mới"
 
-#: lib/bookshelf_changelog.lua:148 lib/bookshelf_chip_editor.lua:1284
-#: lib/bookshelf_chip_editor.lua:1753 lib/bookshelf_chip_editor.lua:2573
+#: lib/bookshelf_changelog.lua:148 lib/bookshelf_chip_editor.lua:1373
+#: lib/bookshelf_chip_editor.lua:1947 lib/bookshelf_chip_editor.lua:2762
 #: lib/bookshelf_collection_manager.lua:549 lib/bookshelf_folder_picker.lua:168
 #: lib/bookshelf_icons_library.lua:496 lib/bookshelf_line_editor.lua:158
 #: lib/bookshelf_module_picker.lua:225 lib/bookshelf_reviews_modal.lua:494
-#: lib/bookshelf_settings.lua:274 lib/bookshelf_updater.lua:319
-#: lib/bookshelf_widget.lua:13679 micromodules/daily_fun.lua:288
+#: lib/bookshelf_settings.lua:291 lib/bookshelf_updater.lua:319
+#: lib/bookshelf_widget.lua:15217 micromodules/daily_fun.lua:288
 msgid "Close"
 msgstr "Đóng"
 
@@ -279,458 +279,510 @@ msgstr "Nhật ký thay đổi (%1 của %2)"
 msgid "Could not fetch the changelog."
 msgstr "Không thể lấy nhật ký thay đổi."
 
-#: lib/bookshelf_chip_editor.lua:42 lib/bookshelf_chip_editor.lua:1405
-#: lib/bookshelf_widget.lua:4286
+#: lib/bookshelf_chip_editor.lua:117 lib/bookshelf_chip_editor.lua:1494
+#: lib/bookshelf_widget.lua:4483
 msgid "List"
 msgstr "Danh sách"
 
-#: lib/bookshelf_chip_editor.lua:43 lib/bookshelf_chip_editor.lua:1410
-#: lib/bookshelf_widget.lua:4285
+#: lib/bookshelf_chip_editor.lua:118 lib/bookshelf_chip_editor.lua:1499
+#: lib/bookshelf_widget.lua:4482
 msgid "Covers"
 msgstr "Bìa"
 
-#: lib/bookshelf_chip_editor.lua:44 lib/bookshelf_chip_editor.lua:1402
-#: lib/bookshelf_chip_editor.lua:1437 lib/bookshelf_settings.lua:3060
-#: lib/bookshelf_settings.lua:3063 lib/bookshelf_settings.lua:3095
-#: lib/bookshelf_start_menu_edit.lua:320 lib/bookshelf_widget.lua:4287
+#: lib/bookshelf_chip_editor.lua:119 lib/bookshelf_chip_editor.lua:1491
+#: lib/bookshelf_chip_editor.lua:1537 lib/bookshelf_chip_editor.lua:1587
+#: lib/bookshelf_settings.lua:3211 lib/bookshelf_settings.lua:3214
+#: lib/bookshelf_settings.lua:3246 lib/bookshelf_start_menu_edit.lua:320
+#: lib/bookshelf_widget.lua:4485
 msgid "Auto"
 msgstr "Tự động"
 
-#: lib/bookshelf_chip_editor.lua:242 lib/bookshelf_chip_editor.lua:1003
-#: lib/bookshelf_settings.lua:5120
-msgid "New chip"
-msgstr "Chip mới"
+#: lib/bookshelf_chip_editor.lua:120 lib/bookshelf_chip_editor.lua:1509
+#: lib/bookshelf_widget.lua:4484
+msgid "Spines"
+msgstr "Gáy sách"
 
-#: lib/bookshelf_chip_editor.lua:284 lib/bookshelf_collection_manager.lua:440
+#: lib/bookshelf_chip_editor.lua:324 lib/bookshelf_chip_editor.lua:1092
+#: lib/bookshelf_settings.lua:5323
+msgid "New shelf"
+msgstr "Kệ mới"
+
+#: lib/bookshelf_chip_editor.lua:367 lib/bookshelf_collection_manager.lua:440
 msgid "Name"
 msgstr "Tên"
 
-#: lib/bookshelf_chip_editor.lua:285 lib/bookshelf_sort_engine.lua:369
+#: lib/bookshelf_chip_editor.lua:368 lib/bookshelf_sort_engine.lua:427
 msgid "Surname"
 msgstr "Họ"
 
-#: lib/bookshelf_chip_editor.lua:286
+#: lib/bookshelf_chip_editor.lua:369
 msgid "Most recently read"
 msgstr "Sách gần nhất đãđọc"
 
-#: lib/bookshelf_chip_editor.lua:287
+#: lib/bookshelf_chip_editor.lua:370
 msgid "Most recently added"
 msgstr "Sách đã được thêm gần nhất"
 
-#: lib/bookshelf_chip_editor.lua:288 lib/bookshelf_sort_engine.lua:445
+#: lib/bookshelf_chip_editor.lua:371 lib/bookshelf_sort_engine.lua:503
 msgid "Book count"
 msgstr "Số sách"
 
-#: lib/bookshelf_chip_editor.lua:296 lib/bookshelf_chip_editor.lua:2057
+#: lib/bookshelf_chip_editor.lua:379 lib/bookshelf_chip_editor.lua:2251
 msgid "Home (folders)"
 msgstr "Trang chủ (thư mục)"
 
-#: lib/bookshelf_chip_editor.lua:297 lib/bookshelf_chip_editor.lua:2058
+#: lib/bookshelf_chip_editor.lua:380 lib/bookshelf_chip_editor.lua:2252
 msgid "Home (flattened)"
 msgstr "Trang chủ(đã flatten)"
 
-#: lib/bookshelf_chip_editor.lua:298 lib/bookshelf_chip_editor.lua:2050
+#: lib/bookshelf_chip_editor.lua:381 lib/bookshelf_chip_editor.lua:2244
 msgid "Recently read"
 msgstr "Đã đọc"
 
-#: lib/bookshelf_chip_editor.lua:299 lib/bookshelf_chip_editor.lua:2051
+#: lib/bookshelf_chip_editor.lua:382 lib/bookshelf_chip_editor.lua:2245
 msgid "Latest added"
 msgstr "Thêm mới"
 
-#: lib/bookshelf_chip_editor.lua:300 lib/bookshelf_chip_editor.lua:315
-#: lib/bookshelf_chip_editor.lua:2072 lib/bookshelf_filter.lua:37
-#: lib/bookshelf_settings.lua:517 lib/bookshelf_settings.lua:660
-#: lib/bookshelf_sort_engine.lua:371 lib/bookshelf_tab_model.lua:50
-#: lib/bookshelf_widget.lua:1506 lib/bookshelf_widget.lua:17126
+#: lib/bookshelf_chip_editor.lua:383 lib/bookshelf_chip_editor.lua:398
+#: lib/bookshelf_chip_editor.lua:2266 lib/bookshelf_filter.lua:37
+#: lib/bookshelf_settings.lua:534 lib/bookshelf_settings.lua:677
+#: lib/bookshelf_sort_engine.lua:429 lib/bookshelf_tab_model.lua:50
+#: lib/bookshelf_widget.lua:1547 lib/bookshelf_widget.lua:18716
 msgid "Series"
 msgstr "Series"
 
-#: lib/bookshelf_chip_editor.lua:301 lib/bookshelf_chip_editor.lua:2077
-#: lib/bookshelf_settings.lua:118 lib/bookshelf_tab_model.lua:52
-#: lib/bookshelf_tokens.lua:30 lib/bookshelf_widget.lua:1505
+#: lib/bookshelf_chip_editor.lua:384 lib/bookshelf_chip_editor.lua:2271
+#: lib/bookshelf_settings.lua:135 lib/bookshelf_tab_model.lua:52
+#: lib/bookshelf_tokens.lua:30 lib/bookshelf_widget.lua:1546
 msgid "Authors"
 msgstr "Tácgiả"
 
-#: lib/bookshelf_chip_editor.lua:302 lib/bookshelf_chip_editor.lua:2082
-#: lib/bookshelf_settings.lua:519 lib/bookshelf_tab_model.lua:54
-#: lib/bookshelf_widget.lua:1507 lib/bookshelf_widget.lua:17128
+#: lib/bookshelf_chip_editor.lua:385 lib/bookshelf_chip_editor.lua:2276
+#: lib/bookshelf_settings.lua:536 lib/bookshelf_tab_model.lua:54
+#: lib/bookshelf_widget.lua:1548 lib/bookshelf_widget.lua:18718
 msgid "Genres"
 msgstr "Thể loại"
 
-#: lib/bookshelf_chip_editor.lua:304 lib/bookshelf_chip_editor.lua:2091
+#: lib/bookshelf_chip_editor.lua:387 lib/bookshelf_chip_editor.lua:2285
 msgid "Formats"
 msgstr "Định dạng"
 
-#: lib/bookshelf_chip_editor.lua:305 lib/bookshelf_chip_editor.lua:2096
-#: lib/bookshelf_widget.lua:1510 lib/bookshelf_widget.lua:16318
+#: lib/bookshelf_chip_editor.lua:388 lib/bookshelf_chip_editor.lua:2290
+#: lib/bookshelf_widget.lua:1551 lib/bookshelf_widget.lua:17908
 msgid "Ratings"
 msgstr "Đánh giá"
 
-#: lib/bookshelf_chip_editor.lua:306 lib/bookshelf_chip_editor.lua:2100
+#: lib/bookshelf_chip_editor.lua:389 lib/bookshelf_chip_editor.lua:2294
 #: lib/bookshelf_tab_model.lua:58
 msgid "Languages"
 msgstr "Ngôn ngữ"
 
-#: lib/bookshelf_chip_editor.lua:307 lib/bookshelf_collection_manager.lua:118
-#: lib/bookshelf_tab_model.lua:60 lib/bookshelf_widget.lua:14985
-#: lib/bookshelf_widget.lua:15022
+#: lib/bookshelf_chip_editor.lua:390 lib/bookshelf_chip_editor.lua:1637
+#: lib/bookshelf_collection_manager.lua:118 lib/bookshelf_tab_model.lua:60
+#: lib/bookshelf_widget.lua:16563 lib/bookshelf_widget.lua:16600
 msgid "Favorites"
 msgstr "Sách yêu thích"
 
-#: lib/bookshelf_chip_editor.lua:309 lib/bookshelf_settings.lua:520
-#: lib/bookshelf_widget.lua:1509 lib/bookshelf_widget.lua:17129
+#: lib/bookshelf_chip_editor.lua:392 lib/bookshelf_settings.lua:537
+#: lib/bookshelf_widget.lua:1550 lib/bookshelf_widget.lua:18719
 msgid "Folder"
 msgstr "Thư mục"
 
-#: lib/bookshelf_chip_editor.lua:310
+#: lib/bookshelf_chip_editor.lua:393
 msgid "Folder (flattened)"
 msgstr "Thư mục (flattened)"
 
-#: lib/bookshelf_chip_editor.lua:311 lib/bookshelf_chip_editor.lua:312
+#: lib/bookshelf_chip_editor.lua:394 lib/bookshelf_chip_editor.lua:395
 #: lib/bookshelf_filter.lua:36
 msgid "Collection"
 msgstr "Collection"
 
-#: lib/bookshelf_chip_editor.lua:313 lib/bookshelf_filter.lua:32
+#: lib/bookshelf_chip_editor.lua:396 lib/bookshelf_filter.lua:32
 msgid "Genre"
 msgstr "Genre"
 
-#: lib/bookshelf_chip_editor.lua:314 lib/bookshelf_settings.lua:397
-#: lib/bookshelf_settings.lua:516 lib/bookshelf_settings.lua:659
-#: lib/bookshelf_sort_engine.lua:367
+#: lib/bookshelf_chip_editor.lua:397 lib/bookshelf_settings.lua:414
+#: lib/bookshelf_settings.lua:533 lib/bookshelf_settings.lua:676
+#: lib/bookshelf_sort_engine.lua:425
 msgid "Author"
 msgstr "Author"
 
-#: lib/bookshelf_chip_editor.lua:316 lib/bookshelf_filter.lua:31
+#: lib/bookshelf_chip_editor.lua:399 lib/bookshelf_filter.lua:31
 msgid "Status"
 msgstr "Status"
 
-#: lib/bookshelf_chip_editor.lua:317 lib/bookshelf_filter.lua:34
+#: lib/bookshelf_chip_editor.lua:400 lib/bookshelf_filter.lua:34
 msgid "Format"
 msgstr "Địnhdạng"
 
-#: lib/bookshelf_chip_editor.lua:319 lib/bookshelf_filter.lua:33
-#: lib/bookshelf_tokens.lua:94 micromodules/trivia.lua:447
+#: lib/bookshelf_chip_editor.lua:402 lib/bookshelf_filter.lua:33
+#: lib/bookshelf_tokens.lua:96 micromodules/trivia.lua:447
 msgid "Language"
 msgstr "Ngôn ngữ"
 
-#: lib/bookshelf_chip_editor.lua:323
+#: lib/bookshelf_chip_editor.lua:406
 msgid "OPDS catalog"
 msgstr "Danh mục OPDS"
 
-#: lib/bookshelf_chip_editor.lua:326 lib/bookshelf_chip_editor.lua:2126
+#: lib/bookshelf_chip_editor.lua:409 lib/bookshelf_chip_editor.lua:2320
 msgid "Kindle Virtual Library"
 msgstr "Thư viện ảo Kindle"
 
-#: lib/bookshelf_chip_editor.lua:334 lib/bookshelf_settings.lua:3142
+#: lib/bookshelf_chip_editor.lua:417 lib/bookshelf_settings.lua:3293
 msgid "(none)"
 msgstr "(không có)"
 
-#: lib/bookshelf_chip_editor.lua:341
+#: lib/bookshelf_chip_editor.lua:424
 msgid "OPDS: %1"
 msgstr "OPDS: %1"
 
-#: lib/bookshelf_chip_editor.lua:547
+#: lib/bookshelf_chip_editor.lua:636
 msgid "Insert icon…"
 msgstr "Chèn biểu tượng…"
 
-#: lib/bookshelf_chip_editor.lua:593 lib/bookshelf_chip_editor.lua:1512
+#: lib/bookshelf_chip_editor.lua:682 lib/bookshelf_chip_editor.lua:1744
 msgid "OK"
 msgstr "OK"
 
-#: lib/bookshelf_chip_editor.lua:603
-msgid "Chip label"
-msgstr "Nhãn chip"
+#: lib/bookshelf_chip_editor.lua:692
+msgid "Shelf label"
+msgstr "Nhãn kệ"
 
-#: lib/bookshelf_chip_editor.lua:624
+#: lib/bookshelf_chip_editor.lua:713
 msgid ": (none)"
 msgstr ": (không có)"
 
-#: lib/bookshelf_chip_editor.lua:624
+#: lib/bookshelf_chip_editor.lua:713
 msgid "Sort "
 msgstr "Sắp xếp"
 
-#: lib/bookshelf_chip_editor.lua:669
+#: lib/bookshelf_chip_editor.lua:758
 msgid "Server order"
 msgstr "Thứ tự máy chủ"
 
-#: lib/bookshelf_chip_editor.lua:706
+#: lib/bookshelf_chip_editor.lua:795
 msgid "Source: "
 msgstr "Nguồn: "
 
-#: lib/bookshelf_chip_editor.lua:720
+#: lib/bookshelf_chip_editor.lua:809
 msgid "Filters: "
 msgstr "Lọc: "
 
-#: lib/bookshelf_chip_editor.lua:734 lib/bookshelf_chip_editor.lua:1269
+#: lib/bookshelf_chip_editor.lua:823 lib/bookshelf_chip_editor.lua:1358
 msgid "Catalog settings"
 msgstr "Cài đặt danh mục"
 
-#: lib/bookshelf_chip_editor.lua:777
+#: lib/bookshelf_chip_editor.lua:866
 msgid "Shelf style: "
 msgstr "Kiểu kệ: "
 
-#: lib/bookshelf_chip_editor.lua:823
+#: lib/bookshelf_chip_editor.lua:912
 msgid "Edit label"
 msgstr "Sửanhãn"
 
-#: lib/bookshelf_chip_editor.lua:861
-msgid "Delete this chip? This cannot be undone."
-msgstr "Xóa chip này? Điều này không thể hoàn tác."
+#: lib/bookshelf_chip_editor.lua:950
+msgid "Delete this shelf? This cannot be undone."
+msgstr "Xóa kệ này? Điều này không thể hoàn tác."
 
-#: lib/bookshelf_chip_editor.lua:910 lib/bookshelf_collection_manager.lua:497
-#: lib/bookshelf_collection_manager.lua:521 lib/bookshelf_line_editor.lua:545
-#: lib/bookshelf_opds_catalog_editor.lua:50 lib/bookshelf_widget.lua:17484
-#: main.lua:2050 micromodules/action.lua:226 micromodules/countdown.lua:144
+#: lib/bookshelf_chip_editor.lua:999 lib/bookshelf_collection_manager.lua:497
+#: lib/bookshelf_collection_manager.lua:521 lib/bookshelf_line_editor.lua:601
+#: lib/bookshelf_opds_catalog_editor.lua:50 lib/bookshelf_widget.lua:19074
+#: main.lua:2104 micromodules/action.lua:226 micromodules/countdown.lua:144
 #: micromodules/reading_goal.lua:359 micromodules/weather.lua:261
 msgid "Save"
 msgstr "Lưu"
 
-#: lib/bookshelf_chip_editor.lua:1051
-msgid "Edit chip"
-msgstr "Chỉnhsửa chip"
+#: lib/bookshelf_chip_editor.lua:1140
+msgid "Edit shelf"
+msgstr "Chỉnh sửa kệ"
 
-#: lib/bookshelf_chip_editor.lua:1053
+#: lib/bookshelf_chip_editor.lua:1142
 msgid "Editing: "
 msgstr "Đang chỉnh sửa: "
 
-#: lib/bookshelf_chip_editor.lua:1237
+#: lib/bookshelf_chip_editor.lua:1326
 msgid "KOReader folder"
 msgstr "Thư mục KOReader"
 
-#: lib/bookshelf_chip_editor.lua:1252
+#: lib/bookshelf_chip_editor.lua:1341
 msgid "Starts at"
 msgstr "Bắt đầu tại"
 
-#: lib/bookshelf_chip_editor.lua:1252
+#: lib/bookshelf_chip_editor.lua:1341
 msgid "a subcatalog"
 msgstr "một danh mục con"
 
-#: lib/bookshelf_chip_editor.lua:1261
+#: lib/bookshelf_chip_editor.lua:1350
 msgid "Starts at: the top of the catalog"
 msgstr "Bắt đầu tại: đầu danh mục"
 
-#: lib/bookshelf_chip_editor.lua:1273
+#: lib/bookshelf_chip_editor.lua:1362
 msgid "Saves to"
 msgstr "Lưu vào"
 
-#: lib/bookshelf_chip_editor.lua:1281
+#: lib/bookshelf_chip_editor.lua:1370
 msgid "Refresh this catalog"
 msgstr "Làm mới danh mục này"
 
-#: lib/bookshelf_chip_editor.lua:1400
+#: lib/bookshelf_chip_editor.lua:1489
 msgid "Show as"
 msgstr "Hiển thị dưới dạng"
 
-#: lib/bookshelf_chip_editor.lua:1460
+#: lib/bookshelf_chip_editor.lua:1560
 msgid "List columns"
 msgstr "Cột danh sách"
 
-#: lib/bookshelf_chip_editor.lua:1462
+#: lib/bookshelf_chip_editor.lua:1562
 msgid "List rows"
 msgstr "Hàng danh sách"
 
-#: lib/bookshelf_chip_editor.lua:1487
+#: lib/bookshelf_chip_editor.lua:1574
+msgid "Spine rows"
+msgstr "Hàng gáy sách"
+
+#: lib/bookshelf_chip_editor.lua:1608
+msgid "Spine thickness"
+msgstr "Độ dày gáy sách"
+
+#: lib/bookshelf_chip_editor.lua:1617
+msgid "No"
+msgstr "Không"
+
+#: lib/bookshelf_chip_editor.lua:1617
+msgid "Yes"
+msgstr "Có"
+
+#: lib/bookshelf_chip_editor.lua:1636 lib/bookshelf_settings.lua:678
+#: lib/bookshelf_settings.lua:881 lib/bookshelf_settings.lua:940
+#: lib/bookshelf_shelf_row.lua:262 lib/bookshelf_stack_display.lua:105
+msgid "None"
+msgstr "Không"
+
+#: lib/bookshelf_chip_editor.lua:1638
+msgid "First in series"
+msgstr "Cuốn đầu trong Series"
+
+#: lib/bookshelf_chip_editor.lua:1639 lib/bookshelf_settings.lua:2975
+msgid "Currently reading"
+msgstr "Đang đọc"
+
+#: lib/bookshelf_chip_editor.lua:1640 micromodules/random_unread.lua:232
+msgid "All books"
+msgstr "Tất cả sách"
+
+#: lib/bookshelf_chip_editor.lua:1646 lib/bookshelf_chip_editor.lua:1685
+msgid "Face out"
+msgstr "Quay bìa ra ngoài"
+
+#: lib/bookshelf_chip_editor.lua:1689
+msgid "Choose which covers to show face out on this shelf."
+msgstr "Chọn những bìa sách nào sẽ quay ra ngoài trên kệ này."
+
+#: lib/bookshelf_chip_editor.lua:1699
+msgid "Author on spine"
+msgstr "Tác giả trên gáy sách"
+
+#: lib/bookshelf_chip_editor.lua:1719
 msgid "Folder tiles: "
 msgstr "Kiểu thư mục: "
 
-#: lib/bookshelf_chip_editor.lua:1490
+#: lib/bookshelf_chip_editor.lua:1722
 msgid "Folder tiles"
 msgstr "Kiểu thư mục"
 
-#: lib/bookshelf_chip_editor.lua:1519
+#: lib/bookshelf_chip_editor.lua:1751
 msgid "Shelf style"
 msgstr "Kiểu kệ"
 
-#: lib/bookshelf_chip_editor.lua:1625
+#: lib/bookshelf_chip_editor.lua:1819
 msgid "Save downloads from this catalog to…"
 msgstr "Lưu sách tải xuống từ danh mục này vào…"
 
-#: lib/bookshelf_chip_editor.lua:1629
+#: lib/bookshelf_chip_editor.lua:1823
 msgid "Choose folder…"
 msgstr "Chọn thư mục…"
 
-#: lib/bookshelf_chip_editor.lua:1633
+#: lib/bookshelf_chip_editor.lua:1827
 msgid "Save downloads to…"
 msgstr "Lưu sách tải xuống vào…"
 
-#: lib/bookshelf_chip_editor.lua:1644 lib/bookshelf_chip_editor.lua:1645
+#: lib/bookshelf_chip_editor.lua:1838 lib/bookshelf_chip_editor.lua:1839
 msgid "KOReader's download folder"
 msgstr "Thư mục tải xuống của KOReader"
 
-#: lib/bookshelf_chip_editor.lua:1705 lib/bookshelf_chip_editor.lua:1793
+#: lib/bookshelf_chip_editor.lua:1899 lib/bookshelf_chip_editor.lua:1987
 msgid "Choose "
 msgstr "Chọn "
 
-#: lib/bookshelf_chip_editor.lua:1706 lib/bookshelf_chip_editor.lua:2352
+#: lib/bookshelf_chip_editor.lua:1900 lib/bookshelf_chip_editor.lua:2533
 #: lib/bookshelf_folder_picker.lua:137 lib/bookshelf_library_modal.lua:517
-#: lib/bookshelf_widget.lua:5640 lib/bookshelf_widget.lua:17457
+#: lib/bookshelf_widget.lua:6337 lib/bookshelf_widget.lua:19047
 msgid "Search…"
 msgstr "Tìm kiếm…"
 
-#: lib/bookshelf_chip_editor.lua:1931
+#: lib/bookshelf_chip_editor.lua:2125
 msgid "Choose OPDS catalog"
 msgstr "Chọn danh mục OPDS"
 
-#: lib/bookshelf_chip_editor.lua:1933
+#: lib/bookshelf_chip_editor.lua:2127
 msgid "Add catalog…"
 msgstr "Thêm danh mục…"
 
-#: lib/bookshelf_chip_editor.lua:1948 lib/bookshelf_line_editor.lua:559
-#: lib/bookshelf_widget.lua:16386 lib/bookshelf_widget.lua:17111
-#: lib/bookshelf_widget.lua:17209
+#: lib/bookshelf_chip_editor.lua:2142 lib/bookshelf_line_editor.lua:615
+#: lib/bookshelf_widget.lua:17976 lib/bookshelf_widget.lua:18701
+#: lib/bookshelf_widget.lua:18799
 msgid "Edit"
 msgstr "Chỉnh sửa"
 
-#: lib/bookshelf_chip_editor.lua:2024
+#: lib/bookshelf_chip_editor.lua:2218
 msgid "Choose folder within home folder"
 msgstr "Chọn thư mục trong thư mục home"
 
-#: lib/bookshelf_chip_editor.lua:2026 lib/bookshelf_folder_picker.lua:111
+#: lib/bookshelf_chip_editor.lua:2220 lib/bookshelf_folder_picker.lua:111
 msgid "Browse device…"
 msgstr "Browse thiết bị…"
 
-#: lib/bookshelf_chip_editor.lua:2052
+#: lib/bookshelf_chip_editor.lua:2246
 msgid "★ Favorites"
 msgstr "★ Sách yêu thích"
 
-#: lib/bookshelf_chip_editor.lua:2065
+#: lib/bookshelf_chip_editor.lua:2259
 msgid "Specific folder…"
 msgstr "Thư mục cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2067
+#: lib/bookshelf_chip_editor.lua:2261
 msgid "Flattened folder…"
 msgstr "Thư mục đã được làm phẳng…"
 
-#: lib/bookshelf_chip_editor.lua:2073
+#: lib/bookshelf_chip_editor.lua:2267
 msgid "Specific series…"
 msgstr "Danh sách cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2078
+#: lib/bookshelf_chip_editor.lua:2272
 msgid "Specific author…"
 msgstr "Tác giả cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2083
+#: lib/bookshelf_chip_editor.lua:2277
 msgid "Specific genre…"
 msgstr "Thể loại cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2088
+#: lib/bookshelf_chip_editor.lua:2282
 msgid "Specific collection…"
 msgstr "Bộ sưu tập cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2092
+#: lib/bookshelf_chip_editor.lua:2286
 msgid "Specific format…"
 msgstr "Định dạng cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2097
+#: lib/bookshelf_chip_editor.lua:2291
 msgid "Specific rating…"
 msgstr "Xếp hạng cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2101
+#: lib/bookshelf_chip_editor.lua:2295
 msgid "Specific language…"
 msgstr "Ngôn ngữ cụ thể…"
 
-#: lib/bookshelf_chip_editor.lua:2110
+#: lib/bookshelf_chip_editor.lua:2304
 msgid "OPDS catalog…"
 msgstr "Danh mục OPDS…"
 
-#: lib/bookshelf_chip_editor.lua:2128
-msgid "Chip source"
-msgstr "Nguồn chip"
+#: lib/bookshelf_chip_editor.lua:2323
+msgid "Shelf source"
+msgstr "Nguồn kệ"
 
-#: lib/bookshelf_chip_editor.lua:2193
+#: lib/bookshelf_chip_editor.lua:2391
 msgid "Clear all filters"
 msgstr "Xóa tất cả bộ lọc"
 
-#: lib/bookshelf_chip_editor.lua:2197 lib/bookshelf_chip_editor.lua:2391
-#: lib/bookshelf_chip_editor.lua:2449 lib/bookshelf_chip_editor.lua:2508
-#: lib/bookshelf_widget.lua:18151
+#: lib/bookshelf_chip_editor.lua:2395 lib/bookshelf_chip_editor.lua:2572
+#: lib/bookshelf_chip_editor.lua:2630 lib/bookshelf_chip_editor.lua:2693
+#: lib/bookshelf_widget.lua:19741
 msgid "Done"
 msgstr "Hoàn thành"
 
-#: lib/bookshelf_chip_editor.lua:2215
+#: lib/bookshelf_chip_editor.lua:2398
 msgid "Pick filters to narrow the shelf. Several picks in the same row match any of them, so picking two genres shows books in either. Picks in different rows must all match, so adding a 5-star rating then limits those to 5-star books only. Numbers below filter choices show how many books currently match based on other selected filters."
 msgstr "Chọn bộ lọc để thu hẹp phạm vi giá sách. Nhiều lựa chọn trong cùng một hàng sẽ khớp với bất kỳ lựa chọn nào trong số đó, vì vậy chọn hai thể loại sẽ hiển thị sách thuộc thể loại này hoặc thể loại kia. Các lựa chọn ở những hàng khác nhau đều phải khớp, vì vậy thêm bộ lọc đánh giá 5 sao sẽ chỉ giới hạn ở những sách 5 sao. Các số bên dưới mỗi lựa chọn lọc cho biết hiện có bao nhiêu sách khớp dựa trên các bộ lọc khác đang được chọn."
 
-#: lib/bookshelf_chip_editor.lua:2221
+#: lib/bookshelf_chip_editor.lua:2400
 msgid "Filters"
 msgstr "Bộ lọc"
 
-#: lib/bookshelf_chip_editor.lua:2270
+#: lib/bookshelf_chip_editor.lua:2450
 msgid "Series filter"
 msgstr "Lọc theo Series"
 
-#: lib/bookshelf_chip_editor.lua:2284
+#: lib/bookshelf_chip_editor.lua:2465
 msgid "Reading status filter"
 msgstr "Lọc theo trạng thái đọc"
 
-#: lib/bookshelf_chip_editor.lua:2285
+#: lib/bookshelf_chip_editor.lua:2466
 msgid "Genre filter"
 msgstr "Lọctheo thể loại"
 
-#: lib/bookshelf_chip_editor.lua:2286
+#: lib/bookshelf_chip_editor.lua:2467
 msgid "Language filter"
 msgstr "Lọc theo ngôn ngữ"
 
-#: lib/bookshelf_chip_editor.lua:2287
+#: lib/bookshelf_chip_editor.lua:2468
 msgid "Format filter"
 msgstr "Lọc theo định dạng"
 
-#: lib/bookshelf_chip_editor.lua:2288
+#: lib/bookshelf_chip_editor.lua:2469
 msgid "Rating filter"
 msgstr "Lọc theo điểm"
 
-#: lib/bookshelf_chip_editor.lua:2289
+#: lib/bookshelf_chip_editor.lua:2470
 msgid "Collection filter"
 msgstr "Lọc bộ sưu tập"
 
-#: lib/bookshelf_chip_editor.lua:2291
+#: lib/bookshelf_chip_editor.lua:2472
 msgid "Filter"
 msgstr "Lọc"
 
-#: lib/bookshelf_chip_editor.lua:2427 micromodules/trivia.lua:42
+#: lib/bookshelf_chip_editor.lua:2608 micromodules/trivia.lua:42
 #: micromodules/trivia.lua:63 micromodules/trivia.lua:70
 #: micromodules/trivia.lua:402
 msgid "Any"
 msgstr "Tất cả"
 
-#: lib/bookshelf_chip_editor.lua:2447
+#: lib/bookshelf_chip_editor.lua:2628
 msgid "(none in library)"
 msgstr "(không có trong thư viện)"
 
-#: lib/bookshelf_chip_editor.lua:2501
+#: lib/bookshelf_chip_editor.lua:2686
 msgid "(no folder filters - tap to remove once added)"
 msgstr "(không có bộ lọc thư mục - chạm để loại bỏ sau khi đã thêm)"
 
-#: lib/bookshelf_chip_editor.lua:2505
+#: lib/bookshelf_chip_editor.lua:2690
 msgid "Add folder to include"
 msgstr "Thêm thư mục để bao gồm"
 
-#: lib/bookshelf_chip_editor.lua:2506
+#: lib/bookshelf_chip_editor.lua:2691
 msgid "Add folder to exclude"
 msgstr "Thêm thư mục để loại trừ"
 
-#: lib/bookshelf_chip_editor.lua:2510
+#: lib/bookshelf_chip_editor.lua:2696
 msgid "Folder filter"
 msgstr "Bộ lọc thư mục"
 
-#: lib/bookshelf_chip_editor.lua:2565
+#: lib/bookshelf_chip_editor.lua:2754
 msgid "Clear sort"
 msgstr "Xóa sắp xếp"
 
-#: lib/bookshelf_chip_editor.lua:2621
+#: lib/bookshelf_chip_editor.lua:2810
 msgid "Sort groups by"
 msgstr "Sắp xếp nhóm theo"
 
-#: lib/bookshelf_chip_editor.lua:2623
+#: lib/bookshelf_chip_editor.lua:2812
 msgid "Within each group, then by"
 msgstr "Trong mỗi nhóm, theo"
 
-#: lib/bookshelf_chip_editor.lua:2625
+#: lib/bookshelf_chip_editor.lua:2814
 msgid "Sort by"
 msgstr "Sắp xếp theo"
 
-#: lib/bookshelf_chip_editor.lua:2627
+#: lib/bookshelf_chip_editor.lua:2816
 msgid "Then by"
 msgstr "Sau đó"
 
@@ -738,15 +790,15 @@ msgstr "Sau đó"
 msgid "Rename collection"
 msgstr "Đổi tên bộ sưu tập"
 
-#: lib/bookshelf_collection_manager.lua:332 lib/bookshelf_widget.lua:17548
+#: lib/bookshelf_collection_manager.lua:332 lib/bookshelf_widget.lua:19138
 msgid "New name"
 msgstr "Tên mới"
 
 #: lib/bookshelf_collection_manager.lua:336
 #: lib/bookshelf_collection_manager.lua:404 lib/bookshelf_move_flow.lua:389
 #: lib/bookshelf_start_menu_edit.lua:101 lib/bookshelf_start_menu_edit.lua:107
-#: lib/bookshelf_start_menu_edit.lua:108 lib/bookshelf_widget.lua:17552
-#: lib/bookshelf_widget.lua:17593
+#: lib/bookshelf_start_menu_edit.lua:108 lib/bookshelf_widget.lua:19142
+#: lib/bookshelf_widget.lua:19183
 msgid "Rename"
 msgstr "Đổi tên"
 
@@ -764,10 +816,10 @@ msgid "\"? Books are not deleted, only the tag."
 msgstr "\"? Sách không được xóa, chỉ xóa thẻ."
 
 #: lib/bookshelf_collection_manager.lua:405
-#: lib/bookshelf_collection_manager.lua:416 lib/bookshelf_widget.lua:17595
-#: lib/bookshelf_widget.lua:17602
-msgid "Pin to chip bar"
-msgstr "Gắn vào thanh chip"
+#: lib/bookshelf_collection_manager.lua:416 lib/bookshelf_widget.lua:19185
+#: lib/bookshelf_widget.lua:19192
+msgid "Pin to shelf menu"
+msgstr "Gắn vào menu kệ"
 
 #: lib/bookshelf_collection_manager.lua:423
 msgid "Edit collection: "
@@ -802,8 +854,8 @@ msgid "Manage collections"
 msgstr "Quản lý bộ sưu tập"
 
 #: lib/bookshelf_collection_manager.lua:688
-msgid "Tap a custom collection to rename, delete, or pin it to the chip bar. Long-press a book on the shelf and tap Collections… to add or remove it from collections."
-msgstr "Chạm vào một bộ sưu tập tùy chỉnh để đổi tên, xóa, hoặc gắn vào thanh chip. Nhấn giữ một cuốn sách trên giá và chạm Bộ sưu tập… để thêm hoặc xóa sách khỏi các bộ sưu tập."
+msgid "Tap a custom collection to rename, delete, or pin it to the shelf menu. Long-press a book on the shelf and tap Collections… to add or remove it from collections."
+msgstr "Chạm vào một bộ sưu tập tùy chỉnh để đổi tên, xóa, hoặc gắn vào menu kệ. Nhấn giữ một cuốn sách trên kệ và chạm Bộ sưu tập… để thêm hoặc xóa sách khỏi các bộ sưu tập."
 
 #: lib/bookshelf_collection_manager.lua:800
 msgid "Add to all"
@@ -818,23 +870,23 @@ msgid "Mixed"
 msgstr "Trộn"
 
 #: lib/bookshelf_collection_manager.lua:817
-#: lib/bookshelf_start_menu_edit.lua:518 lib/bookshelf_widget.lua:17359
-#: lib/bookshelf_widget.lua:17439 micromodules/countdown.lua:121
+#: lib/bookshelf_start_menu_edit.lua:518 lib/bookshelf_widget.lua:18949
+#: lib/bookshelf_widget.lua:19029 micromodules/countdown.lua:121
 msgid "Add"
 msgstr "Thêm"
 
-#: lib/bookshelf_collection_manager.lua:819 lib/bookshelf_widget.lua:17586
+#: lib/bookshelf_collection_manager.lua:819 lib/bookshelf_widget.lua:19176
 msgid "Remove"
 msgstr "Xóa"
 
 #: lib/bookshelf_color_palette.lua:354 lib/bookshelf_line_editor.lua:153
-#: lib/bookshelf_line_editor.lua:541 lib/bookshelf_settings.lua:1548
-#: lib/bookshelf_settings.lua:1885 lib/bookshelf_settings.lua:2648
-#: lib/bookshelf_settings.lua:3543 lib/bookshelf_settings.lua:3778
-#: lib/bookshelf_settings.lua:3844 lib/bookshelf_settings.lua:3909
-#: lib/bookshelf_settings.lua:3993 lib/bookshelf_settings.lua:4057
-#: lib/bookshelf_settings.lua:4142 lib/bookshelf_settings.lua:4351
-#: lib/bookshelf_settings.lua:4438 lib/bookshelf_settings.lua:4528
+#: lib/bookshelf_line_editor.lua:597 lib/bookshelf_settings.lua:1614
+#: lib/bookshelf_settings.lua:2006 lib/bookshelf_settings.lua:2786
+#: lib/bookshelf_settings.lua:3701 lib/bookshelf_settings.lua:3981
+#: lib/bookshelf_settings.lua:4047 lib/bookshelf_settings.lua:4112
+#: lib/bookshelf_settings.lua:4196 lib/bookshelf_settings.lua:4260
+#: lib/bookshelf_settings.lua:4345 lib/bookshelf_settings.lua:4554
+#: lib/bookshelf_settings.lua:4641 lib/bookshelf_settings.lua:4731
 #: lib/bookshelf_stack_display.lua:193
 msgid "Default"
 msgstr "Mặc định"
@@ -851,8 +903,8 @@ msgstr "Chọn một màu sắc"
 msgid "Invalid hex color (use #RGB or #RRGGBB)"
 msgstr "Màu hex không hợp lệ (sử dụng #RGB hoặc #RRGGBB)"
 
-#: lib/bookshelf_cover_apply.lua:166 lib/bookshelf_widget.lua:15613
-#: lib/bookshelf_widget.lua:17303
+#: lib/bookshelf_cover_apply.lua:166 lib/bookshelf_widget.lua:17191
+#: lib/bookshelf_widget.lua:18893
 msgid "Embedded"
 msgstr "Nhúng"
 
@@ -869,8 +921,8 @@ msgid "Previous cover"
 msgstr "Bìa trước đó"
 
 #: lib/bookshelf_cover_apply.lua:208 lib/bookshelf_cover_sources.lua:295
-#: lib/bookshelf_widget.lua:15614 lib/bookshelf_widget.lua:16292
-#: lib/bookshelf_widget.lua:17305 lib/bookshelf_widget.lua:18222
+#: lib/bookshelf_widget.lua:17192 lib/bookshelf_widget.lua:17882
+#: lib/bookshelf_widget.lua:18895 lib/bookshelf_widget.lua:19812
 msgid "Hardcover"
 msgstr "Ấn bản cứng"
 
@@ -935,7 +987,7 @@ msgid "Only books in series"
 msgstr "Chỉ sách thuộc Series"
 
 #: lib/bookshelf_filter.lua:249 lib/bookshelf_filter.lua:266
-#: lib/bookshelf_tokens.lua:256 micromodules/random_unread.lua:233
+#: lib/bookshelf_tokens.lua:260 micromodules/random_unread.lua:233
 #: micromodules/shelf_size.lua:19
 msgid "Unread"
 msgstr "Chưa đọc"
@@ -1024,7 +1076,7 @@ msgstr "Cài đặt module…"
 msgid "No micro-modules available"
 msgstr "Không có micro-modules sẵn sàng"
 
-#: lib/bookshelf_icons_catalogue.lua:20 lib/bookshelf_settings.lua:116
+#: lib/bookshelf_icons_catalogue.lua:20 lib/bookshelf_settings.lua:133
 msgid "All"
 msgstr "Tất cả"
 
@@ -1032,12 +1084,12 @@ msgstr "Tất cả"
 msgid "Dynamic"
 msgstr "Động"
 
-#: lib/bookshelf_icons_catalogue.lua:22 lib/bookshelf_settings.lua:121
-#: lib/bookshelf_tokens.lua:32 lib/bookshelf_widget.lua:17008
+#: lib/bookshelf_icons_catalogue.lua:22 lib/bookshelf_settings.lua:138
+#: lib/bookshelf_tokens.lua:32 lib/bookshelf_widget.lua:18598
 msgid "Device"
 msgstr "Thiết bị"
 
-#: lib/bookshelf_icons_catalogue.lua:24 lib/bookshelf_settings.lua:120
+#: lib/bookshelf_icons_catalogue.lua:24 lib/bookshelf_settings.lua:137
 #: lib/bookshelf_tokens.lua:36
 msgid "Time"
 msgstr "Thời gian"
@@ -1094,7 +1146,7 @@ msgstr "Bầu"
 msgid "Club"
 msgstr "Gầu"
 
-#: lib/bookshelf_icons_catalogue.lua:178 lib/bookshelf_settings.lua:982
+#: lib/bookshelf_icons_catalogue.lua:178 lib/bookshelf_settings.lua:1048
 msgid "Heart"
 msgstr "Tâm"
 
@@ -1494,12 +1546,12 @@ msgstr "Tìm kiếm %1 biểu tượng theo tên…"
 msgid "Drop .svg or .png files in koreader/icons/"
 msgstr "Thả .svg hoặc .png vào koreader/icons/"
 
-#: lib/bookshelf_library_modal.lua:553 lib/bookshelf_widget.lua:13125
-#: lib/bookshelf_widget.lua:19330
+#: lib/bookshelf_library_modal.lua:553 lib/bookshelf_widget.lua:14658
+#: lib/bookshelf_widget.lua:20920
 msgid "Search"
 msgstr "Tìm kiếm"
 
-#: lib/bookshelf_line_editor.lua:115 lib/bookshelf_settings.lua:523
+#: lib/bookshelf_line_editor.lua:115 lib/bookshelf_settings.lua:540
 msgid "Font size"
 msgstr "kích thước phông"
 
@@ -1515,64 +1567,64 @@ msgstr "(Mặc định)"
 msgid "Pick font"
 msgstr "Chọn phông"
 
-#: lib/bookshelf_line_editor.lua:370 lib/bookshelf_line_editor.lua:371
-#: lib/bookshelf_line_editor.lua:374
+#: lib/bookshelf_line_editor.lua:426 lib/bookshelf_line_editor.lua:427
+#: lib/bookshelf_line_editor.lua:430
 msgid "Bold"
 msgstr "In đậm"
 
-#: lib/bookshelf_line_editor.lua:373
+#: lib/bookshelf_line_editor.lua:429
 msgid "Bold italic"
 msgstr "In đậm nghiêng"
 
-#: lib/bookshelf_line_editor.lua:375
+#: lib/bookshelf_line_editor.lua:431
 msgid "Italic"
 msgstr "In nghiêng"
 
-#: lib/bookshelf_line_editor.lua:376
+#: lib/bookshelf_line_editor.lua:432
 msgid "Regular"
 msgstr "Thường"
 
-#: lib/bookshelf_line_editor.lua:396
+#: lib/bookshelf_line_editor.lua:452
 msgid "Size"
 msgstr "Kích thước"
 
-#: lib/bookshelf_line_editor.lua:407
+#: lib/bookshelf_line_editor.lua:463
 msgid "Font ✓"
 msgstr "Phông ✓"
 
-#: lib/bookshelf_line_editor.lua:407
+#: lib/bookshelf_line_editor.lua:463
 msgid "Font…"
 msgstr "Phông…"
 
-#: lib/bookshelf_line_editor.lua:468
+#: lib/bookshelf_line_editor.lua:524
 msgid "Bar style"
 msgstr "Kiểu Bar"
 
-#: lib/bookshelf_line_editor.lua:469
+#: lib/bookshelf_line_editor.lua:525
 msgid "Bar: "
 msgstr "Thanh: "
 
-#: lib/bookshelf_line_editor.lua:482
+#: lib/bookshelf_line_editor.lua:538
 msgid "+ Bar"
 msgstr "+ Cột"
 
-#: lib/bookshelf_line_editor.lua:482
+#: lib/bookshelf_line_editor.lua:538
 msgid "- Bar"
 msgstr "- Thanh"
 
-#: lib/bookshelf_line_editor.lua:492 lib/bookshelf_line_editor.lua:507
+#: lib/bookshelf_line_editor.lua:548 lib/bookshelf_line_editor.lua:563
 msgid "Bar height"
 msgstr "Chiều cao cột"
 
-#: lib/bookshelf_line_editor.lua:493
+#: lib/bookshelf_line_editor.lua:549
 msgid "Height: "
 msgstr "Chiều cao: "
 
-#: lib/bookshelf_line_editor.lua:525
+#: lib/bookshelf_line_editor.lua:581
 msgid "Tokens…"
 msgstr "Khối…"
 
-#: lib/bookshelf_line_editor.lua:534
+#: lib/bookshelf_line_editor.lua:590
 msgid "Icons…"
 msgstr "Biểu tượng…"
 
@@ -1601,7 +1653,7 @@ msgstr "%d trong %d đã hoàn thành"
 msgid "Line %d"
 msgstr "Dòng %d"
 
-#: lib/bookshelf_menu_host.lua:135 lib/bookshelf_widget.lua:1528
+#: lib/bookshelf_menu_host.lua:135 lib/bookshelf_widget.lua:1569
 msgid "Back"
 msgstr "Lùi"
 
@@ -1831,8 +1883,8 @@ msgid "Sync catalog"
 msgstr "Đồng bộ danh mục"
 
 #: lib/bookshelf_opds_catalog_editor.lua:99
-msgid "Delete \"%1\"? %2 chip(s) use this catalog and will stop working."
-msgstr "Xóa \"%1\"? %2 chip đang dùng danh mục này và sẽ ngừng hoạt động."
+msgid "Delete \"%1\"? %2 shelves use this catalog and will stop working."
+msgstr "Xóa \"%1\"? %2 kệ đang dùng danh mục này và sẽ ngừng hoạt động."
 
 #: lib/bookshelf_opds_catalog_editor.lua:101
 msgid "Delete \"%1\"?"
@@ -1862,7 +1914,7 @@ msgstr "Nếu đã cũ hơn một tuần"
 msgid "Every time I open it"
 msgstr "Mỗi lần tôi mở"
 
-#: lib/bookshelf_pagination.lua:84 lib/bookshelf_widget.lua:5012
+#: lib/bookshelf_pagination.lua:84
 msgid "Page %1 of %2+"
 msgstr "Trang %1 của %2+"
 
@@ -1881,42 +1933,42 @@ msgstr "sách"
 msgid "books"
 msgstr "các sách"
 
-#: lib/bookshelf_reader_park.lua:421 lib/bookshelf_widget.lua:19612
-#: main.lua:1125
+#: lib/bookshelf_reader_park.lua:421 lib/bookshelf_widget.lua:21202
+#: main.lua:1179
 msgid "Closing book…"
 msgstr "Đang đóng sách…"
 
 #: lib/bookshelf_reviews_modal.lua:440 lib/bookshelf_updater.lua:122
-#: lib/bookshelf_widget.lua:13609
+#: lib/bookshelf_widget.lua:15147
 msgid "Open"
 msgstr "Mở"
 
-#: lib/bookshelf_settings.lua:117 lib/bookshelf_tokens.lua:31
+#: lib/bookshelf_settings.lua:134 lib/bookshelf_tokens.lua:31
 msgid "Book"
 msgstr "Sách"
 
-#: lib/bookshelf_settings.lua:119 lib/bookshelf_settings.lua:402
-#: lib/bookshelf_sort_engine.lua:399 lib/bookshelf_tokens.lua:34
+#: lib/bookshelf_settings.lua:136 lib/bookshelf_settings.lua:419
+#: lib/bookshelf_sort_engine.lua:457 lib/bookshelf_tokens.lua:34
 msgid "Progress"
 msgstr "Tiến trình"
 
-#: lib/bookshelf_settings.lua:122 lib/bookshelf_tokens.lua:33
+#: lib/bookshelf_settings.lua:139 lib/bookshelf_tokens.lua:33
 msgid "Logic"
 msgstr "Lógica"
 
-#: lib/bookshelf_settings.lua:123 lib/bookshelf_tokens.lua:35
+#: lib/bookshelf_settings.lua:140 lib/bookshelf_tokens.lua:35
 msgid "Style"
 msgstr "Kiểu"
 
-#: lib/bookshelf_settings.lua:171 lib/bookshelf_settings.lua:324
+#: lib/bookshelf_settings.lua:188 lib/bookshelf_settings.lua:341
 msgid "Insert token"
 msgstr "Chèn token"
 
-#: lib/bookshelf_settings.lua:172
+#: lib/bookshelf_settings.lua:189
 msgid "Bookshelf tokens"
 msgstr "Token tủ sách"
 
-#: lib/bookshelf_settings.lua:173
+#: lib/bookshelf_settings.lua:190
 msgid ""
 "Tokens are placeholders that get replaced with live data when the book detail view or status line renders.\n"
 "\n"
@@ -1938,498 +1990,540 @@ msgstr ""
 "  [if:series]Book %series_num of %series_name[/if]\n"
 "  [if:batt<20]LOW %batt[/if]"
 
-#: lib/bookshelf_settings.lua:196
+#: lib/bookshelf_settings.lua:213
 msgid "Search tokens…"
 msgstr "Token tìm kiếm…"
 
-#: lib/bookshelf_settings.lua:277
+#: lib/bookshelf_settings.lua:294
 msgid "Help"
 msgstr "Trợ giúp"
 
-#: lib/bookshelf_settings.lua:395
+#: lib/bookshelf_settings.lua:412
 msgid "Status line"
 msgstr "Hàng trạng thái"
 
-#: lib/bookshelf_settings.lua:396 lib/bookshelf_settings.lua:658
-#: lib/bookshelf_sort_engine.lua:356 lib/bookshelf_tokens.lua:68
+#: lib/bookshelf_settings.lua:413 lib/bookshelf_settings.lua:675
+#: lib/bookshelf_sort_engine.lua:414 lib/bookshelf_tokens.lua:68
 msgid "Title"
 msgstr "Tiêu đề"
 
-#: lib/bookshelf_settings.lua:398
+#: lib/bookshelf_settings.lua:415
 msgid "Rating (interactive)"
 msgstr "Đánh giá (giao tương tác)"
 
-#: lib/bookshelf_settings.lua:399
+#: lib/bookshelf_settings.lua:416
 msgid "Metadata"
 msgstr "Meta dữ liệu"
 
-#: lib/bookshelf_settings.lua:400 lib/bookshelf_widget.lua:13667
-#: lib/bookshelf_widget.lua:15603 lib/bookshelf_widget.lua:17727
-#: lib/bookshelf_widget.lua:17737
+#: lib/bookshelf_settings.lua:417 lib/bookshelf_widget.lua:15205
+#: lib/bookshelf_widget.lua:17181 lib/bookshelf_widget.lua:19317
+#: lib/bookshelf_widget.lua:19327
 msgid "Description"
 msgstr "Mô tả"
 
-#: lib/bookshelf_settings.lua:401
+#: lib/bookshelf_settings.lua:418
 msgid "Tags (interactive)"
 msgstr "Thẻ (giao tương tác)"
 
-#: lib/bookshelf_settings.lua:507
+#: lib/bookshelf_settings.lua:524
 msgid "Show tags line"
 msgstr "Hiển thị dòng thẻ"
 
-#: lib/bookshelf_settings.lua:543
+#: lib/bookshelf_settings.lua:560
 msgid "Tags font size"
 msgstr "Kích thước phông chữ thẻ"
 
-#: lib/bookshelf_settings.lua:549 lib/bookshelf_settings.lua:555
+#: lib/bookshelf_settings.lua:566 lib/bookshelf_settings.lua:572
 msgid "Center"
 msgstr "Trung tâm"
 
-#: lib/bookshelf_settings.lua:549 lib/bookshelf_settings.lua:554
-#: lib/bookshelf_settings.lua:4168
+#: lib/bookshelf_settings.lua:566 lib/bookshelf_settings.lua:571
+#: lib/bookshelf_settings.lua:4371
 msgid "Left"
 msgstr "Trái"
 
-#: lib/bookshelf_settings.lua:549 lib/bookshelf_settings.lua:556
-#: lib/bookshelf_settings.lua:4169
+#: lib/bookshelf_settings.lua:566 lib/bookshelf_settings.lua:573
+#: lib/bookshelf_settings.lua:4372
 msgid "Right"
 msgstr "Phải"
 
-#: lib/bookshelf_settings.lua:550
+#: lib/bookshelf_settings.lua:567
 msgid "Alignment"
 msgstr "Hoàn chỉnh"
 
-#: lib/bookshelf_settings.lua:565 lib/bookshelf_settings.lua:574
+#: lib/bookshelf_settings.lua:582 lib/bookshelf_settings.lua:591
 msgid "Maximum tag rows"
 msgstr "Số hàng thẻ tag tối đa"
 
-#: lib/bookshelf_settings.lua:575
+#: lib/bookshelf_settings.lua:592
 msgid "How many rows of tag pills the hero shows before the rest collapse into a tappable +N button."
 msgstr "Số hàng pill thẻ tag mà khu vực chính hiển thị trước khi phần còn lại thu gọn vào nút +N có thể chạm."
 
-#: lib/bookshelf_settings.lua:580 lib/bookshelf_settings.lua:2465
+#: lib/bookshelf_settings.lua:597 lib/bookshelf_settings.lua:2586
 msgid "Set"
 msgstr "Set"
 
-#: lib/bookshelf_settings.lua:661 lib/bookshelf_settings.lua:815
-#: lib/bookshelf_settings.lua:874 lib/bookshelf_shelf_row.lua:262
-#: lib/bookshelf_stack_display.lua:105
-msgid "None"
-msgstr "Không"
-
-#: lib/bookshelf_settings.lua:687
+#: lib/bookshelf_settings.lua:704
 msgid "Show text below covers"
 msgstr "Hiển thị văn bản dưới đây bao gồm"
 
-#: lib/bookshelf_settings.lua:689
+#: lib/bookshelf_settings.lua:706
 msgid "A line of text under each cover, on the regular shelf and the expanded shelf alike. Choose what it shows, or None to let covers use the full row. Text size follows the Cover labels setting under Text size."
 msgstr "Một dòng chữ dưới mỗi bìa, trên cả kệ thường lẫn kệ mở rộng. Chọn nội dung hiển thị, hoặc Không để bìa dùng trọn cả hàng. Cỡ chữ theo cài đặt Nhãn bìa trong mục Kích thước văn bản."
 
-#: lib/bookshelf_settings.lua:703
+#: lib/bookshelf_settings.lua:720
 msgid "True cover aspect ratio"
 msgstr "Tỷ lệ khung hình bìa thật"
 
-#: lib/bookshelf_settings.lua:704
+#: lib/bookshelf_settings.lua:721
 msgid "Show each cover at its real shape instead of a uniform book rectangle. Covers keep the same width but vary in height: on the shelf they sit along the bottom shelf line, and in the hero area they align to the top. Wide or square covers stop being cropped or stretched. Off by default (uniform grid)."
 msgstr "Hiển thị mỗi bìa theo hình dạng thật thay vì một hình chữ nhật sách đồng nhất. Các bìa giữ nguyên chiều rộng nhưng khác nhau về chiều cao: trên kệ chúng nằm dọc theo đường kệ dưới cùng, còn trong vùng hero chúng canh lên trên cùng. Bìa rộng hoặc vuông sẽ không còn bị cắt hay kéo giãn. Mặc định tắt (lưới đồng nhất)."
 
-#: lib/bookshelf_settings.lua:722
+#: lib/bookshelf_settings.lua:751
+msgid "(default)"
+msgstr "(mặc định)"
+
+#: lib/bookshelf_settings.lua:772
+msgid "Tallest cover shape"
+msgstr "Chiều cao tối đa của bìa"
+
+#: lib/bookshelf_settings.lua:775
+msgid "How tall a cover may be, relative to its width, before the extra height is trimmed. Taller values show more of an unusually tall cover; they also make every row taller, so fewer rows fit on the shelf. Only applies with True cover aspect ratio on."
+msgstr "Chiều cao tối đa của bìa so với chiều rộng trước khi phần dư bị cắt. Giá trị lớn hơn hiển thị nhiều hơn với những bìa cao bất thường; đồng thời làm mỗi hàng cao hơn nên kệ chứa được ít hàng hơn. Chỉ áp dụng khi bật tỉ lệ bìa thực."
+
+#: lib/bookshelf_settings.lua:788
 msgid "Square cover corners"
 msgstr "Góc bìa vuông"
 
-#: lib/bookshelf_settings.lua:723
+#: lib/bookshelf_settings.lua:789
 msgid "Draw covers with square corners instead of the rounded card shape. Independent of the drop shadow, so a flatter look can keep the shadow or drop it separately. Off by default (rounded)."
 msgstr "Vẽ bìa với góc vuông thay vì dạng thẻ bo tròn. Độc lập với đổ bóng, nên kiểu hiển thị phẳng hơn vẫn có thể giữ bóng hoặc bỏ bóng riêng. Mặc định tắt (bo tròn)."
 
-#: lib/bookshelf_settings.lua:739
+#: lib/bookshelf_settings.lua:805
 msgid "No cover drop shadow"
 msgstr "Không đổ bóng bìa"
 
-#: lib/bookshelf_settings.lua:740
+#: lib/bookshelf_settings.lua:806
 msgid "Draw covers flat against the page instead of raised off it. The pixels the shadow reserved go back to the cover, so covers get slightly larger. Off by default (shadow shown)."
 msgstr "Vẽ bìa phẳng trên trang thay vì nổi lên. Các điểm ảnh dành cho bóng được trả lại cho bìa, nên bìa sẽ lớn hơn một chút. Mặc định tắt (hiển thị bóng)."
 
-#: lib/bookshelf_settings.lua:770
+#: lib/bookshelf_settings.lua:836
 msgid "Default folder style: "
 msgstr "Kiểu thư mục mặc định: "
 
-#: lib/bookshelf_settings.lua:772
-msgid "How folders and stacks are drawn on any shelf that has not chosen its own. Long-press a chip to override it for that shelf."
-msgstr "Cách hiển thị thư mục và chồng sách trên mọi kệ chưa chọn kiểu riêng. Nhấn giữ một chip để ghi đè kiểu cho kệ đó."
+#: lib/bookshelf_settings.lua:838
+msgid "How folders and stacks are drawn on any shelf that has not chosen its own. Long-press a shelf to override it there."
+msgstr "Cách hiển thị thư mục và chồng sách trên mọi kệ chưa chọn kiểu riêng. Nhấn giữ một kệ để ghi đè kiểu ngay tại đó."
 
-#: lib/bookshelf_settings.lua:782
+#: lib/bookshelf_settings.lua:848
 msgid "Show progress bars"
 msgstr "Hiển thị thanh tiến độ"
 
-#: lib/bookshelf_settings.lua:784
+#: lib/bookshelf_settings.lua:850
 msgid "Show reading bookmarks"
 msgstr "Hiển thị dấu trang sách"
 
-#: lib/bookshelf_settings.lua:788
+#: lib/bookshelf_settings.lua:854
 msgid "Show page count"
 msgstr "Hiển thị số trang"
 
-#: lib/bookshelf_settings.lua:816
+#: lib/bookshelf_settings.lua:882
 msgid "Bookmark style"
 msgstr "Phong cách dấu trang"
 
-#: lib/bookshelf_settings.lua:817
+#: lib/bookshelf_settings.lua:883
 msgid "Small tick box"
 msgstr "Hộp đánh dấu nhỏ"
 
-#: lib/bookshelf_settings.lua:832
+#: lib/bookshelf_settings.lua:898
 msgid "Completed book badge"
 msgstr "Huy hiệu sách hoàn thành"
 
-#: lib/bookshelf_settings.lua:846
+#: lib/bookshelf_settings.lua:912
 msgid "Fade finished books"
 msgstr "Làm mờ sách hoàn thành"
 
-#: lib/bookshelf_settings.lua:875
+#: lib/bookshelf_settings.lua:941
 msgid "Pause badge"
 msgstr "Thẻ pau"
 
-#: lib/bookshelf_settings.lua:876
+#: lib/bookshelf_settings.lua:942
 msgid "Faded cover"
 msgstr "Bìa mờ"
 
-#: lib/bookshelf_settings.lua:877
+#: lib/bookshelf_settings.lua:943
 msgid "Both"
 msgstr "Cả hai"
 
-#: lib/bookshelf_settings.lua:882
+#: lib/bookshelf_settings.lua:948
 msgid "Pause badge + faded cover"
 msgstr "Thẻ dừng + bìa nhạt"
 
-#: lib/bookshelf_settings.lua:897
+#: lib/bookshelf_settings.lua:963
 msgid "On-hold display"
 msgstr "Màn hình chờ"
 
-#: lib/bookshelf_settings.lua:932
+#: lib/bookshelf_settings.lua:998
 msgid "Always"
 msgstr "Luôn"
 
-#: lib/bookshelf_settings.lua:933
+#: lib/bookshelf_settings.lua:999
 msgid "Within series folder"
 msgstr "Trong thư mục chuỗi"
 
-#: lib/bookshelf_settings.lua:934
+#: lib/bookshelf_settings.lua:1000
 msgid "Never"
 msgstr "Không bao giờ"
 
-#: lib/bookshelf_settings.lua:949
+#: lib/bookshelf_settings.lua:1015
 msgid "Show series #"
 msgstr "Hiển thị chuỗi #"
 
-#: lib/bookshelf_settings.lua:967
+#: lib/bookshelf_settings.lua:1033
 msgid "Show favorites icon"
 msgstr "Hiển thị biểu tượng yêu thích"
 
-#: lib/bookshelf_settings.lua:982
+#: lib/bookshelf_settings.lua:1048
 msgid "Star"
 msgstr "Sao"
 
-#: lib/bookshelf_settings.lua:996
+#: lib/bookshelf_settings.lua:1062
 msgid "Favorite icon"
 msgstr "Biểutượng yêu thích"
 
-#: lib/bookshelf_settings.lua:1032 lib/bookshelf_settings.lua:1987
-#: lib/bookshelf_settings.lua:2788 lib/bookshelf_settings.lua:2815
-#: lib/bookshelf_settings.lua:4170
+#: lib/bookshelf_settings.lua:1098 lib/bookshelf_settings.lua:2108
+#: lib/bookshelf_settings.lua:2926 lib/bookshelf_settings.lua:2953
+#: lib/bookshelf_settings.lua:4373
 msgid "Off"
 msgstr "Tắt"
 
-#: lib/bookshelf_settings.lua:1033
+#: lib/bookshelf_settings.lua:1099
 msgid "Folders only"
 msgstr "Chỉ thư mục"
 
-#: lib/bookshelf_settings.lua:1034
+#: lib/bookshelf_settings.lua:1100
 msgid "Groups only"
 msgstr "Chỉ nhóm"
 
-#: lib/bookshelf_settings.lua:1035
+#: lib/bookshelf_settings.lua:1101
 msgid "All stacks"
 msgstr "Tất cảcác stack"
 
-#: lib/bookshelf_settings.lua:1050
+#: lib/bookshelf_settings.lua:1116
 msgid "Stack count badge"
 msgstr "Thẻ đếm stack"
 
-#: lib/bookshelf_settings.lua:1081
+#: lib/bookshelf_settings.lua:1147
 msgid "Total"
 msgstr "Tổng"
 
-#: lib/bookshelf_settings.lua:1082
+#: lib/bookshelf_settings.lua:1148
 msgid "Finished / Total"
 msgstr "Hoàn thành / Tổng"
 
-#: lib/bookshelf_settings.lua:1097
+#: lib/bookshelf_settings.lua:1163
 msgid "Stack count format"
 msgstr "Định dạng số thẻ"
 
-#: lib/bookshelf_settings.lua:1112
+#: lib/bookshelf_settings.lua:1178
 msgid "Cover opening effect"
 msgstr "Hiệu ứng mở bìa"
 
-#: lib/bookshelf_settings.lua:1113
+#: lib/bookshelf_settings.lua:1179
 msgid "When you open a book, briefly flex its cover open before the page appears. Purely cosmetic; turn it off for an instant, plain open. On by default."
 msgstr "Khi bạn mở một cuốn sách, bìa của nó sẽ mở ra trong giây lát trước khi trang hiện lên. Chỉ mang tính thẩm mỹ; tắt đi để mở tức thì, giản đơn. Mặc định bật."
 
-#: lib/bookshelf_settings.lua:1201
+#: lib/bookshelf_settings.lua:1267
 msgid "Rows, columns and view are set per shelf:"
 msgstr "Số hàng, số cột và chế độ xem được đặt riêng cho từng kệ:"
 
-#: lib/bookshelf_settings.lua:1205
-msgid "long-press a chip, then open Shelf style."
-msgstr "Nhấn giữ một chip, sau đó mở Kiểu kệ."
+#: lib/bookshelf_settings.lua:1271
+msgid "long-press a shelf, then open Shelf style."
+msgstr "Nhấn giữ một kệ, sau đó mở Kiểu kệ."
 
-#: lib/bookshelf_settings.lua:1232
+#: lib/bookshelf_settings.lua:1298
 msgid "Add a line (maximum reached)"
 msgstr "Thêm dòng (đã đạt tối đa)"
 
-#: lib/bookshelf_settings.lua:1234
+#: lib/bookshelf_settings.lua:1300
 msgid "Add a line"
 msgstr "Thêm dòng"
 
-#: lib/bookshelf_settings.lua:1332
+#: lib/bookshelf_settings.lua:1398
 msgid "Move up"
 msgstr "Di chuyển lên"
 
-#: lib/bookshelf_settings.lua:1335
+#: lib/bookshelf_settings.lua:1401
 msgid "Move down"
 msgstr "Di chuyển xuống"
 
-#: lib/bookshelf_settings.lua:1446 lib/bookshelf_settings.lua:1463
+#: lib/bookshelf_settings.lua:1512 lib/bookshelf_settings.lua:1529
 msgid "default"
 msgstr "mặc định"
 
-#: lib/bookshelf_settings.lua:1562
+#: lib/bookshelf_settings.lua:1628
 msgid "◐ Editing night-mode colors (tap to switch)"
 msgstr "◐ Đang chỉnh sửa màu chế độ đêm (nhấn để chuyển)"
 
-#: lib/bookshelf_settings.lua:1564
+#: lib/bookshelf_settings.lua:1630
 msgid "☀ Editing day-mode colors (tap to switch)"
 msgstr "☀ Chỉnh sửa màu ngày (nhấn để chuyển)"
 
-#: lib/bookshelf_settings.lua:1585
+#: lib/bookshelf_settings.lua:1651
 msgid "Progress bar"
 msgstr "Thanh tiến độ"
 
-#: lib/bookshelf_settings.lua:1590
+#: lib/bookshelf_settings.lua:1656
 msgid "Progress bar (% black)"
 msgstr "Thanh tiến độ (% đen)"
 
-#: lib/bookshelf_settings.lua:1600
+#: lib/bookshelf_settings.lua:1666
 msgid "Progress bar track"
 msgstr "Đường thanh tiến độ"
 
-#: lib/bookshelf_settings.lua:1605
+#: lib/bookshelf_settings.lua:1671
 msgid "Progress bar track (% black)"
 msgstr "Đường viền thanh tiếntrình (% đen)"
 
-#: lib/bookshelf_settings.lua:1615
+#: lib/bookshelf_settings.lua:1681
 msgid "Bookmark color"
 msgstr "Màu dấu trang"
 
-#: lib/bookshelf_settings.lua:1620
+#: lib/bookshelf_settings.lua:1686
 msgid "Bookmark color (% black)"
 msgstr "Màu dấu trang (% đen)"
 
-#: lib/bookshelf_settings.lua:1630
+#: lib/bookshelf_settings.lua:1696
 msgid "Finished bookmark color"
 msgstr "Màu dấu trang hoàn thành"
 
-#: lib/bookshelf_settings.lua:1636
+#: lib/bookshelf_settings.lua:1702
 msgid "Finished bookmark color (% black)"
 msgstr "Màu dấu trang hoàn thành (% đen)"
 
-#: lib/bookshelf_settings.lua:1650
+#: lib/bookshelf_settings.lua:1716
 msgid "Favorite heart color"
 msgstr "Màu tim yêu thích"
 
-#: lib/bookshelf_settings.lua:1650
+#: lib/bookshelf_settings.lua:1716
 msgid "Favorite star color"
 msgstr "Màu sao yêu thích"
 
-#: lib/bookshelf_settings.lua:1658
+#: lib/bookshelf_settings.lua:1724
 msgid "Favorite heart color (% black)"
 msgstr "Màu tim yêu thích (% đen)"
 
-#: lib/bookshelf_settings.lua:1661
+#: lib/bookshelf_settings.lua:1727
 msgid "Favorite star color (% black)"
 msgstr "Màu sắc ngôisao yêu thích (% đen)"
 
-#: lib/bookshelf_settings.lua:1673
+#: lib/bookshelf_settings.lua:1739
 msgid "Badge foreground"
 msgstr "Màu nền biểu tượng"
 
-#: lib/bookshelf_settings.lua:1678
+#: lib/bookshelf_settings.lua:1744
 msgid "Badge foreground (% black)"
 msgstr "Màu nền biểu tượng (% đen)"
 
-#: lib/bookshelf_settings.lua:1688
+#: lib/bookshelf_settings.lua:1754
 msgid "Badge background"
 msgstr "Nền sau"
 
-#: lib/bookshelf_settings.lua:1693
+#: lib/bookshelf_settings.lua:1759
 msgid "Badge background (% black)"
 msgstr "Nền badge (% đen)"
 
-#: lib/bookshelf_settings.lua:1703
+#: lib/bookshelf_settings.lua:1769
 msgid "Border color"
 msgstr "Màu viền"
 
-#: lib/bookshelf_settings.lua:1705
+#: lib/bookshelf_settings.lua:1771
 msgid "Color of the book cover frame border + pill badge / page-count badge borders. Badge foreground is now just badge text. Default black."
 msgstr "Màu viền khung bìa sách + viền pill badge / badge số trang. Màu chữ badge giờ chỉ là văn bản badge. Mặc định là màu đen."
 
-#: lib/bookshelf_settings.lua:1711
+#: lib/bookshelf_settings.lua:1777
 msgid "Border color (% black)"
 msgstr "Màu viền (% đen)"
 
-#: lib/bookshelf_settings.lua:1721
+#: lib/bookshelf_settings.lua:1787
+msgid "Selection outline color"
+msgstr "Màu viền vùng chọn"
+
+#: lib/bookshelf_settings.lua:1789
+msgid "Color of the ring drawn around the selected book or the one you are currently reading. Default black."
+msgstr "Màu của viền vẽ quanh cuốn sách đang chọn hoặc cuốn bạn đang đọc. Mặc định là đen."
+
+#: lib/bookshelf_settings.lua:1794
+msgid "Selection outline color (% black)"
+msgstr "Màu viền vùng chọn (% đen)"
+
+#: lib/bookshelf_settings.lua:1804
+msgid "Cover shadow color"
+msgstr "Màu bóng đổ của bìa"
+
+#: lib/bookshelf_settings.lua:1806
+msgid "Color of the drop shadow behind book covers and folder cards. Has no effect where the shadow is switched off. Default mid gray, and darker in night mode."
+msgstr "Màu của bóng đổ phía sau bìa sách và thẻ thư mục. Không có tác dụng khi bóng đổ đã tắt. Mặc định là xám vừa, tối hơn ở chế độ ban đêm."
+
+#: lib/bookshelf_settings.lua:1812
+msgid "Cover shadow color (% black)"
+msgstr "Màu bóng đổ của bìa (% đen)"
+
+#: lib/bookshelf_settings.lua:1822
+msgid "Shelf plank color"
+msgstr "Màu ván kệ"
+
+#: lib/bookshelf_settings.lua:1824
+msgid "Color of the shelf plank the Spines style stands its books on. The lit top surface and shaded front edge are both tinted from this one color. Default light oak."
+msgstr "Màu của tấm ván kệ mà kiểu Gáy sách đặt sách lên. Cả mặt trên được chiếu sáng lẫn cạnh trước phủ bóng đều được tô từ cùng một màu này. Mặc định là màu gỗ sồi nhạt."
+
+#: lib/bookshelf_settings.lua:1830
+msgid "Shelf plank color (% black)"
+msgstr "Màu ván kệ (% đen)"
+
+#: lib/bookshelf_settings.lua:1840
 msgid "Folder overlay background"
 msgstr "Nền overlay thư mục"
 
-#: lib/bookshelf_settings.lua:1726
+#: lib/bookshelf_settings.lua:1845
 msgid "Folder overlay background (% black)"
 msgstr "Nền nền lớp phủ thư mục (% đen)"
 
-#: lib/bookshelf_settings.lua:1736
+#: lib/bookshelf_settings.lua:1855
 msgid "Folder text color"
 msgstr "Màu sắc văn bản thư mục"
 
-#: lib/bookshelf_settings.lua:1738
+#: lib/bookshelf_settings.lua:1857
 msgid "Color of the label text inside folder / series / author / genre / tag cards. The cardboard outline around the card itself follows the Border color setting above."
 msgstr "Màu văn bản nhãn bên trong thẻ thư mục / bộ truyện / tác giả / thể loại / tag. Đường viền dạng bìa cứng quanh thẻ tuân theo thiết lập Màu viền ở trên."
 
-#: lib/bookshelf_settings.lua:1745
+#: lib/bookshelf_settings.lua:1864
 msgid "Folder text color (% black)"
 msgstr "Màu sắc văn bản thư mục (% đen)"
 
-#: lib/bookshelf_settings.lua:1755
-msgid "Selected chip fill"
-msgstr "Màu nền chip đang chọn"
+#: lib/bookshelf_settings.lua:1874
+msgid "Selected shelf fill"
+msgstr "Màu nền kệ đang chọn"
 
-#: lib/bookshelf_settings.lua:1757
-msgid "Fill behind the selected chip in the chip bar. Left unset, the selected chip is drawn by inverting the chip -- the fastest path and identical on every device. Setting a color paints it instead. Long-press to clear."
-msgstr "Màu nền phía sau chip đang chọn trên thanh chip. Nếu để trống, chip đang chọn được vẽ bằng cách đảo màu của chip -- cách nhanh nhất và giống nhau trên mọi thiết bị. Đặt một màu sẽ tô màu đó thay thế. Nhấn giữ để xóa."
+#: lib/bookshelf_settings.lua:1876
+msgid "Fill behind the selected shelf in the shelf menu. Left unset, the selected shelf is drawn by inverting it -- the fastest path and identical on every device. Setting a color paints it instead. Long-press to clear."
+msgstr "Màu nền phía sau kệ đang chọn trong menu kệ. Nếu để trống, kệ đang chọn được vẽ bằng cách đảo màu của nó -- cách nhanh nhất và giống nhau trên mọi thiết bị. Đặt một màu sẽ tô màu đó thay thế. Nhấn giữ để xóa."
 
-#: lib/bookshelf_settings.lua:1764
-msgid "Selected chip fill (% black)"
-msgstr "Màu nền chip đang chọn (% đen)"
+#: lib/bookshelf_settings.lua:1883
+msgid "Selected shelf fill (% black)"
+msgstr "Màu nền kệ đang chọn (% đen)"
 
-#: lib/bookshelf_settings.lua:1775
-msgid "Selected chip text"
-msgstr "Màu chữ chip đang chọn"
+#: lib/bookshelf_settings.lua:1894
+msgid "Selected shelf text"
+msgstr "Màu chữ kệ đang chọn"
 
-#: lib/bookshelf_settings.lua:1777
-msgid "Label color on the selected chip. Defaults to paper white over the fill. Long-press to clear."
-msgstr "Màu nhãn trên chip đang chọn. Mặc định là màu trắng giấy trên nền đã tô. Nhấn giữ để xóa."
+#: lib/bookshelf_settings.lua:1896
+msgid "Label color on the selected shelf. Defaults to paper white over the fill. Long-press to clear."
+msgstr "Màu nhãn trên kệ đang chọn. Mặc định là màu trắng giấy trên nền đã tô. Nhấn giữ để xóa."
 
-#: lib/bookshelf_settings.lua:1782
-msgid "Selected chip text (% black)"
-msgstr "Màu chữ chip đang chọn (% đen)"
+#: lib/bookshelf_settings.lua:1901
+msgid "Selected shelf text (% black)"
+msgstr "Màu chữ kệ đang chọn (% đen)"
 
-#: lib/bookshelf_settings.lua:1792
+#: lib/bookshelf_settings.lua:1911
 msgid "Reset to default colors"
 msgstr "Khôi phục lại màu sắc mặc định"
 
-#: lib/bookshelf_settings.lua:1873
+#: lib/bookshelf_settings.lua:1994
 msgid "Cover badge size"
 msgstr "Kích thước bейджи che phủ"
 
-#: lib/bookshelf_settings.lua:1918
+#: lib/bookshelf_settings.lua:2039
 msgid "Edit book detail view"
 msgstr "Chỉnh sửa chế độ xem chi tiết sách"
 
-#: lib/bookshelf_settings.lua:1919
+#: lib/bookshelf_settings.lua:2040
 msgid "The lines of book information shown in the hero area: title, author, rating, metadata, description, tags and progress. Tap a line to edit its template; hold to toggle it. The status line at the top has its own entry."
 msgstr "Các dòng thông tin sách hiển thị ở khu vực chính: tiêu đề, tác giả, đánh giá, metadata, mô tả, thẻ và tiến độ. Chạm vào một dòng để chỉnh sửa mẫu của nó; nhấn giữ để bật/tắt. Dòng trạng thái ở trên cùng có mục riêng."
 
-#: lib/bookshelf_settings.lua:1936
+#: lib/bookshelf_settings.lua:2057
 msgid "Cover display"
 msgstr "Màn hình bìa"
 
-#: lib/bookshelf_settings.lua:1942
+#: lib/bookshelf_settings.lua:2063
 msgid "List view"
 msgstr "Màn hình danh sách"
 
-#: lib/bookshelf_settings.lua:1948 lib/bookshelf_settings.lua:3981
+#: lib/bookshelf_settings.lua:2069 lib/bookshelf_settings.lua:4184
 msgid "Text size"
 msgstr "Kích thước văn bản"
 
-#: lib/bookshelf_settings.lua:1954
+#: lib/bookshelf_settings.lua:2075
 msgid "Colors"
 msgstr "Màu sắc"
 
-#: lib/bookshelf_settings.lua:1965 micromodules/clock.lua:51
+#: lib/bookshelf_settings.lua:2086 micromodules/clock.lua:51
 msgid "Follow KOReader"
 msgstr "Theo dõi KOReader"
 
-#: lib/bookshelf_settings.lua:1967
+#: lib/bookshelf_settings.lua:2088
 msgid "Bookshelf UI font: %1"
 msgstr "Font UI Bookshelf: %1"
 
-#: lib/bookshelf_settings.lua:1969
-msgid "The font Bookshelf uses for its own UI text (chips, labels, metadata). Pick any installed font (same picker as the hero card); '(Default)' follows your KOReader UI font. The hero title and author have their own fonts in the hero card editor."
-msgstr "Font mà Bookshelf dùng cho văn bản giao diện của riêng nó (chip, nhãn, metadata). Chọn bất kỳ font đã cài đặt nào (cùng bộ chọn với thẻ chính); '(Mặc định)' theo font giao diện KOReader của bạn. Tiêu đề và tác giả ở khu vực chính có font riêng trong trình chỉnh sửa thẻ chính."
+#: lib/bookshelf_settings.lua:2090
+msgid "The font Bookshelf uses for its own UI text (shelf names, labels, metadata). Pick any installed font (same picker as the hero card); '(Default)' follows your KOReader UI font. The hero title and author have their own fonts in the hero card editor."
+msgstr "Font mà Bookshelf dùng cho văn bản giao diện của riêng nó (tên kệ, nhãn, metadata). Chọn bất kỳ font đã cài đặt nào (cùng bộ chọn với thẻ chính); '(Mặc định)' theo font giao diện KOReader của bạn. Tiêu đề và tác giả ở khu vực chính có font riêng trong trình chỉnh sửa thẻ chính."
 
-#: lib/bookshelf_settings.lua:1987 lib/bookshelf_settings.lua:1989
-#: lib/bookshelf_settings.lua:2838
+#: lib/bookshelf_settings.lua:2108 lib/bookshelf_settings.lua:2110
+#: lib/bookshelf_settings.lua:2976
 msgid "Micro modules"
 msgstr "Modul vi mô"
 
-#: lib/bookshelf_settings.lua:1991
-msgid "Where micro-modules appear. Each surface is independent: In start menu shows module cards in the start-menu launcher; In hero area gives a chip that swaps the hero card for the grid; Full-screen button adds a footer button opening a full-screen grid. The hero and full-screen surfaces keep their own module lists. Turn all three off to disable micro-modules entirely."
-msgstr "Nơi micro-module xuất hiện. Mỗi bề mặt độc lập: Trong menu bắt đầu hiển thị các thẻ module trong trình khởi chạy menu bắt đầu; Trong khu vực chính thêm một chip để chuyển thẻ chính sang dạng lưới; Nút full-screen thêm một nút chân trang mở lưới toàn màn hình. Khu vực chính và full-screen giữ danh sách module riêng của mình. Tắt cả ba để vô hiệu hóa hoàn toàn micro-module."
+#: lib/bookshelf_settings.lua:2112
+msgid "Where micro-modules appear. Each surface is independent: In start menu shows module cards in the start-menu launcher; In hero area adds a shelf-menu entry that swaps the hero card for the grid; Full-screen button adds a footer button opening a full-screen grid. The hero and full-screen surfaces keep their own module lists. Turn all three off to disable micro-modules entirely."
+msgstr "Nơi micro-module xuất hiện. Mỗi bề mặt độc lập: Trong menu bắt đầu hiển thị các thẻ module trong trình khởi chạy menu bắt đầu; Trong khu vực chính thêm một mục vào menu kệ để chuyển thẻ chính sang dạng lưới; Nút full-screen thêm một nút chân trang mở lưới toàn màn hình. Khu vực chính và full-screen giữ danh sách module riêng của mình. Tắt cả ba để vô hiệu hóa hoàn toàn micro-module."
 
-#: lib/bookshelf_settings.lua:2043
+#: lib/bookshelf_settings.lua:2164
 msgid "In start menu"
 msgstr "Trong menu bắt đầu"
 
-#: lib/bookshelf_settings.lua:2044
+#: lib/bookshelf_settings.lua:2165
 msgid "In hero area"
 msgstr "Trong khu vực chính"
 
-#: lib/bookshelf_settings.lua:2045
+#: lib/bookshelf_settings.lua:2166
 msgid "Full-screen button"
 msgstr "Nút full-screen"
 
-#: lib/bookshelf_settings.lua:2050 lib/bookshelf_settings.lua:4193
-#: lib/bookshelf_settings.lua:4619
+#: lib/bookshelf_settings.lua:2171 lib/bookshelf_settings.lua:4396
+#: lib/bookshelf_settings.lua:4822
 msgid "Start menu"
 msgstr "Màn hình bắt đầu"
 
-#: lib/bookshelf_settings.lua:2059
+#: lib/bookshelf_settings.lua:2180
 msgid "Behavior"
 msgstr "Hành vi"
 
-#: lib/bookshelf_settings.lua:2065
+#: lib/bookshelf_settings.lua:2186
 msgid "Library & search"
 msgstr "Thư viện và tìm kiếm"
 
-#: lib/bookshelf_settings.lua:2071
+#: lib/bookshelf_settings.lua:2192
 msgid "Advanced"
 msgstr "Nâng cao"
 
-#: lib/bookshelf_settings.lua:2081
+#: lib/bookshelf_settings.lua:2202
 msgid "never"
 msgstr "không bao giờ"
 
-#: lib/bookshelf_settings.lua:2188
+#: lib/bookshelf_settings.lua:2309 main.lua:2455
 msgid "Hardcover plugin is not available"
 msgstr "Plugin bìa cứng không sẵn có"
 
-#: lib/bookshelf_settings.lua:2216
+#: lib/bookshelf_settings.lua:2337
 msgid "No unlinked books to auto-link."
 msgstr "Không có sách chưa liên kết để tự động liên kết."
 
-#: lib/bookshelf_settings.lua:2239
+#: lib/bookshelf_settings.lua:2360
 msgid "Auto-link report"
 msgstr "Báo cáotự động liên kết"
 
-#: lib/bookshelf_settings.lua:2325
+#: lib/bookshelf_settings.lua:2446
 msgid ""
 "Auto-linking from Hardcover…\n"
 "\n"
@@ -2443,7 +2537,7 @@ msgstr ""
 "\n"
 "(nhấn để hủy)"
 
-#: lib/bookshelf_settings.lua:2340
+#: lib/bookshelf_settings.lua:2461
 msgid ""
 "Auto-link %1 unlinked book(s)?\n"
 "\n"
@@ -2453,120 +2547,128 @@ msgstr ""
 "\n"
 "Sẽ kết nối tới Hardcover (giới hạn tốc độ), mất khoảng ~%2 phút. Có thể hủy, kèm báo cáo khi hoàn tất."
 
-#: lib/bookshelf_settings.lua:2345
+#: lib/bookshelf_settings.lua:2466
 msgid "Exact match (ISBN / Hardcover id)"
 msgstr "Trùng khớp chính xác (ISBN / Mã bìa cứng)"
 
-#: lib/bookshelf_settings.lua:2349
+#: lib/bookshelf_settings.lua:2470
 msgid "Best guess (title & author)"
 msgstr "Dự đoán tốt nhất (tiêu đề & tác giả)"
 
-#: lib/bookshelf_settings.lua:2366
+#: lib/bookshelf_settings.lua:2487
 msgid "Cached Hardcover ratings: unavailable"
 msgstr "Đánh giá bìa cứng: không sẵn có"
 
-#: lib/bookshelf_settings.lua:2369
+#: lib/bookshelf_settings.lua:2490
 #, lua-format
 msgid "Cached Hardcover ratings: %d/%d · %s"
 msgstr "Bộ lưu tạm điểm rating bìa: %d/%d · %s"
 
-#: lib/bookshelf_settings.lua:2379
+#: lib/bookshelf_settings.lua:2500
 msgid "Auto-link all books"
 msgstr "Tự động liên kết tất cả sách"
 
-#: lib/bookshelf_settings.lua:2380
+#: lib/bookshelf_settings.lua:2501
 msgid "Scan the library and link books to Hardcover, fetching each match's details (description, cover, rating) in the same pass. Choose Exact match (uses an embedded ISBN / Hardcover id, fast) or Best guess (searches by title and author and picks the most confident match, slower but catches books with no embedded id). A report at the end lists exactly what was linked. Contacts Hardcover (rate-limited) with cancellable progress."
 msgstr "Quét thư viện và liên kết sách với Hardcover, đồng thời tải thông tin chi tiết của từng kết quả khớp (mô tả, bìa, đánh giá) trong cùng một lượt. Chọn Trùng khớp chính xác (dùng ISBN / mã Hardcover nhúng sẵn, nhanh) hoặc Dự đoán tốt nhất (tìm theo tiêu đề và tác giả rồi chọn kết quả khớp tin cậy nhất, chậm hơn nhưng bắt được cả những sách không có mã nhúng sẵn). Một báo cáo ở cuối liệt kê chính xác những gì đã được liên kết. Sẽ kết nối tới Hardcover (giới hạn tốc độ) với tiến trình có thể hủy."
 
-#: lib/bookshelf_settings.lua:2390
+#: lib/bookshelf_settings.lua:2511
 msgid "Show Hardcover ratings in hero"
 msgstr "Hiển thị điểm rating bìa trong hero"
 
-#: lib/bookshelf_settings.lua:2391
+#: lib/bookshelf_settings.lua:2512
 msgid "When enabled, the Hero rating row shows the cached public Hardcover rating instead of KOReader's local rating. Enabling this also turns on the Hero rating row. Normal Bookshelf rendering only reads the local cache."
 msgstr "Khi bật, hàng đánh giá ở khu vực chính sẽ hiển thị đánh giá công khai của Hardcover đã lưu tạm thay vì đánh giá cục bộ của KOReader. Bật tùy chọn này cũng sẽ bật hàng đánh giá ở khu vực chính. Việc hiển thị bình thường của Bookshelf chỉ đọc từ bộ nhớ đệm cục bộ."
 
-#: lib/bookshelf_settings.lua:2414
+#: lib/bookshelf_settings.lua:2535
 msgid "Use Hardcover metadata"
 msgstr "Sử dụng thông tin metadata bìa"
 
-#: lib/bookshelf_settings.lua:2415
+#: lib/bookshelf_settings.lua:2536
 msgid "For books linked to Hardcover, show Hardcover's title, author, series and genres in place of the book's own -- a clean switch, no merging. Covers and descriptions stay under their per-book toggles. This affects sorting, search and series grouping for linked books; non-linked books are unaffected. Metadata is always cached, so this only decides whether it's used."
 msgstr "Với những sách đã liên kết Hardcover, hiển thị tiêu đề, tác giả, series và thể loại của Hardcover thay cho dữ liệu riêng của sách -- một sự chuyển đổi hoàn toàn, không gộp chung. Bìa và mô tả vẫn theo các tùy chọn bật/tắt riêng của từng sách. Điều này ảnh hưởng đến sắp xếp, tìm kiếm và gom nhóm theo series đối với các sách đã liên kết; sách chưa liên kết không bị ảnh hưởng. Siêu dữ liệu luôn được lưu tạm, nên tùy chọn này chỉ quyết định liệu nó có được sử dụng hay không."
 
-#: lib/bookshelf_settings.lua:2430
+#: lib/bookshelf_settings.lua:2551
 msgid "Download covers from Hardcover"
 msgstr "Tải xuống bìa từ Hardcover"
 
-#: lib/bookshelf_settings.lua:2431
+#: lib/bookshelf_settings.lua:2552
 msgid "When on, linking a book also downloads its Hardcover cover and stores it as the book's cover. Off by default: most books already have a cover, and downloaded covers use storage and get picked up by the library metadata scan. Descriptions, ratings and metadata are fetched either way; turn this on only if you want Hardcover covers too."
 msgstr "Khi bật, việc liên kết một cuốn sách cũng sẽ tải bìa từ Hardcover về và lưu làm bìa của sách đó. Mặc định tắt: hầu hết sách đã có sẵn bìa, và bìa tải về sẽ chiếm dung lượng lưu trữ và bị quét thư viện thu thập lại. Mô tả, đánh giá và siêu dữ liệu vẫn được tải về dù bật hay tắt tùy chọn này; chỉ bật nếu bạn cũng muốn dùng bìa từ Hardcover."
 
-#: lib/bookshelf_settings.lua:2447
+#: lib/bookshelf_settings.lua:2568
 msgid "Hardcover genres used: %1"
 msgstr "Thể loại bìa sử dụng: %1"
 
-#: lib/bookshelf_settings.lua:2449
-msgid "How many of a linked book's Hardcover genres to use -- for the tag pills and the genre chips/stacks -- when Use Hardcover metadata is on. 0 uses none."
-msgstr "Số lượng thể loại Hardcover của một sách đã liên kết được sử dụng -- cho các thẻ và chip/nhóm thể loại -- khi bật Sử dụng thông tin metadata bìa. 0 nghĩa là không dùng thể loại nào."
+#: lib/bookshelf_settings.lua:2570
+msgid "How many of a linked book's Hardcover genres to use -- for the tag pills and the genre shelves/stacks -- when Use Hardcover metadata is on. 0 uses none."
+msgstr "Số lượng thể loại Hardcover của một sách đã liên kết được sử dụng -- cho các thẻ và kệ/nhóm thể loại -- khi bật Sử dụng thông tin metadata bìa. 0 nghĩa là không dùng thể loại nào."
 
-#: lib/bookshelf_settings.lua:2458
+#: lib/bookshelf_settings.lua:2579
 msgid "Hardcover genres used"
 msgstr "Thể loại bìa sử dụng"
 
-#: lib/bookshelf_settings.lua:2459
-msgid "How many of a book's Hardcover genres to use for tag pills and the genre chips/stacks."
-msgstr "Số lượng thể loại Hardcover của một sách được sử dụng cho các thẻ và chip/nhóm thể loại."
+#: lib/bookshelf_settings.lua:2580
+msgid "How many of a book's Hardcover genres to use for tag pills and the genre shelves/stacks."
+msgstr "Số lượng thể loại Hardcover của một sách được sử dụng cho các thẻ và kệ/nhóm thể loại."
 
-#: lib/bookshelf_settings.lua:2479
+#: lib/bookshelf_settings.lua:2600
 msgid "Manage Hardcover data"
 msgstr "Quản lý dữ liệu Hardcover"
 
-#: lib/bookshelf_settings.lua:2486
+#: lib/bookshelf_settings.lua:2607
 msgid "Refresh ratings only"
 msgstr "Làm mới chỉ đánh giá"
 
-#: lib/bookshelf_settings.lua:2487
-msgid "Fetch up-to-date public ratings and review counts for linked Hardcover books. Covers and descriptions are fetched when a book is linked, so this only updates the ratings."
-msgstr "Tải đánh giá công khai và số lượng nhận xét mới nhất cho các sách đã liên kết Hardcover. Bìa và mô tả đã được tải khi sách được liên kết, nên tùy chọn này chỉ cập nhật đánh giá."
+#: lib/bookshelf_settings.lua:2608
+msgid "Fetch up-to-date public ratings and review counts for every linked book in one quick batched request -- seconds, even for a large library. Ratings drift daily; for the rarely-changing details (author, genres, series, description, pages) use Refresh linked book details instead."
+msgstr "Tải về đánh giá công khai và số lượng nhận xét mới nhất cho mọi cuốn sách đã liên kết trong một lượt yêu cầu gộp nhanh gọn -- chỉ vài giây, kể cả với thư viện lớn. Đánh giá thay đổi hằng ngày; với những thông tin chi tiết ít thay đổi (tác giả, thể loại, series, mô tả, số trang) hãy dùng Làm mới chi tiết sách đã liên kết."
 
-#: lib/bookshelf_settings.lua:2495 lib/bookshelf_widget.lua:17988
+#: lib/bookshelf_settings.lua:2616 lib/bookshelf_widget.lua:19578
 msgid "Hardcover integration could not be loaded"
 msgstr "Không thể tải tích hợp Hardcover"
 
-#: lib/bookshelf_settings.lua:2498
+#: lib/bookshelf_settings.lua:2619
 msgid "Fetching Hardcover ratings..."
 msgstr "Đang tải đánh giá Hardcover..."
 
-#: lib/bookshelf_settings.lua:2501
+#: lib/bookshelf_settings.lua:2622
 msgid "Hardcover ratings refresh failed"
 msgstr "Làm mới đánh giá bìa cứng thất bại"
 
-#: lib/bookshelf_settings.lua:2506
+#: lib/bookshelf_settings.lua:2627
 msgid "Hardcover ratings refreshed: %1 rated of %2 linked books"
 msgstr "Đánh giá bìa cứng đã được làm mới: %1 được đánh giá trong %2 cuốn sách liên kết"
 
-#: lib/bookshelf_settings.lua:2516
+#: lib/bookshelf_settings.lua:2640
+msgid "Refresh linked book details"
+msgstr "Làm mới chi tiết sách đã liên kết"
+
+#: lib/bookshelf_settings.lua:2641
+msgid "Re-fetch the cached details (author, description, series, genres, page count, ratings) for every linked book, one rate-limited request per book -- minutes on a large library, cancellable. Use after an upgrade note asks for it, or when cached data looks stale; for just the ratings, Refresh ratings only is much faster."
+msgstr "Tải lại thông tin chi tiết đã lưu tạm (tác giả, mô tả, series, thể loại, số trang, đánh giá) cho mọi cuốn sách đã liên kết, mỗi sách một yêu cầu có giới hạn tốc độ -- mất vài phút với thư viện lớn, có thể hủy. Dùng khi một thông báo nâng cấp yêu cầu điều đó, hoặc khi dữ liệu đã lưu tạm có vẻ đã cũ; nếu chỉ cần đánh giá thì Làm mới chỉ đánh giá nhanh hơn nhiều."
+
+#: lib/bookshelf_settings.lua:2654
 msgid "Clear cache (keeps links)"
 msgstr "Xóa cache (giữ liên kết)"
 
-#: lib/bookshelf_settings.lua:2517
+#: lib/bookshelf_settings.lua:2655
 msgid "Remove Bookshelf's cached Hardcover descriptions, cover images, ratings, review counts and review text. Existing book links are kept, so you can refresh again later."
 msgstr "Xóa các mô tả, ảnh bìa, đánh giá, số lượng nhận xét và nội dung nhận xét từ Hardcover mà Bookshelf đã lưu tạm. Các liên kết sách hiện có vẫn được giữ nguyên, nên bạn có thể làm mới lại sau."
 
-#: lib/bookshelf_settings.lua:2530
+#: lib/bookshelf_settings.lua:2668
 msgid "Hardcover cache cleared"
 msgstr "Bộ cache bìa cứng đã được xóa"
 
-#: lib/bookshelf_settings.lua:2538
+#: lib/bookshelf_settings.lua:2676
 msgid "Remove downloaded covers"
 msgstr "Xóa cáctờ bìa đã tải xuống"
 
-#: lib/bookshelf_settings.lua:2539
+#: lib/bookshelf_settings.lua:2677
 msgid "Delete every downloaded Hardcover cover and restore each book's original cover, keeping links, descriptions and ratings. Frees the storage the covers use and clears them out of the library metadata scan."
 msgstr "Xóa mọi bìa đã tải từ Hardcover và khôi phục lại bìa gốc của từng sách, đồng thời giữ nguyên các liên kết, mô tả và đánh giá. Giải phóng dung lượng lưu trữ mà các bìa đó chiếm dụng và loại chúng khỏi lượt quét siêu dữ liệu thư viện."
 
-#: lib/bookshelf_settings.lua:2543
+#: lib/bookshelf_settings.lua:2681
 msgid ""
 "Remove all downloaded Hardcover covers?\n"
 "\n"
@@ -2576,23 +2678,23 @@ msgstr ""
 "\n"
 "Bìa gốc của từng sách sẽ được khôi phục; liên kết, mô tả và đánh giá vẫn được giữ nguyên."
 
-#: lib/bookshelf_settings.lua:2544
+#: lib/bookshelf_settings.lua:2682
 msgid "Remove covers"
 msgstr "Xóa bìa"
 
-#: lib/bookshelf_settings.lua:2557
+#: lib/bookshelf_settings.lua:2695
 msgid "Removed downloaded covers (%1 book(s))."
 msgstr "Đã xóa các tờ bìa đã tải xuống (%1 cuốn sách)."
 
-#: lib/bookshelf_settings.lua:2567
+#: lib/bookshelf_settings.lua:2705
 msgid "Remove all Hardcover data"
 msgstr "Xóa tất cả dữ liệu bìa cứng"
 
-#: lib/bookshelf_settings.lua:2568
+#: lib/bookshelf_settings.lua:2706
 msgid "Unlink every book and delete all cached Hardcover descriptions, covers, ratings and reviews, resetting the library to how it was before any Hardcover linking. Only covers Hardcover added are removed; a cover you had before is restored. Cannot be undone."
 msgstr "Hủy liên kết mọi sách và xóa toàn bộ mô tả, bìa, đánh giá và nhận xét từ Hardcover đã lưu tạm, đưa thư viện trở lại trạng thái trước khi liên kết Hardcover. Chỉ những bìa do Hardcover thêm vào mới bị xóa; bìa bạn có trước đó sẽ được khôi phục. Không thể hoàn tác."
 
-#: lib/bookshelf_settings.lua:2572
+#: lib/bookshelf_settings.lua:2710
 msgid ""
 "Remove ALL Hardcover data?\n"
 "\n"
@@ -2606,607 +2708,615 @@ msgstr ""
 "\n"
 "Không thể hoàn tác."
 
-#: lib/bookshelf_settings.lua:2573
+#: lib/bookshelf_settings.lua:2711
 msgid "Remove all"
 msgstr "Xóa tất cả"
 
-#: lib/bookshelf_settings.lua:2586
+#: lib/bookshelf_settings.lua:2724
 msgid "All Hardcover data removed (%1 book(s) unlinked)."
 msgstr "Tất cả dữ liệu Hardcover đã được xóa (%1 book(s) unlinked)."
 
-#: lib/bookshelf_settings.lua:2636
+#: lib/bookshelf_settings.lua:2774
 msgid "Expanded shelf font scale"
 msgstr "Mở rộng tỷ lệ phông shelf"
 
-#: lib/bookshelf_settings.lua:2667
+#: lib/bookshelf_settings.lua:2805
 msgid "Instant book close (beta)"
 msgstr "Đóng sách tức thì (beta)"
 
-#: lib/bookshelf_settings.lua:2668
+#: lib/bookshelf_settings.lua:2806
 msgid "Show Bookshelf immediately when leaving a book. The book finishes closing at the next quiet moment - opening another book, half a minute of inactivity, or leaving Bookshelf - so browsing never has to wait for it. Until then, going straight back into the same book is instant. Turn this off to close books fully before Bookshelf appears, as before."
 msgstr "Hiển thị Bookshelf ngay khi bạn rời khỏi một cuốn sách. Cuốn sách sẽ hoàn tất việc đóng vào thời điểm rảnh tiếp theo - khi mở một cuốn khác, sau nửa phút không hoạt động, hoặc khi rời khỏi Bookshelf - nên việc duyệt xem không bao giờ phải chờ. Trước lúc đó, quay thẳng lại chính cuốn sách đó là tức thì. Tắt tùy chọn này để đóng sách hoàn toàn trước khi Bookshelf xuất hiện, như trước đây."
 
-#: lib/bookshelf_settings.lua:2686
-msgid "Pre-warm chip cache"
-msgstr "Sơ chế chip cache"
+#: lib/bookshelf_settings.lua:2824
+msgid "Pre-warm shelf cache"
+msgstr "Tải trước bộ nhớ đệm kệ"
 
-#: lib/bookshelf_settings.lua:2687
-msgid "Warms each chip's data in the background shortly after launch so switching chips is instant. On a large library with many chips this adds a few seconds of work after startup; turn it off for a quicker, lighter launch (chips then load on first use)."
-msgstr "Tải trước dữ liệu của từng chip trong nền ngay sau khi khởi động để việc chuyển chip diễn ra tức thì. Với thư viện lớn có nhiều chip, việc này sẽ thêm vài giây xử lý sau khi khởi động; tắt đi để khởi động nhanh và nhẹ hơn (khi đó chip sẽ tải khi dùng lần đầu)."
+#: lib/bookshelf_settings.lua:2825
+msgid "Warms each shelf's data in the background shortly after launch so switching shelves is instant. On a large library with many shelves this adds a few seconds of work after startup; turn it off for a quicker, lighter launch (shelves then load on first use)."
+msgstr "Tải trước dữ liệu của từng kệ trong nền ngay sau khi khởi động để việc chuyển kệ diễn ra tức thì. Với thư viện lớn có nhiều kệ, việc này sẽ thêm vài giây xử lý sau khi khởi động; tắt đi để khởi động nhanh và nhẹ hơn (khi đó kệ sẽ tải khi dùng lần đầu)."
 
-#: lib/bookshelf_settings.lua:2702
+#: lib/bookshelf_settings.lua:2840
 msgid "\"Latest\" walk depth"
 msgstr "Độ sâu quét của \"Mới nhất\""
 
-#: lib/bookshelf_settings.lua:2707
+#: lib/bookshelf_settings.lua:2845
 msgid "Cover cache"
 msgstr "Bộ nhớ đệm bìa sách"
 
-#: lib/bookshelf_settings.lua:2711
+#: lib/bookshelf_settings.lua:2849
 msgid "How much memory to use for ready-scaled book covers. A bigger cache keeps more covers warm -- smoother paging and preloading -- at the cost of RAM. Default 24 MB. Lower it if memory is tight; raise it on a device with plenty of RAM. (How many covers that holds depends on their size: roughly 200-400 small grayscale covers, fewer large or color ones.)"
 msgstr "Lượng bộ nhớ dùng cho các bìa sách đã được co giãn sẵn. Bộ đệm càng lớn thì càng giữ được nhiều bìa sẵn sàng -- lật trang và tải trước mượt hơn -- đổi lại tốn RAM hơn. Mặc định 24 MB. Giảm xuống nếu bộ nhớ hạn chế; tăng lên nếu thiết bị có nhiều RAM. (Số lượng bìa chứa được tùy vào kích thước của chúng: khoảng 200-400 bìa xám nhỏ, ít hơn với bìa lớn hoặc bìa màu.)"
 
-#: lib/bookshelf_settings.lua:2723
+#: lib/bookshelf_settings.lua:2861
 msgid "Clear cover cache"
 msgstr "Xóa bộ nhớ đệm bìa sách"
 
-#: lib/bookshelf_settings.lua:2724
+#: lib/bookshelf_settings.lua:2862
 msgid "Drop all cached scaled covers, in memory and on disk. Use this when a book's cover has been updated outside KOReader (e.g. a metadata-enrichment tool rewrote the EPUB) and the old cover is still showing on the shelf. The next render fetches fresh covers from the EPUBs."
 msgstr "Xóa toàn bộ bìa đã co giãn khỏi bộ nhớ đệm và khỏi ổ đĩa. Dùng khi bìa của một cuốn sách đã được cập nhật bên ngoài KOReader (ví dụ một công cụ làm giàu siêu dữ liệu đã ghi lại tệp EPUB) nhưng bìa cũ vẫn còn hiển thị trên kệ. Lần hiển thị tiếp theo sẽ tải lại bìa mới từ các tệp EPUB."
 
-#: lib/bookshelf_settings.lua:2734
+#: lib/bookshelf_settings.lua:2872
 msgid "Cover cache cleared"
 msgstr "Bộ đệm cache đã được làm sạch"
 
-#: lib/bookshelf_settings.lua:2747
+#: lib/bookshelf_settings.lua:2885
 msgid "Color panel dithering"
 msgstr "Dithering tấm nền màu"
 
-#: lib/bookshelf_settings.lua:2748
+#: lib/bookshelf_settings.lua:2886
 msgid "Applies the color-dither waveform when redrawing book covers so they keep their full saturation on color e-ink panels. Turn it off to compare; with it off, covers can look washed out until a full-screen refresh. Color panels only."
 msgstr "Áp dụng dạng sóng dithering màu khi vẽ lại bìa sách để giữ được độ bão hòa màu đầy đủ trên màn hình e-ink màu. Tắt để so sánh; khi tắt, bìa sách có thể trông nhạt màu cho đến khi có một lần làm mới toàn màn hình. Chỉ dùng cho màn hình e-ink màu."
 
-#: lib/bookshelf_settings.lua:2789 lib/bookshelf_settings.lua:2816
+#: lib/bookshelf_settings.lua:2927 lib/bookshelf_settings.lua:2954
 msgid "Fast"
 msgstr "Nhanh"
 
-#: lib/bookshelf_settings.lua:2790 lib/bookshelf_settings.lua:2817
+#: lib/bookshelf_settings.lua:2928 lib/bookshelf_settings.lua:2955
 #: micromodules/analogue_clock.lua:176 micromodules/trivia.lua:65
 msgid "Medium"
 msgstr "Trung bình"
 
-#: lib/bookshelf_settings.lua:2791 lib/bookshelf_settings.lua:2818
+#: lib/bookshelf_settings.lua:2929 lib/bookshelf_settings.lua:2956
 msgid "Slow"
 msgstr "Chậm"
 
-#: lib/bookshelf_settings.lua:2837
-msgid "Currently reading"
-msgstr "Đang đọc"
-
-#: lib/bookshelf_settings.lua:2872
+#: lib/bookshelf_settings.lua:3010
 msgid "Hero area starts with"
 msgstr "Vùng hero bắtđầu với"
 
-#: lib/bookshelf_settings.lua:2874
-msgid "What the hero area at the top of the bookshelf shows when it opens: the book you're currently reading, or a grid of micro-modules (clock, quote, random book, reading goals…). You can also switch between them with the chips above the shelves."
-msgstr "Những gì khu vực chính ở đầu tủ sách hiển thị khi mở: cuốn sách bạn đang đọc, hoặc một lưới các micro-module (đồng hồ, trích dẫn, sách ngẫu nhiên, mục tiêu đọc…). Bạn cũng có thể chuyển đổi giữa chúng bằng các chip phía trên kệ sách."
+#: lib/bookshelf_settings.lua:3012
+msgid "What the hero area at the top of the bookshelf shows when it opens: the book you're currently reading, or a grid of micro-modules (clock, quote, random book, reading goals…). You can also switch between them from the shelf menu."
+msgstr "Những gì khu vực chính ở đầu tủ sách hiển thị khi mở: cuốn sách bạn đang đọc, hoặc một lưới các micro-module (đồng hồ, trích dẫn, sách ngẫu nhiên, mục tiêu đọc…). Bạn cũng có thể chuyển đổi giữa chúng từ menu kệ."
 
-#: lib/bookshelf_settings.lua:2893
+#: lib/bookshelf_settings.lua:3031
 msgid "Show book detail in hero"
 msgstr "Hiển thị chi tiết sách ở khu vực nổi bật"
 
-#: lib/bookshelf_settings.lua:2894
+#: lib/bookshelf_settings.lua:3032
 msgid "Open with a single tap"
 msgstr "Mở bằng một lần nhấn"
 
-#: lib/bookshelf_settings.lua:2895
+#: lib/bookshelf_settings.lua:3033
 msgid "Open with a double tap"
 msgstr "Mở bằng nhấn đúp"
 
-#: lib/bookshelf_settings.lua:2917
+#: lib/bookshelf_settings.lua:3055
 msgid "Tap a book in expanded shelf"
 msgstr "Chạm vào sách trong kệ mở rộng"
 
-#: lib/bookshelf_settings.lua:2920
+#: lib/bookshelf_settings.lua:3058
 msgid "What tapping a book does in the expanded shelf: show that book's detail in the hero area, open it with a single tap, or open it with a double tap (first tap selects). The hero card's own double-tap-to-open is the next row."
 msgstr "Hành vi khi chạm vào một cuốn sách trong kệ mở rộng: hiển thị chi tiết sách ở khu vực chính, mở sách bằng một lần chạm, hoặc mở bằng chạm đúp (lần chạm đầu tiên để chọn). Tùy chọn chạm đúp để mở của riêng thẻ chính nằm ở hàng kế tiếp."
 
-#: lib/bookshelf_settings.lua:2933
+#: lib/bookshelf_settings.lua:3071
 msgid "Double tap to open books"
 msgstr "Nhấn gấp đôi để mở sách"
 
-#: lib/bookshelf_settings.lua:2934
+#: lib/bookshelf_settings.lua:3072
 msgid "When enabled, opening a book from the hero card or from a shelf cover in expanded mode requires two taps -- the first selects the cover (focus ring), the second commits. Useful if you tend to open books accidentally while browsing. Regular shelf covers (with the hero visible) already work this way -- tap stages the book as the hero preview, tap the hero opens it -- and are unaffected by this setting."
 msgstr "Khi bật, mở một cuốn sách từ thẻ chính hoặc từ bìa trên kệ ở chế độ mở rộng sẽ cần hai lần nhấn -- lần đầu chọn bìa (vòng lấy nét), lần hai xác nhận mở. Hữu ích nếu bạn hay lỡ tay mở nhầm sách khi duyệt kệ. Các bìa kệ thông thường (khi thẻ chính đang hiển thị) đã hoạt động theo cách này -- nhấn để đưa sách lên xem trước ở khu vực chính, nhấn vào khu vực chính để mở -- và không bị ảnh hưởng bởi tùy chọn này."
 
-#: lib/bookshelf_settings.lua:2959
+#: lib/bookshelf_settings.lua:3097
 msgid "Page turn animation"
 msgstr "Hiệu ứng lật trang"
 
-#: lib/bookshelf_settings.lua:2960
-msgid "Animate shelf page turns and chip-bar paging with a wipe effect. E-ink only (the effect relies on the panel's refresh, so it does nothing on LCD screens). Fast / Medium / Slow trade snappiness for smoothness. Slow looks smoothest but takes longer on older panels."
-msgstr "Tạo hiệu ứng quét khi lật trang trên kệ sách và chuyển trang thanh chip. Chỉ dùng cho màn hình e-ink (hiệu ứng dựa vào việc làm mới của tấm nền, nên không có tác dụng trên màn hình LCD). Nhanh / Trung bình / Chậm đánh đổi giữa độ nhanh nhạy và độ mượt. Chậm trông mượt nhất nhưng lâu hơn trên các tấm nền cũ."
+#: lib/bookshelf_settings.lua:3098
+msgid "Animate shelf page turns and shelf-menu paging with a wipe effect. E-ink only (the effect relies on the panel's refresh, so it does nothing on LCD screens). Fast / Medium / Slow trade snappiness for smoothness. Slow looks smoothest but takes longer on older panels."
+msgstr "Tạo hiệu ứng quét khi lật trang trên kệ và khi chuyển trang menu kệ. Chỉ dùng cho màn hình e-ink (hiệu ứng dựa vào việc làm mới của tấm nền, nên không có tác dụng trên màn hình LCD). Nhanh / Trung bình / Chậm đánh đổi giữa độ nhanh nhạy và độ mượt. Chậm trông mượt nhất nhưng lâu hơn trên các tấm nền cũ."
 
-#: lib/bookshelf_settings.lua:2965
+#: lib/bookshelf_settings.lua:3103
 msgid "Start menu animation"
 msgstr "Hiệu ứng menu bắt đầu"
 
-#: lib/bookshelf_settings.lua:2966
+#: lib/bookshelf_settings.lua:3104
 msgid "Animate the start menu opening and closing. Separate from the page-turn wipe, so you can keep one and turn off the other - the menu reveal repaints a taller area and can look choppy on some screens, particularly while reading. E-ink only."
 msgstr "Tạo hiệu ứng khi mở và đóng menu bắt đầu. Tách riêng với hiệu ứng quét lật trang, nên bạn có thể giữ hiệu ứng này và tắt hiệu ứng kia - phần mở menu vẽ lại một vùng cao hơn và có thể trông giật trên một số màn hình, nhất là khi đang đọc. Chỉ dùng cho màn hình e-ink."
 
-#: lib/bookshelf_settings.lua:2972
+#: lib/bookshelf_settings.lua:3110
 msgid "Closing book notification"
 msgstr "Thông báo đóng cuốnsách"
 
-#: lib/bookshelf_settings.lua:2973
+#: lib/bookshelf_settings.lua:3111
 msgid "Show a 'Closing book…' message in the center of the screen while a book is being closed back to Bookshelf. The book-close work takes a moment, so the message confirms your gesture landed during the wait. Some users on color e-ink panels see a brief flash from the message appearing. Turn it off here if you prefer no message and no flash."
 msgstr "Hiển thị thông báo 'Đang đóng sách…' ở giữa màn hình trong khi sách đang được đóng để quay lại Bookshelf. Việc đóng sách mất một chút thời gian, nên thông báo này xác nhận rằng thao tác của bạn đã được ghi nhận trong lúc chờ. Một số người dùng màn hình e-ink màu có thể thấy nhấp nháy nhẹ khi thông báo xuất hiện. Tắt tùy chọn này nếu bạn không muốn có thông báo và không muốn nhấp nháy."
 
-#: lib/bookshelf_settings.lua:3001
+#: lib/bookshelf_settings.lua:3139
 msgid "Scan all library metadata"
 msgstr "Quét toàn bộ métadữ liệu thư viện"
 
-#: lib/bookshelf_settings.lua:3010
+#: lib/bookshelf_settings.lua:3148
+msgid "Extract page counts"
+msgstr "Trích xuất số trang"
+
+#: lib/bookshelf_settings.lua:3149
+msgid "Paginate books that have never been opened, so spine thickness and page-count badges reflect their real length. Each book is rendered in the background; this can take a while on a large library."
+msgstr "Đánh số trang cho những cuốn sách chưa từng được mở, để độ dày gáy sách và badge số trang phản ánh đúng độ dài thật của chúng. Mỗi cuốn sách được dựng ở chế độ nền; việc này có thể mất một lúc với thư viện lớn."
+
+#: lib/bookshelf_settings.lua:3161
 msgid "Manage collections…"
 msgstr "Quản lý bộ sưu tập…"
 
-#: lib/bookshelf_settings.lua:3011
-msgid "Create, rename, reorder and delete collections. Also reachable from collection chips and stacks."
-msgstr "Tạo, đổi tên, sắp xếp lại và xóa các bộ sưu tập. Cũng có thể truy cập từ các chip và stack bộ sưu tập."
+#: lib/bookshelf_settings.lua:3162
+msgid "Create, rename, reorder and delete collections. Also reachable from collection shelves and stacks."
+msgstr "Tạo, đổi tên, sắp xếp lại và xóa các bộ sưu tập. Cũng có thể truy cập từ các kệ và stack bộ sưu tập."
 
-#: lib/bookshelf_settings.lua:3035 lib/bookshelf_settings.lua:3037
+#: lib/bookshelf_settings.lua:3186 lib/bookshelf_settings.lua:3188
 msgid "Bulk selection mode"
 msgstr "Chế độ chọn hàng loạt"
 
-#: lib/bookshelf_settings.lua:3039
+#: lib/bookshelf_settings.lua:3190
 msgid "Select several books at once to move or delete them or add them to a collection. Also available from a book's Edit tab (Select), the stack menus (Select N), or as a gesture. Not available in remote catalog views."
 msgstr "Chọn nhiều cuốn sách cùng lúc để di chuyển, xóa hoặc thêm vào bộ sưu tập. Cũng có thể dùng từ tab Chỉnh sửa của sách (Chọn), menu của stack (Chọn N), hoặc qua cử chỉ. Không khả dụng trong chế độ xem danh mục từ xa."
 
-#: lib/bookshelf_settings.lua:3061 lib/bookshelf_settings.lua:3096
+#: lib/bookshelf_settings.lua:3212 lib/bookshelf_settings.lua:3247
 msgid "First Last"
 msgstr "Tên Đầu Tiên"
 
-#: lib/bookshelf_settings.lua:3062 lib/bookshelf_settings.lua:3097
+#: lib/bookshelf_settings.lua:3213 lib/bookshelf_settings.lua:3248
 msgid "Last, First"
 msgstr "Họ, Tên"
 
-#: lib/bookshelf_settings.lua:3064
+#: lib/bookshelf_settings.lua:3215
 msgid "Author name formatting"
 msgstr "Cách định dạng tên tác giả"
 
-#: lib/bookshelf_settings.lua:3066
-msgid "How author names are displayed on the Authors chip. Auto keeps whichever form was first found (\"Richard Osman\" or \"Osman, Richard\"). First Last and Last, First force every author card into the same shape regardless of how each book stored the name."
-msgstr "Cách hiển thị tên tác giả trên chip Tác giả. Tự động giữ nguyên dạng được tìm thấy đầu tiên (\"Richard Osman\" hoặc \"Osman, Richard\"). Tên Đầu Tiên và Họ, Tên buộc mọi thẻ tác giả theo cùng một khuôn dạng bất kể mỗi sách lưu tên theo cách nào."
+#: lib/bookshelf_settings.lua:3217
+msgid "How author names are displayed on the Authors shelf. Auto keeps whichever form was first found (\"Richard Osman\" or \"Osman, Richard\"). First Last and Last, First force every author card into the same shape regardless of how each book stored the name."
+msgstr "Cách hiển thị tên tác giả trên kệ Tác giả. Tự động giữ nguyên dạng được tìm thấy đầu tiên (\"Richard Osman\" hoặc \"Osman, Richard\"). Tên Đầu Tiên và Họ, Tên buộc mọi thẻ tác giả theo cùng một khuôn dạng bất kể mỗi sách lưu tên theo cách nào."
 
-#: lib/bookshelf_settings.lua:3102
+#: lib/bookshelf_settings.lua:3253
 msgid "Hide single-book series and genres"
 msgstr "Ẩn bỏ series và thể loại sách đơn lẻ"
 
-#: lib/bookshelf_settings.lua:3103
+#: lib/bookshelf_settings.lua:3254
 msgid "When a series or genre contains only one book, hide it from the Series and Genres tabs. Useful when a book carries a one-off series name, or its own title as the series. Off by default."
 msgstr "Khi một series hoặc thể loại chỉ có một cuốn sách duy nhất, ẩn nó khỏi các thẻ Series và Thể loại. Hữu ích khi một cuốn sách mang tên series chỉ dùng một lần, hoặc lấy chính tiêu đề của nó làm tên series. Mặc định tắt."
 
-#: lib/bookshelf_settings.lua:3142
+#: lib/bookshelf_settings.lua:3293
 msgid "Image library"
 msgstr "Thư viện ảnh"
 
-#: lib/bookshelf_settings.lua:3145
+#: lib/bookshelf_settings.lua:3296
 msgid "Where Bookshelf looks for custom cover images. For stacks, place files like authors/author-name.jpg into the matching subfolder (authors, series, genres, collections). For folders, drop a cover.jpg into the folder itself. See the README for more matching options."
 msgstr "Nơi Bookshelf tìm ảnh bìa tùy chỉnh. Với các chồng sách, đặt tệp như authors/author-name.jpg vào đúng thư mục con tương ứng (authors, series, genres, collections). Với thư mục, đặt một tệp cover.jpg ngay trong thư mục đó. Xem README để biết thêm các tùy chọn đối chiếu khác."
 
-#: lib/bookshelf_settings.lua:3153
+#: lib/bookshelf_settings.lua:3304
 msgid "Include folder names in search results"
 msgstr "Bao gồm tên thư mục trong kết quả tìm kiếm"
 
-#: lib/bookshelf_settings.lua:3154
+#: lib/bookshelf_settings.lua:3305
 msgid "When searching, also match the names of folders in your library and list them as folder results. Off by default: most libraries file books into author, series or genre folders, so a matching folder just duplicates the author / series / genre result of the same name. Turn on if you navigate by folder and want folders in search."
 msgstr "Khi tìm kiếm, cũng đối chiếu với tên các thư mục trong thư viện của bạn và liệt kê chúng như kết quả thư mục. Mặc định tắt: hầu hết thư viện sắp xếp sách vào thư mục theo tác giả, series hoặc thể loại, nên một thư mục khớp chỉ trùng lặp với kết quả tác giả / series / thể loại cùng tên. Bật lên nếu bạn điều hướng theo thư mục và muốn thư mục xuất hiện trong tìm kiếm."
 
-#: lib/bookshelf_settings.lua:3171
+#: lib/bookshelf_settings.lua:3322
 msgid "Sort Chinese text by pinyin"
 msgstr "Sắp xếpvăn bản Trung Quốc theo pinyin"
 
-#: lib/bookshelf_settings.lua:3172
+#: lib/bookshelf_settings.lua:3323
 msgid "Sorts Chinese characters by their Mandarin pinyin reading, so Chinese titles and authors file alphabetically alongside Latin names. When off, Chinese text sorts in Unicode order (roughly by radical and stroke count), after Latin names. Japanese kanji are also affected, so leave this off for Japanese-language libraries."
 msgstr "Sắp xếp các ký tự Trung Quốc theo cách đọc pinyin tiếng Quan Thoại, để tiêu đề và tác giả tiếng Trung được sắp xếp theo thứ tự chữ cái cùng với tên Latin. Khi tắt, văn bản tiếng Trung sắp xếp theo thứ tự Unicode (đại khái theo bộ thủ và số nét), sau các tên Latin. Chữ Hán trong tiếng Nhật cũng bị ảnh hưởng, nên hãy tắt tùy chọn này với thư viện tiếng Nhật."
 
-#: lib/bookshelf_settings.lua:3222
+#: lib/bookshelf_settings.lua:3373
 msgid "Show status line"
 msgstr "Hiện hàng trạng thái"
 
-#: lib/bookshelf_settings.lua:3223
+#: lib/bookshelf_settings.lua:3374
 msgid "Puts Bookshelf's status line across the top of the reader, drawn by the same code that draws it on the shelf, so it reads the same in both. Edit the line itself under Settings > Status line. If you also use Bookends, its top row and any top-anchored progress bar move down to make space."
 msgstr "Hiển thị hàng trạng thái của Bookshelf ở phía trên trình đọc, được vẽ bằng cùng đoạn mã vẽ nó trên giá sách, nên hai nơi trông giống nhau. Bản thân hàng này được chỉnh trong Cài đặt > Hàng trạng thái. Nếu bạn cũng dùng Bookends, hàng trên cùng của nó và mọi thanh tiến trình neo ở trên sẽ dịch xuống để nhường chỗ."
 
-#: lib/bookshelf_settings.lua:3246
+#: lib/bookshelf_settings.lua:3397
 msgid "Show menu button"
 msgstr "Hiển thị nút menu"
 
-#: lib/bookshelf_settings.lua:3247
+#: lib/bookshelf_settings.lua:3398
 msgid "Adds the Bookshelf menu button to the reader. Takes effect the next time you open a book."
 msgstr "Thêm nút menu Bookshelf vào trình đọc. Có hiệu lực từ lần mở sách tiếp theo."
 
-#: lib/bookshelf_settings.lua:3256
+#: lib/bookshelf_settings.lua:3407
 msgid "Show micro-modules button"
 msgstr "Hiển thị nút micro-modules"
 
-#: lib/bookshelf_settings.lua:3257
+#: lib/bookshelf_settings.lua:3408
 msgid "Adds the micro-modules button to the reader, in the corner opposite the menu button. Takes effect the next time you open a book."
 msgstr "Thêm nút micro-modules vào trình đọc, ở góc đối diện với nút menu. Có hiệu lực từ lần mở sách tiếp theo."
 
-#: lib/bookshelf_settings.lua:3267
+#: lib/bookshelf_settings.lua:3418
 msgid "Launcher button position and size"
 msgstr "Vị trí và kích thước nút khởi chạy"
 
-#: lib/bookshelf_settings.lua:3268
+#: lib/bookshelf_settings.lua:3419
 msgid "Position, size, side and which edge the in-reader launcher buttons sit on. Opens a blank screen showing just the buttons, so you can see them move as you adjust."
 msgstr "Vị trí, kích thước, bên và cạnh màn hình mà các nút khởi chạy trong trình đọc nằm ở đó. Mở một màn hình trống chỉ hiển thị các nút, để bạn thấy chúng di chuyển khi bạn điều chỉnh."
 
-#: lib/bookshelf_settings.lua:3286
+#: lib/bookshelf_settings.lua:3437
 msgid "Performance tweaks"
 msgstr "Cải tiến hiệu suất"
 
-#: lib/bookshelf_settings.lua:3292
+#: lib/bookshelf_settings.lua:3443
 msgid "While reading"
 msgstr "Khi đang đọc"
 
-#: lib/bookshelf_settings.lua:3300
-msgid "Reset chip bar to defaults"
-msgstr "Đặt thanh chip về mặc định"
+#: lib/bookshelf_settings.lua:3451
+msgid "Reset shelf menu to defaults"
+msgstr "Đặt menu kệ về mặc định"
 
-#: lib/bookshelf_settings.lua:3301
-msgid "Clears your custom chip layout (which chips are shown, their order, their labels and icons, their sources and filters and sorts) and restores the fresh-install chip set: Home / Recent / Series / Favorites enabled, the rest available to toggle on. Also returns the active chip to Home and the page indicator to 1. Other settings (hero text, fonts, colors) are unaffected."
-msgstr "Xóa bố cục chip tùy chỉnh của bạn (chip nào được hiển thị, thứ tự, nhãn và biểu tượng, nguồn, bộ lọc và cách sắp xếp của chúng) và khôi phục bộ chip mặc định lúc mới cài đặt: Trang chủ / Gần đây / Series / Sách yêu thích được bật, phần còn lại có thể bật thêm. Cũng đưa chip đang hoạt động về Trang chủ và chỉ báo trang về 1. Các cài đặt khác (văn bản khu vực chính, font, màu sắc) không bị ảnh hưởng."
+#: lib/bookshelf_settings.lua:3452
+msgid "Clears your custom shelf menu (which shelves are shown, their order, their labels and icons, their sources and filters and sorts) and restores the fresh-install set: Home / Recent / Series / Favorites enabled, the rest available to toggle on. Also returns the active shelf to Home and the page indicator to 1. Other settings (hero text, fonts, colors) are unaffected."
+msgstr "Xóa menu kệ tùy chỉnh của bạn (kệ nào được hiển thị, thứ tự, nhãn và biểu tượng, nguồn, bộ lọc và cách sắp xếp của chúng) và khôi phục bộ mặc định lúc mới cài đặt: Trang chủ / Gần đây / Series / Sách yêu thích được bật, phần còn lại có thể bật thêm. Cũng đưa kệ đang hoạt động về Trang chủ và chỉ báo trang về 1. Các cài đặt khác (văn bản khu vực chính, font, màu sắc) không bị ảnh hưởng."
 
-#: lib/bookshelf_settings.lua:3312
+#: lib/bookshelf_settings.lua:3463
 msgid ""
-"Reset the chip bar to default settings?\n"
+"Reset the shelf menu to default settings?\n"
 "\n"
-"All custom chips you have created or edited will be lost. Other Bookshelf settings (hero text, fonts, colors) are unaffected."
+"All custom shelves you have created or edited will be lost. Other Bookshelf settings (hero text, fonts, colors) are unaffected."
 msgstr ""
-"Đặt lại thanh chip về cài đặt mặc định?\n"
+"Đặt lại menu kệ về cài đặt mặc định?\n"
 "\n"
-"Mọi chip tùy chỉnh bạn đã tạo hoặc chỉnh sửa sẽ bị mất. Các cài đặt khác của Bookshelf (văn bản khu vực chính, font, màu sắc) không bị ảnh hưởng."
+"Mọi kệ tùy chỉnh bạn đã tạo hoặc chỉnh sửa sẽ bị mất. Các cài đặt khác của Bookshelf (văn bản khu vực chính, font, màu sắc) không bị ảnh hưởng."
 
-#: lib/bookshelf_settings.lua:3348
+#: lib/bookshelf_settings.lua:3499
 msgid "Reset book detail area to defaults"
 msgstr "Đặt khu vực chi tiết cuốn sách về mặc định"
 
-#: lib/bookshelf_settings.lua:3349
-msgid "Clears your hero/book-detail customizations and restores the fresh-install detail layout, including the bundled title (Inter ExtraBold) and author (Caveat) fonts. The Bookshelf UI font and chip bar are unaffected."
-msgstr "Xóa các tùy chỉnh khu vực chính/chi tiết sách của bạn và khôi phục bố cục chi tiết mặc định lúc mới cài đặt, bao gồm font tiêu đề (Inter ExtraBold) và font tác giả (Caveat) đi kèm sẵn. Font giao diện Bookshelf và thanh chip không bị ảnh hưởng."
+#: lib/bookshelf_settings.lua:3500
+msgid "Clears your hero/book-detail customizations and restores the fresh-install detail layout, including the bundled title (Inter ExtraBold) and author (Caveat) fonts. The Bookshelf UI font and shelf menu are unaffected."
+msgstr "Xóa các tùy chỉnh khu vực chính/chi tiết sách của bạn và khôi phục bố cục chi tiết mặc định lúc mới cài đặt, bao gồm font tiêu đề (Inter ExtraBold) và font tác giả (Caveat) đi kèm sẵn. Font giao diện Bookshelf và menu kệ không bị ảnh hưởng."
 
-#: lib/bookshelf_settings.lua:3356
+#: lib/bookshelf_settings.lua:3507
 msgid ""
 "Reset the book detail area to default settings?\n"
 "\n"
-"All hero/detail text and font customizations will be lost. The Bookshelf UI font and chip bar are unaffected."
+"All hero/detail text and font customizations will be lost. The Bookshelf UI font and shelf menu are unaffected."
 msgstr ""
 "Đặt lại khu vực chi tiết sách về cài đặt mặc định?\n"
 "\n"
-"Mọi tùy chỉnh văn bản và font ở khu vực chính/chi tiết sẽ bị mất. Font giao diện Bookshelf và thanh chip không bị ảnh hưởng."
+"Mọi tùy chỉnh văn bản và font ở khu vực chính/chi tiết sẽ bị mất. Font giao diện Bookshelf và menu kệ không bị ảnh hưởng."
 
-#: lib/bookshelf_settings.lua:3376
+#: lib/bookshelf_settings.lua:3527
 msgid "BETA: Read calibre metadata.calibre"
 msgstr "BETA: Đọc calibre metadata.calibre"
 
-#: lib/bookshelf_settings.lua:3377
-msgid "For users with a Calibre-managed library. Reads the metadata.calibre JSON file at home_dir to cover title / authors / series / tags / language for every book in the library — no per-book extraction needed. BIM-cached metadata still wins per field; Calibre data only fills gaps."
-msgstr "Dành cho người dùng có thư viện quản lý bằng Calibre. Đọc tệp JSON metadata.calibre tại home_dir để lấy tiêu đề / tác giả / series / thẻ / ngôn ngữ cho mọi cuốn sách trong thư viện — không cần trích xuất riêng từng sách. Siêu dữ liệu đã lưu tạm trong BIM vẫn được ưu tiên theo từng trường; dữ liệu Calibre chỉ lấp vào những chỗ còn thiếu."
+#: lib/bookshelf_settings.lua:3532
+msgid "For users with a Calibre-managed library. Reads the metadata.calibre file in your home folder to fill in title, authors, series, tags, language and description for every book at once, with no per-book extraction. Calibre's values take priority over the metadata KOReader extracted from the book file itself. Anything you have edited in Book information still wins over both. Covers and page counts always come from KOReader."
+msgstr "Dành cho người dùng có thư viện quản lý bằng Calibre. Đọc tệp metadata.calibre trong thư mục home của bạn để điền tiêu đề, tác giả, series, thẻ, ngôn ngữ và mô tả cho mọi cuốn sách cùng một lúc, không cần trích xuất riêng từng sách. Giá trị của Calibre được ưu tiên hơn siêu dữ liệu mà KOReader trích xuất từ chính tệp sách. Những gì bạn đã chỉnh sửa trong Thông tin sách vẫn được ưu tiên hơn cả hai. Bìa và số trang luôn lấy từ KOReader."
 
-#: lib/bookshelf_settings.lua:3408
+#: lib/bookshelf_settings.lua:3566
 msgid "BETA: Kobo library shelf"
 msgstr "BETA: Kệ thư viện Kobo"
 
-#: lib/bookshelf_settings.lua:3409
-msgid "Adds a \"Kobo\" chip that surfaces your Kobo virtual library (the books managed by the Kobo store / OGKevin's kobo.koplugin) as a Bookshelf shelf. Read-only; covers and opening depend on that plugin. Kobo devices only."
-msgstr "Thêm một chip \"Kobo\" hiển thị thư viện ảo Kobo của bạn (các sách được quản lý bởi cửa hàng Kobo / kobo.koplugin của OGKevin) như một kệ Bookshelf. Chỉ đọc; bìa sách và việc mở sách phụ thuộc vào plugin đó. Chỉ dành cho thiết bị Kobo."
+#: lib/bookshelf_settings.lua:3567
+msgid "Adds a \"Kobo\" shelf that surfaces your Kobo virtual library (the books managed by the Kobo store / OGKevin's kobo.koplugin). Read-only; covers and opening depend on that plugin. Kobo devices only."
+msgstr "Thêm một kệ \"Kobo\" hiển thị thư viện ảo Kobo của bạn (các sách được quản lý bởi cửa hàng Kobo / kobo.koplugin của OGKevin). Chỉ đọc; bìa sách và việc mở sách phụ thuộc vào plugin đó. Chỉ dành cho thiết bị Kobo."
 
-#: lib/bookshelf_settings.lua:3688 main.lua:628
+#: lib/bookshelf_settings.lua:3880
+msgid "Rows and columns set how much of the screen the shelf takes; the hero area above fills whatever is left. List and spine shelves use that same space with their own row counts, so covers are shown here while you adjust it."
+msgstr "Số hàng và số cột quyết định kệ chiếm bao nhiêu phần màn hình; vùng hero phía trên lấp đầy phần còn lại. Kệ danh sách và kệ gáy sách dùng chính khoảng không gian đó với số hàng riêng của chúng, nên ở đây hiển thị bìa trong lúc bạn điều chỉnh."
+
+#: lib/bookshelf_settings.lua:3888 main.lua:682
 msgid "Edit shelf size"
 msgstr "Sửa kích thước shelf"
 
-#: lib/bookshelf_settings.lua:3699
+#: lib/bookshelf_settings.lua:3902
 msgid "Columns: "
 msgstr "Cột: "
 
-#: lib/bookshelf_settings.lua:3707
+#: lib/bookshelf_settings.lua:3910
 msgid "Rows: "
 msgstr "Hàng: "
 
-#: lib/bookshelf_settings.lua:3714
+#: lib/bookshelf_settings.lua:3917
 msgid "Accept"
 msgstr "Chấp nhận"
 
-#: lib/bookshelf_settings.lua:3766
+#: lib/bookshelf_settings.lua:3969
 msgid "Book detail font scale"
 msgstr "Độ phông sách chi tiết"
 
-#: lib/bookshelf_settings.lua:3832
+#: lib/bookshelf_settings.lua:4035
 msgid "Hero micro-modules font scale"
 msgstr "Kíchthước phông Hero micro-modules"
 
-#: lib/bookshelf_settings.lua:3897
-msgid "Chip bar font scale"
-msgstr "Kích thước phông Chip bar"
+#: lib/bookshelf_settings.lua:4100
+msgid "Shelf menu font scale"
+msgstr "Kích thước phông menu kệ"
 
-#: lib/bookshelf_settings.lua:4045
+#: lib/bookshelf_settings.lua:4248
 msgid "Stack & folder label scale"
 msgstr "Kích thước nhãn Stack & folder"
 
-#: lib/bookshelf_settings.lua:4130
+#: lib/bookshelf_settings.lua:4333
 msgid "Start menu font scale"
 msgstr "Kích thước phông Start menu"
 
-#: lib/bookshelf_settings.lua:4195
+#: lib/bookshelf_settings.lua:4398
 msgid "Where the start-menu button sits in the footer. Right moves the button and its menu to the bottom-right corner; Off hides the button entirely."
 msgstr "Vị trí nút màn hình bắt đầu trong chân trang. Phải sẽ chuyển nút này và menu của nó sang góc dưới bên phải; Tắt sẽ ẩn hoàn toàn nút này."
 
-#: lib/bookshelf_settings.lua:4213
+#: lib/bookshelf_settings.lua:4416
 msgid "Minimum start menu width: default"
 msgstr "Chiều rộng tối thiểu của menu bắt đầu: mặc định"
 
-#: lib/bookshelf_settings.lua:4214
+#: lib/bookshelf_settings.lua:4417
 msgid "Minimum start menu width: %1 dp"
 msgstr "Chiều rộng tối thiểu của menu bắt đầu: %1 dp"
 
-#: lib/bookshelf_settings.lua:4216
+#: lib/bookshelf_settings.lua:4419
 msgid "The start menu is normally only as wide as its longest label, so short menu text also narrows the micro-module cards. Raise this to widen the panel without lengthening the text."
 msgstr "Menu bắt đầu thường chỉ rộng bằng nhãn dài nhất của nó, nên văn bản menu ngắn cũng làm hẹp các thẻ micro-module. Tăng giá trị này để mở rộng bảng menu mà không cần kéo dài văn bản."
 
-#: lib/bookshelf_settings.lua:4303
+#: lib/bookshelf_settings.lua:4506
 msgid "Launcher buttons"
 msgstr "Các nút khởi chạy"
 
-#: lib/bookshelf_settings.lua:4309
+#: lib/bookshelf_settings.lua:4512
 msgid "edge %1 dp"
 msgstr "cạnh %1 dp"
 
-#: lib/bookshelf_settings.lua:4318
+#: lib/bookshelf_settings.lua:4521
 msgid "side %1 dp"
 msgstr "bên %1 dp"
 
-#: lib/bookshelf_settings.lua:4327
+#: lib/bookshelf_settings.lua:4530
 msgid "size %1%"
 msgstr "cỡ %1%"
 
-#: lib/bookshelf_settings.lua:4335
+#: lib/bookshelf_settings.lua:4538
 msgid "Side: left"
 msgstr "Bên: trái"
 
-#: lib/bookshelf_settings.lua:4335
+#: lib/bookshelf_settings.lua:4538
 msgid "Side: right"
 msgstr "Bên: phải"
 
-#: lib/bookshelf_settings.lua:4340
+#: lib/bookshelf_settings.lua:4543
 msgid "Edge: bottom"
 msgstr "Cạnh: dưới"
 
-#: lib/bookshelf_settings.lua:4340
+#: lib/bookshelf_settings.lua:4543
 msgid "Edge: top"
 msgstr "Cạnh: trên"
 
-#: lib/bookshelf_settings.lua:4426
+#: lib/bookshelf_settings.lua:4629
 msgid "Minimum start menu width"
 msgstr "Chiều rộng tối thiểu của menu bắt đầu"
 
-#: lib/bookshelf_settings.lua:4516
+#: lib/bookshelf_settings.lua:4719
 msgid "Modal tab label font scale"
 msgstr "Kích thước phông nhãn tab hộp thoại"
 
-#: lib/bookshelf_settings.lua:4593
+#: lib/bookshelf_settings.lua:4796
 msgid "Cover labels"
 msgstr "Nhãn bìa"
 
-#: lib/bookshelf_settings.lua:4594
+#: lib/bookshelf_settings.lua:4797
 msgid "Cover badges"
 msgstr "Thẻ bìa"
 
-#: lib/bookshelf_settings.lua:4595
+#: lib/bookshelf_settings.lua:4798
 msgid "Stack & folder labels"
 msgstr "nhãn thùng & nhãn thư mục"
 
-#: lib/bookshelf_settings.lua:4596
-msgid "Chip bar"
-msgstr "khay Chip"
+#: lib/bookshelf_settings.lua:4799
+msgid "Shelf menu"
+msgstr "Menu kệ"
 
-#: lib/bookshelf_settings.lua:4607
+#: lib/bookshelf_settings.lua:4810
 msgid "List text"
 msgstr "Văn bản danh sách"
 
-#: lib/bookshelf_settings.lua:4612
+#: lib/bookshelf_settings.lua:4815
 msgid "Hero card"
 msgstr "Thẻ Hero"
 
-#: lib/bookshelf_settings.lua:4614
+#: lib/bookshelf_settings.lua:4817
 msgid "Hero micro-modules"
 msgstr "Thẻ Hero vi mô"
 
-#: lib/bookshelf_settings.lua:4620
+#: lib/bookshelf_settings.lua:4823
 msgid "Modal tabs"
 msgstr "Tab hộp thoại"
 
-#: lib/bookshelf_settings.lua:4637
+#: lib/bookshelf_settings.lua:4840
 msgid "Choose image library folder"
 msgstr "Chọn thư mục thư viện ảnh"
 
-#: lib/bookshelf_settings.lua:4663
+#: lib/bookshelf_settings.lua:4866
 msgid "\"Latest\" folder walk depth"
 msgstr "Độ sâu quét thư mục \"Mới nhất\""
 
-#: lib/bookshelf_settings.lua:4664
+#: lib/bookshelf_settings.lua:4867
 msgid "How deep to scan your library folder for newly-added books. Higher values take longer on a cold start."
 msgstr "Độ sâu quét thư mục thư viện của bạn để tìm sách mới thêm vào. Giá trị càng cao thì khởi động nguội càng mất nhiều thời gian."
 
-#: lib/bookshelf_settings.lua:4680
+#: lib/bookshelf_settings.lua:4883
 msgid "MB"
 msgstr "MB"
 
-#: lib/bookshelf_settings.lua:4681
+#: lib/bookshelf_settings.lua:4884
 msgid "Cover cache budget"
 msgstr "Ngân sách bộnhớ cache"
 
-#: lib/bookshelf_settings.lua:4682
+#: lib/bookshelf_settings.lua:4885
 msgid "Memory budget for ready-scaled book covers (MB). Higher = smoother paging and preloading, more RAM. Default 24 MB."
 msgstr "Ngân sách bộ nhớ cho các bìa sách đã co giãn sẵn (MB). Cao hơn = lật trang và tải trước mượt hơn, tốn nhiều RAM hơn. Mặc định 24 MB."
 
-#: lib/bookshelf_settings.lua:4816
+#: lib/bookshelf_settings.lua:5019
 msgid "Link copied to clipboard"
 msgstr "Đã sao chép link vào bộ nhớ tạm"
 
-#: lib/bookshelf_settings.lua:4906 main.lua:691
+#: lib/bookshelf_settings.lua:5109 main.lua:745
 msgid "Update available"
 msgstr "Cập nhật sẵn có"
 
-#: lib/bookshelf_settings.lua:4909 lib/bookshelf_settings.lua:4966
+#: lib/bookshelf_settings.lua:5112 lib/bookshelf_settings.lua:5169
 msgid "Check for updates"
 msgstr "Kiểm tra có cập nhật"
 
-#: lib/bookshelf_settings.lua:4911
+#: lib/bookshelf_settings.lua:5114
 msgid "Checks GitHub for a newer Bookshelf release and offers to install it, with the release notes shown first. The version in brackets is what's installed."
 msgstr "Kiểm tra trên GitHub xem có bản phát hành Bookshelf mới hơn không và đề nghị cài đặt, hiển thị ghi chú phát hành trước. Phiên bản trong ngoặc là phiên bản đang cài."
 
-#: lib/bookshelf_settings.lua:4918
+#: lib/bookshelf_settings.lua:5121
 msgid "View changelog"
 msgstr "Xem nhật ký thay đổi"
 
-#: lib/bookshelf_settings.lua:4919
+#: lib/bookshelf_settings.lua:5122
 msgid "Browse this and past releases' notes, newest first. Notes are cached, so anything fetched once stays readable offline; Refresh pulls the latest."
 msgstr "Duyệt ghi chú của bản phát hành này và các bản trước, mới nhất trước. Ghi chú được lưu tạm, nên những gì đã tải một lần vẫn đọc được khi ngoại tuyến; Làm mới sẽ lấy bản mới nhất."
 
-#: lib/bookshelf_settings.lua:4929
+#: lib/bookshelf_settings.lua:5132
 msgid "Notify on wake when update available"
 msgstr "Thông báo khi bật khi có cập nhật sẵn sàng"
 
-#: lib/bookshelf_settings.lua:4940 lib/bookshelf_settings.lua:4944
+#: lib/bookshelf_settings.lua:5143 lib/bookshelf_settings.lua:5147
 msgid "Developer updates"
 msgstr "Cập nhật của nhà phát triển"
 
-#: lib/bookshelf_settings.lua:4950 lib/bookshelf_settings.lua:4951
-#: main.lua:2040
+#: lib/bookshelf_settings.lua:5153 lib/bookshelf_settings.lua:5154
+#: main.lua:2094
 msgid "Development branch"
 msgstr "Nhánh phát triển"
 
-#: lib/bookshelf_settings.lua:4967
+#: lib/bookshelf_settings.lua:5170
 msgid "Install branch"
 msgstr "Cài đặt nhánh"
 
-#: lib/bookshelf_settings.lua:4973
+#: lib/bookshelf_settings.lua:5176
 msgid "Reset to latest stable release"
 msgstr "Khởi động lại về phiên bản ổn định mới nhất"
 
-#: lib/bookshelf_settings.lua:4984 lib/bookshelf_settings.lua:4987
+#: lib/bookshelf_settings.lua:5187 lib/bookshelf_settings.lua:5190
 msgid "Installed: v"
 msgstr "Đã cài đặt: v"
 
-#: lib/bookshelf_settings.lua:5027
-msgid "Flexible chip widths"
-msgstr "Độ rộng chip linh hoạt"
+#: lib/bookshelf_settings.lua:5230
+msgid "Flexible shelf widths"
+msgstr "Độ rộng kệ linh hoạt"
 
-#: lib/bookshelf_settings.lua:5028
-msgid "Off: every chip gets the same width. On: each chip is sized to its label, so single-icon chips stay narrow and longer text labels get more room. Falls back to equal widths when natural sizes don't fit."
-msgstr "Tắt: mọi chip có cùng độ rộng. Bật: mỗi chip được co giãn theo nhãn của nó, nên chip chỉ có biểu tượng sẽ hẹp còn nhãn văn bản dài sẽ có nhiều không gian hơn. Tự động chuyển về độ rộng bằng nhau khi kích thước tự nhiên không vừa."
+#: lib/bookshelf_settings.lua:5231
+msgid "Off: every shelf gets the same width. On: each shelf is sized to its label, so single-icon shelves stay narrow and longer text labels get more room. Falls back to equal widths when natural sizes don't fit."
+msgstr "Tắt: mọi kệ có cùng độ rộng. Bật: mỗi kệ được co giãn theo nhãn của nó, nên kệ chỉ có biểu tượng sẽ hẹp còn nhãn văn bản dài sẽ có nhiều không gian hơn. Tự động chuyển về độ rộng bằng nhau khi kích thước tự nhiên không vừa."
 
-#: lib/bookshelf_settings.lua:5043
+#: lib/bookshelf_settings.lua:5246
 msgid "Uppercase labels"
 msgstr "Nhãn chữ in hoa"
 
-#: lib/bookshelf_settings.lua:5044
-msgid "On: chip labels and the drill breadcrumb are shown in capitals, the default look. Off: each label reads exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."
-msgstr "Bật: nhãn chip và đường dẫn phân cấp khi đi sâu được hiển thị bằng chữ in hoa, đây là kiểu mặc định. Tắt: mỗi nhãn hiển thị đúng như bạn đã nhập, nên \"Sci-Fi\" vẫn là \"Sci-Fi\"."
+#: lib/bookshelf_settings.lua:5247
+msgid "On: shelf names and the drill breadcrumb are shown in capitals, the default look. Off: each label reads exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."
+msgstr "Bật: tên kệ và đường dẫn phân cấp khi đi sâu được hiển thị bằng chữ in hoa, đây là kiểu mặc định. Tắt: mỗi nhãn hiển thị đúng như bạn đã nhập, nên \"Sci-Fi\" vẫn là \"Sci-Fi\"."
 
-#: lib/bookshelf_settings.lua:5103
-msgid "+ Add new chip"
-msgstr "+ Thêm chip mới"
+#: lib/bookshelf_settings.lua:5306
+msgid "+ Add new shelf"
+msgstr "+ Thêm kệ mới"
 
-#: lib/bookshelf_sort_engine.lua:363
+#: lib/bookshelf_sort_engine.lua:421
 msgid "Filename"
 msgstr "Tên tệp"
 
-#: lib/bookshelf_sort_engine.lua:367
+#: lib/bookshelf_sort_engine.lua:425
 msgid "Author (given name)"
 msgstr "Tác giả (tên đệm)"
 
-#: lib/bookshelf_sort_engine.lua:369
+#: lib/bookshelf_sort_engine.lua:427
 msgid "Author surname"
 msgstr "Họ tác giả"
 
-#: lib/bookshelf_sort_engine.lua:371 lib/bookshelf_tokens.lua:77
+#: lib/bookshelf_sort_engine.lua:429 lib/bookshelf_tokens.lua:77
 msgid "Series name"
 msgstr "Tên series"
 
-#: lib/bookshelf_sort_engine.lua:375
+#: lib/bookshelf_sort_engine.lua:433
 msgid "Series #"
 msgstr "Số series"
 
-#: lib/bookshelf_sort_engine.lua:375
+#: lib/bookshelf_sort_engine.lua:433
 msgid "Series index"
 msgstr "Chỉ số series"
 
-#: lib/bookshelf_sort_engine.lua:383
+#: lib/bookshelf_sort_engine.lua:441
 msgid "Series + #"
 msgstr "Series + #"
 
-#: lib/bookshelf_sort_engine.lua:383
+#: lib/bookshelf_sort_engine.lua:441
 msgid "Series + index"
 msgstr "Chuỗi + chỉ số"
 
-#: lib/bookshelf_sort_engine.lua:393
+#: lib/bookshelf_sort_engine.lua:451
 msgid "Last opened"
 msgstr "Lần mở gần nhất"
 
-#: lib/bookshelf_sort_engine.lua:393
+#: lib/bookshelf_sort_engine.lua:451
 msgid "Opened"
 msgstr "Đã mở"
 
-#: lib/bookshelf_sort_engine.lua:399 lib/bookshelf_tokens.lua:95
+#: lib/bookshelf_sort_engine.lua:457 lib/bookshelf_tokens.lua:97
 msgid "Percent read"
 msgstr "Phần trăm đã đọc"
 
-#: lib/bookshelf_sort_engine.lua:404
+#: lib/bookshelf_sort_engine.lua:462
 msgid "Unread/Reading/Finished"
 msgstr "Chưa đọc/Đang đọc/Đã hoàn thành"
 
-#: lib/bookshelf_sort_engine.lua:405
+#: lib/bookshelf_sort_engine.lua:463
 msgid "Unread 1st"
 msgstr "Chưa đọc thứ nhất"
 
-#: lib/bookshelf_sort_engine.lua:414
+#: lib/bookshelf_sort_engine.lua:472
 msgid "Reading/Unread/Finished"
 msgstr "Đang đọc/Chưa đọc/Đã hoàn thành"
 
-#: lib/bookshelf_sort_engine.lua:415
+#: lib/bookshelf_sort_engine.lua:473
 msgid "Reading 1st"
 msgstr "Lần đọc thứ nhất"
 
-#: lib/bookshelf_sort_engine.lua:426 lib/bookshelf_widget.lua:14574
-#: lib/bookshelf_widget.lua:14589
+#: lib/bookshelf_sort_engine.lua:484 lib/bookshelf_widget.lua:16152
+#: lib/bookshelf_widget.lua:16167
 msgid "Added"
 msgstr "Đã thêm"
 
-#: lib/bookshelf_sort_engine.lua:426
+#: lib/bookshelf_sort_engine.lua:484
 msgid "Date added"
 msgstr "Ngày thêm"
 
-#: lib/bookshelf_sort_engine.lua:438
+#: lib/bookshelf_sort_engine.lua:496
 msgid "File size"
 msgstr "Kích thước tệp"
 
-#: lib/bookshelf_sort_engine.lua:445 micromodules/shelf_size.lua:159
+#: lib/bookshelf_sort_engine.lua:503 micromodules/shelf_size.lua:159
 #: micromodules/trivia.lua:44
 msgid "Books"
 msgstr "Sách"
 
-#: lib/bookshelf_sort_engine.lua:460
+#: lib/bookshelf_sort_engine.lua:518
 msgid "Page count"
 msgstr "Số trang"
 
-#: lib/bookshelf_sort_engine.lua:460 lib/bookshelf_widget.lua:14571
+#: lib/bookshelf_sort_engine.lua:518 lib/bookshelf_widget.lua:16149
 msgid "Pages"
 msgstr "Trang"
 
-#: lib/bookshelf_spine_widget.lua:1172
+#: lib/bookshelf_spine_widget.lua:1359
 msgid "%1 p"
 msgstr "%1 tr"
 
@@ -3350,12 +3460,12 @@ msgstr "Gần đây"
 msgid "Latest"
 msgstr "Mới nhất"
 
-#: lib/bookshelf_tab_model.lua:56 lib/bookshelf_widget.lua:1508
-#: lib/bookshelf_widget.lua:17135
+#: lib/bookshelf_tab_model.lua:56 lib/bookshelf_widget.lua:1549
+#: lib/bookshelf_widget.lua:18725
 msgid "Tags"
 msgstr "Thẻ"
 
-#: lib/bookshelf_tab_model.lua:170 lib/bookshelf_widget.lua:1137
+#: lib/bookshelf_tab_model.lua:170 lib/bookshelf_widget.lua:1168
 msgid "Kobo"
 msgstr "Kobo"
 
@@ -3457,261 +3567,279 @@ msgstr "Một phần trích dẫn ngẫu nhiên từ cuốn sách này"
 msgid "The book and author for %quote"
 msgstr "Cuốn sách và tác giả cho %quote"
 
-#: lib/bookshelf_tokens.lua:96
+#: lib/bookshelf_tokens.lua:94
+#, lua-format
+msgid "Page the %quote highlight is on"
+msgstr "Trang chứa đoạn tô sáng của %quote"
+
+#: lib/bookshelf_tokens.lua:95
+#, lua-format
+msgid "Chapter the %quote highlight is in"
+msgstr "Chương chứa đoạn tô sáng của %quote"
+
+#: lib/bookshelf_tokens.lua:98
 msgid "Percent left"
 msgstr "Phần trăm còn lại"
 
-#: lib/bookshelf_tokens.lua:97
+#: lib/bookshelf_tokens.lua:99
 msgid "Current page"
 msgstr "Trang hiện tại"
 
-#: lib/bookshelf_tokens.lua:98
+#: lib/bookshelf_tokens.lua:100
 msgid "Total pages (approximate for EPUB)"
 msgstr "Tổng số trang (khoảng cho EPUB)"
 
-#: lib/bookshelf_tokens.lua:99
+#: lib/bookshelf_tokens.lua:101
 msgid "Pages left (approximate for EPUB)"
 msgstr "Trang còn lại (khoảng cho EPUB)"
 
-#: lib/bookshelf_tokens.lua:100
+#: lib/bookshelf_tokens.lua:102
 msgid "Time left to finish (statistics)"
 msgstr "Thời gian còn lại để hoàn thành (thống kê)"
 
-#: lib/bookshelf_tokens.lua:101
+#: lib/bookshelf_tokens.lua:103
 msgid "Total time read (statistics)"
 msgstr "Tổng thời gian đọc (thống kê)"
 
-#: lib/bookshelf_tokens.lua:102
+#: lib/bookshelf_tokens.lua:104
 msgid "Pages read (statistics)"
 msgstr "Trang đã đọc (thống kê)"
 
-#: lib/bookshelf_tokens.lua:103
+#: lib/bookshelf_tokens.lua:105
 msgid "Days since first opened (statistics)"
 msgstr "Ngày kể từ khi mở lần đầu (thống kê)"
 
-#: lib/bookshelf_tokens.lua:104
+#: lib/bookshelf_tokens.lua:106
 msgid "Pages per day (statistics)"
 msgstr "Trang mỗi ngày (thống kê)"
 
-#: lib/bookshelf_tokens.lua:105
+#: lib/bookshelf_tokens.lua:107
 msgid "Speed in pages/hour (statistics)"
 msgstr "Tốc độ trang/giờ (thống kê)"
 
-#: lib/bookshelf_tokens.lua:106
+#: lib/bookshelf_tokens.lua:108
 msgid "Date this book was last opened"
 msgstr "Ngày cuốn sách này được mở lần cuối"
 
-#: lib/bookshelf_tokens.lua:107
+#: lib/bookshelf_tokens.lua:109
 msgid "How many books in your whole library are marked Finished"
 msgstr "Số sách trong toàn bộ thư viện của bạn được đánh dấu là Hoàn thành"
 
-#: lib/bookshelf_tokens.lua:108
+#: lib/bookshelf_tokens.lua:110
 msgid "How many books have any reading time recorded (statistics)"
 msgstr "Số sách có bất kỳ thời gian đọc nào được ghi lại (thống kê)"
 
-#: lib/bookshelf_tokens.lua:109
+#: lib/bookshelf_tokens.lua:111
 msgid "Time (12-hour)"
 msgstr "Thời gian (12 giờ)"
 
-#: lib/bookshelf_tokens.lua:110
+#: lib/bookshelf_tokens.lua:112
 msgid "Time (24-hour)"
 msgstr "Thời gian (24 giờ)"
 
-#: lib/bookshelf_tokens.lua:111
+#: lib/bookshelf_tokens.lua:113
 msgid "Date (e.g. 4 May)"
 msgstr "Ngày (ví dụ: 4 tháng 5)"
 
-#: lib/bookshelf_tokens.lua:112
+#: lib/bookshelf_tokens.lua:114
 msgid "Date (e.g. 4 May 2026)"
 msgstr "Ngày (ví dụ: 4 tháng 5 năm 2026)"
 
-#: lib/bookshelf_tokens.lua:113
+#: lib/bookshelf_tokens.lua:115
 msgid "Date (numeric)"
 msgstr "Ngày (dạng số)"
 
-#: lib/bookshelf_tokens.lua:114
+#: lib/bookshelf_tokens.lua:116
 msgid "Weekday"
 msgstr "Ngày trong tuần"
 
-#: lib/bookshelf_tokens.lua:115
+#: lib/bookshelf_tokens.lua:117
 msgid "Weekday (short)"
 msgstr "Ngày trong tuần (ngắn)"
 
-#: lib/bookshelf_tokens.lua:116
+#: lib/bookshelf_tokens.lua:118
 msgid "Battery percentage"
 msgstr "Phần trăm pin"
 
-#: lib/bookshelf_tokens.lua:117
+#: lib/bookshelf_tokens.lua:119
 msgid "Battery icon (Nerd Font)"
 msgstr "Biểu tượng pin (Nerd Font)"
 
-#: lib/bookshelf_tokens.lua:118
+#: lib/bookshelf_tokens.lua:120
 msgid "Wi-Fi icon"
 msgstr "Biểu tượng Wi-Fi"
 
-#: lib/bookshelf_tokens.lua:119
+#: lib/bookshelf_tokens.lua:121
 msgid "Wi-Fi icon only when online"
 msgstr "Biểu tượng Wi-Fi chỉ khi trực tuyến"
 
-#: lib/bookshelf_tokens.lua:120
+#: lib/bookshelf_tokens.lua:122
 msgid "Night mode icon (moon/sun)"
 msgstr "Biểu tượng chế độ đêm (trăng/mặt trời)"
 
-#: lib/bookshelf_tokens.lua:121
+#: lib/bookshelf_tokens.lua:123
 msgid "Frontlight intensity (raw)"
 msgstr "Độ sáng frontlight (nguyên bản)"
 
-#: lib/bookshelf_tokens.lua:122
+#: lib/bookshelf_tokens.lua:124
 msgid "Frontlight intensity (0–100%)"
 msgstr "Độ sáng frontlight (0–100%)"
 
-#: lib/bookshelf_tokens.lua:123
+#: lib/bookshelf_tokens.lua:125
 msgid "Lifetime reading time, all books"
 msgstr "Tổng thời gian đọc, tất cả sách"
 
-#: lib/bookshelf_tokens.lua:124
+#: lib/bookshelf_tokens.lua:126
 msgid "Percent of the book actually read"
 msgstr "Phần trăm sách đã thực sự đọc"
 
-#: lib/bookshelf_tokens.lua:125
+#: lib/bookshelf_tokens.lua:127
 msgid "Books finished (bookends' name for %books_read)"
 msgstr "Số sách đã đọc xong (tên trong bookends của %books_read)"
 
-#: lib/bookshelf_tokens.lua:126
+#: lib/bookshelf_tokens.lua:128
 msgid "Pages read today, all books"
 msgstr "Số trang đã đọc hôm nay, tất cả sách"
 
-#: lib/bookshelf_tokens.lua:127
+#: lib/bookshelf_tokens.lua:129
 msgid "Time read today, all books"
 msgstr "Thời gian đọc hôm nay, tất cả sách"
 
-#: lib/bookshelf_tokens.lua:128
+#: lib/bookshelf_tokens.lua:130
 msgid "Average time per page for this book"
 msgstr "Thời gian trung bình mỗi trang của sách này"
 
-#: lib/bookshelf_tokens.lua:129
+#: lib/bookshelf_tokens.lua:131
 msgid "Number of highlights"
 msgstr "Số đoạn đánh dấu"
 
-#: lib/bookshelf_tokens.lua:130
+#: lib/bookshelf_tokens.lua:132
 msgid "Number of notes"
 msgstr "Số ghi chú"
 
-#: lib/bookshelf_tokens.lua:131
+#: lib/bookshelf_tokens.lua:133
 msgid "Number of bookmarks"
 msgstr "Số dấu trang"
 
-#: lib/bookshelf_tokens.lua:132
+#: lib/bookshelf_tokens.lua:134
 msgid "Highlights + notes + bookmarks"
 msgstr "Đánh dấu + ghi chú + dấu trang"
 
-#: lib/bookshelf_tokens.lua:133
+#: lib/bookshelf_tokens.lua:135
 msgid "Frontlight icon"
 msgstr "Biểu tượng đèn trước"
 
-#: lib/bookshelf_tokens.lua:134
+#: lib/bookshelf_tokens.lua:136
 msgid "Warmth on the device's own scale, 0-24 on Kindle (natural-light only)"
 msgstr "Độ ấm theo thang của thiết bị, 0-24 trên Kindle (chỉ với đèn ánh sáng tự nhiên)"
 
-#: lib/bookshelf_tokens.lua:135
+#: lib/bookshelf_tokens.lua:137
 msgid "Warmth as a percentage (natural-light only)"
 msgstr "Độ ấm theo phần trăm (chỉ với đèn ánh sáng tự nhiên)"
 
-#: lib/bookshelf_tokens.lua:136
+#: lib/bookshelf_tokens.lua:138
 msgid "Warmth icon: cool / mid / warm (natural-light only)"
 msgstr "Biểu tượng độ ấm: lạnh / vừa / ấm (chỉ với đèn ánh sáng tự nhiên)"
 
-#: lib/bookshelf_tokens.lua:137
+#: lib/bookshelf_tokens.lua:139
+msgid "SSH icon, shown only while the SSH server is running"
+msgstr "Biểu tượng SSH, chỉ hiện khi máy chủ SSH đang chạy"
+
+#: lib/bookshelf_tokens.lua:140
+msgid "Same, wrapped so a whole section hides when SSH is off"
+msgstr "Tương tự, được bọc lại để ẩn cả một phần khi SSH tắt"
+
+#: lib/bookshelf_tokens.lua:141
 msgid "System memory used (%)"
 msgstr "Dung lượng bộ nhớ hệ thống đã sử dụng (%)"
 
-#: lib/bookshelf_tokens.lua:138
+#: lib/bookshelf_tokens.lua:142
 msgid "System memory used (MiB)"
 msgstr "Dung lượng bộ nhớ hệ thống đã sử dụng (MiB)"
 
-#: lib/bookshelf_tokens.lua:139
+#: lib/bookshelf_tokens.lua:143
 msgid "KOReader RSS (MiB)"
 msgstr "KOReader RSS (MiB)"
 
-#: lib/bookshelf_tokens.lua:140
+#: lib/bookshelf_tokens.lua:144
 msgid "Storage free (GB)"
 msgstr "Dung lượng trống (GB)"
 
-#: lib/bookshelf_tokens.lua:141
+#: lib/bookshelf_tokens.lua:145
 msgid "Show … when token foo is set"
 msgstr "Hiển thị … khi thẻ foo được thiết lập"
 
-#: lib/bookshelf_tokens.lua:142
+#: lib/bookshelf_tokens.lua:146
 msgid "Show … when foo is empty"
 msgstr "Hiển thị … khi foo trống"
 
-#: lib/bookshelf_tokens.lua:143
+#: lib/bookshelf_tokens.lua:147
 msgid "Numeric comparison"
 msgstr "So sánh số"
 
-#: lib/bookshelf_tokens.lua:144
+#: lib/bookshelf_tokens.lua:148
 msgid "If/else"
 msgstr "Nếu/khác"
 
-#: lib/bookshelf_tokens.lua:145
+#: lib/bookshelf_tokens.lua:149
 msgid "Per-language font: e.g. a Japanese face for ja books, another otherwise"
 msgstr "Phông chữ theo ngôn ngữ: ví dụ, phông chữ Nhật cho sách ja, ngược lại thì phông chữ khác"
 
-#: lib/bookshelf_tokens.lua:146
+#: lib/bookshelf_tokens.lua:150
 msgid "Show … only in the full-width status line (micro-module + full-screen views), not the cover-view status"
 msgstr "Chỉ hiển thị … trong dòng trạng thái toàn chiều rộng (khung xem micro-module + toàn màn hình), không hiển thị ở trạng thái dạng xem bìa"
 
-#: lib/bookshelf_tokens.lua:147
+#: lib/bookshelf_tokens.lua:151
 msgid "Elastic gap: pushes content left/right to the region edges"
 msgstr "Khoảng trống elastik: đẩy nội dung sang trái/phải đến các cạnh vùng"
 
-#: lib/bookshelf_tokens.lua:148
+#: lib/bookshelf_tokens.lua:152
 msgid "Progress bar, filling the rest of the line"
 msgstr "Thanh tiến độ, lấp đầy phần còn lại của dòng"
 
-#: lib/bookshelf_tokens.lua:149
+#: lib/bookshelf_tokens.lua:153
 msgid "Progress bar whose length reflects how long the book is"
 msgstr "Thanh tiến độ có chiều dài phản ánh độ dài của cuốn sách"
 
-#: lib/bookshelf_tokens.lua:157
+#: lib/bookshelf_tokens.lua:161
 msgid "Bold from here on ([/b] ends it)"
 msgstr "In đậm từ đây trở đi ([/b] kết thúc nó)"
 
-#: lib/bookshelf_tokens.lua:158
+#: lib/bookshelf_tokens.lua:162
 msgid "Italic from here on ([/i] ends it)"
 msgstr "In nghiêng từ đây trở đi ([/i] kết thúc nó)"
 
-#: lib/bookshelf_tokens.lua:159
+#: lib/bookshelf_tokens.lua:163
 msgid "Smaller from here on: 4pt below the line's own size ([/size] ends it)"
 msgstr "Nhỏ hơn từ đây trở đi: nhỏ hơn 4pt so với kích thước phông của dòng ([/size] kết thúc nó)"
 
-#: lib/bookshelf_tokens.lua:160
+#: lib/bookshelf_tokens.lua:164
 msgid "Larger from here on; [size=12] sets an exact point size ([/size] ends it)"
 msgstr "Lớn hơn từ đây trở đi; [size=12] đặt kích thước phông chính xác theo điểm ([/size] kết thúc nó)"
 
-#: lib/bookshelf_tokens.lua:161
+#: lib/bookshelf_tokens.lua:165
 msgid "A different font from here on: replace NAME with a font name ([/font] ends it)"
 msgstr "Một phông chữ khác từ đây trở đi: thay NAME bằng tên phông chữ ([/font] kết thúc nó)"
 
-#: lib/bookshelf_tokens.lua:227
+#: lib/bookshelf_tokens.lua:231
 msgid " and "
 msgstr " và "
 
-#: lib/bookshelf_tokens.lua:227
+#: lib/bookshelf_tokens.lua:231
 msgid ", et al."
 msgstr ", et al."
 
-#: lib/bookshelf_tokens.lua:790
+#: lib/bookshelf_tokens.lua:895
 #, lua-format
 msgid "%dh %02dm"
 msgstr "%dh %02dm"
 
-#: lib/bookshelf_tokens.lua:832
+#: lib/bookshelf_tokens.lua:937
 #, lua-format
 msgid "%ds"
 msgstr "%ds"
 
-#: lib/bookshelf_tokens.lua:833
+#: lib/bookshelf_tokens.lua:938
 #, lua-format
 msgid "%dm %02ds"
 msgstr "%dm %02ds"
@@ -3816,90 +3944,90 @@ msgstr "Không thể lấy bản phát hành mới nhất."
 msgid "Latest release has no downloadable zip."
 msgstr "Bản phát hành mới nhất không có tệp zip để tải xuống."
 
-#: lib/bookshelf_widget.lua:1480
+#: lib/bookshelf_widget.lua:1521
 msgid "Search results"
 msgstr "Kết quả tìm kiếm"
 
-#: lib/bookshelf_widget.lua:1816
+#: lib/bookshelf_widget.lua:1892
 #, lua-format
 msgid "No matches for \"%s\""
 msgstr "Không có kết quả nào cho \"%s\""
 
-#: lib/bookshelf_widget.lua:1818
+#: lib/bookshelf_widget.lua:1894
 msgid "Nothing in Series yet · Add series metadata to your books and they will appear here"
 msgstr "Chưa có gì trong Series · Thêm siêu dữ liệu series vào sách của bạn và chúng sẽ xuất hiện ở đây"
 
-#: lib/bookshelf_widget.lua:1820
+#: lib/bookshelf_widget.lua:1896
 msgid "No authors yet · Add author metadata to your books and they will appear here"
 msgstr "Chưa có tác giả nào · Thêm siêu dữ liệu tác giả vào sách của bạn và chúng sẽ xuất hiện ở đây"
 
-#: lib/bookshelf_widget.lua:1822
+#: lib/bookshelf_widget.lua:1898
 msgid "No genres yet · Add keywords or subject metadata to your books and they will appear here"
 msgstr "Chưa có thể loại nào · Thêm từ khóa hoặc siêu dữ liệu chủ đề vào sách của bạn và chúng sẽ xuất hiện ở đây"
 
-#: lib/bookshelf_widget.lua:1824
+#: lib/bookshelf_widget.lua:1900
 msgid "No collections yet · Long-press a book and tap 'Collections…' to create one"
 msgstr "Chưa có bộ sưu tập nào · Giữ ngón tay trên một cuốn sách và chọn 'Bộ sưu tập…' để tạo mới"
 
-#: lib/bookshelf_widget.lua:1826
+#: lib/bookshelf_widget.lua:1902
 msgid "No favorites yet · Long-press a book and tap 'Add to favorites'"
 msgstr "Chưa có yêu thích nào · Giữ ngón tay trên sách một thời gian và chọn 'Thêm vào yêu thích'"
 
-#: lib/bookshelf_widget.lua:1828
+#: lib/bookshelf_widget.lua:1904
 msgid "No books found · Set your library folder in Settings then tap Latest"
 msgstr "Không tìm thấy sách nào · Thiết lập thư mục thư viện của bạn trong Settings rồi chọn Latest"
 
-#: lib/bookshelf_widget.lua:1830
+#: lib/bookshelf_widget.lua:1906
 msgid "No recent reads yet · Open a book and it will appear here"
 msgstr "Chưa có đọc gần đây nào · Mở một cuốn sách và nó sẽ xuất hiện ở đây"
 
-#: lib/bookshelf_widget.lua:1836
+#: lib/bookshelf_widget.lua:1912
 msgid "No books here yet · Pick a folder to use as your KOReader library and books in it will appear here."
 msgstr "Chưa có sách nào ở đây · Chọn một thư mục để dùng làm thư viện KOReader của bạn và sách trong đó sẽ xuất hiện ở đây."
 
-#: lib/bookshelf_widget.lua:1862
+#: lib/bookshelf_widget.lua:1938
 #, lua-format
 msgid "Couldn't load %s · Pull down to try again"
 msgstr "Không thể tải %s · Kéo xuống để thử lại"
 
-#: lib/bookshelf_widget.lua:1866
+#: lib/bookshelf_widget.lua:1942
 #, lua-format
 msgid "Nothing in \"%s\" · Pull down to refresh, or clear the start folder in Catalog settings"
 msgstr "Chưa có gì trong \"%s\" · Kéo xuống để làm mới, hoặc xóa thư mục bắt đầu trong Cài đặt danh mục"
 
-#: lib/bookshelf_widget.lua:1870
+#: lib/bookshelf_widget.lua:1946
 #, lua-format
 msgid "Nothing in %s · Pull down to refresh"
 msgstr "Chưa có gì trong %s · Kéo xuống để làm mới"
 
-#: lib/bookshelf_widget.lua:1881
+#: lib/bookshelf_widget.lua:1957
 #, lua-format
-msgid "No books in %s yet · Long-press the chip to edit its source or filter"
-msgstr "Chưa có sách nào trong %s · Nhấn giữ thẻ để chỉnh sửa nguồn hoặc bộ lọc"
+msgid "No books in %s yet · Long-press the shelf to edit its source or filter"
+msgstr "Chưa có sách nào trong %s · Nhấn giữ kệ để chỉnh sửa nguồn hoặc bộ lọc"
 
-#: lib/bookshelf_widget.lua:1884
+#: lib/bookshelf_widget.lua:1960
 #, lua-format
 msgid "No books in %s yet"
 msgstr "Chưa có sách nào trong %s"
 
-#: lib/bookshelf_widget.lua:1895
+#: lib/bookshelf_widget.lua:1971
 #, lua-format
-msgid "Nothing in %s yet · Long-press the chip to edit its filter"
-msgstr "Chưa có gì trong %s · Nhấn giữ thẻ để chỉnh sửa bộ lọc"
+msgid "Nothing in %s yet · Long-press the shelf to edit its filter"
+msgstr "Chưa có gì trong %s · Nhấn giữ kệ để chỉnh sửa bộ lọc"
 
-#: lib/bookshelf_widget.lua:1979
+#: lib/bookshelf_widget.lua:2055
 msgid "Set home folder"
 msgstr "Đặt thư mục gốc"
 
-#: lib/bookshelf_widget.lua:1988
+#: lib/bookshelf_widget.lua:2064
 msgid "Current home folder:"
 msgstr "Thư mục gốc hiện tại:"
 
-#: lib/bookshelf_widget.lua:3526
+#: lib/bookshelf_widget.lua:3693
 msgid "Couldn't open this Kobo book."
 msgstr "Không thể mở cuốn sách Kobo này."
 
-#: lib/bookshelf_widget.lua:3568
+#: lib/bookshelf_widget.lua:3735
 msgid ""
 "This Kindle book has to be converted before KOReader can read it.\n"
 "\n"
@@ -3913,11 +4041,11 @@ msgstr ""
 "\n"
 "Điều này chỉ xảy ra trong lần đầu bạn mở sách."
 
-#: lib/bookshelf_widget.lua:3573
+#: lib/bookshelf_widget.lua:3740
 msgid "Convert"
 msgstr "Chuyển đổi"
 
-#: lib/bookshelf_widget.lua:3616
+#: lib/bookshelf_widget.lua:3783
 msgid ""
 "This is a protected %1 file, which can't be opened.\n"
 "\n"
@@ -3931,7 +4059,7 @@ msgstr ""
 "\n"
 "Sách KFX của bạn vẫn mở bình thường."
 
-#: lib/bookshelf_widget.lua:3626
+#: lib/bookshelf_widget.lua:3793
 msgid ""
 "KOReader can't read %1 files.\n"
 "\n"
@@ -3945,91 +4073,94 @@ msgstr ""
 "\n"
 "Các sách Kindle khác của bạn vẫn mở bình thường."
 
-#: lib/bookshelf_widget.lua:3631
+#: lib/bookshelf_widget.lua:3798
 msgid "The Kindle library isn't available right now."
 msgstr "Thư viện Kindle hiện không khả dụng."
 
-#: lib/bookshelf_widget.lua:3667 lib/bookshelf_widget.lua:15805
+#: lib/bookshelf_widget.lua:3834 lib/bookshelf_widget.lua:17395
 msgid "File no longer exists. The bookshelf entry is stale."
 msgstr "Tệp không tồn tại nữa. Mục trên kệ sách đã lỗi thời."
 
-#: lib/bookshelf_widget.lua:3742
+#: lib/bookshelf_widget.lua:3909
 msgid "Preparing this book…"
 msgstr "Đang chuẩn bị cuốn sách này…"
 
-#: lib/bookshelf_widget.lua:3756
+#: lib/bookshelf_widget.lua:3923
 msgid "This book is still being prepared. Please try again in a moment."
 msgstr "Cuốn sách này vẫn đang được chuẩn bị. Vui lòng thử lại sau ít phút."
 
-#: lib/bookshelf_widget.lua:4283
+#: lib/bookshelf_widget.lua:4480
 msgid "Show search results as"
 msgstr "Hiển thị kết quả tìm kiếm dưới dạng"
 
-#: lib/bookshelf_widget.lua:4626
+#: lib/bookshelf_widget.lua:4938
 msgid "Catalog books can't be selected."
 msgstr "Không thể chọn sách trong danh mục."
 
-#: lib/bookshelf_widget.lua:5013
-#, lua-format
-msgid "Page %d of %d"
-msgstr "Trang %d của %d"
+#: lib/bookshelf_widget.lua:5705
+msgid "%1 - %2 of %3+"
+msgstr "%1 - %2 của %3+"
 
-#: lib/bookshelf_widget.lua:5360 lib/bookshelf_widget.lua:8443
+#: lib/bookshelf_widget.lua:5706
+msgid "%1 - %2 of %3"
+msgstr "%1 - %2 của %3"
+
+#: lib/bookshelf_widget.lua:6057 lib/bookshelf_widget.lua:9610
 msgid "Selection cleared"
 msgstr "Đã xóa lựa chọn"
 
-#: lib/bookshelf_widget.lua:5623
+#: lib/bookshelf_widget.lua:6320
 #, lua-format
 msgid "No items start with %q"
 msgstr "Không có mục nào bắt đầu với %q"
 
-#: lib/bookshelf_widget.lua:5651
+#: lib/bookshelf_widget.lua:6348
 msgid "Go to letter"
 msgstr "Đi đến chữ cái"
 
-#: lib/bookshelf_widget.lua:5662
+#: lib/bookshelf_widget.lua:6359
 msgid "Enter text, letter or page number"
 msgstr "Nhập văn bản, chữ cái hoặc số trang"
 
-#: lib/bookshelf_widget.lua:5668
+#: lib/bookshelf_widget.lua:6365
 #, lua-format
 msgid "(a - z) or (1 - %d)"
 msgstr "(a - z) hoặc (1 - %d)"
 
-#: lib/bookshelf_widget.lua:5678
+#: lib/bookshelf_widget.lua:6375
 msgid "Go to page"
 msgstr "Đi đến trang"
 
-#: lib/bookshelf_widget.lua:5684
+#: lib/bookshelf_widget.lua:6381
 #, lua-format
 msgid "Page must be between 1 and %d"
 msgstr "Trang phải nằm trong khoảng từ 1 đến %d"
 
-#: lib/bookshelf_widget.lua:7211
+#: lib/bookshelf_widget.lua:8314
 msgid "Retrieving book cover…"
 msgstr "Đang tải bìa sách…"
 
-#: lib/bookshelf_widget.lua:10631
+#: lib/bookshelf_widget.lua:12084
 msgid "Micro-modules"
 msgstr "Mô-đun nhỏ"
 
-#: lib/bookshelf_widget.lua:10635
+#: lib/bookshelf_widget.lua:12088
 msgid "Reset modules to default"
 msgstr "Đặt lại các mô-đun về mặc định"
 
-#: lib/bookshelf_widget.lua:10644
+#: lib/bookshelf_widget.lua:12097
 msgid "Remove micro-modules from hero (re-enable in settings)"
 msgstr "Xóa các mô-đun nhỏ từ hero (kích hoạt lại trong cài đặt)"
 
-#: lib/bookshelf_widget.lua:10773 lib/bookshelf_widget.lua:18498
+#: lib/bookshelf_widget.lua:12226 lib/bookshelf_widget.lua:20088
 msgid "Bulk selection isn't available in remote catalog views."
 msgstr "Chọn hàng loạt không khả dụng trong chế độ xem danh mục từ xa."
 
-#: lib/bookshelf_widget.lua:11180
+#: lib/bookshelf_widget.lua:12713
 msgid "Refreshing library…"
 msgstr "Đang làm mới thư viện…"
 
-#: lib/bookshelf_widget.lua:11583
+#: lib/bookshelf_widget.lua:13116
 msgid ""
 "Fetching %1… (%2 books)\n"
 "(Tap to cancel)"
@@ -4037,7 +4168,7 @@ msgstr ""
 "Đang tải %1… (%2 cuốn sách)\n"
 "(Nhấn để hủy)"
 
-#: lib/bookshelf_widget.lua:11587
+#: lib/bookshelf_widget.lua:13120
 msgid ""
 "Fetching %1…\n"
 "(Tap to cancel)"
@@ -4045,7 +4176,7 @@ msgstr ""
 "Đang tải %1…\n"
 "(Nhấn để hủy)"
 
-#: lib/bookshelf_widget.lua:11657
+#: lib/bookshelf_widget.lua:13190
 msgid ""
 "Stop loading %1?\n"
 "%2 books so far."
@@ -4053,111 +4184,115 @@ msgstr ""
 "Dừng tải %1?\n"
 "Đã tải %2 cuốn sách."
 
-#: lib/bookshelf_widget.lua:11659
+#: lib/bookshelf_widget.lua:13192
 msgid "Stop loading %1?"
 msgstr "Dừng tải %1?"
 
-#: lib/bookshelf_widget.lua:11661
+#: lib/bookshelf_widget.lua:13194
 msgid "Keep loading"
 msgstr "Tiếp tục tải"
 
-#: lib/bookshelf_widget.lua:11661
+#: lib/bookshelf_widget.lua:13194
 msgid "Stop"
 msgstr "Dừng"
 
-#: lib/bookshelf_widget.lua:11713 lib/bookshelf_widget.lua:13242
-#: lib/bookshelf_widget.lua:14000
+#: lib/bookshelf_widget.lua:13246 lib/bookshelf_widget.lua:14775
+#: lib/bookshelf_widget.lua:15578
 msgid "Authentication failed for %1"
 msgstr "Xác thực thất bại với %1"
 
-#: lib/bookshelf_widget.lua:11715 lib/bookshelf_widget.lua:13244
+#: lib/bookshelf_widget.lua:13248 lib/bookshelf_widget.lua:14777
 msgid "%1 refused every format Bookshelf asked for"
 msgstr "%1 từ chối mọi định dạng mà Bookshelf yêu cầu"
 
-#: lib/bookshelf_widget.lua:11716 lib/bookshelf_widget.lua:13245
-#: lib/bookshelf_widget.lua:14004
+#: lib/bookshelf_widget.lua:13249 lib/bookshelf_widget.lua:14778
+#: lib/bookshelf_widget.lua:15582
 msgid "Couldn't reach %1"
 msgstr "Không thể kết nối tới %1"
 
-#: lib/bookshelf_widget.lua:11749 lib/bookshelf_widget.lua:11779
+#: lib/bookshelf_widget.lua:13282 lib/bookshelf_widget.lua:13312
 msgid "No books found in %1"
 msgstr "Không tìm thấy sách nào trong %1"
 
-#: lib/bookshelf_widget.lua:11778
+#: lib/bookshelf_widget.lua:13311
 msgid "No downloadable titles in this category."
 msgstr "Không có đầu sách nào tải được trong mục này."
 
-#: lib/bookshelf_widget.lua:11970 lib/bookshelf_widget.lua:13191
-#: lib/bookshelf_widget.lua:13846 lib/bookshelf_widget.lua:13961
-#: lib/bookshelf_widget.lua:19536
+#: lib/bookshelf_widget.lua:13503 lib/bookshelf_widget.lua:14724
+#: lib/bookshelf_widget.lua:15384 lib/bookshelf_widget.lua:15517
+#: lib/bookshelf_widget.lua:21126
 msgid "The catalog is busy. Try again in a moment."
 msgstr "Danh mục đang bận. Hãy thử lại sau giây lát."
 
-#: lib/bookshelf_widget.lua:13087
+#: lib/bookshelf_widget.lua:14620
 msgid "This catalog does not offer search."
 msgstr "Danh mục này không hỗ trợ tìm kiếm."
 
-#: lib/bookshelf_widget.lua:13088
+#: lib/bookshelf_widget.lua:14621
 msgid "Load the catalog first, then search it."
 msgstr "Hãy tải danh mục trước, rồi mới tìm kiếm."
 
-#: lib/bookshelf_widget.lua:13135
+#: lib/bookshelf_widget.lua:14668
 msgid "Search my library"
 msgstr "Tìm trong thư viện của tôi"
 
-#: lib/bookshelf_widget.lua:13141
+#: lib/bookshelf_widget.lua:14674
 msgid "Search %1"
 msgstr "Tìm kiếm %1"
 
-#: lib/bookshelf_widget.lua:13214
+#: lib/bookshelf_widget.lua:14747
 msgid "Searching %1…"
 msgstr "Đang tìm trên %1…"
 
-#: lib/bookshelf_widget.lua:13274
+#: lib/bookshelf_widget.lua:14807
 msgid "Search: \"%1\""
 msgstr "Tìm kiếm: \"%1\""
 
-#: lib/bookshelf_widget.lua:13502 lib/bookshelf_widget.lua:14470
+#: lib/bookshelf_widget.lua:15040 lib/bookshelf_widget.lua:16048
 msgid "(no title)"
 msgstr "(không tiêu đề)"
 
-#: lib/bookshelf_widget.lua:13636
+#: lib/bookshelf_widget.lua:15174
 msgid "Download"
 msgstr "Tải xuống"
 
-#: lib/bookshelf_widget.lua:13636
+#: lib/bookshelf_widget.lua:15174
 msgid "Download %1"
 msgstr "Tải xuống %1"
 
-#: lib/bookshelf_widget.lua:13642
+#: lib/bookshelf_widget.lua:15180
 msgid "Recommended"
 msgstr "Đề xuất"
 
-#: lib/bookshelf_widget.lua:13644
+#: lib/bookshelf_widget.lua:15182
 msgid "Alternatives"
 msgstr "Lựa chọn khác"
 
-#: lib/bookshelf_widget.lua:13659
+#: lib/bookshelf_widget.lua:15197
 msgid "No formats this device can open"
 msgstr "Không có định dạng nào thiết bị này mở được"
 
-#: lib/bookshelf_widget.lua:13871
+#: lib/bookshelf_widget.lua:15409
 msgid "Set a home folder in KOReader before downloading books."
 msgstr "Hãy đặt thư mục home trong KOReader trước khi tải sách."
 
-#: lib/bookshelf_widget.lua:13910
+#: lib/bookshelf_widget.lua:15466
 msgid "%1 already exists. Download it again?"
 msgstr "%1 đã tồn tại. Tải lại lần nữa?"
 
-#: lib/bookshelf_widget.lua:13911
+#: lib/bookshelf_widget.lua:15467
 msgid "Overwrite"
 msgstr "Ghi đè"
 
-#: lib/bookshelf_widget.lua:13972
-msgid "Downloading %1…"
-msgstr "Đang tải xuống %1…"
+#: lib/bookshelf_widget.lua:15542
+msgid "Downloading %1… (tap to cancel)"
+msgstr "Đang tải %1… (Nhấn để hủy)"
 
-#: lib/bookshelf_widget.lua:13994
+#: lib/bookshelf_widget.lua:15554
+msgid "Download cancelled"
+msgstr "Đã hủy tải xuống"
+
+#: lib/bookshelf_widget.lua:15572
 msgid ""
 "Insecure redirect refused.\n"
 "\n"
@@ -4175,468 +4310,468 @@ msgstr ""
 "\n"
 "Nhiều ứng dụng từ chối điều này vì nó có thể là một cuộc tấn công hạ cấp."
 
-#: lib/bookshelf_widget.lua:14103
+#: lib/bookshelf_widget.lua:15681
 msgid "%1 downloaded. Read it now?"
 msgstr "Đã tải xuống %1. Đọc ngay bây giờ?"
 
-#: lib/bookshelf_widget.lua:14104 lib/bookshelf_widget.lua:14575
+#: lib/bookshelf_widget.lua:15682 lib/bookshelf_widget.lua:16153
 msgid "Read"
 msgstr "Đọc"
 
-#: lib/bookshelf_widget.lua:14112
+#: lib/bookshelf_widget.lua:15690
 msgid "Not now"
 msgstr "Để sau"
 
-#: lib/bookshelf_widget.lua:14172
+#: lib/bookshelf_widget.lua:15750
 msgid "✓ Bookshelf is my home screen"
 msgstr "✓ Kệ sách là màn hình chính của tôi"
 
-#: lib/bookshelf_widget.lua:14173
+#: lib/bookshelf_widget.lua:15751
 msgid "Set as home screen"
 msgstr "Đặt làm màn hình chính"
 
-#: lib/bookshelf_widget.lua:14180 lib/bookshelf_widget.lua:14184
+#: lib/bookshelf_widget.lua:15758 lib/bookshelf_widget.lua:15762
 msgid "Bookshelf will load on next launch"
 msgstr "Kệ sách sẽ tải vào lần khởi chạy tiếp theo"
 
-#: lib/bookshelf_widget.lua:14429
+#: lib/bookshelf_widget.lua:16007
 msgid "%1 bookmarks"
 msgstr "%1 đánh dấu"
 
-#: lib/bookshelf_widget.lua:14429
+#: lib/bookshelf_widget.lua:16007
 msgid "1 bookmark"
 msgstr "1 đánh dấu"
 
-#: lib/bookshelf_widget.lua:14590
+#: lib/bookshelf_widget.lua:16168
 msgid "Last read"
 msgstr "Đọc lần cuối"
 
-#: lib/bookshelf_widget.lua:15635
+#: lib/bookshelf_widget.lua:17213
 msgid "(from Hardcover)"
 msgstr "(từ Ấn bản cứng)"
 
-#: lib/bookshelf_widget.lua:15801
+#: lib/bookshelf_widget.lua:17391
 msgid "Show info"
 msgstr "Hiển thị thông tin"
 
-#: lib/bookshelf_widget.lua:15862
+#: lib/bookshelf_widget.lua:17452
 msgid "Removed from history"
 msgstr "Đã xóa khỏi lịch sử"
 
-#: lib/bookshelf_widget.lua:15916
+#: lib/bookshelf_widget.lua:17506
 msgid "Delete file permanently?"
 msgstr "Xóa tệp tin vĩnh viễn chưa?"
 
-#: lib/bookshelf_widget.lua:15925
+#: lib/bookshelf_widget.lua:17515
 msgid "Failed to delete file."
 msgstr "Không thể xóa tệp."
 
-#: lib/bookshelf_widget.lua:15947
+#: lib/bookshelf_widget.lua:17537
 msgid "Metadata refresh queued"
 msgstr "Đã hàng đợi làm mới siêu dữ liệu"
 
-#: lib/bookshelf_widget.lua:15949
+#: lib/bookshelf_widget.lua:17539
 msgid "Select"
 msgstr "Chọn"
 
-#: lib/bookshelf_widget.lua:15962
+#: lib/bookshelf_widget.lua:17552
 msgid "Move…"
 msgstr "Di chuyển…"
 
-#: lib/bookshelf_widget.lua:16094
+#: lib/bookshelf_widget.lua:17684
 msgid "Reading status"
 msgstr "Trạng thái đọc"
 
-#: lib/bookshelf_widget.lua:16235
+#: lib/bookshelf_widget.lua:17825
 msgid "Your rating"
 msgstr "Đánh giá của bạn"
 
-#: lib/bookshelf_widget.lua:16372
+#: lib/bookshelf_widget.lua:17962
 msgid "File & metadata"
 msgstr "Tệp & siêu dữ liệu"
 
-#: lib/bookshelf_widget.lua:16385
+#: lib/bookshelf_widget.lua:17975
 msgid "Not linked"
 msgstr "Chưa liên kết"
 
-#: lib/bookshelf_widget.lua:16386
+#: lib/bookshelf_widget.lua:17976
 msgid "Link…"
 msgstr "Liên kết…"
 
-#: lib/bookshelf_widget.lua:16398
+#: lib/bookshelf_widget.lua:17988
 msgid "Plugin actions"
 msgstr "Hành động của plugin"
 
-#: lib/bookshelf_widget.lua:16545
+#: lib/bookshelf_widget.lua:18135
 #, lua-format
 msgid "%d ratings"
 msgstr "%d đánh giá sao"
 
-#: lib/bookshelf_widget.lua:16548
+#: lib/bookshelf_widget.lua:18138
 #, lua-format
 msgid "%d reviews"
 msgstr "%d bài nhận xét"
 
-#: lib/bookshelf_widget.lua:16709
+#: lib/bookshelf_widget.lua:18299
 msgid "Choose from device"
 msgstr "Chọn từ thiết bị"
 
-#: lib/bookshelf_widget.lua:16713
+#: lib/bookshelf_widget.lua:18303
 msgid "Search online…"
 msgstr "Tìm trực tuyến…"
 
-#: lib/bookshelf_widget.lua:16777
+#: lib/bookshelf_widget.lua:18367
 msgid "No covers stored yet. Use Search online or Choose from device."
 msgstr "Chưa có bìa nào được lưu. Dùng Tìm trực tuyến hoặc Chọn từ thiết bị."
 
-#: lib/bookshelf_widget.lua:16925
+#: lib/bookshelf_widget.lua:18515
 msgid "That cover is unavailable"
 msgstr "Bìa đó không khả dụng"
 
-#: lib/bookshelf_widget.lua:16932
+#: lib/bookshelf_widget.lua:18522
 msgid "Couldn't set the cover"
 msgstr "Không thể đặt bìa"
 
-#: lib/bookshelf_widget.lua:16987
+#: lib/bookshelf_widget.lua:18577
 msgid "Cover updated"
 msgstr "Đã cập nhật bìa"
 
-#: lib/bookshelf_widget.lua:16987
+#: lib/bookshelf_widget.lua:18577
 msgid "Reverted to embedded cover"
 msgstr "Đã khôi phục bìa nhúng"
 
-#: lib/bookshelf_widget.lua:17000
+#: lib/bookshelf_widget.lua:18590
 msgid "Choose cover image"
 msgstr "Chọn ảnh bìa"
 
-#: lib/bookshelf_widget.lua:17031
+#: lib/bookshelf_widget.lua:18621
 msgid "No cover matches found"
 msgstr "Không tìm thấy bìa phù hợp"
 
-#: lib/bookshelf_widget.lua:17040
+#: lib/bookshelf_widget.lua:18630
 msgid "Cover search failed"
 msgstr "Tìm bìa thất bại"
 
-#: lib/bookshelf_widget.lua:17125
+#: lib/bookshelf_widget.lua:18715
 msgid "Author(s)"
 msgstr "Tác giả"
 
-#: lib/bookshelf_widget.lua:17304
+#: lib/bookshelf_widget.lua:18894
 msgid "Calibre"
 msgstr "Calibre"
 
-#: lib/bookshelf_widget.lua:17355 lib/bookshelf_widget.lua:17435
-#: lib/bookshelf_widget.lua:17480
+#: lib/bookshelf_widget.lua:18945 lib/bookshelf_widget.lua:19025
+#: lib/bookshelf_widget.lua:19070
 msgid "New tag"
 msgstr "Thẻ mới"
 
-#: lib/bookshelf_widget.lua:17456
+#: lib/bookshelf_widget.lua:19046
 msgid "Edit tags"
 msgstr "Chỉnh sửa thẻ"
 
-#: lib/bookshelf_widget.lua:17547
+#: lib/bookshelf_widget.lua:19137
 msgid "Rename tag"
 msgstr "Đổi tên thẻ"
 
-#: lib/bookshelf_widget.lua:17585
+#: lib/bookshelf_widget.lua:19175
 msgid "Remove the tag \"%1\" from this book?"
 msgstr "Xóa thẻ \"%1\" khỏi cuốn sách này?"
 
-#: lib/bookshelf_widget.lua:17608
+#: lib/bookshelf_widget.lua:19198
 msgid "Edit tag: "
 msgstr "Chỉnh sửa thẻ: "
 
-#: lib/bookshelf_widget.lua:17697
+#: lib/bookshelf_widget.lua:19287
 msgid "Not in any collection."
 msgstr "Không thuộc bộ sưu tập nào."
 
-#: lib/bookshelf_widget.lua:17787
+#: lib/bookshelf_widget.lua:19377
 msgid "Reviews couldn't be fetched."
 msgstr "Không thể tải bài nhận xét."
 
-#: lib/bookshelf_widget.lua:17804
+#: lib/bookshelf_widget.lua:19394
 msgid "Tap Refresh to load reviews."
 msgstr "Chạm Làm mới để tải nhận xét."
 
-#: lib/bookshelf_widget.lua:17807
+#: lib/bookshelf_widget.lua:19397
 msgid "Reviews"
 msgstr "Nhận xét"
 
-#: lib/bookshelf_widget.lua:17833
+#: lib/bookshelf_widget.lua:19423
 msgid "Cover"
 msgstr "Bìa"
 
-#: lib/bookshelf_widget.lua:18031
+#: lib/bookshelf_widget.lua:19621
 msgid "Hardcover metadata refreshed"
 msgstr "Dữ liệu Hardcover đã được làm mới"
 
-#: lib/bookshelf_widget.lua:18033
+#: lib/bookshelf_widget.lua:19623
 msgid "Hardcover refresh failed"
 msgstr "Làm mới Hardcover thất bại"
 
-#: lib/bookshelf_widget.lua:18045
+#: lib/bookshelf_widget.lua:19635
 msgid "Auto link"
 msgstr "Tự động liên kết"
 
-#: lib/bookshelf_widget.lua:18045
+#: lib/bookshelf_widget.lua:19635
 msgid "Auto link (best guess)"
 msgstr "Tự động liên kết (dự đoán tốt nhất)"
 
-#: lib/bookshelf_widget.lua:18050
+#: lib/bookshelf_widget.lua:19640
 msgid "No embedded Hardcover identifier found"
 msgstr "Không tìm thấy mã định danh Hardcover tích hợp"
 
-#: lib/bookshelf_widget.lua:18053 lib/bookshelf_widget.lua:18088
+#: lib/bookshelf_widget.lua:19643 lib/bookshelf_widget.lua:19678
 msgid "Hardcover book linked"
 msgstr "Sách Hardcover đã liên kết"
 
-#: lib/bookshelf_widget.lua:18060
+#: lib/bookshelf_widget.lua:19650
 msgid "No confident Hardcover match -- try Manual link"
 msgstr "Không có phù hợp Hardcover nào với độ tin cậy cao -- thử liên kết thủ công"
 
-#: lib/bookshelf_widget.lua:18061 lib/bookshelf_widget.lua:18095
+#: lib/bookshelf_widget.lua:19651 lib/bookshelf_widget.lua:19685
 msgid "Hardcover search failed"
 msgstr "Tìm kiếm Hardcover thất bại"
 
-#: lib/bookshelf_widget.lua:18065
+#: lib/bookshelf_widget.lua:19655
 msgid "Hardcover book linked (best guess)"
 msgstr "Sách Hardcover đã liên kết (giả định tốt nhất)"
 
-#: lib/bookshelf_widget.lua:18072
+#: lib/bookshelf_widget.lua:19662
 msgid "Manual link"
 msgstr "Liên kết thủ công"
 
-#: lib/bookshelf_widget.lua:18080 lib/bookshelf_widget.lua:18114
+#: lib/bookshelf_widget.lua:19670 lib/bookshelf_widget.lua:19704
 msgid "Hardcover link failed"
 msgstr "Liên kết Hardcover thất bại"
 
-#: lib/bookshelf_widget.lua:18085
+#: lib/bookshelf_widget.lua:19675
 msgid "Book linked, but metadata refresh failed: %1"
 msgstr "Sách đã được liên kết, nhưng việc làm mới metadata thất bại: %1"
 
-#: lib/bookshelf_widget.lua:18102
+#: lib/bookshelf_widget.lua:19692
 msgid "Select edition"
 msgstr "Chọn phiên bản"
 
-#: lib/bookshelf_widget.lua:18107
+#: lib/bookshelf_widget.lua:19697
 msgid "Link a Hardcover book first"
 msgstr "Liên kết sách Hardcover trước"
 
-#: lib/bookshelf_widget.lua:18119
+#: lib/bookshelf_widget.lua:19709
 msgid "Edition linked, but metadata refresh failed: %1"
 msgstr "Bản dịch liên kết, nhưng việc làm mới siêu dữ liệu thất bại: %1"
 
-#: lib/bookshelf_widget.lua:18122
+#: lib/bookshelf_widget.lua:19712
 msgid "Hardcover edition linked"
 msgstr "Bản hardcover liên kết"
 
-#: lib/bookshelf_widget.lua:18127
+#: lib/bookshelf_widget.lua:19717
 msgid "Hardcover edition search failed"
 msgstr "Tìm kiếm bản hardcover thất bại"
 
-#: lib/bookshelf_widget.lua:18134
+#: lib/bookshelf_widget.lua:19724
 msgid "Clear link"
 msgstr "Xóa liên kết"
 
-#: lib/bookshelf_widget.lua:18140
+#: lib/bookshelf_widget.lua:19730
 msgid "Hardcover link cleared"
 msgstr "Liên kết Hardcover đã xóa"
 
-#: lib/bookshelf_widget.lua:18142
+#: lib/bookshelf_widget.lua:19732
 msgid "Could not clear Hardcover link"
 msgstr "Không thể xóa liên kết Hardcover"
 
-#: lib/bookshelf_widget.lua:18168
+#: lib/bookshelf_widget.lua:19758
 msgid "Use Hardcover image"
 msgstr "Sử dụng hình ảnh Hardcover"
 
-#: lib/bookshelf_widget.lua:18178
+#: lib/bookshelf_widget.lua:19768
 msgid "Could not update"
 msgstr "Không thể cập nhật"
 
-#: lib/bookshelf_widget.lua:18195
+#: lib/bookshelf_widget.lua:19785
 msgid "Use Hardcover description"
 msgstr "Sử dụng mô tả từ Hardcover"
 
-#: lib/bookshelf_widget.lua:18213
+#: lib/bookshelf_widget.lua:19803
 msgid "Linked: %1"
 msgstr "Đã liên kết: %1"
 
-#: lib/bookshelf_widget.lua:18214
+#: lib/bookshelf_widget.lua:19804
 msgid "Not linked to Hardcover"
 msgstr "Chưa liên kết với Hardcover"
 
-#: lib/bookshelf_widget.lua:18504
+#: lib/bookshelf_widget.lua:20094
 msgid "No books to select here."
 msgstr "Không có sách nào để chọn ở đây."
 
-#: lib/bookshelf_widget.lua:18516
+#: lib/bookshelf_widget.lua:20106
 msgid "Selected the first %1 books (the most one selection holds)."
 msgstr "Đã chọn %1 cuốn sách đầu tiên (số lượng tối đa mà một lựa chọn có thể chứa)."
 
-#: lib/bookshelf_widget.lua:18521
+#: lib/bookshelf_widget.lua:20111
 msgid "Selected %1 books."
 msgstr "Đã chọn %1 cuốn sách."
 
-#: lib/bookshelf_widget.lua:18600 lib/bookshelf_widget.lua:18675
+#: lib/bookshelf_widget.lua:20190 lib/bookshelf_widget.lua:20265
 msgid "this folder"
 msgstr "thư mục này"
 
-#: lib/bookshelf_widget.lua:18608
+#: lib/bookshelf_widget.lua:20198
 msgid "Already the start folder"
 msgstr "Đã là thư mục bắt đầu"
 
-#: lib/bookshelf_widget.lua:18612
-msgid "Start this chip at \"%1\""
-msgstr "Bắt đầu chip này tại \"%1\""
+#: lib/bookshelf_widget.lua:20202
+msgid "Start this shelf at \"%1\""
+msgstr "Bắt đầu kệ này tại \"%1\""
 
-#: lib/bookshelf_widget.lua:18622
+#: lib/bookshelf_widget.lua:20212
 msgid "Back to the top (now starts at \"%1\")"
 msgstr "Quay về đầu (hiện đang bắt đầu tại \"%1\")"
 
-#: lib/bookshelf_widget.lua:18627
+#: lib/bookshelf_widget.lua:20217
 msgid "Back to the top of the catalog"
 msgstr "Quay về đầu danh mục"
 
-#: lib/bookshelf_widget.lua:18676
+#: lib/bookshelf_widget.lua:20266
 msgid "this series"
 msgstr "tập này"
 
-#: lib/bookshelf_widget.lua:18677
+#: lib/bookshelf_widget.lua:20267
 msgid "this author"
 msgstr "tác giả này"
 
-#: lib/bookshelf_widget.lua:18678
+#: lib/bookshelf_widget.lua:20268
 msgid "this genre"
 msgstr "thể loại này"
 
-#: lib/bookshelf_widget.lua:18679
+#: lib/bookshelf_widget.lua:20269
 msgid "this collection"
 msgstr "bộ sưu tập này"
 
-#: lib/bookshelf_widget.lua:18680
+#: lib/bookshelf_widget.lua:20270
 msgid "this format"
 msgstr "định dạng này"
 
-#: lib/bookshelf_widget.lua:18681
+#: lib/bookshelf_widget.lua:20271
 msgid "this rating"
 msgstr "xếp hạng này"
 
-#: lib/bookshelf_widget.lua:18682
+#: lib/bookshelf_widget.lua:20272
 msgid "this language"
 msgstr "ngôn ngữ này"
 
-#: lib/bookshelf_widget.lua:18683
+#: lib/bookshelf_widget.lua:20273
 msgid "this group"
 msgstr "nhóm này"
 
-#: lib/bookshelf_widget.lua:18705
+#: lib/bookshelf_widget.lua:20295
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or remove its %d books from your selection."
 msgstr ""
-"Gắn %s vào thanh chip để truy cập nhanh,\n"
+"Gắn %s vào menu kệ để truy cập nhanh,\n"
 "hoặc bỏ chọn %d cuốn sách của nó khỏi lựa chọn của bạn."
 
-#: lib/bookshelf_widget.lua:18711
+#: lib/bookshelf_widget.lua:20301
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or add %d more / remove the %d already selected."
 msgstr ""
-"Gắn %s vào thanh chip để truy cập nhanh,\n"
+"Gắn %s vào menu kệ để truy cập nhanh,\n"
 "hoặc thêm %d cuốn nữa / bỏ chọn %d cuốn đã chọn."
 
-#: lib/bookshelf_widget.lua:18715
+#: lib/bookshelf_widget.lua:20305
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or select its %d books for bulk edits."
 msgstr ""
-"Gắn %s vào thanh chip để truy cập nhanh,\n"
+"Gắn %s vào menu kệ để truy cập nhanh,\n"
 "hoặc chọn %d cuốn sách của nó để chỉnh sửa hàng loạt."
 
-#: lib/bookshelf_widget.lua:18792
+#: lib/bookshelf_widget.lua:20382
 msgid "Pin"
 msgstr "Pin"
 
-#: lib/bookshelf_widget.lua:18810
+#: lib/bookshelf_widget.lua:20400
 #, lua-format
 msgid "Add %d more"
 msgstr "Thêm %d nữa"
 
-#: lib/bookshelf_widget.lua:18811
+#: lib/bookshelf_widget.lua:20401
 #, lua-format
 msgid "Select %d"
 msgstr "Chọn %d"
 
-#: lib/bookshelf_widget.lua:18820
+#: lib/bookshelf_widget.lua:20410
 #, lua-format
 msgid "Remove %d"
 msgstr "Xóa %d"
 
-#: lib/bookshelf_widget.lua:18840
+#: lib/bookshelf_widget.lua:20430
 msgid "Set folder image…"
 msgstr "Đặt hình ảnh thư mục…"
 
-#: lib/bookshelf_widget.lua:18847
+#: lib/bookshelf_widget.lua:20437
 msgid "Clear folder image"
 msgstr "Xóa hình ảnh thư mục"
 
-#: lib/bookshelf_widget.lua:18862
+#: lib/bookshelf_widget.lua:20452
 msgid "Move folder…"
 msgstr "Di chuyển thư mục…"
 
-#: lib/bookshelf_widget.lua:18868
+#: lib/bookshelf_widget.lua:20458
 msgid "Rename folder…"
 msgstr "Đổi tên thư mục…"
 
-#: lib/bookshelf_widget.lua:18884 lib/bookshelf_widget.lua:18895
+#: lib/bookshelf_widget.lua:20474 lib/bookshelf_widget.lua:20485
 msgid "Set author image…"
 msgstr "Đặt hình ảnh tác giả…"
 
-#: lib/bookshelf_widget.lua:18885 lib/bookshelf_widget.lua:18896
+#: lib/bookshelf_widget.lua:20475 lib/bookshelf_widget.lua:20486
 msgid "Set series image…"
 msgstr "Đặt hình ảnh series…"
 
-#: lib/bookshelf_widget.lua:18886 lib/bookshelf_widget.lua:18897
+#: lib/bookshelf_widget.lua:20476 lib/bookshelf_widget.lua:20487
 msgid "Set genre image…"
 msgstr "Đặt hình ảnh thể loại…"
 
-#: lib/bookshelf_widget.lua:18887 lib/bookshelf_widget.lua:18898
+#: lib/bookshelf_widget.lua:20477 lib/bookshelf_widget.lua:20488
 msgid "Set collection image…"
 msgstr "Đặt hình ảnh bộ sưu tập…"
 
-#: lib/bookshelf_widget.lua:18888 lib/bookshelf_widget.lua:18901
+#: lib/bookshelf_widget.lua:20478 lib/bookshelf_widget.lua:20491
 msgid "Clear author image"
 msgstr "Xóa hình ảnh tác giả"
 
-#: lib/bookshelf_widget.lua:18889 lib/bookshelf_widget.lua:18902
+#: lib/bookshelf_widget.lua:20479 lib/bookshelf_widget.lua:20492
 msgid "Clear series image"
 msgstr "Xóa hình ảnh loạt"
 
-#: lib/bookshelf_widget.lua:18890 lib/bookshelf_widget.lua:18903
+#: lib/bookshelf_widget.lua:20480 lib/bookshelf_widget.lua:20493
 msgid "Clear genre image"
 msgstr "Xóa hình ảnh thể loại"
 
-#: lib/bookshelf_widget.lua:18891 lib/bookshelf_widget.lua:18904
+#: lib/bookshelf_widget.lua:20481 lib/bookshelf_widget.lua:20494
 msgid "Clear collection image"
 msgstr "Xóa hình ảnh bộ sưu tập"
 
-#: lib/bookshelf_widget.lua:18964
+#: lib/bookshelf_widget.lua:20554
 msgid "Choose folder image"
 msgstr "Chọn hình ảnh thư mục"
 
-#: lib/bookshelf_widget.lua:19003
+#: lib/bookshelf_widget.lua:20593
 msgid "Choose image"
 msgstr "Chọn hình ảnh"
 
-#: lib/bookshelf_widget.lua:19319
+#: lib/bookshelf_widget.lua:20909
 msgid "Search library"
 msgstr "Tìm kiếm thư viện"
 
-#: lib/bookshelf_widget.lua:19321
+#: lib/bookshelf_widget.lua:20911
 msgid "title, author, series, genre…"
 msgstr "tiêu đề, tác giả, series, thể loại…"
 
@@ -4644,127 +4779,145 @@ msgstr "tiêu đề, tác giả, series, thể loại…"
 msgid "Importing calibre metadata…"
 msgstr "Đang nhập siêu dữ liệu calibre…"
 
-#: main.lua:344
+#: main.lua:293
+msgid ""
+"Bookshelf update: cached Hardcover book details from earlier versions can list audiobook narrators and translators as authors, which shows extra author cards.\n"
+"\n"
+"Refresh the details for your linked books now? (Contacts Hardcover, rate-limited, cancellable. Also available later under Hardcover > Manage Hardcover data.)"
+msgstr ""
+"Cập nhật Bookshelf: thông tin chi tiết sách Hardcover đã lưu tạm từ các phiên bản trước có thể liệt kê người đọc sách nói và người dịch như là tác giả, khiến xuất hiện thêm các thẻ tác giả.\n"
+"\n"
+"Làm mới thông tin chi tiết cho những sách đã liên kết của bạn ngay bây giờ? (Sẽ kết nối tới Hardcover, có giới hạn tốc độ, có thể hủy. Cũng có thể dùng sau trong Hardcover > Quản lý dữ liệu Hardcover.)"
+
+#: main.lua:294
+msgid "Refresh now"
+msgstr "Làm mới ngay"
+
+#: main.lua:295
+msgid "Later"
+msgstr "Để sau"
+
+#: main.lua:398
 msgid "Bookshelf requires the CoverBrowser plugin. Enable it under Settings > More plugins."
 msgstr "Bookshelf yêu cầu plugin CoverBrowser. Hãy bật plugin này trong Settings > More plugins."
 
-#: main.lua:422 main.lua:426 main.lua:457
+#: main.lua:476 main.lua:480 main.lua:511
 msgid "bookshelf"
 msgstr "kệ sách"
 
-#: main.lua:457
+#: main.lua:511
 msgid "Start with: %1"
 msgstr "Bắt đầu với: %1"
 
-#: main.lua:570
+#: main.lua:624
 msgid "Close Bookshelf"
 msgstr "Đóng Kệ sách"
 
-#: main.lua:570
+#: main.lua:624
 msgid "Open Bookshelf"
 msgstr "Mở Kệ sách"
 
-#: main.lua:629
+#: main.lua:683
 msgid "Open a small overlay that lets you set the number of columns and rows of books on the shelf, with the bookshelf visible behind it. Cover size follows the column count and the hero area fills the space left over. Changes preview in realtime; Accept keeps them, Cancel reverts."
 msgstr "Mở một lớp phủ nhỏ cho phép bạn đặt số cột và hàng sách trên kệ, với tủ sách vẫn hiển thị phía sau. Kích thước bìa theo số cột và khu vực chính lấp đầy phần không gian còn lại. Thay đổi được xem trước theo thời gian thực; Chấp nhận để giữ lại, Hủy để hoàn tác."
 
-#: main.lua:643
-msgid "Bookshelf chips…"
-msgstr "Chips Kệ sách…"
+#: main.lua:697
+msgid "Bookshelf shelves…"
+msgstr "Kệ của Bookshelf…"
 
-#: main.lua:664
+#: main.lua:718
 msgid "Hardcover enrichment"
 msgstr "Bổ sung bìa cứng"
 
-#: main.lua:674
+#: main.lua:728
 msgid "Settings"
 msgstr "Cài đặt"
 
-#: main.lua:693
+#: main.lua:747
 msgid "Updates"
 msgstr "Cập nhật"
 
-#: main.lua:699
+#: main.lua:753
 msgid "About"
 msgstr "Về"
 
-#: main.lua:805
+#: main.lua:859
 msgid "Bookshelf couldn't open. Some of its files may be missing or corrupted after an update. Try reinstalling the plugin."
 msgstr "Bookshelf không thể mở. Một số tệp của nó có thể bị thiếu hoặc hỏng sau khi cập nhật. Hãy thử cài đặt lại plugin."
 
-#: main.lua:879
+#: main.lua:933
 msgid "Bookshelf: open or close"
 msgstr "Sách: mở hoặc đóng"
 
-#: main.lua:885
+#: main.lua:939
 msgid "Bookshelf: open"
 msgstr "Sách: mở"
 
-#: main.lua:888
+#: main.lua:942
 msgid "off"
 msgstr "tắt"
 
-#: main.lua:888
+#: main.lua:942
 msgid "on"
 msgstr "trên"
 
-#: main.lua:894
-msgid "Bookshelf: next chip"
-msgstr "Bookshelf: chip tiếp theo"
+#: main.lua:948
+msgid "Bookshelf: next shelf"
+msgstr "Bookshelf: kệ tiếp theo"
 
-#: main.lua:900
-msgid "Bookshelf: previous chip"
-msgstr "Bookshelf: chip trước"
+#: main.lua:954
+msgid "Bookshelf: previous shelf"
+msgstr "Bookshelf: kệ trước"
 
-#: main.lua:906
-msgid "Bookshelf: next page of chips"
-msgstr "Bookshelf: trang chip tiếp theo"
+#: main.lua:960
+msgid "Bookshelf: next page of shelves"
+msgstr "Bookshelf: trang kệ tiếp theo"
 
-#: main.lua:912
-msgid "Bookshelf: previous page of chips"
-msgstr "Bookshelf: trang chip trước"
+#: main.lua:966
+msgid "Bookshelf: previous page of shelves"
+msgstr "Bookshelf: trang kệ trước"
 
-#: main.lua:918
+#: main.lua:972
 msgid "Bookshelf: expand or collapse hero"
 msgstr "Bookshelf: mở rộng hoặc thu gọn hero"
 
-#: main.lua:924
+#: main.lua:978
 msgid "Bookshelf: toggle bulk selection mode"
 msgstr "Sách: bật/tắt chế độ chọn hàng loạt"
 
-#: main.lua:931
+#: main.lua:985
 msgid "Bookshelf: toggle selection on focused book"
 msgstr "Sách: bật/tắt chọn trên quyển sách được chọn"
 
-#: main.lua:940
+#: main.lua:994
 msgid "Bookshelf: select all books in this shelf"
 msgstr "Bookshelf: chọn tất cả sách trong kệ này"
 
-#: main.lua:946
+#: main.lua:1000
 msgid "Bookshelf: add focused stack to selection"
 msgstr "Sách: thêm ngăn được chọn vào chọn"
 
-#: main.lua:952
+#: main.lua:1006
 msgid "Bookshelf: open bulk action menu"
 msgstr "Sách: mở menu thao tác hàng loạt"
 
-#: main.lua:963
+#: main.lua:1017
 msgid "Bookshelf: open start menu"
 msgstr "Sách: mở menu bắt đầu"
 
-#: main.lua:969
+#: main.lua:1023
 msgid "Bookshelf: open micro-modules"
 msgstr "Sách: mở các mô-đun nhỏ"
 
-#: main.lua:980
+#: main.lua:1034
 msgid "Bookshelf: go to home screen"
 msgstr "Bookshelf: về màn hình chính"
 
-#: main.lua:2042
+#: main.lua:2096
 msgid "Branch name (leave empty for stable)"
 msgstr "Tên nhánh (để trống để sử dụng phiên bản ổn định)"
 
-#: main.lua:2079
+#: main.lua:2133
 msgid ""
 "Book metadata scanner not available.\n"
 "Install the CoverBrowser plugin to enable it."
@@ -4772,11 +4925,65 @@ msgstr ""
 "Trình quét siêu dữ liệu sách không khả dụng.\n"
 "Cài đặt plugin CoverBrowser để bật tính năng này."
 
-#: main.lua:2141
+#: main.lua:2236
+msgid "Every book already has a page count."
+msgstr "Mọi cuốn sách đều đã có số trang."
+
+#: main.lua:2298
+msgid "Page count report"
+msgstr "Báo cáo số trang"
+
+#: main.lua:2320
+msgid "Checking publisher page numbers… %1 of %2"
+msgstr "Đang kiểm tra số trang của nhà xuất bản… %1 của %2"
+
+#: main.lua:2375
+msgid ""
+"%1 books have no page source.\n"
+"\n"
+"Paginate them the slow way?\n"
+"\n"
+"Each one is opened in the background; this can take a while. You can cancel between books by tapping the progress message."
+msgstr ""
+"%1 cuốn sách không có nguồn số trang.\n"
+"\n"
+"Đánh số trang cho chúng theo cách chậm?\n"
+"\n"
+"Mỗi cuốn sẽ được mở ở chế độ nền; việc này có thể mất một lúc. Bạn có thể hủy giữa các cuốn sách bằng cách nhấn vào thông báo tiến trình."
+
+#: main.lua:2376
+msgid "Paginate"
+msgstr "Đánh số trang"
+
+#: main.lua:2376
+msgid "Skip"
+msgstr "Bỏ qua"
+
+#: main.lua:2411
+msgid ""
+"Paginating… %1 of %2\n"
+"%3"
+msgstr ""
+"Đang đánh số trang… %1 của %2\n"
+"%3"
+
+#: main.lua:2461
+msgid "No linked books to refresh"
+msgstr "Không có sách liên kết nào để làm mới"
+
+#: main.lua:2478
+msgid "Refreshing Hardcover details… %1 of %2"
+msgstr "Đang làm mới chi tiết Hardcover… %1 của %2"
+
+#: main.lua:2511
+msgid "Hardcover details refreshed for %1 of %2 linked books."
+msgstr "Đã làm mới chi tiết Hardcover cho %1 trong %2 cuốn sách liên kết."
+
+#: main.lua:2533
 msgid "This will clear the development branch setting and install the latest stable release of Bookshelf, then restart KOReader. Continue?"
 msgstr "Thao tác này sẽ xóa cài đặt nhánh phát triển và cài đặt phiên bản ổn định mới nhất của Bookshelf, sau đó khởi động lại KOReader. Tiếp tục?"
 
-#: main.lua:2163
+#: main.lua:2555
 msgid "Bookshelf update available: v"
 msgstr "Cập nhật kệ sách khả dụng: v"
 
@@ -5070,12 +5277,8 @@ msgid "Random book"
 msgstr "Sách ngẫu nhiên"
 
 #: micromodules/random_unread.lua:232
-msgid "All books"
-msgstr "Tất cả sách"
-
-#: micromodules/random_unread.lua:232
-msgid "Current chip"
-msgstr "Chip hiện tại"
+msgid "Current shelf"
+msgstr "Kệ hiện tại"
 
 #: micromodules/random_unread.lua:234
 msgid "In progress"
@@ -5605,6 +5808,42 @@ msgstr "Đã cập nhật %1m trước"
 #: micromodules/weather.lua:460 micromodules/weather.lua:546
 msgid "Updated %1h ago"
 msgstr "Đã cập nhật %1h trước"
+
+#~ msgid "New chip"
+#~ msgstr "Chip mới"
+
+#~ msgid "Chip label"
+#~ msgstr "Nhãn chip"
+
+#~ msgid "Edit chip"
+#~ msgstr "Chỉnhsửa chip"
+
+#~ msgid "Chip source"
+#~ msgstr "Nguồn chip"
+
+#~ msgid "Pin to chip bar"
+#~ msgstr "Gắn vào thanh chip"
+
+#~ msgid "Chip bar font scale"
+#~ msgstr "Kích thước phông Chip bar"
+
+#~ msgid "Chip bar"
+#~ msgstr "khay Chip"
+
+#~ msgid "Current chip"
+#~ msgstr "Chip hiện tại"
+
+#~ msgid "Fetch up-to-date public ratings and review counts for linked Hardcover books. Covers and descriptions are fetched when a book is linked, so this only updates the ratings."
+#~ msgstr "Tải đánh giá công khai và số lượng nhận xét mới nhất cho các sách đã liên kết Hardcover. Bìa và mô tả đã được tải khi sách được liên kết, nên tùy chọn này chỉ cập nhật đánh giá."
+
+#~ msgid "For users with a Calibre-managed library. Reads the metadata.calibre JSON file at home_dir to cover title / authors / series / tags / language for every book in the library — no per-book extraction needed. BIM-cached metadata still wins per field; Calibre data only fills gaps."
+#~ msgstr "Dành cho người dùng có thư viện quản lý bằng Calibre. Đọc tệp JSON metadata.calibre tại home_dir để lấy tiêu đề / tác giả / series / thẻ / ngôn ngữ cho mọi cuốn sách trong thư viện — không cần trích xuất riêng từng sách. Siêu dữ liệu đã lưu tạm trong BIM vẫn được ưu tiên theo từng trường; dữ liệu Calibre chỉ lấp vào những chỗ còn thiếu."
+
+#~ msgid "Page %d of %d"
+#~ msgstr "Trang %d của %d"
+
+#~ msgid "Downloading %1…"
+#~ msgstr "Đang tải xuống %1…"
 
 #~ msgid "Search results choose their own view."
 #~ msgstr "Kết quả tìm kiếm có chế độ xem riêng."

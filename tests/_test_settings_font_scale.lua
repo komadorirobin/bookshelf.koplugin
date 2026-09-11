@@ -511,7 +511,7 @@ local function openChipColourDialog(row_label)
     return dialog, bw, row, tm
 end
 
-for _, row_label in ipairs({ "Selected chip fill", "Selected chip text" }) do
+for _, row_label in ipairs({ "Selected shelf fill", "Selected shelf text" }) do
     t.test(row_label .. ": nudging recolours the strip, never rebuilds the shelf",
     function()
         local dialog, bw = openChipColourDialog(row_label)
@@ -578,7 +578,7 @@ t.test("a colour nudge with no live chip bar falls back to a shelf rebuild", fun
     Settings._bw, Settings._plugin = bw, makePlugin()
     local row
     for _, item in ipairs(Settings:_colorsSubItems()) do
-        if item.text_func and item.text_func():find("Selected chip fill", 1, true) then
+        if item.text_func and item.text_func():find("Selected shelf fill", 1, true) then
             row = item
         end
     end
@@ -656,18 +656,18 @@ t.test("Text size lists every scale key exactly once, on its own picker", functi
         seen[k] = true
     end
     -- The order is the menu's own banding (shelf, then hero, then menus), and
-    -- "Chip bar" / "List text" are adjacent on purpose: they are the same band
+    -- "Shelf menu" / "List text" are adjacent on purpose: they are the same band
     -- shape on two keys, and a user tuning one should see the other.
     eq(keys, {
         "Cover labels", "Cover badges", "Stack & folder labels",
-        "Chip bar", "List text",
+        "Shelf menu", "List text",
         "\xEE\x9E\xBD  Hero card", "\xEE\xB1\xAF  Hero micro-modules",
         "Start menu", "Pagination footer", "Pagination top margin",
         "Pagination bottom margin", "Modal tabs",
     })
 end)
 
-t.test("the chip bar row and the list row row drive different keys", function()
+t.test("the shelf menu row and the list row row drive different keys", function()
     -- The separation, at the surface the user touches. Both rows read 100 by
     -- default; nudging one must move only its own label.
     resetStore()
@@ -678,14 +678,14 @@ t.test("the chip bar row and the list row row drive different keys", function()
         end
         error("no Text size row named " .. name)
     end
-    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 100%")
+    eq(rowNamed("Shelf menu").text_func(),  "Shelf menu: 100%")
     eq(rowNamed("List text").text_func(), "List text: 100%")
     BookshelfSettings.save("list_font_scale", 150)
     eq(rowNamed("List text").text_func(), "List text: 150%")
-    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 100%",
-        "the chip bar row moved with the list key")
+    eq(rowNamed("Shelf menu").text_func(),  "Shelf menu: 100%",
+        "the shelf menu row moved with the list key")
     BookshelfSettings.save("chip_font_scale", 80)
-    eq(rowNamed("Chip bar").text_func(),  "Chip bar: 80%")
+    eq(rowNamed("Shelf menu").text_func(),  "Shelf menu: 80%")
     eq(rowNamed("List text").text_func(), "List text: 150%",
         "the list row row moved with the chip key")
     resetStore()

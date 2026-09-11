@@ -139,26 +139,26 @@ t.test("applySourceDefaults leaves a user-edited label alone", function()
 end)
 
 t.test("applySourceDefaults relabels an untouched 'New chip' to the source label", function()
-    local draft = { source = { kind = "genres" }, label = "New chip" }
+    local draft = { source = { kind = "genres" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     -- SOURCE_LABEL.genres() -> _("Genres") -> identity in tests.
     eq(draft.label, "Genres")
 end)
 
 t.test("applySourceDefaults uses a specific source id as the label", function()
-    local draft = { source = { kind = "author", id = "Ursula K. Le Guin" }, label = "New chip" }
+    local draft = { source = { kind = "author", id = "Ursula K. Le Guin" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Ursula K. Le Guin")
 end)
 
 t.test("applySourceDefaults uses the folder basename for folder sources", function()
-    local draft = { source = { kind = "folder", id = "/mnt/us/ebooks/Sci-Fi" }, label = "New chip" }
+    local draft = { source = { kind = "folder", id = "/mnt/us/ebooks/Sci-Fi" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Sci-Fi")
 end)
 
 t.test("applySourceDefaults is a no-op for an unknown source kind", function()
-    local draft = { source = { kind = "totally_unknown" }, label = "New chip" }
+    local draft = { source = { kind = "totally_unknown" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, nil)   -- no defaults applied
 end)
@@ -201,20 +201,20 @@ t.test("SOURCE_SORT_DEFAULTS.kindle sorts by title", function()
 end)
 
 t.test("applySourceDefaults sets up a Kindle draft", function()
-    local draft = { source = { kind = "kindle" }, label = "New chip" }
+    local draft = { source = { kind = "kindle" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, { { key = "title", reverse = false } })
     eq(draft.label, "Kindle Virtual Library")
 end)
 
 t.test("applySourceDefaults leaves sort_priority = {} for an opds draft", function()
-    local draft = { source = { kind = "opds", id = "k1" }, label = "New chip" }
+    local draft = { source = { kind = "opds", id = "k1" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, {})
 end)
 
 t.test("applySourceDefaults uses the OPDS server title (not the raw key) as the label", function()
-    local draft = { source = { kind = "opds", id = "k1" }, label = "New chip" }
+    local draft = { source = { kind = "opds", id = "k1" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Server One")
 end)
@@ -272,6 +272,69 @@ t.test("series filter picker marks what UNSET actually does (#350)", function()
                            filter = { series_membership = "both" } })
     assert(marked and marked:find("Standalone and books", 1, true),
         "an explicit both must mark both, got: " .. tostring(marked))
+end)
+
+-- ── Every picker sits above the shelf it is about ─────────────────────────
+--
+-- SOURCE-SHAPE, because placement is a constructor field: nothing a picker
+-- RETURNS says where it was drawn, and the only alternative is a screenshot.
+--
+-- The shelf-style picker had the high anchor to itself. The maintainer's
+-- point is that the reason generalises: a chip's source, filters, sort and
+-- face-out are all settings about the shelf, and a dialog centred over the
+-- shelf hides the thing being set.
+
+local editor_src = assert(io.open("lib/bookshelf_chip_editor.lua")):read("*a")
+
+-- The body of one Editor: method, so a dialog in a neighbouring function
+-- cannot satisfy an assertion about this one.
+local function bodyOf(name)
+    local body = editor_src:match("\nfunction Editor:" .. name .. "%b()(.-)\nend\n")
+    assert(body, "Editor:" .. name .. " is gone or was renamed")
+    return body
+end
+
+for _, name in ipairs({
+    "_pickSource", "_openFilters", "_pickChoiceFilter",
+    "_pickMultiFilter", "_pickFolderFilter", "_pickSortLevel",
+}) do
+    t.test(name .. " anchors its dialog above the shelf", function()
+        local body = bodyOf(name)
+        assert(body:find("ButtonDialog:new", 1, true), "no dialog in " .. name)
+        assert(body:find("_highAnchor", 1, true),
+            name .. " went back to a centred dialog, which covers the shelf "
+            .. "it is configuring")
+    end)
+end
+
+t.test("the placement is shared, not copy-pasted per dialog", function()
+    -- The anchor carries four separate load-bearing details (prefers_pop_down,
+    -- the laid-out width, the un-clamped x, w=dw for RTL). Seven copies of
+    -- that drift; one does not.
+    local defs = select(2, editor_src:gsub("local function _highAnchor", ""))
+    eq(defs, 1, "a second copy of the anchor maths appeared")
+    local uses = select(2, editor_src:gsub("_highAnchor%(", ""))
+    assert(uses >= 7, "expected every picker to use it, found " .. uses)
+end)
+
+t.test("the face-out chooser says what it is choosing between", function()
+    -- Five bare labels with no heading: once the row that named the setting
+    -- has closed behind them, "Favorites" / "First in series" could be
+    -- choosing anything.
+    local body = bodyOf("_pickGroupDisplay")
+    local sub = body:match("sub = ButtonDialog:new{(.-)\n%s+}")
+    assert(sub, "the face-out sub-dialog moved or was renamed")
+    assert(sub:find('title%s*=%s*_%("Face out"%)'), "no heading")
+    assert(sub:find("_helpParagraph", 1, true), "no explanatory line")
+    assert(sub:find("_highAnchor", 1, true), "not anchored above the shelf")
+end)
+
+t.test("the help paragraph is shared too", function()
+    local defs = select(2, editor_src:gsub("local function _helpParagraph", ""))
+    eq(defs, 1)
+    -- Filters had the only copy of this width arithmetic; it now has a caller.
+    local uses = select(2, editor_src:gsub("_helpParagraph%(", ""))
+    assert(uses >= 2, "expected at least Filters and Face out, found " .. uses)
 end)
 
 t.done()

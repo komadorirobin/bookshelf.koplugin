@@ -222,6 +222,11 @@ local function flip(opts)
                 return {
                     load = function() return tabs end,
                     save = function(t) saved = t end,
+                    getById = function(id)
+                        for _i, t in ipairs(tabs) do
+                            if t.id == id then return t end
+                        end
+                    end,
                 }
             end
             return { new = function(_s, t) return t end }
@@ -247,7 +252,8 @@ local function flip(opts)
         _rebuild = function(s2) rebuilt = rebuilt + 1 end,
         _setCursorToShow = function() end,
         _globalIndexOfFilepath = function() return nil end,
-        _isListMode = function() return opts.is_list == true end,
+        _isListMode  = function() return opts.is_list == true end,
+        _isSpineMode = function() return opts.is_spines == true end,
         _isSearchResults = function(s2)
             local tip = s2._drilldown_path
                         and s2._drilldown_path[#s2._drilldown_path]
@@ -259,7 +265,7 @@ local function flip(opts)
     return tabs, saved, rebuilt, notices, pickers, search_writes
 end
 
-t.test("the hold pins the current chip to the OTHER mode", function()
+t.test("the hold cycles the chip: covers -> list -> spines -> covers", function()
     local tabs, saved, rebuilt = flip{ chip = "home", is_list = false }
     assert(saved ~= nil, "the pin must be persisted through TabModel.save")
     eq(tabs[1][ViewMode.CHIP_KEY], ViewMode.LIST,
@@ -268,8 +274,23 @@ t.test("the hold pins the current chip to the OTHER mode", function()
 
     local tabs2 = { { id = "home", [ViewMode.CHIP_KEY] = ViewMode.LIST } }
     flip{ chip = "home", is_list = true, tabs = tabs2 }
-    eq(tabs2[1][ViewMode.CHIP_KEY], ViewMode.COVERS,
-        "list on screen: the hold pins Covers")
+    eq(tabs2[1][ViewMode.CHIP_KEY], ViewMode.SPINES,
+        "list on screen: the hold pins Spines")
+
+    local tabs3 = { { id = "home", [ViewMode.CHIP_KEY] = ViewMode.SPINES } }
+    flip{ chip = "home", is_spines = true, tabs = tabs3 }
+    eq(tabs3[1][ViewMode.CHIP_KEY], ViewMode.COVERS,
+        "spines on screen: the hold pins Covers")
+end)
+
+t.test("an OPDS chip's cycle skips Spines", function()
+    -- The style is disabled for catalogues everywhere else (the Shelf style
+    -- dialog hides the radio); the gesture must not be the back door.
+    local tabs = { { id = "cat", [ViewMode.CHIP_KEY] = ViewMode.LIST,
+                     source = { kind = "opds" } } }
+    flip{ chip = "cat", is_list = true, tabs = tabs }
+    eq(tabs[1][ViewMode.CHIP_KEY], ViewMode.COVERS,
+        "OPDS list on screen: the hold pins Covers, never Spines")
 end)
 
 t.test("the hold writes THIS chip and leaves the others alone", function()

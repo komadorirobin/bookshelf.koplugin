@@ -71,13 +71,29 @@ local function tap(opts)
         end,
         _swapShelvesInPlace = function() took.swap_shelves = true end,
         _openBook         = function(_s, b) took.opened = b.filepath end,
+        -- A bar that can restyle in place (the normal chips-mode shape).
+        -- opts.bare_bar swaps in a method-less bar to drive the deferred
+        -- fallback instead.
+        _chip_bar         = opts.bare_bar and {} or {
+            setCurrentSelected = function(_b, sel)
+                took.chip_inplace = { sel = sel }
+                return true
+            end,
+        },
+        _chipStripFlashBand = function()
+            took.band = true
+            return { x = 0, y = 0, w = 1, h = 1 }
+        end,
+        _rebuildRefreshChipStrip = function() took.chip_strip = true end,
     }
     local env = {
         string = string, math = math, ipairs = ipairs, pairs = pairs,
         tostring = tostring, type = type, pcall = pcall,
         _gettime = function() now = now + 0.001; return now end,
         logger   = { dbg = function() end, warn = function() end },
-        UIManager = { setDirty = function() end, nextTick = function() end },
+        UIManager = { setDirty = function() end, nextTick = function() end,
+                      tickAfterNext = function(_, fn) if fn then fn() end end },
+        BookshelfWidget = nil, -- filled below, needs self_tbl
         Screen   = { scaleBySize = function(_s, n) return n end },
         Repo     = { currentFilepath = function() return opts.lastfile end },
         require  = function(name)
@@ -87,6 +103,7 @@ local function tap(opts)
             error("unexpected require: " .. tostring(name))
         end,
     }
+    env.BookshelfWidget = { live = self_tbl }
     compile("local self, book, tap_t = ... ; " .. preview_body, env, "_previewBook")(
         self_tbl, opts.tapped, nil)
     return self_tbl, took
@@ -109,12 +126,49 @@ t.test("a preview supersedes a staged hero tap (#335)", function()
         lastfile = C.filepath, preview = A, staged = A.filepath, tapped = C,
         hero_mounted = true,
     }
-    assert(took.rebuild, "expected the boundary-crossing rebuild branch")
+    -- The boundary no longer forces a synchronous full rebuild (the
+    -- first-tap-after-load lag): the tap takes the fast swap and the chip
+    -- bar restyles its own row in place, in the same cycle as the swap.
+    assert(took.swap_hero, "expected the fast hero swap at the boundary")
+    assert(took.repaint and took.repaint.new == C.filepath,
+        "the ring repaint must target the new preview")
+    assert(took.chip_inplace and took.chip_inplace.sel == true,
+        "the in-place chip restyle must select the current chip (C is lastfile)")
+    assert(took.band, "the in-place restyle must flash the chip band")
+    assert(not took.chip_strip,
+        "no deferred rebuild when the bar restyled in place")
+    assert(not took.rebuild, "the boundary must not rebuild the shelf")
     assert(not took.opened, "tapping a different book must not open it")
     assert(self_tbl._preview_book.filepath == C.filepath, "preview must move to C")
     local ring = selectedFilepath(self_tbl)
     assert(ring == C.filepath,
         "ring must follow the preview, got " .. tostring(ring))
+end)
+
+-- The other direction of the boundary: preview moves OFF the lastfile, so
+-- the chip deselects (and its pointer erases) in the same cycle.
+t.test("boundary away from lastfile deselects the chip in place", function()
+    local _self_tbl, took = tap{
+        lastfile = C.filepath, preview = C, staged = nil, tapped = A,
+        hero_mounted = true,
+    }
+    assert(took.swap_hero, "expected the fast hero swap at the boundary")
+    assert(took.chip_inplace and took.chip_inplace.sel == false,
+        "the chip must deselect when the preview leaves the lastfile")
+    assert(not took.rebuild, "no shelf rebuild either way")
+end)
+
+-- A bar that can't restyle in place (no setCurrentSelected — e.g. a stub
+-- or an older shape) still gets the deferred scoped rebuild, so the strip
+-- never goes stale.
+t.test("bar without in-place restyle falls back to the deferred rebuild", function()
+    local _self_tbl, took = tap{
+        lastfile = C.filepath, preview = A, staged = nil, tapped = C,
+        hero_mounted = true, bare_bar = true,
+    }
+    assert(took.swap_hero, "expected the fast hero swap at the boundary")
+    assert(took.chip_strip, "the deferred chip-strip restyle must run")
+    assert(not took.chip_inplace, "no in-place call on a bare bar")
 end)
 
 -- The same staleness on the fast path. The explicit is_selected there hides it

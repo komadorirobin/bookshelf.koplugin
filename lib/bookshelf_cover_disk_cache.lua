@@ -33,12 +33,13 @@ local MAGIC = "BSC1"
 -- ~4x between 8bpp grayscale and RGB32, so a file COUNT maps to wildly
 -- different amounts of disk. The sweep already stats each file for its mtime;
 -- taking the size from the same call makes the byte bound free.
--- 32MB. One page of shelf covers is ~2.4MB, so this holds a dozen-odd pages
--- -- far more than the startup path needs, and it is a cache, not a mirror of
--- the library. Kept deliberately modest because this writes to the same
--- storage as BIM's cover database, which is already the largest thing
--- bookshelf touches on a Kindle.
-M.MAX_BYTES = 32 * 1024 * 1024
+-- 96MB (was 32). One page of shelf covers is ~2.4MB, so this holds ~40 pages
+-- -- enough that a deep paging session survives a restart instead of paying
+-- the decode+scale again for everything beyond the first dozen pages (the
+-- post-restart "first visit to every page is slow" report). Still a cache,
+-- not a mirror of the library, and still modest next to BIM's cover
+-- database -- the largest thing bookshelf touches on a Kindle.
+M.MAX_BYTES = 96 * 1024 * 1024
 
 local _dir            -- resolved cache directory, or false when unavailable
 local _swept = false  -- the count sweep runs at most once per session
