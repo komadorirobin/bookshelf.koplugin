@@ -58,7 +58,7 @@ M.TEMPLATE_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
   Drop SVG files in this folder and they turn up now and then in the gaps on
   the spine shelf, standing on the plank like the books. This file is one:
   a potted plant (cactus.svg beside it is another). Copy it as a starting
-  point, or delete either if you'd rather not see it -- they won't come back.
+  point, or delete either if you'd rather not see it; they won't come back.
 
   The rules of the shelf:
 
@@ -68,7 +68,7 @@ M.TEMPLATE_SVG = [==[<?xml version="1.0" encoding="UTF-8"?>
     set the overhang line below to the number of viewBox units that should
     hang below the surface, and draw that part at the bottom.
   - The shelf is seen from slightly above (about 12 degrees), so anything
-    with a top -- a pot, a box, a cup -- shows its opening as a shallow
+    with a top (a pot, a box, a cup) shows its opening as a shallow
     ellipse about a fifth as tall as it is wide. Match that and it belongs.
   - Use colour. Colour screens show it as drawn; grey e-ink shows it as
     shades of grey, so keep the tones fairly dark and distinct from each

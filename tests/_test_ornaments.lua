@@ -291,4 +291,49 @@ t.test("pick takes a per-call chance", function()
     assert(not O.pick("s", 1000, 400, POOL, never), "chance 0 never does")
 end)
 
+-- ── the seeded files must be valid SVG ───────────────────────────────────
+--
+-- template.svg shipped in v5.0.0 NOT well-formed: "--" is illegal inside an
+-- XML comment, and its own comment block used it as a dash three times.
+-- KOReader's renderer (nanosvg) is lenient enough to draw it anyway, so the
+-- shelf looked right and nothing failed -- but this is the file a reader is
+-- invited to copy as a starting point, and any real SVG editor rejects it.
+-- Caught by the maintainer opening it, not by any test.
+
+local function seedBodies()
+    local src = assert(io.open("lib/bookshelf_ornaments.lua")):read("*a")
+    local out = {}
+    for name, body in src:gmatch("M%.([A-Z]+)_SVG%s*=%s*%[==%[(.-)%]==%]") do
+        out[#out + 1] = { name = name:lower() .. ".svg", body = body }
+    end
+    return out
+end
+
+t.test("every seeded ornament is shipped, and there are at least two", function()
+    local seeds = seedBodies()
+    assert(#seeds >= 2, "expected the template and the cactus, found " .. #seeds)
+end)
+
+t.test("no seeded SVG has '--' inside an XML comment", function()
+    -- The whole bug, stated as the rule it broke.
+    for _i, s in ipairs(seedBodies()) do
+        for comment in s.body:gmatch("<!%-%-(.-)%-%->") do
+            assert(not comment:find("%-%-"),
+                s.name .. ": '--' inside an XML comment makes the file invalid; "
+                .. "use a single hyphen or restructure")
+        end
+    end
+end)
+
+t.test("every seeded SVG has balanced comment delimiters and one svg root", function()
+    for _i, s in ipairs(seedBodies()) do
+        local opens = select(2, s.body:gsub("<!%-%-", ""))
+        local closes = select(2, s.body:gsub("%-%->", ""))
+        eq(opens, closes, s.name .. ": unbalanced comment delimiters")
+        eq(select(2, s.body:gsub("<svg", "")), 1, s.name .. ": expected one <svg")
+        eq(select(2, s.body:gsub("</svg>", "")), 1, s.name .. ": expected one </svg>")
+        assert(s.body:find('viewBox="'), s.name .. ": no viewBox, so it cannot be placed")
+    end
+end)
+
 t.done()
