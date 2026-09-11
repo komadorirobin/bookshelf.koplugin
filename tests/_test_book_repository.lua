@@ -5513,6 +5513,36 @@ test("BIM's own count still wins over the scan store", function()
     end)
 end)
 
+test("one function owns the end of the page-count ladder", function()
+    -- Three consumers ask the same question -- the hero through buildBook, the
+    -- rows through progressFor, the spine plan for its widths -- and each had
+    -- grown its own ending. Two of them got patched separately in two days.
+    assert(type(Repo.pageCountFor) == "function", "Repo.pageCountFor missing")
+    with_scan_store({ ["/lib/x.epub"] = 300 }, function()
+        assert(Repo.pageCountFor("/lib/x.epub", 512) == 512,
+            "what the caller already knows wins")
+        assert(Repo.pageCountFor("/lib/x.epub", nil) == 300, "then the store")
+        assert(Repo.pageCountFor("/lib/y p(88).epub", nil) == 88,
+            "and the filename marker comes before the store")
+        assert(Repo.pageCountFor("/lib/z.epub", 0) == nil,
+            "a zero is not a count")
+        assert(Repo.pageCountFor(nil, nil) == nil, "no path, no answer")
+    end)
+end)
+
+test("an opened book with no committed total still gets the marker", function()
+    -- The sidecar branch of progressFor used to skip the filename marker and
+    -- go straight to the store, so an opened reflowable named p(N) with no
+    -- total yet answered differently from the same book unopened.
+    _G._test_docsettings_data = { ["/lib/opened p(415).epub"] = { percent_finished = 0.5 } }
+    with_scan_store({}, function()
+        local _p, _s, _r, pages, opened = Repo.progressFor("/lib/opened p(415).epub")
+        assert(opened == true, "the book has a sidecar")
+        assert(pages == 415, "expected the marker, got " .. tostring(pages))
+    end)
+    _G._test_docsettings_data = nil
+end)
+
 test("a filename marker still outranks the scan store", function()
     -- p(N) in the name is free and authoritative; the store often holds a
     -- persisted echo of that same number.

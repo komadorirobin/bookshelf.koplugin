@@ -1460,6 +1460,27 @@ local function _scannedPageCount(filepath)
     return ok2 and tonumber(pages) or nil
 end
 
+-- Repo.pageCountFor(filepath, known) -> a page count, or nil.
+--
+-- The TAIL of the page-count ladder, in one place. `known` is whatever the
+-- caller already has -- BookInfoManager's count, or the sidecar's -- and wins
+-- when it is a real number. After it come the two sources that need no file
+-- open and no database read:
+--
+--   1. a p(<n>) marker in the filename (#159), free and explicit
+--   2. the "Extract page counts" scan's store, which holds an ESTIMATE for
+--      most books (see _scannedPageCount)
+--
+-- Every consumer asks the same question and each had grown its own ending:
+-- the hero's had both rungs, the lazy resolver's sidecar branch had only the
+-- second, and the two got patched separately twice in two days. Owning the
+-- order here is the point -- callers supply what they know and stop deciding.
+function Repo.pageCountFor(filepath, known)
+    known = tonumber(known)
+    if known and known > 0 then return known end
+    return pageCountFromFilename(filepath) or _scannedPageCount(filepath)
+end
+
 
 -- opts is forwarded verbatim to buildBookMeta; opts.want_cover=false skips
 -- BIM's zstd decode and Blitbuffer allocation for callers that never look at
@@ -1536,17 +1557,11 @@ function Repo.buildBook(filepath, opts)
             end
         end
     end
-    -- #159: fall back to a p(<n>) token in the filename when there's no
-    -- sidecar-derived count (unopened reflowable books). ds-or-filename also
-    -- seeds the progress cache below, so it must match what readProgress
-    -- computes (which never sees BIM's count).
-    -- ...then the scan's store, which is where "Extract page counts" leaves
-    -- everything but a publisher count. The hero builds its book HERE rather
-    -- than through the lazy resolver the shelf rows use, so without this the
-    -- scan reached the rows and not the hero -- device report: a page_count
-    -- token added to the hero stayed empty for most books.
-    local fallback_page_count = ds_page_count or pageCountFromFilename(filepath)
-                                or _scannedPageCount(filepath)
+    -- The rest of the ladder -- the filename marker, then the scan's store --
+    -- belongs to Repo.pageCountFor. This value also seeds the progress cache
+    -- below, so it must match what readProgress would compute for this file,
+    -- which is why it starts from the SIDECAR count and not from BIM's.
+    local fallback_page_count = Repo.pageCountFor(filepath, ds_page_count)
     if not book.page_count then
         book.page_count = fallback_page_count
     end
@@ -2409,10 +2424,11 @@ function Repo.progressFor(filepath)
     if not filepath then return nil, nil, nil, nil, false end
     if _hasSidecar(filepath) then
         local pct, status, rating, pages, page_num = Repo.readProgress(filepath)
-        -- An opened book usually knows its own count; a scanned one is the
-        -- fallback for the reflowable that has been opened but never paged
-        -- far enough for KOReader to commit a total.
-        return pct, status, rating, pages or _scannedPageCount(filepath),
+        -- An opened book usually knows its own count. When it does not -- a
+        -- reflowable opened but never paged far enough for KOReader to commit
+        -- a total -- it takes the same ending as an unopened one, which this
+        -- branch used to skip half of.
+        return pct, status, rating, Repo.pageCountFor(filepath, pages),
                true, page_num
     end
     -- No sidecar means never opened: no percentage, status or rating exists to
@@ -2422,9 +2438,7 @@ function Repo.progressFor(filepath)
     -- sort key instead of going blank exactly where the sort has a value.
     -- No sidecar means never opened, so there is no current page either --
     -- page_num stays nil rather than being synthesised as page 1.
-    return nil, nil, nil,
-           pageCountFromFilename(filepath) or _scannedPageCount(filepath),
-           false, nil
+    return nil, nil, nil, Repo.pageCountFor(filepath), false, nil
 end
 
 -- Repo.fileSizeFor(filepath) -> bytes, or nil.
