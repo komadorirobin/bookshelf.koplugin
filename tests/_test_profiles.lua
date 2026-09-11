@@ -1,5 +1,13 @@
 -- tests/_test_profiles.lua
 
+local saved_settings = {}
+package.loaded["lib/bookshelf_settings_store"] = {
+    read = function(key) return saved_settings[key] end,
+    save = function(key, value) saved_settings[key] = value end,
+    delete = function(key) saved_settings[key] = nil end,
+    flush = function() end,
+}
+
 local Profiles = dofile("lib/bookshelf_profiles.lua")
 
 local pass, fail = 0, 0
@@ -67,6 +75,48 @@ test("profiles: both expose a short BookOrbit TBR chip", function()
     local comics = Profiles.chip(Profiles.get("comics"), "bookorbit_tbr")
     assert(prose and prose.label == "TBR" and prose.kind == "bookorbit_want")
     assert(comics and comics.label == "TBR" and comics.kind == "bookorbit_want")
+end)
+
+test("profile shelf settings are isolated per profile and chip", function()
+    local prose = Profiles.get("prose")
+    local comics = Profiles.get("comics")
+    Profiles.saveShelfSettings(prose, "profile_fiction", {
+        view_mode = "list",
+        list_rows = 5,
+    })
+    Profiles.saveShelfSettings(comics, "profile_manga", {
+        view_mode = "spines",
+        spine_rows = 3,
+    })
+    local fiction = Profiles.shelfSettings(prose, "profile_fiction")
+    local manga = Profiles.shelfSettings(comics, "profile_manga")
+    assert(fiction.view_mode == "list" and fiction.list_rows == 5)
+    assert(fiction.spine_rows == nil)
+    assert(manga.view_mode == "spines" and manga.spine_rows == 3)
+    assert(Profiles.shelfSettings(prose, "profile_nonfiction").view_mode == nil)
+end)
+
+test("profile shelf settings preserve false and discard unrelated fields", function()
+    local comics = Profiles.get("comics")
+    Profiles.saveShelfSettings(comics, "profile_comics", {
+        view_mode = "spines",
+        spine_face_out = false,
+        spine_show_author = false,
+        label = "must not replace a fixed profile label",
+    })
+    local got = Profiles.shelfSettings(comics, "profile_comics")
+    assert(got.view_mode == "spines")
+    assert(got.spine_face_out == false)
+    assert(got.spine_show_author == false)
+    assert(got.label == nil)
+end)
+
+test("saving an empty profile shelf setting clears its override", function()
+    local prose = Profiles.get("prose")
+    Profiles.saveShelfSettings(prose, "profile_poetry", { view_mode = "covers" })
+    assert(Profiles.shelfSettings(prose, "profile_poetry").view_mode == "covers")
+    Profiles.saveShelfSettings(prose, "profile_poetry", {})
+    assert(next(Profiles.shelfSettings(prose, "profile_poetry")) == nil)
 end)
 
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))

@@ -2,6 +2,32 @@
 
 local Profiles = {}
 
+-- SimpleUI profiles use fixed chips rather than the editable TabModel rows.
+-- Keep their visual overrides in the Bookshelf settings store so profile
+-- shelves can still use the same Shelf style picker as ordinary chips.
+local SHELF_FIELDS = {
+    "view_mode",
+    "group_display",
+    "list_rows",
+    "list_rows_expanded",
+    "list_columns",
+    "spine_rows",
+    "spine_rows_expanded",
+    "spine_thickness_pct",
+    "spine_face_out",
+    "spine_show_author",
+}
+
+local function settingsStore()
+    local ok, store = pcall(require, "lib/bookshelf_settings_store")
+    return ok and store or nil
+end
+
+local function shelfSettingsKey(profile, chip_key)
+    if not (profile and profile.key and chip_key) then return nil end
+    return "profile_shelf_" .. profile.key .. "_" .. chip_key
+end
+
 local PROFILE_DEFS = {
     prose = {
         key = "prose",
@@ -86,6 +112,35 @@ function Profiles.chip(profile, key)
         if chip.key == key then return chip end
     end
     return nil
+end
+
+function Profiles.shelfSettings(profile, chip_key)
+    local store = settingsStore()
+    local key = shelfSettingsKey(profile, chip_key)
+    if not (store and key) then return {} end
+    local saved = store.read(key)
+    if type(saved) ~= "table" then return {} end
+    local out = {}
+    for _, field in ipairs(SHELF_FIELDS) do
+        if saved[field] ~= nil then out[field] = saved[field] end
+    end
+    return out
+end
+
+function Profiles.saveShelfSettings(profile, chip_key, values)
+    local store = settingsStore()
+    local key = shelfSettingsKey(profile, chip_key)
+    if not (store and key) then return end
+    local saved = {}
+    values = type(values) == "table" and values or {}
+    for _, field in ipairs(SHELF_FIELDS) do
+        if values[field] ~= nil then saved[field] = values[field] end
+    end
+    if next(saved) then
+        store.save(key, saved)
+    else
+        store.delete(key)
+    end
 end
 
 function Profiles.scope(profile)

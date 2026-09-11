@@ -208,9 +208,15 @@ end)
 
 local function flip(opts)
     local saved, rebuilt, notices = nil, 0, {}
+    local profile_save
     local tabs = opts.tabs or { { id = "home" } }
     local env = {
         ViewMode = ViewMode,
+        Profiles = {
+            saveShelfSettings = function(profile, chip, settings)
+                profile_save = { profile = profile, chip = chip, settings = settings }
+            end,
+        },
         ipairs   = ipairs,
         logger   = { dbg = function() end },
         UIManager = {
@@ -246,6 +252,7 @@ local function flip(opts)
     }
     local self = {
         chip = opts.chip or "home",
+        profile = opts.profile,
         _drilldown_path = opts.drill,
         _expanded = false,
         _markOpdsNav = function() end,
@@ -260,9 +267,10 @@ local function flip(opts)
             return tip ~= nil and tip.kind == "search"
         end,
         _showSearchViewModePicker = function() pickers = pickers + 1 end,
+        _profileShelfSettings = function() return opts.profile_settings end,
     }
     methodOf("_flipViewMode", env)(self)
-    return tabs, saved, rebuilt, notices, pickers, search_writes
+    return tabs, saved, rebuilt, notices, pickers, search_writes, profile_save
 end
 
 t.test("the hold cycles the chip: covers -> list -> spines -> covers", function()
@@ -298,6 +306,21 @@ t.test("the hold writes THIS chip and leaves the others alone", function()
     flip{ chip = "recent", is_list = false, tabs = tabs }
     eq(tabs[1][ViewMode.CHIP_KEY], nil)
     eq(tabs[2][ViewMode.CHIP_KEY], ViewMode.LIST)
+end)
+
+t.test("the cycle persists a fixed profile chip outside TabModel", function()
+    local profile = { key = "comics" }
+    local settings = {}
+    local _tabs, saved, rebuilt, _notices, _pickers, _writes, profile_save = flip{
+        chip = "profile_manga",
+        profile = profile,
+        profile_settings = settings,
+    }
+    assert(saved == nil, "a fixed profile chip must not write TabModel")
+    eq(settings[ViewMode.CHIP_KEY], ViewMode.LIST)
+    assert(profile_save and profile_save.profile == profile)
+    eq(profile_save.chip, "profile_manga")
+    assert(rebuilt == 1)
 end)
 
 t.test("in a search drill the hold toggles the SEARCH mode, writes no pin",
@@ -350,7 +373,7 @@ assert(LIST_COLUMNS_MAX and LIST_MIN_COL_DP, "column constants renamed?")
 -- is the part worth testing and a stub would assert my assumptions back at
 -- me. The preset layer that used to sit between them went with the preset
 -- feature.
-local function chipValue(self_tbl, chip_own, default)
+local function chipValue(self_tbl, chip_own, default, profile_own)
     local env = {
         require = function(name)
             assert(name == "lib/bookshelf_tab_model", "unexpected require: " .. name)
@@ -360,6 +383,7 @@ local function chipValue(self_tbl, chip_own, default)
         type = type,
     }
     local f = methodWithArgs("_chipListValue", env)
+    self_tbl._profileShelfSettings = function() return profile_own end
     return f(self_tbl, "list_columns")
 end
 
@@ -386,6 +410,13 @@ t.test("the chip's own count beats the library default", function()
     eq(chipValue(self_tbl, { list_columns = 3 }, 1), 3)
     eq(chipValue(self_tbl, { }, 1), 1)
     eq(chipValue(self_tbl, nil, nil), nil)
+end)
+
+t.test("a fixed profile chip's count beats the library default", function()
+    local self_tbl = {}
+    eq(chipValue(self_tbl, nil, 1, { list_columns = 2 }), 2)
+    eq(chipValue(self_tbl, { list_columns = 3 }, 1, {}), 1,
+        "profile settings must not leak editable TabModel values")
 end)
 
 -- The same accessor with a chip pinned to a preset: the preset's column count

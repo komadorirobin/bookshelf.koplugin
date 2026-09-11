@@ -1031,6 +1031,11 @@ function BookshelfWidget:_profileChip(key)
     return Profiles.chip(self.profile, key or self.chip)
 end
 
+function BookshelfWidget:_profileShelfSettings(key)
+    if not self.profile then return nil end
+    return Profiles.shelfSettings(self.profile, key or self.chip)
+end
+
 function BookshelfWidget:_profileSettingKey()
     if self.profile then
         return "active_chip_" .. self.profile.key
@@ -1549,7 +1554,7 @@ function BookshelfWidget:_selectChip(key)
     self.chip    = key
     self._cursor = 1
     self:_syncPageFromCursor()
-    BookshelfSettings.saveDeferred("active_chip", key)
+    BookshelfSettings.saveDeferred(self:_profileSettingKey(), key)
     self:_rebuild()
     UIManager:setDirty(self, "ui")
 end
@@ -2422,11 +2427,14 @@ function BookshelfWidget:_rebuild()
             self:_drillBackTo(depth)
         end,
         on_hold = function(key)
-            if self.profile then return end
             -- The modules chip isn't an editable tab; its long-press opens the
             -- micro-module options menu instead of the tab editor.
             if key == "modules" then
                 self:_showModulesOptions()
+                return
+            end
+            if self.profile then
+                self:_showProfileShelfStyle(key)
                 return
             end
             -- Long-pressing a chip that isn't the active one selects it first,
@@ -4028,6 +4036,8 @@ end
 function BookshelfWidget:_groupDisplayMode()
     local tip = self._drilldown_path and self._drilldown_path[#self._drilldown_path]
     if tip and tip.kind == "search" then return nil end
+    local profile_settings = self:_profileShelfSettings()
+    if profile_settings then return profile_settings.group_display end
     local TabModel = require("lib/bookshelf_tab_model")
     local tab = TabModel.getById(self.chip)
     return tab and tab.group_display or nil
@@ -4045,6 +4055,10 @@ end
 function BookshelfWidget:_chipViewMode()
     local tip = self._drilldown_path and self._drilldown_path[#self._drilldown_path]
     if tip and tip.kind == "search" then return nil end
+    local profile_settings = self:_profileShelfSettings()
+    if profile_settings then
+        return ViewMode.chipOverride(profile_settings[ViewMode.CHIP_KEY])
+    end
     local TabModel = require("lib/bookshelf_tab_model")
     local tab = TabModel.getById(self.chip)
     return ViewMode.chipOverride(tab and tab[ViewMode.CHIP_KEY])
@@ -5228,6 +5242,26 @@ function BookshelfWidget:_showSearchViewModePicker()
     UIManager:show(dialog)
 end
 
+-- Fixed SimpleUI profile chips are not TabModel records, so the normal chip
+-- editor cannot edit them. They still represent shelves and expose the same
+-- visual controls. Each choice is persisted immediately because this picker
+-- has no outer editor with a separate Save button.
+function BookshelfWidget:_showProfileShelfStyle(key)
+    local profile_chip = self:_profileChip(key)
+    if not profile_chip then return end
+    if key ~= self.chip then self:_selectChip(key) end
+
+    local draft = self:_profileShelfSettings(key) or {}
+    local Editor = require("lib/bookshelf_chip_editor")
+    Editor:_pickGroupDisplay(draft, function()
+        Profiles.saveShelfSettings(self.profile, key, draft)
+        self:_afterChipEdit()
+    end, {
+        bw = self,
+        is_opds = profile_chip.kind == "opds",
+    })
+end
+
 -- _isDrilledIn() — is the shelf showing the CONTENTS of something the user
 -- opened, rather than a chip's top level?
 --
@@ -5296,13 +5330,19 @@ function BookshelfWidget:_flipViewMode()
     else
         target = ViewMode.LIST
     end
-    local tabs, hit = TabModel.load(), nil
-    for _i, t in ipairs(tabs or {}) do
-        if t.id == self.chip then hit = t break end
-    end
-    if hit then
-        hit[ViewMode.CHIP_KEY] = target
-        TabModel.save(tabs)
+    if self.profile then
+        local settings = self:_profileShelfSettings() or {}
+        settings[ViewMode.CHIP_KEY] = target
+        Profiles.saveShelfSettings(self.profile, self.chip, settings)
+    else
+        local tabs, hit = TabModel.load(), nil
+        for _i, t in ipairs(tabs or {}) do
+            if t.id == self.chip then hit = t break end
+        end
+        if hit then
+            hit[ViewMode.CHIP_KEY] = target
+            TabModel.save(tabs)
+        end
     end
     logger.dbg("[bookshelf perf] view mode pinned: chip=" .. tostring(self.chip)
         .. " -> " .. tostring(target))
@@ -5553,7 +5593,8 @@ end
 -- per chip and the lines degrading to fit the row, a saved layout had nothing
 -- left to carry.
 function BookshelfWidget:_chipListValue(key)
-    local tab = require("lib/bookshelf_tab_model").getById(self.chip)
+    local tab = self:_profileShelfSettings()
+        or require("lib/bookshelf_tab_model").getById(self.chip)
     local own = tab and tab[key]
     if type(own) == "number" then return own end
     return BookshelfSettings.read(key)
@@ -5571,6 +5612,12 @@ end
 
 -- _setChipDensity(key, n) -- write a density number onto THIS chip, deferred.
 function BookshelfWidget:_setChipDensity(key, n)
+    if self.profile then
+        local settings = self:_profileShelfSettings() or {}
+        settings[key] = n
+        Profiles.saveShelfSettings(self.profile, self.chip, settings)
+        return
+    end
     local TabModel = require("lib/bookshelf_tab_model")
     local tabs = TabModel.load()
     local hit
@@ -6060,7 +6107,8 @@ function BookshelfWidget:_spineFaceOut()
         if type(v) == "string" and FACE_OUT_MODES[v] then return v end
         return nil
     end
-    local tab = require("lib/bookshelf_tab_model").getById(self.chip)
+    local tab = self:_profileShelfSettings()
+        or require("lib/bookshelf_tab_model").getById(self.chip)
     local own = norm(tab and tab.spine_face_out)
     if own then return own end
     return norm(BookshelfSettings.read("spine_face_out")) or "favorites"
@@ -6070,7 +6118,8 @@ end
 -- printed spine sets it. Same tri-state as face-out: chip pin first
 -- (false = no, nil = follow), then the library default of YES.
 function BookshelfWidget:_spineShowAuthor()
-    local tab = require("lib/bookshelf_tab_model").getById(self.chip)
+    local tab = self:_profileShelfSettings()
+        or require("lib/bookshelf_tab_model").getById(self.chip)
     local own = tab and tab.spine_show_author
     if own == false then return false end
     if own == true then return true end

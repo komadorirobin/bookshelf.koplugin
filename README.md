@@ -133,9 +133,9 @@ The full gesture reference is in [Gestures cheatsheet](#gestures-cheatsheet) bel
 
 ### List view
 
-Any shelf can be a text list instead of covers. Long-press the shelf's chip and pick **List** under Show as, or hold the page number in the footer to flip the shelf you are looking at. This fork defaults to **Auto**, which switches a shelf to a list whenever it is expanded or drilled into a folder or stack, and back to covers on the two rows under the hero. Pick **Covers** to keep a shelf as covers everywhere. The same dialog sets how many **rows** (1 to 12) and **columns** (1 to 3) the list uses, and pinching the shelf fits one more or one fewer row.
+Any shelf can be a text list instead of covers. Long-press the shelf's chip and pick **List** under Show as. This works for both editable Bookshelf chips and the fixed Fiktion/Manga chips supplied by SimpleUI profiles. This fork defaults to **Auto**, which switches a shelf to a list whenever it is expanded or drilled into a folder or stack, and back to covers on the two rows under the hero. Pick **Covers** to keep a shelf as covers everywhere. The same dialog sets how many **rows** (1 to 12) and **columns** (1 to 3) the list uses, and pinching the shelf fits one more or one fewer row. Pick **Spines** in that dialog for the bookcase view and to set its rows, thickness, face-out covers and author labels.
 
-Search results keep their own view -- covers unless you say otherwise. Long-press the **Search results** pill (or hold the page number) while viewing results to pick Covers, List or Auto for them.
+Search results keep their own view -- covers unless you say otherwise. Long-press the **Search results** pill while viewing results to pick Covers, List, Spines or Auto. Long-pressing the page indicator opens the sort menu.
 
 Rows are built from the same editable lines as the hero card: up to six per row, each with its own template, font, size, weight, slant, case and alignment, edited under **menu > Settings > List view**. Tokens work in every line, so a row can carry a progress bar (`%bar`, or `%bar{rel}` to make its length reflect how long the book is), file size, dates, or anything else from the [Token cheatsheet](#token-cheatsheet). As rows get shorter, lines drop from the bottom up, so the title and author are the last to go.
 
@@ -573,7 +573,8 @@ Everything beyond this point is the full feature reference. Expand any section y
 | **Tap** | Search icon | Open the library search |
 | **Tap** | "Page N of M" footer | Open the go-to dialog: jump by page number, jump to the first item starting with a letter, or search the library |
 | **Tap** | First / prev / next / last chevrons | Page navigation |
-| **Long-press** | Chip | Open the chip editor |
+| **Long-press** | Chip | Open the chip editor; fixed SimpleUI profile chips open Shelf style |
+| **Long-press** | "Page N of M" footer | Open the sort menu |
 | **Long-press** | Shelf book cover | Open the per-book menu |
 | **Long-press** | Shelf stack cover (series, author, etc.) | Pin the stack to the chip bar |
 | **Long-press** | Prev / next chevron | Skip 10 pages back / forward (clamped to first / last) |
