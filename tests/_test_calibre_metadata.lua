@@ -63,7 +63,8 @@ end)
 --
 -- rapidjson is stubbed rather than real here: the logic under test is the
 -- merge, not the parse, and the parse is covered on device.
-local function withStubbedJson(books, harvest)
+local function withStubbedJson(books, harvest, home)
+    home = home or "/lib"
     local META = "/lib/metadata.calibre"
     local HARV = "/lib/calibre.bookshelf.json"
     package.loaded["rapidjson"] = {
@@ -76,6 +77,10 @@ local function withStubbedJson(books, harvest)
     }
     package.loaded["libs/libkoreader-lfs"] = {
         attributes = function(path, what)
+            -- POSIX collapses repeated slashes, so a real lfs finds the file
+            -- either way. The stub has to, or the test would "pass" by failing
+            -- to find the library at all.
+            if type(path) == "string" then path = path:gsub("//+", "/") end
             if path ~= META then return nil end
             if what == "mode" then return "file" end
             return { mode = "file", modification = 12345, size = 2048 }
@@ -83,7 +88,7 @@ local function withStubbedJson(books, harvest)
     }
     _G.G_reader_settings = {
         readSetting = function(_self, key)
-            if key == "home_dir" then return "/lib" end
+            if key == "home_dir" then return home end
             return nil
         end,
     }
@@ -185,6 +190,34 @@ t.test("a value present in the file WINS over the harvested one", function()
     assert(f.publisher == "New Publisher",
            "harvest overwrote a live value: " .. tostring(f.publisher))
     assert(f.mood == "cosy", "and the harvested-only key should still arrive")
+end)
+
+-- ── issue 372: a home_dir with a trailing slash found nothing ─────────────
+
+t.test("a trailing slash on home_dir still resolves every book", function()
+    -- The file is found either way, because POSIX collapses "//". What broke
+    -- was the KEY: the library root kept the slash, so every entry went in as
+    -- "/lib//a/Dune.epub" while the book's own path is "/lib/a/Dune.epub".
+    -- Nothing matched, the harvest sidecar was still written with every column
+    -- in it, and the reporter saw a correct-looking file and no data.
+    local M = withStubbedJson(STRIPPED, HARVEST, "/lib/")
+    local e = M.entryFor("/lib/a/Dune.epub", true)
+    assert(e, "a trailing slash on home_dir lost the whole library")
+    assert(e.author_sort == "Herbert, Frank", "author_sort: " .. tostring(e.author_sort))
+    assert(e.calibre and e.calibre.mood == "cosy", "custom column lost")
+end)
+
+t.test("a doubled slash in the CALLER's path resolves too", function()
+    -- The other side of the same coin: whoever asks may have built the path
+    -- from a joined root of their own.
+    local M = withStubbedJson(STRIPPED, HARVEST)
+    assert(M.entryFor("/lib//a/Dune.epub", true), "the lookup is not normalised")
+end)
+
+t.test("a normal home_dir is unaffected", function()
+    local M = withStubbedJson(STRIPPED, HARVEST)
+    local e = M.entryFor("/lib/a/Dune.epub", true)
+    assert(e and e.calibre and e.calibre.mood == "cosy")
 end)
 
 t.done()
