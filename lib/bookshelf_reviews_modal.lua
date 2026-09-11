@@ -846,7 +846,7 @@ function ReviewsModal:_isRetainedBody(w)
     return false
 end
 
--- Chip bar + an HTML scroller sized to the remaining body height. CACHED per
+-- Shelf menu + an HTML scroller sized to the remaining body height. CACHED per
 -- source (Embedded / Hardcover): switching the chip or tabbing back reuses the
 -- already-rendered body instead of allocating a fresh MuPDF render each time.
 -- The cache is keyed by source index and invalidated when the font size changes

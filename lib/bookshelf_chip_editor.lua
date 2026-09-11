@@ -309,13 +309,20 @@ local function _applySourceDefaults(draft)
             draft.filter.formats = formats
         end
     end
-    -- QoL: if the chip's label is still the default "New chip" (i.e.
+    -- QoL: if the chip's label is still the default "New shelf" (i.e.
     -- the user hasn't customised it), rename it to match the picked
     -- source — e.g. picking "Genres" sets the label to "Genres",
     -- picking a specific author sets it to that author's name. Only
     -- the untouched default is replaced; user-edited labels are
     -- preserved as-is.
-    if draft.label == _("New chip") and draft.source then
+    -- "New chip" was this sentinel's wording before the shelf rename. A tab
+    -- saved under the old name still carries that literal label, so accept it
+    -- too or those chips silently lose the auto-rename. English only: a
+    -- translated old label cannot be recognised without keeping the retired
+    -- msgid alive purely to compare against, which is not worth a string in
+    -- every locale for a label the reader can change in two taps.
+    if (draft.label == _("New shelf") or draft.label == "New chip")
+            and draft.source then
         local fresh
         if draft.source.id and draft.source.id ~= "" then
             -- Specific-X sources (folder, single_series, etc.): use the
@@ -652,7 +659,7 @@ function Editor:editTab(tab_id, opts)
                         if label_dialog then
                             label_dialog.deny_keyboard_hiding = true
                         end
-                        -- Chip labels render literally (no token
+                        -- Shelf labels render literally (no token
                         -- expansion), so dynamic %tokens are excluded.
                         IconsLibrary:show(function(glyph)
                             if label_dialog then
@@ -682,7 +689,7 @@ function Editor:editTab(tab_id, opts)
                 end,
             }
             label_dialog = InputDialog:new{
-                title           = _("Chip label"),
+                title           = _("Shelf label"),
                 input           = draft.label or "",
                 allow_newline   = false,
                 text_height     = Screen:scaleBySize(40),
@@ -940,7 +947,7 @@ function Editor:editTab(tab_id, opts)
                     bordersize     = 0,
                     callback   = function()
                         UIManager:show(ConfirmBox:new{
-                            text       = _("Delete this chip? This cannot be undone."),
+                            text       = _("Delete this shelf? This cannot be undone."),
                             ok_text    = _("Delete"),
                             ok_callback = function()
                                 -- Deleting a tab changes the list of tabs,
@@ -1082,7 +1089,7 @@ function Editor:editTab(tab_id, opts)
                         -- origin.
                         TabModel.insertAfter(fresh, tab_id, {
                             id            = new_id,
-                            label         = _("New chip"),
+                            label         = _("New shelf"),
                             icon          = nil,
                             source        = { kind = "all" },
                             filter        = {},
@@ -1130,7 +1137,7 @@ function Editor:editTab(tab_id, opts)
         -- button below is being edited. Falls back to a generic string
         -- when the label is empty / nil. with_bottom_line is off so the
         -- titlebar separator doesn't double with the top_row's top border.
-        local title_text = _("Edit chip")
+        local title_text = _("Edit shelf")
         if draft.label and draft.label ~= "" then
             title_text = _("Editing: ") .. draft.label
         end
@@ -1254,7 +1261,7 @@ function Editor:editTab(tab_id, opts)
     -- A chip that has just been created has no source the user chose: it holds
     -- the placeholder every new chip starts from. Picking one is the first
     -- thing to do and it is also what names the chip (_applySourceDefaults
-    -- renames a label still reading "New chip"), so the editor would otherwise
+    -- renames a label still reading "New shelf"), so the editor would otherwise
     -- open on a chip presenting a Home (folders) source and a generic name as
     -- though they had been decided.
     --
@@ -2313,7 +2320,7 @@ function Editor:_pickSource(draft, on_close)
         table.insert(rows, #rows, { btn("kindle", _("Kindle Virtual Library")) })
     end
     d = ButtonDialog:new{
-        title   = _("Chip source"),
+        title   = _("Shelf source"),
         buttons = rows,
         anchor  = _highAnchor(function() return d end),
     }

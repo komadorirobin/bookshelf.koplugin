@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: bookends\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-11 19:11+0100\n"
+"POT-Creation-Date: 2026-09-11 19:47+0100\n"
 "PO-Revision-Date: 2026-06-25 00:02+0000\n"
 "Language-Team: Bulgarian\n"
 "Language: bg_BG\n"
@@ -67,7 +67,7 @@ msgstr "Избор на действие"
 msgid "Unknown"
 msgstr "Неизвестен"
 
-#: lib/bookshelf_book_repository.lua:6130 lib/bookshelf_chip_editor.lua:2036
+#: lib/bookshelf_book_repository.lua:6130 lib/bookshelf_chip_editor.lua:2043
 #: lib/bookshelf_filter.lua:280
 msgid "Unrated"
 msgstr "Без оценка"
@@ -103,7 +103,7 @@ msgid "Finished"
 msgstr "Завършени"
 
 #: lib/bookshelf_bulk_actions.lua:125 lib/bookshelf_bulk_actions.lua:127
-#: lib/bookshelf_chip_editor.lua:394 lib/bookshelf_filter.lua:35
+#: lib/bookshelf_chip_editor.lua:401 lib/bookshelf_filter.lua:35
 #: lib/bookshelf_sort_engine.lua:511
 msgid "Rating"
 msgstr "Оценка"
@@ -112,15 +112,15 @@ msgstr "Оценка"
 msgid "(clear)"
 msgstr "(изчистване)"
 
-#: lib/bookshelf_bulk_actions.lua:160 lib/bookshelf_chip_editor.lua:2555
+#: lib/bookshelf_bulk_actions.lua:160 lib/bookshelf_chip_editor.lua:2562
 msgid "Clear"
 msgstr "Изчистване"
 
 #: lib/bookshelf_bulk_actions.lua:165 lib/bookshelf_bulk_actions.lua:424
-#: lib/bookshelf_chip_editor.lua:624 lib/bookshelf_chip_editor.lua:967
-#: lib/bookshelf_chip_editor.lua:1667 lib/bookshelf_chip_editor.lua:1790
-#: lib/bookshelf_chip_editor.lua:1840 lib/bookshelf_chip_editor.lua:1976
-#: lib/bookshelf_chip_editor.lua:2302 lib/bookshelf_collection_manager.lua:334
+#: lib/bookshelf_chip_editor.lua:631 lib/bookshelf_chip_editor.lua:974
+#: lib/bookshelf_chip_editor.lua:1674 lib/bookshelf_chip_editor.lua:1797
+#: lib/bookshelf_chip_editor.lua:1847 lib/bookshelf_chip_editor.lua:1983
+#: lib/bookshelf_chip_editor.lua:2309 lib/bookshelf_collection_manager.lua:334
 #: lib/bookshelf_collection_manager.lua:410
 #: lib/bookshelf_collection_manager.lua:417
 #: lib/bookshelf_collection_manager.lua:442
@@ -158,8 +158,8 @@ msgstr "Задаване на оценка"
 msgid "Favorite"
 msgstr "Любима"
 
-#: lib/bookshelf_bulk_actions.lua:214 lib/bookshelf_chip_editor.lua:379
-#: lib/bookshelf_chip_editor.lua:2274 lib/bookshelf_settings.lua:535
+#: lib/bookshelf_bulk_actions.lua:214 lib/bookshelf_chip_editor.lua:386
+#: lib/bookshelf_chip_editor.lua:2281 lib/bookshelf_settings.lua:535
 #: lib/bookshelf_widget.lua:18717
 msgid "Collections"
 msgstr "Колекции"
@@ -193,7 +193,7 @@ msgid "Pending changes discarded"
 msgstr "Чакащите промени са отхвърлени"
 
 #: lib/bookshelf_bulk_actions.lua:329 lib/bookshelf_bulk_actions.lua:345
-#: lib/bookshelf_chip_editor.lua:944 lib/bookshelf_chip_editor.lua:2139
+#: lib/bookshelf_chip_editor.lua:951 lib/bookshelf_chip_editor.lua:2146
 #: lib/bookshelf_collection_manager.lua:378
 #: lib/bookshelf_collection_manager.lua:408
 #: lib/bookshelf_opds_catalog_editor.lua:104 lib/bookshelf_settings.lua:1406
@@ -261,14 +261,14 @@ msgstr "По-стари"
 msgid "Newer"
 msgstr "По-нови"
 
-#: lib/bookshelf_changelog.lua:139 lib/bookshelf_chip_editor.lua:1363
+#: lib/bookshelf_changelog.lua:139 lib/bookshelf_chip_editor.lua:1370
 #: lib/bookshelf_reviews_modal.lua:462 lib/bookshelf_widget.lua:18149
 #: micromodules/quote_of_day.lua:77
 msgid "Refresh"
 msgstr "Опресняване"
 
-#: lib/bookshelf_changelog.lua:148 lib/bookshelf_chip_editor.lua:1366
-#: lib/bookshelf_chip_editor.lua:1940 lib/bookshelf_chip_editor.lua:2755
+#: lib/bookshelf_changelog.lua:148 lib/bookshelf_chip_editor.lua:1373
+#: lib/bookshelf_chip_editor.lua:1947 lib/bookshelf_chip_editor.lua:2762
 #: lib/bookshelf_collection_manager.lua:549 lib/bookshelf_folder_picker.lua:168
 #: lib/bookshelf_icons_library.lua:496 lib/bookshelf_line_editor.lua:158
 #: lib/bookshelf_module_picker.lua:225 lib/bookshelf_reviews_modal.lua:494
@@ -285,212 +285,212 @@ msgstr "Списък с промени (%1 от %2)"
 msgid "Could not fetch the changelog."
 msgstr "Списъкът с промени не можа да бъде изтеглен."
 
-#: lib/bookshelf_chip_editor.lua:117 lib/bookshelf_chip_editor.lua:1487
+#: lib/bookshelf_chip_editor.lua:117 lib/bookshelf_chip_editor.lua:1494
 #: lib/bookshelf_widget.lua:4483
 msgid "List"
 msgstr "Списък"
 
-#: lib/bookshelf_chip_editor.lua:118 lib/bookshelf_chip_editor.lua:1492
+#: lib/bookshelf_chip_editor.lua:118 lib/bookshelf_chip_editor.lua:1499
 #: lib/bookshelf_widget.lua:4482
 msgid "Covers"
 msgstr "Корици"
 
-#: lib/bookshelf_chip_editor.lua:119 lib/bookshelf_chip_editor.lua:1484
-#: lib/bookshelf_chip_editor.lua:1530 lib/bookshelf_chip_editor.lua:1580
+#: lib/bookshelf_chip_editor.lua:119 lib/bookshelf_chip_editor.lua:1491
+#: lib/bookshelf_chip_editor.lua:1537 lib/bookshelf_chip_editor.lua:1587
 #: lib/bookshelf_settings.lua:3211 lib/bookshelf_settings.lua:3214
 #: lib/bookshelf_settings.lua:3246 lib/bookshelf_start_menu_edit.lua:320
 #: lib/bookshelf_widget.lua:4485
 msgid "Auto"
 msgstr "Автоматично"
 
-#: lib/bookshelf_chip_editor.lua:120 lib/bookshelf_chip_editor.lua:1502
+#: lib/bookshelf_chip_editor.lua:120 lib/bookshelf_chip_editor.lua:1509
 #: lib/bookshelf_widget.lua:4484
 msgid "Spines"
 msgstr "Гръбчета"
 
-#: lib/bookshelf_chip_editor.lua:318 lib/bookshelf_chip_editor.lua:1085
+#: lib/bookshelf_chip_editor.lua:324 lib/bookshelf_chip_editor.lua:1092
 #: lib/bookshelf_settings.lua:5323
-msgid "New chip"
-msgstr "Нов чип"
+msgid "New shelf"
+msgstr "Нов рафт"
 
-#: lib/bookshelf_chip_editor.lua:360 lib/bookshelf_collection_manager.lua:440
+#: lib/bookshelf_chip_editor.lua:367 lib/bookshelf_collection_manager.lua:440
 msgid "Name"
 msgstr "Име"
 
-#: lib/bookshelf_chip_editor.lua:361 lib/bookshelf_sort_engine.lua:427
+#: lib/bookshelf_chip_editor.lua:368 lib/bookshelf_sort_engine.lua:427
 msgid "Surname"
 msgstr "Фамилия"
 
-#: lib/bookshelf_chip_editor.lua:362
+#: lib/bookshelf_chip_editor.lua:369
 msgid "Most recently read"
 msgstr "Последно четени"
 
-#: lib/bookshelf_chip_editor.lua:363
+#: lib/bookshelf_chip_editor.lua:370
 msgid "Most recently added"
 msgstr "Последно добавени"
 
-#: lib/bookshelf_chip_editor.lua:364 lib/bookshelf_sort_engine.lua:503
+#: lib/bookshelf_chip_editor.lua:371 lib/bookshelf_sort_engine.lua:503
 msgid "Book count"
 msgstr "Брой книги"
 
-#: lib/bookshelf_chip_editor.lua:372 lib/bookshelf_chip_editor.lua:2244
+#: lib/bookshelf_chip_editor.lua:379 lib/bookshelf_chip_editor.lua:2251
 msgid "Home (folders)"
 msgstr "Начало (папки)"
 
-#: lib/bookshelf_chip_editor.lua:373 lib/bookshelf_chip_editor.lua:2245
+#: lib/bookshelf_chip_editor.lua:380 lib/bookshelf_chip_editor.lua:2252
 msgid "Home (flattened)"
 msgstr "Начало (без папки)"
 
-#: lib/bookshelf_chip_editor.lua:374 lib/bookshelf_chip_editor.lua:2237
+#: lib/bookshelf_chip_editor.lua:381 lib/bookshelf_chip_editor.lua:2244
 msgid "Recently read"
 msgstr "Последно четени"
 
-#: lib/bookshelf_chip_editor.lua:375 lib/bookshelf_chip_editor.lua:2238
+#: lib/bookshelf_chip_editor.lua:382 lib/bookshelf_chip_editor.lua:2245
 msgid "Latest added"
 msgstr "Последно добавени"
 
-#: lib/bookshelf_chip_editor.lua:376 lib/bookshelf_chip_editor.lua:391
-#: lib/bookshelf_chip_editor.lua:2259 lib/bookshelf_filter.lua:37
+#: lib/bookshelf_chip_editor.lua:383 lib/bookshelf_chip_editor.lua:398
+#: lib/bookshelf_chip_editor.lua:2266 lib/bookshelf_filter.lua:37
 #: lib/bookshelf_settings.lua:534 lib/bookshelf_settings.lua:677
 #: lib/bookshelf_sort_engine.lua:429 lib/bookshelf_tab_model.lua:50
 #: lib/bookshelf_widget.lua:1547 lib/bookshelf_widget.lua:18716
 msgid "Series"
 msgstr "Поредици"
 
-#: lib/bookshelf_chip_editor.lua:377 lib/bookshelf_chip_editor.lua:2264
+#: lib/bookshelf_chip_editor.lua:384 lib/bookshelf_chip_editor.lua:2271
 #: lib/bookshelf_settings.lua:135 lib/bookshelf_tab_model.lua:52
 #: lib/bookshelf_tokens.lua:30 lib/bookshelf_widget.lua:1546
 msgid "Authors"
 msgstr "Автори"
 
-#: lib/bookshelf_chip_editor.lua:378 lib/bookshelf_chip_editor.lua:2269
+#: lib/bookshelf_chip_editor.lua:385 lib/bookshelf_chip_editor.lua:2276
 #: lib/bookshelf_settings.lua:536 lib/bookshelf_tab_model.lua:54
 #: lib/bookshelf_widget.lua:1548 lib/bookshelf_widget.lua:18718
 msgid "Genres"
 msgstr "Жанрове"
 
-#: lib/bookshelf_chip_editor.lua:380 lib/bookshelf_chip_editor.lua:2278
+#: lib/bookshelf_chip_editor.lua:387 lib/bookshelf_chip_editor.lua:2285
 msgid "Formats"
 msgstr "Формати"
 
-#: lib/bookshelf_chip_editor.lua:381 lib/bookshelf_chip_editor.lua:2283
+#: lib/bookshelf_chip_editor.lua:388 lib/bookshelf_chip_editor.lua:2290
 #: lib/bookshelf_widget.lua:1551 lib/bookshelf_widget.lua:17908
 msgid "Ratings"
 msgstr "Оценки"
 
-#: lib/bookshelf_chip_editor.lua:382 lib/bookshelf_chip_editor.lua:2287
+#: lib/bookshelf_chip_editor.lua:389 lib/bookshelf_chip_editor.lua:2294
 #: lib/bookshelf_tab_model.lua:58
 msgid "Languages"
 msgstr "Езици"
 
-#: lib/bookshelf_chip_editor.lua:383 lib/bookshelf_chip_editor.lua:1630
+#: lib/bookshelf_chip_editor.lua:390 lib/bookshelf_chip_editor.lua:1637
 #: lib/bookshelf_collection_manager.lua:118 lib/bookshelf_tab_model.lua:60
 #: lib/bookshelf_widget.lua:16563 lib/bookshelf_widget.lua:16600
 msgid "Favorites"
 msgstr "Любими"
 
-#: lib/bookshelf_chip_editor.lua:385 lib/bookshelf_settings.lua:537
+#: lib/bookshelf_chip_editor.lua:392 lib/bookshelf_settings.lua:537
 #: lib/bookshelf_widget.lua:1550 lib/bookshelf_widget.lua:18719
 msgid "Folder"
 msgstr "Папка"
 
-#: lib/bookshelf_chip_editor.lua:386
+#: lib/bookshelf_chip_editor.lua:393
 msgid "Folder (flattened)"
 msgstr "Папка (без подпапки)"
 
-#: lib/bookshelf_chip_editor.lua:387 lib/bookshelf_chip_editor.lua:388
+#: lib/bookshelf_chip_editor.lua:394 lib/bookshelf_chip_editor.lua:395
 #: lib/bookshelf_filter.lua:36
 msgid "Collection"
 msgstr "Колекция"
 
-#: lib/bookshelf_chip_editor.lua:389 lib/bookshelf_filter.lua:32
+#: lib/bookshelf_chip_editor.lua:396 lib/bookshelf_filter.lua:32
 msgid "Genre"
 msgstr "Жанр"
 
-#: lib/bookshelf_chip_editor.lua:390 lib/bookshelf_settings.lua:414
+#: lib/bookshelf_chip_editor.lua:397 lib/bookshelf_settings.lua:414
 #: lib/bookshelf_settings.lua:533 lib/bookshelf_settings.lua:676
 #: lib/bookshelf_sort_engine.lua:425
 msgid "Author"
 msgstr "Автор"
 
-#: lib/bookshelf_chip_editor.lua:392 lib/bookshelf_filter.lua:31
+#: lib/bookshelf_chip_editor.lua:399 lib/bookshelf_filter.lua:31
 msgid "Status"
 msgstr "Статус"
 
-#: lib/bookshelf_chip_editor.lua:393 lib/bookshelf_filter.lua:34
+#: lib/bookshelf_chip_editor.lua:400 lib/bookshelf_filter.lua:34
 msgid "Format"
 msgstr "Формат"
 
-#: lib/bookshelf_chip_editor.lua:395 lib/bookshelf_filter.lua:33
+#: lib/bookshelf_chip_editor.lua:402 lib/bookshelf_filter.lua:33
 #: lib/bookshelf_tokens.lua:96 micromodules/trivia.lua:447
 msgid "Language"
 msgstr "Език"
 
-#: lib/bookshelf_chip_editor.lua:399
+#: lib/bookshelf_chip_editor.lua:406
 msgid "OPDS catalog"
 msgstr "OPDS каталог"
 
-#: lib/bookshelf_chip_editor.lua:402 lib/bookshelf_chip_editor.lua:2313
+#: lib/bookshelf_chip_editor.lua:409 lib/bookshelf_chip_editor.lua:2320
 msgid "Kindle Virtual Library"
 msgstr "Виртуална библиотека Kindle"
 
-#: lib/bookshelf_chip_editor.lua:410 lib/bookshelf_settings.lua:3293
+#: lib/bookshelf_chip_editor.lua:417 lib/bookshelf_settings.lua:3293
 msgid "(none)"
 msgstr "(няма)"
 
-#: lib/bookshelf_chip_editor.lua:417
+#: lib/bookshelf_chip_editor.lua:424
 msgid "OPDS: %1"
 msgstr "OPDS: %1"
 
-#: lib/bookshelf_chip_editor.lua:629
+#: lib/bookshelf_chip_editor.lua:636
 msgid "Insert icon…"
 msgstr "Вмъкване на икона…"
 
-#: lib/bookshelf_chip_editor.lua:675 lib/bookshelf_chip_editor.lua:1737
+#: lib/bookshelf_chip_editor.lua:682 lib/bookshelf_chip_editor.lua:1744
 msgid "OK"
 msgstr "ОК"
 
-#: lib/bookshelf_chip_editor.lua:685
-msgid "Chip label"
-msgstr "Етикет на чип"
+#: lib/bookshelf_chip_editor.lua:692
+msgid "Shelf label"
+msgstr "Етикет на рафт"
 
-#: lib/bookshelf_chip_editor.lua:706
+#: lib/bookshelf_chip_editor.lua:713
 msgid ": (none)"
 msgstr ": (няма)"
 
-#: lib/bookshelf_chip_editor.lua:706
+#: lib/bookshelf_chip_editor.lua:713
 msgid "Sort "
 msgstr "Сортиране "
 
-#: lib/bookshelf_chip_editor.lua:751
+#: lib/bookshelf_chip_editor.lua:758
 msgid "Server order"
 msgstr "Подредба от сървъра"
 
-#: lib/bookshelf_chip_editor.lua:788
+#: lib/bookshelf_chip_editor.lua:795
 msgid "Source: "
 msgstr "Източник: "
 
-#: lib/bookshelf_chip_editor.lua:802
+#: lib/bookshelf_chip_editor.lua:809
 msgid "Filters: "
 msgstr "Филтри: "
 
-#: lib/bookshelf_chip_editor.lua:816 lib/bookshelf_chip_editor.lua:1351
+#: lib/bookshelf_chip_editor.lua:823 lib/bookshelf_chip_editor.lua:1358
 msgid "Catalog settings"
 msgstr "Настройки на каталога"
 
-#: lib/bookshelf_chip_editor.lua:859
+#: lib/bookshelf_chip_editor.lua:866
 msgid "Shelf style: "
 msgstr "Стил на рафта: "
 
-#: lib/bookshelf_chip_editor.lua:905
+#: lib/bookshelf_chip_editor.lua:912
 msgid "Edit label"
 msgstr "Редактиране на етикет"
 
-#: lib/bookshelf_chip_editor.lua:943
-msgid "Delete this chip? This cannot be undone."
-msgstr "Да се изтрие ли този чип? Действието е необратимо."
+#: lib/bookshelf_chip_editor.lua:950
+msgid "Delete this shelf? This cannot be undone."
+msgstr "Да се изтрие ли този рафт? Действието е необратимо."
 
-#: lib/bookshelf_chip_editor.lua:992 lib/bookshelf_collection_manager.lua:497
+#: lib/bookshelf_chip_editor.lua:999 lib/bookshelf_collection_manager.lua:497
 #: lib/bookshelf_collection_manager.lua:521 lib/bookshelf_line_editor.lua:601
 #: lib/bookshelf_opds_catalog_editor.lua:50 lib/bookshelf_widget.lua:19074
 #: main.lua:2104 micromodules/action.lua:226 micromodules/countdown.lua:144
@@ -498,297 +498,297 @@ msgstr "Да се изтрие ли този чип? Действието е н�
 msgid "Save"
 msgstr "Запазване"
 
-#: lib/bookshelf_chip_editor.lua:1133
-msgid "Edit chip"
-msgstr "Редактиране на чип"
+#: lib/bookshelf_chip_editor.lua:1140
+msgid "Edit shelf"
+msgstr "Редактиране на рафт"
 
-#: lib/bookshelf_chip_editor.lua:1135
+#: lib/bookshelf_chip_editor.lua:1142
 msgid "Editing: "
 msgstr "Редактиране: "
 
-#: lib/bookshelf_chip_editor.lua:1319
+#: lib/bookshelf_chip_editor.lua:1326
 msgid "KOReader folder"
 msgstr "папката на KOReader"
 
-#: lib/bookshelf_chip_editor.lua:1334
+#: lib/bookshelf_chip_editor.lua:1341
 msgid "Starts at"
 msgstr "Стартиране от"
 
-#: lib/bookshelf_chip_editor.lua:1334
+#: lib/bookshelf_chip_editor.lua:1341
 msgid "a subcatalog"
 msgstr "подкаталог"
 
-#: lib/bookshelf_chip_editor.lua:1343
+#: lib/bookshelf_chip_editor.lua:1350
 msgid "Starts at: the top of the catalog"
 msgstr "Стартиране от: началото на каталога"
 
-#: lib/bookshelf_chip_editor.lua:1355
+#: lib/bookshelf_chip_editor.lua:1362
 msgid "Saves to"
 msgstr "Запазване в"
 
-#: lib/bookshelf_chip_editor.lua:1363
+#: lib/bookshelf_chip_editor.lua:1370
 msgid "Refresh this catalog"
 msgstr "Опресняване на този каталог"
 
-#: lib/bookshelf_chip_editor.lua:1482
+#: lib/bookshelf_chip_editor.lua:1489
 msgid "Show as"
 msgstr "Показване като"
 
-#: lib/bookshelf_chip_editor.lua:1553
+#: lib/bookshelf_chip_editor.lua:1560
 msgid "List columns"
 msgstr "Колони на списъка"
 
-#: lib/bookshelf_chip_editor.lua:1555
+#: lib/bookshelf_chip_editor.lua:1562
 msgid "List rows"
 msgstr "Редове на списъка"
 
-#: lib/bookshelf_chip_editor.lua:1567
+#: lib/bookshelf_chip_editor.lua:1574
 msgid "Spine rows"
 msgstr "Редове с гръбчета"
 
-#: lib/bookshelf_chip_editor.lua:1601
+#: lib/bookshelf_chip_editor.lua:1608
 msgid "Spine thickness"
 msgstr "Дебелина на гръбчетата"
 
-#: lib/bookshelf_chip_editor.lua:1610
+#: lib/bookshelf_chip_editor.lua:1617
 msgid "No"
 msgstr "Не"
 
-#: lib/bookshelf_chip_editor.lua:1610
+#: lib/bookshelf_chip_editor.lua:1617
 msgid "Yes"
 msgstr "Да"
 
-#: lib/bookshelf_chip_editor.lua:1629 lib/bookshelf_settings.lua:678
+#: lib/bookshelf_chip_editor.lua:1636 lib/bookshelf_settings.lua:678
 #: lib/bookshelf_settings.lua:881 lib/bookshelf_settings.lua:940
 #: lib/bookshelf_shelf_row.lua:262 lib/bookshelf_stack_display.lua:105
 msgid "None"
 msgstr "Без"
 
-#: lib/bookshelf_chip_editor.lua:1631
+#: lib/bookshelf_chip_editor.lua:1638
 msgid "First in series"
 msgstr "Първите в поредица"
 
-#: lib/bookshelf_chip_editor.lua:1632 lib/bookshelf_settings.lua:2975
+#: lib/bookshelf_chip_editor.lua:1639 lib/bookshelf_settings.lua:2975
 msgid "Currently reading"
 msgstr "Текущо четене"
 
-#: lib/bookshelf_chip_editor.lua:1633 micromodules/random_unread.lua:232
+#: lib/bookshelf_chip_editor.lua:1640 micromodules/random_unread.lua:232
 msgid "All books"
 msgstr "Всички книги"
 
-#: lib/bookshelf_chip_editor.lua:1639 lib/bookshelf_chip_editor.lua:1678
+#: lib/bookshelf_chip_editor.lua:1646 lib/bookshelf_chip_editor.lua:1685
 msgid "Face out"
 msgstr "С лице напред"
 
-#: lib/bookshelf_chip_editor.lua:1682
+#: lib/bookshelf_chip_editor.lua:1689
 msgid "Choose which covers to show face out on this shelf."
 msgstr "Изберете кои корици да се показват с лице напред на този рафт."
 
-#: lib/bookshelf_chip_editor.lua:1692
+#: lib/bookshelf_chip_editor.lua:1699
 msgid "Author on spine"
 msgstr "Автор на гръбчето"
 
-#: lib/bookshelf_chip_editor.lua:1712
+#: lib/bookshelf_chip_editor.lua:1719
 msgid "Folder tiles: "
 msgstr "Стил на папките: "
 
-#: lib/bookshelf_chip_editor.lua:1715
+#: lib/bookshelf_chip_editor.lua:1722
 msgid "Folder tiles"
 msgstr "Стил на папките"
 
-#: lib/bookshelf_chip_editor.lua:1744
+#: lib/bookshelf_chip_editor.lua:1751
 msgid "Shelf style"
 msgstr "Стил на рафта"
 
-#: lib/bookshelf_chip_editor.lua:1812
+#: lib/bookshelf_chip_editor.lua:1819
 msgid "Save downloads from this catalog to…"
 msgstr "Запазване на изтеглянията от този каталог в…"
 
-#: lib/bookshelf_chip_editor.lua:1816
+#: lib/bookshelf_chip_editor.lua:1823
 msgid "Choose folder…"
 msgstr "Избор на папка…"
 
-#: lib/bookshelf_chip_editor.lua:1820
+#: lib/bookshelf_chip_editor.lua:1827
 msgid "Save downloads to…"
 msgstr "Запазване на изтеглянията в…"
 
-#: lib/bookshelf_chip_editor.lua:1831 lib/bookshelf_chip_editor.lua:1832
+#: lib/bookshelf_chip_editor.lua:1838 lib/bookshelf_chip_editor.lua:1839
 msgid "KOReader's download folder"
 msgstr "Папката за изтегляния на KOReader"
 
-#: lib/bookshelf_chip_editor.lua:1892 lib/bookshelf_chip_editor.lua:1980
+#: lib/bookshelf_chip_editor.lua:1899 lib/bookshelf_chip_editor.lua:1987
 msgid "Choose "
 msgstr "Избор на "
 
-#: lib/bookshelf_chip_editor.lua:1893 lib/bookshelf_chip_editor.lua:2526
+#: lib/bookshelf_chip_editor.lua:1900 lib/bookshelf_chip_editor.lua:2533
 #: lib/bookshelf_folder_picker.lua:137 lib/bookshelf_library_modal.lua:517
 #: lib/bookshelf_widget.lua:6337 lib/bookshelf_widget.lua:19047
 msgid "Search…"
 msgstr "Търсене…"
 
-#: lib/bookshelf_chip_editor.lua:2118
+#: lib/bookshelf_chip_editor.lua:2125
 msgid "Choose OPDS catalog"
 msgstr "Избор на OPDS каталог"
 
-#: lib/bookshelf_chip_editor.lua:2120
+#: lib/bookshelf_chip_editor.lua:2127
 msgid "Add catalog…"
 msgstr "Добавяне на каталог…"
 
-#: lib/bookshelf_chip_editor.lua:2135 lib/bookshelf_line_editor.lua:615
+#: lib/bookshelf_chip_editor.lua:2142 lib/bookshelf_line_editor.lua:615
 #: lib/bookshelf_widget.lua:17976 lib/bookshelf_widget.lua:18701
 #: lib/bookshelf_widget.lua:18799
 msgid "Edit"
 msgstr "Редактиране"
 
-#: lib/bookshelf_chip_editor.lua:2211
+#: lib/bookshelf_chip_editor.lua:2218
 msgid "Choose folder within home folder"
 msgstr "Избор на папка в началната папка"
 
-#: lib/bookshelf_chip_editor.lua:2213 lib/bookshelf_folder_picker.lua:111
+#: lib/bookshelf_chip_editor.lua:2220 lib/bookshelf_folder_picker.lua:111
 msgid "Browse device…"
 msgstr "Преглед на устройството…"
 
-#: lib/bookshelf_chip_editor.lua:2239
+#: lib/bookshelf_chip_editor.lua:2246
 msgid "★ Favorites"
 msgstr "★ Любими"
 
-#: lib/bookshelf_chip_editor.lua:2252
+#: lib/bookshelf_chip_editor.lua:2259
 msgid "Specific folder…"
 msgstr "Конкретна папка…"
 
-#: lib/bookshelf_chip_editor.lua:2254
+#: lib/bookshelf_chip_editor.lua:2261
 msgid "Flattened folder…"
 msgstr "Папка без подпапки…"
 
-#: lib/bookshelf_chip_editor.lua:2260
+#: lib/bookshelf_chip_editor.lua:2267
 msgid "Specific series…"
 msgstr "Конкретна поредица…"
 
-#: lib/bookshelf_chip_editor.lua:2265
+#: lib/bookshelf_chip_editor.lua:2272
 msgid "Specific author…"
 msgstr "Конкретен автор…"
 
-#: lib/bookshelf_chip_editor.lua:2270
+#: lib/bookshelf_chip_editor.lua:2277
 msgid "Specific genre…"
 msgstr "Конкретен жанр…"
 
-#: lib/bookshelf_chip_editor.lua:2275
+#: lib/bookshelf_chip_editor.lua:2282
 msgid "Specific collection…"
 msgstr "Конкретна колекция…"
 
-#: lib/bookshelf_chip_editor.lua:2279
+#: lib/bookshelf_chip_editor.lua:2286
 msgid "Specific format…"
 msgstr "Конкретен формат…"
 
-#: lib/bookshelf_chip_editor.lua:2284
+#: lib/bookshelf_chip_editor.lua:2291
 msgid "Specific rating…"
 msgstr "Конкретна оценка…"
 
-#: lib/bookshelf_chip_editor.lua:2288
+#: lib/bookshelf_chip_editor.lua:2295
 msgid "Specific language…"
 msgstr "Конкретен език…"
 
-#: lib/bookshelf_chip_editor.lua:2297
+#: lib/bookshelf_chip_editor.lua:2304
 msgid "OPDS catalog…"
 msgstr "OPDS каталог…"
 
-#: lib/bookshelf_chip_editor.lua:2316
-msgid "Chip source"
-msgstr "Източник на чип"
+#: lib/bookshelf_chip_editor.lua:2323
+msgid "Shelf source"
+msgstr "Източник на рафт"
 
-#: lib/bookshelf_chip_editor.lua:2384
+#: lib/bookshelf_chip_editor.lua:2391
 msgid "Clear all filters"
 msgstr "Изчистване на всички филтри"
 
-#: lib/bookshelf_chip_editor.lua:2388 lib/bookshelf_chip_editor.lua:2565
-#: lib/bookshelf_chip_editor.lua:2623 lib/bookshelf_chip_editor.lua:2686
+#: lib/bookshelf_chip_editor.lua:2395 lib/bookshelf_chip_editor.lua:2572
+#: lib/bookshelf_chip_editor.lua:2630 lib/bookshelf_chip_editor.lua:2693
 #: lib/bookshelf_widget.lua:19741
 msgid "Done"
 msgstr "Готово"
 
-#: lib/bookshelf_chip_editor.lua:2391
+#: lib/bookshelf_chip_editor.lua:2398
 msgid "Pick filters to narrow the shelf. Several picks in the same row match any of them, so picking two genres shows books in either. Picks in different rows must all match, so adding a 5-star rating then limits those to 5-star books only. Numbers below filter choices show how many books currently match based on other selected filters."
 msgstr "Изберете филтри, за да стесните рафта. Няколко избора в един ред съвпадат с всеки от тях, така че изборът на два жанра показва книги от всеки от тях. Изборите в различни редове трябва да съвпадат едновременно, така че добавянето на оценка 5 звезди ограничава показаните до книги с 5 звезди. Числата под филтрите показват колко книги отговарят в момента въз основа на другите избрани филтри."
 
-#: lib/bookshelf_chip_editor.lua:2393
+#: lib/bookshelf_chip_editor.lua:2400
 msgid "Filters"
 msgstr "Филтри"
 
-#: lib/bookshelf_chip_editor.lua:2443
+#: lib/bookshelf_chip_editor.lua:2450
 msgid "Series filter"
 msgstr "Филтър по поредица"
 
-#: lib/bookshelf_chip_editor.lua:2458
+#: lib/bookshelf_chip_editor.lua:2465
 msgid "Reading status filter"
 msgstr "Филтър по статус на четене"
 
-#: lib/bookshelf_chip_editor.lua:2459
+#: lib/bookshelf_chip_editor.lua:2466
 msgid "Genre filter"
 msgstr "Филтър по жанр"
 
-#: lib/bookshelf_chip_editor.lua:2460
+#: lib/bookshelf_chip_editor.lua:2467
 msgid "Language filter"
 msgstr "Филтър по език"
 
-#: lib/bookshelf_chip_editor.lua:2461
+#: lib/bookshelf_chip_editor.lua:2468
 msgid "Format filter"
 msgstr "Филтър по формат"
 
-#: lib/bookshelf_chip_editor.lua:2462
+#: lib/bookshelf_chip_editor.lua:2469
 msgid "Rating filter"
 msgstr "Филтър по оценка"
 
-#: lib/bookshelf_chip_editor.lua:2463
+#: lib/bookshelf_chip_editor.lua:2470
 msgid "Collection filter"
 msgstr "Филтър по колекция"
 
-#: lib/bookshelf_chip_editor.lua:2465
+#: lib/bookshelf_chip_editor.lua:2472
 msgid "Filter"
 msgstr "Филтър"
 
-#: lib/bookshelf_chip_editor.lua:2601 micromodules/trivia.lua:42
+#: lib/bookshelf_chip_editor.lua:2608 micromodules/trivia.lua:42
 #: micromodules/trivia.lua:63 micromodules/trivia.lua:70
 #: micromodules/trivia.lua:402
 msgid "Any"
 msgstr "Всякакви"
 
-#: lib/bookshelf_chip_editor.lua:2621
+#: lib/bookshelf_chip_editor.lua:2628
 msgid "(none in library)"
 msgstr "(няма в библиотеката)"
 
-#: lib/bookshelf_chip_editor.lua:2679
+#: lib/bookshelf_chip_editor.lua:2686
 msgid "(no folder filters - tap to remove once added)"
 msgstr "(няма филтри за папки - докоснете за премахване след добавяне)"
 
-#: lib/bookshelf_chip_editor.lua:2683
+#: lib/bookshelf_chip_editor.lua:2690
 msgid "Add folder to include"
 msgstr "Добавяне на папка за включване"
 
-#: lib/bookshelf_chip_editor.lua:2684
+#: lib/bookshelf_chip_editor.lua:2691
 msgid "Add folder to exclude"
 msgstr "Добавяне на папка за изключване"
 
-#: lib/bookshelf_chip_editor.lua:2689
+#: lib/bookshelf_chip_editor.lua:2696
 msgid "Folder filter"
 msgstr "Филтър по папка"
 
-#: lib/bookshelf_chip_editor.lua:2747
+#: lib/bookshelf_chip_editor.lua:2754
 msgid "Clear sort"
 msgstr "Изчистване на сортирането"
 
-#: lib/bookshelf_chip_editor.lua:2803
+#: lib/bookshelf_chip_editor.lua:2810
 msgid "Sort groups by"
 msgstr "Сортиране на групите по"
 
-#: lib/bookshelf_chip_editor.lua:2805
+#: lib/bookshelf_chip_editor.lua:2812
 msgid "Within each group, then by"
 msgstr "Във всяка група, след това по"
 
-#: lib/bookshelf_chip_editor.lua:2807
+#: lib/bookshelf_chip_editor.lua:2814
 msgid "Sort by"
 msgstr "Сортиране по"
 
-#: lib/bookshelf_chip_editor.lua:2809
+#: lib/bookshelf_chip_editor.lua:2816
 msgid "Then by"
 msgstr "След това по"
 
@@ -824,8 +824,8 @@ msgstr "\"? Книгите не се изтриват, само етикетът
 #: lib/bookshelf_collection_manager.lua:405
 #: lib/bookshelf_collection_manager.lua:416 lib/bookshelf_widget.lua:19185
 #: lib/bookshelf_widget.lua:19192
-msgid "Pin to chip bar"
-msgstr "Закачане към лентата с чипове"
+msgid "Pin to shelf menu"
+msgstr "Закачане към менюто на рафтовете"
 
 #: lib/bookshelf_collection_manager.lua:423
 msgid "Edit collection: "
@@ -860,8 +860,8 @@ msgid "Manage collections"
 msgstr "Управление на колекциите"
 
 #: lib/bookshelf_collection_manager.lua:688
-msgid "Tap a custom collection to rename, delete, or pin it to the chip bar. Long-press a book on the shelf and tap Collections… to add or remove it from collections."
-msgstr "Докоснете персонализирана колекция, за да я преименувате, изтриете или закачите към лентата с чипове. Задръжте върху книга на рафта и докоснете Колекции…, за да я добавите или премахнете от колекции."
+msgid "Tap a custom collection to rename, delete, or pin it to the shelf menu. Long-press a book on the shelf and tap Collections… to add or remove it from collections."
+msgstr "Докоснете персонализирана колекция, за да я преименувате, изтриете или закачите към менюто на рафтовете. Задръжте върху книга на рафта и докоснете Колекции…, за да я добавите или премахнете от колекции."
 
 #: lib/bookshelf_collection_manager.lua:800
 msgid "Add to all"
@@ -1889,8 +1889,8 @@ msgid "Sync catalog"
 msgstr "Синхронизиране на каталога"
 
 #: lib/bookshelf_opds_catalog_editor.lua:99
-msgid "Delete \"%1\"? %2 chip(s) use this catalog and will stop working."
-msgstr "Да се изтрие ли „%1“? %2 чип(а) използват този каталог и ще спрат да работят."
+msgid "Delete \"%1\"? %2 shelves use this catalog and will stop working."
+msgstr "Да се изтрие ли „%1“? %2 рафт(а) използват този каталог и ще спрат да работят."
 
 #: lib/bookshelf_opds_catalog_editor.lua:101
 msgid "Delete \"%1\"?"
@@ -2118,8 +2118,8 @@ msgid "Default folder style: "
 msgstr "Стил на папките по подразбиране: "
 
 #: lib/bookshelf_settings.lua:838
-msgid "How folders and stacks are drawn on any shelf that has not chosen its own. Long-press a chip to override it for that shelf."
-msgstr "Как се изчертават папките и стековете на всеки рафт, който не е избрал собствен стил. Задръжте върху чип, за да зададете друг стил за този рафт."
+msgid "How folders and stacks are drawn on any shelf that has not chosen its own. Long-press a shelf to override it there."
+msgstr "Как се изчертават папките и стековете на всеки рафт, който не е избрал собствен стил. Задръжте върху рафт, за да зададете друг стил там."
 
 #: lib/bookshelf_settings.lua:848
 msgid "Show progress bars"
@@ -2244,8 +2244,8 @@ msgid "Rows, columns and view are set per shelf:"
 msgstr "Редовете, колоните и изгледът се задават за всеки рафт:"
 
 #: lib/bookshelf_settings.lua:1271
-msgid "long-press a chip, then open Shelf style."
-msgstr "Задръжте върху чип и отворете Стил на рафта."
+msgid "long-press a shelf, then open Shelf style."
+msgstr "Задръжте върху рафт и отворете Стил на рафта."
 
 #: lib/bookshelf_settings.lua:1298
 msgid "Add a line (maximum reached)"
@@ -2408,28 +2408,28 @@ msgid "Folder text color (% black)"
 msgstr "Цвят на текста на папките (% черно)"
 
 #: lib/bookshelf_settings.lua:1874
-msgid "Selected chip fill"
-msgstr "Фон на избрания чип"
+msgid "Selected shelf fill"
+msgstr "Фон на избрания рафт"
 
 #: lib/bookshelf_settings.lua:1876
-msgid "Fill behind the selected chip in the chip bar. Left unset, the selected chip is drawn by inverting the chip -- the fastest path and identical on every device. Setting a color paints it instead. Long-press to clear."
-msgstr "Фонът под избрания чип в лентата с чипове. Ако не е зададен, избраният чип се изчертава чрез обръщане на цветовете му -- най-бързият начин, еднакъв на всяко устройство. Задаването на цвят го запълва с него вместо това. Задръжте за изчистване."
+msgid "Fill behind the selected shelf in the shelf menu. Left unset, the selected shelf is drawn by inverting it -- the fastest path and identical on every device. Setting a color paints it instead. Long-press to clear."
+msgstr "Фонът под избрания рафт в менюто на рафтовете. Ако не е зададен, избраният рафт се изчертава чрез обръщане на цветовете му -- най-бързият начин, еднакъв на всяко устройство. Задаването на цвят го запълва с него вместо това. Задръжте за изчистване."
 
 #: lib/bookshelf_settings.lua:1883
-msgid "Selected chip fill (% black)"
-msgstr "Фон на избрания чип (% черно)"
+msgid "Selected shelf fill (% black)"
+msgstr "Фон на избрания рафт (% черно)"
 
 #: lib/bookshelf_settings.lua:1894
-msgid "Selected chip text"
-msgstr "Текст на избрания чип"
+msgid "Selected shelf text"
+msgstr "Текст на избрания рафт"
 
 #: lib/bookshelf_settings.lua:1896
-msgid "Label color on the selected chip. Defaults to paper white over the fill. Long-press to clear."
-msgstr "Цветът на етикета върху избрания чип. По подразбиране е бялото на хартията върху фона. Задръжте за изчистване."
+msgid "Label color on the selected shelf. Defaults to paper white over the fill. Long-press to clear."
+msgstr "Цветът на етикета върху избрания рафт. По подразбиране е бялото на хартията върху фона. Задръжте за изчистване."
 
 #: lib/bookshelf_settings.lua:1901
-msgid "Selected chip text (% black)"
-msgstr "Текст на избрания чип (% черно)"
+msgid "Selected shelf text (% black)"
+msgstr "Текст на избрания рафт (% черно)"
 
 #: lib/bookshelf_settings.lua:1911
 msgid "Reset to default colors"
@@ -2472,8 +2472,8 @@ msgid "Bookshelf UI font: %1"
 msgstr "Шрифт на интерфейса на Bookshelf: %1"
 
 #: lib/bookshelf_settings.lua:2090
-msgid "The font Bookshelf uses for its own UI text (chips, labels, metadata). Pick any installed font (same picker as the hero card); '(Default)' follows your KOReader UI font. The hero title and author have their own fonts in the hero card editor."
-msgstr "Шрифтът, който Bookshelf използва за собствения си текст на интерфейса (чипове, етикети, метаданни). Изберете произволен инсталиран шрифт (същият избор като при главното изображение); '(По подразбиране)' следва шрифта на интерфейса на KOReader. Заглавието и авторът в главното изображение имат собствени шрифтове в редактора на главното изображение."
+msgid "The font Bookshelf uses for its own UI text (shelf names, labels, metadata). Pick any installed font (same picker as the hero card); '(Default)' follows your KOReader UI font. The hero title and author have their own fonts in the hero card editor."
+msgstr "Шрифтът, който Bookshelf използва за собствения си текст на интерфейса (имена на рафтове, етикети, метаданни). Изберете произволен инсталиран шрифт (същият избор като при главното изображение); '(По подразбиране)' следва шрифта на интерфейса на KOReader. Заглавието и авторът в главното изображение имат собствени шрифтове в редактора на главното изображение."
 
 #: lib/bookshelf_settings.lua:2108 lib/bookshelf_settings.lua:2110
 #: lib/bookshelf_settings.lua:2976
@@ -2481,8 +2481,8 @@ msgid "Micro modules"
 msgstr "Микромодули"
 
 #: lib/bookshelf_settings.lua:2112
-msgid "Where micro-modules appear. Each surface is independent: In start menu shows module cards in the start-menu launcher; In hero area gives a chip that swaps the hero card for the grid; Full-screen button adds a footer button opening a full-screen grid. The hero and full-screen surfaces keep their own module lists. Turn all three off to disable micro-modules entirely."
-msgstr "Къде се показват микромодулите. Всяка повърхност е независима: „В стартовото меню“ показва картите на модулите в стартовото меню; „В главната област“ добавя чип, който заменя главната карта с мрежата; „Бутон на цял екран“ добавя бутон в долната лента, който отваря мрежа на цял екран. Главната област и тази на цял екран пазят собствени списъци с модули. Изключете и трите, за да изключите микромодулите изцяло."
+msgid "Where micro-modules appear. Each surface is independent: In start menu shows module cards in the start-menu launcher; In hero area adds a shelf-menu entry that swaps the hero card for the grid; Full-screen button adds a footer button opening a full-screen grid. The hero and full-screen surfaces keep their own module lists. Turn all three off to disable micro-modules entirely."
+msgstr "Къде се показват микромодулите. Всяка повърхност е независима: „В стартовото меню“ показва картите на модулите в стартовото меню; „В главната област“ добавя запис в менюто на рафтовете, който заменя главната карта с мрежата; „Бутон на цял екран“ добавя бутон в долната лента, който отваря мрежа на цял екран. Главната област и тази на цял екран пазят собствени списъци с модули. Изключете и трите, за да изключите микромодулите изцяло."
 
 #: lib/bookshelf_settings.lua:2164
 msgid "In start menu"
@@ -2607,16 +2607,16 @@ msgid "Hardcover genres used: %1"
 msgstr "Използвани жанрове от Hardcover: %1"
 
 #: lib/bookshelf_settings.lua:2570
-msgid "How many of a linked book's Hardcover genres to use -- for the tag pills and the genre chips/stacks -- when Use Hardcover metadata is on. 0 uses none."
-msgstr "Колко от жанровете на свързана книга от Hardcover да се използват — за етикетите и чиповете/стековете за жанрове — когато Използване на метаданните от Hardcover е включено. 0 не използва нито един."
+msgid "How many of a linked book's Hardcover genres to use -- for the tag pills and the genre shelves/stacks -- when Use Hardcover metadata is on. 0 uses none."
+msgstr "Колко от жанровете на свързана книга от Hardcover да се използват — за етикетите и рафтовете/стековете за жанрове — когато Използване на метаданните от Hardcover е включено. 0 не използва нито един."
 
 #: lib/bookshelf_settings.lua:2579
 msgid "Hardcover genres used"
 msgstr "Използвани жанрове от Hardcover"
 
 #: lib/bookshelf_settings.lua:2580
-msgid "How many of a book's Hardcover genres to use for tag pills and the genre chips/stacks."
-msgstr "Колко от жанровете на книга от Hardcover да се използват за етикетите и чиповете/стековете за жанрове."
+msgid "How many of a book's Hardcover genres to use for tag pills and the genre shelves/stacks."
+msgstr "Колко от жанровете на книга от Hardcover да се използват за етикетите и рафтовете/стековете за жанрове."
 
 #: lib/bookshelf_settings.lua:2600
 msgid "Manage Hardcover data"
@@ -2735,12 +2735,12 @@ msgid "Show Bookshelf immediately when leaving a book. The book finishes closing
 msgstr "Показва Bookshelf веднага щом излезете от книга. Книгата приключва затварянето си в следващия спокоен момент - при отваряне на друга книга, половин минута бездействие или излизане от Bookshelf - така че разглеждането никога не чака. Дотогава връщането директно в същата книга е мигновено. Изключете тази опция, за да се затварят книгите напълно, преди да се покаже Bookshelf, както преди."
 
 #: lib/bookshelf_settings.lua:2824
-msgid "Pre-warm chip cache"
-msgstr "Предварително зареждане на кеша на чиповете"
+msgid "Pre-warm shelf cache"
+msgstr "Предварително зареждане на кеша на рафтовете"
 
 #: lib/bookshelf_settings.lua:2825
-msgid "Warms each chip's data in the background shortly after launch so switching chips is instant. On a large library with many chips this adds a few seconds of work after startup; turn it off for a quicker, lighter launch (chips then load on first use)."
-msgstr "Зарежда данните на всеки чип във фонов режим малко след стартиране, така че превключването между чиповете е мигновено. При голяма библиотека с много чипове това добавя няколко секунди работа след стартиране; изключете го за по-бързо и по-леко стартиране (чиповете тогава се зареждат при първа употреба)."
+msgid "Warms each shelf's data in the background shortly after launch so switching shelves is instant. On a large library with many shelves this adds a few seconds of work after startup; turn it off for a quicker, lighter launch (shelves then load on first use)."
+msgstr "Зарежда данните на всеки рафт във фонов режим малко след стартиране, така че превключването между рафтовете е мигновено. При голяма библиотека с много рафтове това добавя няколко секунди работа след стартиране; изключете го за по-бързо и по-леко стартиране (рафтовете тогава се зареждат при първа употреба)."
 
 #: lib/bookshelf_settings.lua:2840
 msgid "\"Latest\" walk depth"
@@ -2792,8 +2792,8 @@ msgid "Hero area starts with"
 msgstr "Главната област започва с"
 
 #: lib/bookshelf_settings.lua:3012
-msgid "What the hero area at the top of the bookshelf shows when it opens: the book you're currently reading, or a grid of micro-modules (clock, quote, random book, reading goals…). You can also switch between them with the chips above the shelves."
-msgstr "Какво показва главната област в горната част на рафта при отваряне: книгата, която четете в момента, или мрежа от микромодули (часовник, цитат, произволна книга, цели за четене…). Можете да превключвате между тях и с чиповете над рафтовете."
+msgid "What the hero area at the top of the bookshelf shows when it opens: the book you're currently reading, or a grid of micro-modules (clock, quote, random book, reading goals…). You can also switch between them from the shelf menu."
+msgstr "Какво показва главната област в горната част на рафта при отваряне: книгата, която четете в момента, или мрежа от микромодули (часовник, цитат, произволна книга, цели за четене…). Можете да превключвате между тях и от менюто на рафтовете."
 
 #: lib/bookshelf_settings.lua:3031
 msgid "Show book detail in hero"
@@ -2828,8 +2828,8 @@ msgid "Page turn animation"
 msgstr "Анимация при прелистване"
 
 #: lib/bookshelf_settings.lua:3098
-msgid "Animate shelf page turns and chip-bar paging with a wipe effect. E-ink only (the effect relies on the panel's refresh, so it does nothing on LCD screens). Fast / Medium / Slow trade snappiness for smoothness. Slow looks smoothest but takes longer on older panels."
-msgstr "Анимиране на прелистването на рафта и странирането на лентата с чипове с ефект на изтриване. Само за e-ink (ефектът разчита на опресняването на панела, затова не прави нищо на LCD екрани). „Бърз\" / „Среден\" / „Бавен\" разменят пъргавина за плавност. „Бавен\" изглежда най-плавно, но отнема повече време на по-стари панели."
+msgid "Animate shelf page turns and shelf-menu paging with a wipe effect. E-ink only (the effect relies on the panel's refresh, so it does nothing on LCD screens). Fast / Medium / Slow trade snappiness for smoothness. Slow looks smoothest but takes longer on older panels."
+msgstr "Анимиране на прелистването на рафта и странирането на менюто на рафтовете с ефект на изтриване. Само за e-ink (ефектът разчита на опресняването на панела, затова не прави нищо на LCD екрани). „Бърз\" / „Среден\" / „Бавен\" разменят пъргавина за плавност. „Бавен\" изглежда най-плавно, но отнема повече време на по-стари панели."
 
 #: lib/bookshelf_settings.lua:3103
 msgid "Start menu animation"
@@ -2864,8 +2864,8 @@ msgid "Manage collections…"
 msgstr "Управление на колекциите…"
 
 #: lib/bookshelf_settings.lua:3162
-msgid "Create, rename, reorder and delete collections. Also reachable from collection chips and stacks."
-msgstr "Създаване, преименуване, пренареждане и изтриване на колекции. Достъпно и от чиповете на колекции и стековете."
+msgid "Create, rename, reorder and delete collections. Also reachable from collection shelves and stacks."
+msgstr "Създаване, преименуване, пренареждане и изтриване на колекции. Достъпно и от рафтовете на колекции и стековете."
 
 #: lib/bookshelf_settings.lua:3186 lib/bookshelf_settings.lua:3188
 msgid "Bulk selection mode"
@@ -2888,8 +2888,8 @@ msgid "Author name formatting"
 msgstr "Форматиране на имената на авторите"
 
 #: lib/bookshelf_settings.lua:3217
-msgid "How author names are displayed on the Authors chip. Auto keeps whichever form was first found (\"Richard Osman\" or \"Osman, Richard\"). First Last and Last, First force every author card into the same shape regardless of how each book stored the name."
-msgstr "Как се показват имената на авторите в чипа Автори. Автоматично запазва формата, открита първа (\"Richard Osman\" или \"Osman, Richard\"). Име Фамилия и Фамилия, Име привеждат всяка карта на автор в един и същ вид, независимо как всяка книга е записала името."
+msgid "How author names are displayed on the Authors shelf. Auto keeps whichever form was first found (\"Richard Osman\" or \"Osman, Richard\"). First Last and Last, First force every author card into the same shape regardless of how each book stored the name."
+msgstr "Как се показват имената на авторите на рафта Автори. Автоматично запазва формата, открита първа (\"Richard Osman\" или \"Osman, Richard\"). Име Фамилия и Фамилия, Име привеждат всяка карта на автор в един и същ вид, независимо как всяка книга е записала името."
 
 #: lib/bookshelf_settings.lua:3253
 msgid "Hide single-book series and genres"
@@ -2964,40 +2964,40 @@ msgid "While reading"
 msgstr "По време на четене"
 
 #: lib/bookshelf_settings.lua:3451
-msgid "Reset chip bar to defaults"
-msgstr "Връщане на лентата с чипове към подразбиране"
+msgid "Reset shelf menu to defaults"
+msgstr "Връщане на менюто на рафтовете към подразбиране"
 
 #: lib/bookshelf_settings.lua:3452
-msgid "Clears your custom chip layout (which chips are shown, their order, their labels and icons, their sources and filters and sorts) and restores the fresh-install chip set: Home / Recent / Series / Favorites enabled, the rest available to toggle on. Also returns the active chip to Home and the page indicator to 1. Other settings (hero text, fonts, colors) are unaffected."
-msgstr "Изчиства персонализираното оформление на чиповете (кои чипове се показват, реда им, етикетите и иконите им, източниците, филтрите и сортирането им) и възстановява набора чипове при нова инсталация: Начало / Скорошни / Поредици / Любими са включени, останалите могат да се включват. Връща и активния чип на Начало, а индикатора за страница на 1. Другите настройки (текст на главното изображение, шрифтове, цветове) не се засягат."
+msgid "Clears your custom shelf menu (which shelves are shown, their order, their labels and icons, their sources and filters and sorts) and restores the fresh-install set: Home / Recent / Series / Favorites enabled, the rest available to toggle on. Also returns the active shelf to Home and the page indicator to 1. Other settings (hero text, fonts, colors) are unaffected."
+msgstr "Изчиства персонализираното меню на рафтовете (кои рафтове се показват, реда им, етикетите и иконите им, източниците, филтрите и сортирането им) и възстановява набора при нова инсталация: Начало / Скорошни / Поредици / Любими са включени, останалите могат да се включват. Връща и активния рафт на Начало, а индикатора за страница на 1. Другите настройки (текст на главното изображение, шрифтове, цветове) не се засягат."
 
 #: lib/bookshelf_settings.lua:3463
 msgid ""
-"Reset the chip bar to default settings?\n"
+"Reset the shelf menu to default settings?\n"
 "\n"
-"All custom chips you have created or edited will be lost. Other Bookshelf settings (hero text, fonts, colors) are unaffected."
+"All custom shelves you have created or edited will be lost. Other Bookshelf settings (hero text, fonts, colors) are unaffected."
 msgstr ""
-"Да се върне ли лентата с чипове към настройките по подразбиране?\n"
+"Да се върне ли менюто на рафтовете към настройките по подразбиране?\n"
 "\n"
-"Всички персонализирани чипове, които сте създали или редактирали, ще бъдат загубени. Другите настройки на Bookshelf (текст на главното изображение, шрифтове, цветове) не се засягат."
+"Всички персонализирани рафтове, които сте създали или редактирали, ще бъдат загубени. Другите настройки на Bookshelf (текст на главното изображение, шрифтове, цветове) не се засягат."
 
 #: lib/bookshelf_settings.lua:3499
 msgid "Reset book detail area to defaults"
 msgstr "Връщане на областта с детайли за книгата към подразбиране"
 
 #: lib/bookshelf_settings.lua:3500
-msgid "Clears your hero/book-detail customizations and restores the fresh-install detail layout, including the bundled title (Inter ExtraBold) and author (Caveat) fonts. The Bookshelf UI font and chip bar are unaffected."
-msgstr "Изчиства персонализациите на главното изображение/детайлите за книгата и възстановява оформлението на детайлите при нова инсталация, включително включените шрифтове за заглавие (Inter ExtraBold) и автор (Caveat). Шрифтът на интерфейса на Bookshelf и лентата с чипове не се засягат."
+msgid "Clears your hero/book-detail customizations and restores the fresh-install detail layout, including the bundled title (Inter ExtraBold) and author (Caveat) fonts. The Bookshelf UI font and shelf menu are unaffected."
+msgstr "Изчиства персонализациите на главното изображение/детайлите за книгата и възстановява оформлението на детайлите при нова инсталация, включително включените шрифтове за заглавие (Inter ExtraBold) и автор (Caveat). Шрифтът на интерфейса на Bookshelf и менюто на рафтовете не се засягат."
 
 #: lib/bookshelf_settings.lua:3507
 msgid ""
 "Reset the book detail area to default settings?\n"
 "\n"
-"All hero/detail text and font customizations will be lost. The Bookshelf UI font and chip bar are unaffected."
+"All hero/detail text and font customizations will be lost. The Bookshelf UI font and shelf menu are unaffected."
 msgstr ""
 "Да се върне ли областта с детайли за книгата към настройките по подразбиране?\n"
 "\n"
-"Всички персонализации на текст и шрифт в главното изображение/детайлите ще бъдат загубени. Шрифтът на интерфейса на Bookshelf и лентата с чипове не се засягат."
+"Всички персонализации на текст и шрифт в главното изображение/детайлите ще бъдат загубени. Шрифтът на интерфейса на Bookshelf и менюто на рафтовете не се засягат."
 
 #: lib/bookshelf_settings.lua:3527
 msgid "BETA: Read calibre metadata.calibre"
@@ -3012,8 +3012,8 @@ msgid "BETA: Kobo library shelf"
 msgstr "БЕТА: Рафт с библиотеката на Kobo"
 
 #: lib/bookshelf_settings.lua:3567
-msgid "Adds a \"Kobo\" chip that surfaces your Kobo virtual library (the books managed by the Kobo store / OGKevin's kobo.koplugin) as a Bookshelf shelf. Read-only; covers and opening depend on that plugin. Kobo devices only."
-msgstr "Добавя чип „Kobo“, който показва виртуалната ви библиотека на Kobo (книгите, управлявани от магазина на Kobo / kobo.koplugin на OGKevin) като рафт на Bookshelf. Само за четене; кориците и отварянето зависят от тази приставка. Само за устройства Kobo."
+msgid "Adds a \"Kobo\" shelf that surfaces your Kobo virtual library (the books managed by the Kobo store / OGKevin's kobo.koplugin). Read-only; covers and opening depend on that plugin. Kobo devices only."
+msgstr "Добавя рафт „Kobo“, който показва виртуалната ви библиотека на Kobo (книгите, управлявани от магазина на Kobo / kobo.koplugin на OGKevin). Само за четене; кориците и отварянето зависят от тази приставка. Само за устройства Kobo."
 
 #: lib/bookshelf_settings.lua:3880
 msgid "Rows and columns set how much of the screen the shelf takes; the hero area above fills whatever is left. List and spine shelves use that same space with their own row counts, so covers are shown here while you adjust it."
@@ -3044,8 +3044,8 @@ msgid "Hero micro-modules font scale"
 msgstr "Мащаб на шрифта на микромодулите в главната област"
 
 #: lib/bookshelf_settings.lua:4100
-msgid "Chip bar font scale"
-msgstr "Мащаб на шрифта на лентата с чипове"
+msgid "Shelf menu font scale"
+msgstr "Мащаб на шрифта на менюто на рафтовете"
 
 #: lib/bookshelf_settings.lua:4248
 msgid "Stack & folder label scale"
@@ -3124,8 +3124,8 @@ msgid "Stack & folder labels"
 msgstr "Надписи на стекове и папки"
 
 #: lib/bookshelf_settings.lua:4799
-msgid "Chip bar"
-msgstr "Лента с чипове"
+msgid "Shelf menu"
+msgstr "Меню на рафтовете"
 
 #: lib/bookshelf_settings.lua:4810
 msgid "List text"
@@ -3217,24 +3217,24 @@ msgid "Installed: v"
 msgstr "Инсталиран: v"
 
 #: lib/bookshelf_settings.lua:5230
-msgid "Flexible chip widths"
-msgstr "Гъвкави ширини на чиповете"
+msgid "Flexible shelf widths"
+msgstr "Гъвкави ширини на рафтовете"
 
 #: lib/bookshelf_settings.lua:5231
-msgid "Off: every chip gets the same width. On: each chip is sized to its label, so single-icon chips stay narrow and longer text labels get more room. Falls back to equal widths when natural sizes don't fit."
-msgstr "Изкл.: всеки чип получава еднаква ширина. Вкл.: всеки чип се оразмерява според етикета си, така че чиповете само с икона остават тесни, а по-дългите текстови етикети получават повече място. Връща се към еднакви ширини, когато естествените размери не се побират."
+msgid "Off: every shelf gets the same width. On: each shelf is sized to its label, so single-icon shelves stay narrow and longer text labels get more room. Falls back to equal widths when natural sizes don't fit."
+msgstr "Изкл.: всеки рафт получава еднаква ширина. Вкл.: всеки рафт се оразмерява според етикета си, така че рафтовете само с икона остават тесни, а по-дългите текстови етикети получават повече място. Връща се към еднакви ширини, когато естествените размери не се побират."
 
 #: lib/bookshelf_settings.lua:5246
 msgid "Uppercase labels"
 msgstr "Етикети с главни букви"
 
 #: lib/bookshelf_settings.lua:5247
-msgid "On: chip labels and the drill breadcrumb are shown in capitals, the default look. Off: each label reads exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."
-msgstr "Вкл.: етикетите на чиповете и пътеката при разглеждане се показват с главни букви - изгледът по подразбиране. Изкл.: всеки етикет се чете точно както сте го въвели, така че „Sci-Fi“ остава „Sci-Fi“."
+msgid "On: shelf names and the drill breadcrumb are shown in capitals, the default look. Off: each label reads exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."
+msgstr "Вкл.: имената на рафтовете и пътеката при разглеждане се показват с главни букви - изгледът по подразбиране. Изкл.: всеки етикет се чете точно както сте го въвели, така че „Sci-Fi“ остава „Sci-Fi“."
 
 #: lib/bookshelf_settings.lua:5306
-msgid "+ Add new chip"
-msgstr "+ Добавяне на нов чип"
+msgid "+ Add new shelf"
+msgstr "+ Добавяне на нов рафт"
 
 #: lib/bookshelf_sort_engine.lua:421
 msgid "Filename"
@@ -4008,8 +4008,8 @@ msgstr "Няма нищо в %s · Дръпнете надолу за опрес
 
 #: lib/bookshelf_widget.lua:1957
 #, lua-format
-msgid "No books in %s yet · Long-press the chip to edit its source or filter"
-msgstr "Все още няма книги в %s · Задръжте върху чипа, за да редактирате източника или филтъра"
+msgid "No books in %s yet · Long-press the shelf to edit its source or filter"
+msgstr "Все още няма книги в %s · Задръжте върху рафта, за да редактирате източника или филтъра"
 
 #: lib/bookshelf_widget.lua:1960
 #, lua-format
@@ -4018,8 +4018,8 @@ msgstr "Все още няма книги в %s"
 
 #: lib/bookshelf_widget.lua:1971
 #, lua-format
-msgid "Nothing in %s yet · Long-press the chip to edit its filter"
-msgstr "Все още няма нищо в %s · Задръжте чипа, за да редактирате филтъра му"
+msgid "Nothing in %s yet · Long-press the shelf to edit its filter"
+msgstr "Все още няма нищо в %s · Задръжте рафта, за да редактирате филтъра му"
 
 #: lib/bookshelf_widget.lua:2055
 msgid "Set home folder"
@@ -4628,8 +4628,8 @@ msgid "Already the start folder"
 msgstr "Вече е стартовата папка"
 
 #: lib/bookshelf_widget.lua:20202
-msgid "Start this chip at \"%1\""
-msgstr "Стартиране на този чип от „%1“"
+msgid "Start this shelf at \"%1\""
+msgstr "Стартиране на този рафт от „%1“"
 
 #: lib/bookshelf_widget.lua:20212
 msgid "Back to the top (now starts at \"%1\")"
@@ -4674,28 +4674,28 @@ msgstr "тази група"
 #: lib/bookshelf_widget.lua:20295
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or remove its %d books from your selection."
 msgstr ""
-"Закачете %s към лентата с чипове за бърз достъп,\n"
+"Закачете %s към менюто на рафтовете за бърз достъп,\n"
 "или премахнете %d книги от избора си."
 
 #: lib/bookshelf_widget.lua:20301
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or add %d more / remove the %d already selected."
 msgstr ""
-"Закачете %s към лентата с чипове за бърз достъп,\n"
+"Закачете %s към менюто на рафтовете за бърз достъп,\n"
 "или добавете още %d / премахнете %d вече избрани."
 
 #: lib/bookshelf_widget.lua:20305
 #, lua-format
 msgid ""
-"Pin %s to the chip bar for quick access,\n"
+"Pin %s to the shelf menu for quick access,\n"
 "or select its %d books for bulk edits."
 msgstr ""
-"Закачете %s към лентата с чипове за бърз достъп,\n"
+"Закачете %s към менюто на рафтовете за бърз достъп,\n"
 "или изберете неговите %d книги за групови промени."
 
 #: lib/bookshelf_widget.lua:20382
@@ -4828,8 +4828,8 @@ msgid "Open a small overlay that lets you set the number of columns and rows of 
 msgstr "Отваря малък наслагващ се прозорец, в който задавате броя колони и редове с книги на рафта, докато рафтът се вижда зад него. Размерът на кориците следва броя колони, а главната област запълва оставащото място. Промените се показват в реално време; Приемане ги запазва, Отказ ги отменя."
 
 #: main.lua:697
-msgid "Bookshelf chips…"
-msgstr "Чипове на Bookshelf…"
+msgid "Bookshelf shelves…"
+msgstr "Рафтове на Bookshelf…"
 
 #: main.lua:718
 msgid "Hardcover enrichment"
@@ -4868,20 +4868,20 @@ msgid "on"
 msgstr "вкл."
 
 #: main.lua:948
-msgid "Bookshelf: next chip"
-msgstr "Bookshelf: следващ чип"
+msgid "Bookshelf: next shelf"
+msgstr "Bookshelf: следващ рафт"
 
 #: main.lua:954
-msgid "Bookshelf: previous chip"
-msgstr "Bookshelf: предишен чип"
+msgid "Bookshelf: previous shelf"
+msgstr "Bookshelf: предишен рафт"
 
 #: main.lua:960
-msgid "Bookshelf: next page of chips"
-msgstr "Bookshelf: следваща страница с чипове"
+msgid "Bookshelf: next page of shelves"
+msgstr "Bookshelf: следваща страница с рафтове"
 
 #: main.lua:966
-msgid "Bookshelf: previous page of chips"
-msgstr "Bookshelf: предишна страница с чипове"
+msgid "Bookshelf: previous page of shelves"
+msgstr "Bookshelf: предишна страница с рафтове"
 
 #: main.lua:972
 msgid "Bookshelf: expand or collapse hero"
@@ -5283,8 +5283,8 @@ msgid "Random book"
 msgstr "Произволна книга"
 
 #: micromodules/random_unread.lua:232
-msgid "Current chip"
-msgstr "Текущ чип"
+msgid "Current shelf"
+msgstr "Текущ рафт"
 
 #: micromodules/random_unread.lua:234
 msgid "In progress"
@@ -5814,6 +5814,30 @@ msgstr "Обновено преди %1 мин"
 #: micromodules/weather.lua:460 micromodules/weather.lua:546
 msgid "Updated %1h ago"
 msgstr "Обновено преди %1 ч"
+
+#~ msgid "New chip"
+#~ msgstr "Нов чип"
+
+#~ msgid "Chip label"
+#~ msgstr "Етикет на чип"
+
+#~ msgid "Edit chip"
+#~ msgstr "Редактиране на чип"
+
+#~ msgid "Chip source"
+#~ msgstr "Източник на чип"
+
+#~ msgid "Pin to chip bar"
+#~ msgstr "Закачане към лентата с чипове"
+
+#~ msgid "Chip bar font scale"
+#~ msgstr "Мащаб на шрифта на лентата с чипове"
+
+#~ msgid "Chip bar"
+#~ msgstr "Лента с чипове"
+
+#~ msgid "Current chip"
+#~ msgstr "Текущ чип"
 
 #~ msgid "Fetch up-to-date public ratings and review counts for linked Hardcover books. Covers and descriptions are fetched when a book is linked, so this only updates the ratings."
 #~ msgstr "Взема актуални публични оценки и брой отзиви за свързаните с Hardcover книги. Кориците и описанията се вземат при свързване на книга, така че това обновява само оценките."

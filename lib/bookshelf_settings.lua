@@ -836,8 +836,8 @@ function Settings:_coverDisplaySubItems()
                 return _("Default folder style: ") .. SD.labelFor(SD.defaultMode())
             end,
             help_text = _("How folders and stacks are drawn on any shelf that "
-                .. "has not chosen its own. Long-press a chip to override it "
-                .. "for that shelf."),
+                .. "has not chosen its own. Long-press a shelf to override "
+                .. "it there."),
             sub_item_table_func = function()
                 return Settings:_groupDisplaySubItems()
             end,
@@ -1268,7 +1268,7 @@ function Settings:_listViewSubItems()
             enabled = false,
         },
         {
-            text = _("long-press a chip, then open Shelf style."),
+            text = _("long-press a shelf, then open Shelf style."),
             enabled = false,
             separator = true,
         },
@@ -1871,16 +1871,16 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
-                return _("Selected chip fill") .. ": " .. valueLabel("chip_selected_bg")
+                return _("Selected shelf fill") .. ": " .. valueLabel("chip_selected_bg")
             end,
-            help_text = _("Fill behind the selected chip in the chip bar."
-                .. " Left unset, the selected chip is drawn by inverting the"
-                .. " chip -- the fastest path and identical on every device."
+            help_text = _("Fill behind the selected shelf in the shelf menu."
+                .. " Left unset, the selected shelf is drawn by inverting"
+                .. " it -- the fastest path and identical on every device."
                 .. " Setting a color paints it instead. Long-press to clear."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("chip_selected_bg", "chip_selected_bg", 100,
-                    _("Selected chip fill (% black)"), touchmenu_instance,
+                    _("Selected shelf fill (% black)"), touchmenu_instance,
                     refreshChipBar, chipBarAnchor)
             end,
             hold_callback = function(touchmenu_instance)
@@ -1891,14 +1891,14 @@ function Settings:_colorsSubItems()
         },
         {
             text_func = function()
-                return _("Selected chip text") .. ": " .. valueLabel("chip_selected_fg")
+                return _("Selected shelf text") .. ": " .. valueLabel("chip_selected_fg")
             end,
-            help_text = _("Label color on the selected chip. Defaults to"
+            help_text = _("Label color on the selected shelf. Defaults to"
                 .. " paper white over the fill. Long-press to clear."),
             keep_menu_open = true,
             callback = function(touchmenu_instance)
                 pickColor("chip_selected_fg", "chip_selected_fg", 0,
-                    _("Selected chip text (% black)"), touchmenu_instance,
+                    _("Selected shelf text (% black)"), touchmenu_instance,
                     refreshChipBar, chipBarAnchor)
             end,
             hold_callback = function(touchmenu_instance)
@@ -2087,7 +2087,7 @@ function Settings:_settingsSubItems()
             if f then label = f:gsub("^.*/", ""):gsub("%.%w+$", "") end  -- basename, no extension
             return T(_("Bookshelf UI font: %1"), label)
         end,
-        help_text = _("The font Bookshelf uses for its own UI text (chips, "
+        help_text = _("The font Bookshelf uses for its own UI text (shelf names, "
             .. "labels, metadata). Pick any installed font (same picker as the "
             .. "hero card); '(Default)' follows your KOReader UI font. The hero "
             .. "title and author have their own fonts in the hero card editor."),
@@ -2111,7 +2111,7 @@ function Settings:_settingsSubItems()
         end,
         help_text = _("Where micro-modules appear. Each surface is independent:"
             .. " In start menu shows module cards in the start-menu launcher; In"
-            .. " hero area gives a chip that swaps the hero card for the grid;"
+            .. " hero area adds a shelf-menu entry that swaps the hero card for the grid;"
             .. " Full-screen button adds a footer button opening a full-screen"
             .. " grid. The hero and full-screen surfaces keep their own module"
             .. " lists. Turn all three off to disable micro-modules entirely."),
@@ -2567,7 +2567,7 @@ function Settings:_hardcoverSubItems()
                 local n = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
                 return T(_("Hardcover genres used: %1"), tostring(n))
             end,
-            help_text = _("How many of a linked book's Hardcover genres to use -- for the tag pills and the genre chips/stacks -- when Use Hardcover metadata is on. 0 uses none."),
+            help_text = _("How many of a linked book's Hardcover genres to use -- for the tag pills and the genre shelves/stacks -- when Use Hardcover metadata is on. 0 uses none."),
             enabled_func = function()
                 return BookshelfSettings.isTrue("hardcover_use_metadata")
             end,
@@ -2577,7 +2577,7 @@ function Settings:_hardcoverSubItems()
                 local cur = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
                 UIManager:show(SpinWidget:new{
                     title_text     = _("Hardcover genres used"),
-                    info_text      = _("How many of a book's Hardcover genres to use for tag pills and the genre chips/stacks."),
+                    info_text      = _("How many of a book's Hardcover genres to use for tag pills and the genre shelves/stacks."),
                     value          = cur,
                     value_min      = 0,
                     value_max      = 20,
@@ -2821,12 +2821,12 @@ function Settings:_performanceSubItems()
             end,
         },
         {
-            text = _("Pre-warm chip cache"),
-            help_text = _("Warms each chip's data in the background shortly"
-                .. " after launch so switching chips is instant. On a large"
-                .. " library with many chips this adds a few seconds of work"
+            text = _("Pre-warm shelf cache"),
+            help_text = _("Warms each shelf's data in the background shortly"
+                .. " after launch so switching shelves is instant. On a large"
+                .. " library with many shelves this adds a few seconds of work"
                 .. " after startup; turn it off for a quicker, lighter launch"
-                .. " (chips then load on first use)."),
+                .. " (shelves then load on first use)."),
             checked_func = function()
                 return BookshelfSettings.nilOrTrue("prewarm_chip_cache")
             end,
@@ -3013,7 +3013,7 @@ function Settings:_behaviourSubItems()
                     .. " shows when it opens: the book you're currently"
                     .. " reading, or a grid of micro-modules (clock, quote,"
                     .. " random book, reading goals…). You can also switch"
-                    .. " between them with the chips above the shelves."),
+                    .. " between them from the shelf menu."),
                 sub_item_table_func = function()
                     return {
                         optionRow("currently_reading", labels.currently_reading),
@@ -3095,7 +3095,7 @@ function Settings:_behaviourSubItems()
         separator = true,
     }
     items[#items + 1] = animRow(_("Page turn animation"), "shelf_page_animation",
-        _("Animate shelf page turns and chip-bar paging with a wipe "
+        _("Animate shelf page turns and shelf-menu paging with a wipe "
         .. "effect. E-ink only (the effect relies on the panel's "
         .. "refresh, so it does nothing on LCD screens). Fast / Medium "
         .. "/ Slow trade snappiness for smoothness. Slow looks "
@@ -3160,7 +3160,7 @@ function Settings:_librarySubItems()
     {
         text     = _("Manage collections\xE2\x80\xA6"),
         help_text = _("Create, rename, reorder and delete collections."
-            .. " Also reachable from collection chips and stacks."),
+            .. " Also reachable from collection shelves and stacks."),
         callback = function()
             local CollectionManager = require("lib/bookshelf_collection_manager")
             CollectionManager.show{
@@ -3215,7 +3215,7 @@ function Settings:_librarySubItems()
                 return _("Author name formatting") .. ": " .. label
             end,
             help_text = _("How author names are displayed on the Authors"
-                .. " chip. Auto keeps whichever form was first found"
+                .. " shelf. Auto keeps whichever form was first found"
                 .. " (\"Richard Osman\" or \"Osman, Richard\"). First Last"
                 .. " and Last, First force every author card into the same"
                 .. " shape regardless of how each book stored the name."),
@@ -3448,20 +3448,20 @@ function Settings:_advancedSubItems()
             separator = true,
         },
         {
-            text     = _("Reset chip bar to defaults"),
-            help_text = _("Clears your custom chip layout (which chips are "
+            text     = _("Reset shelf menu to defaults"),
+            help_text = _("Clears your custom shelf menu (which shelves are "
                 .. "shown, their order, their labels and icons, their "
                 .. "sources and filters and sorts) and restores the "
-                .. "fresh-install chip set: Home / Recent / Series / "
+                .. "fresh-install set: Home / Recent / Series / "
                 .. "Favorites enabled, the rest available to toggle on. "
-                .. "Also returns the active chip to Home and the page "
+                .. "Also returns the active shelf to Home and the page "
                 .. "indicator to 1. Other settings (hero text, fonts, "
                 .. "colors) are unaffected."),
             callback = function(touchmenu_instance)
                 local ConfirmBox = require("ui/widget/confirmbox")
                 UIManager:show(ConfirmBox:new{
-                    text = _("Reset the chip bar to default settings?\n\n"
-                        .. "All custom chips you have created or edited "
+                    text = _("Reset the shelf menu to default settings?\n\n"
+                        .. "All custom shelves you have created or edited "
                         .. "will be lost. Other Bookshelf settings (hero "
                         .. "text, fonts, colors) are unaffected."),
                     ok_text = _("Reset"),
@@ -3500,13 +3500,13 @@ function Settings:_advancedSubItems()
             help_text = _("Clears your hero/book-detail customizations and "
                 .. "restores the fresh-install detail layout, including the "
                 .. "bundled title (Inter ExtraBold) and author (Caveat) fonts. "
-                .. "The Bookshelf UI font and chip bar are unaffected."),
+                .. "The Bookshelf UI font and shelf menu are unaffected."),
             callback = function(touchmenu_instance)
                 local ConfirmBox = require("ui/widget/confirmbox")
                 UIManager:show(ConfirmBox:new{
                     text = _("Reset the book detail area to default settings?\n\n"
                         .. "All hero/detail text and font customizations will be "
-                        .. "lost. The Bookshelf UI font and chip bar are unaffected."),
+                        .. "lost. The Bookshelf UI font and shelf menu are unaffected."),
                     ok_text = _("Reset"),
                     ok_callback = function()
                         local Regions = require("lib/bookshelf_hero_regions")
@@ -3564,9 +3564,9 @@ function Settings:_advancedSubItems()
     -- off-Kobo). Toggling rebuilds so the chip appears/disappears immediately.
     items[#items + 1] = {
         text = _("BETA: Kobo library shelf"),
-        help_text = _("Adds a \"Kobo\" chip that surfaces your Kobo "
+        help_text = _("Adds a \"Kobo\" shelf that surfaces your Kobo "
             .. "virtual library (the books managed by the Kobo store / "
-            .. "OGKevin's kobo.koplugin) as a Bookshelf shelf. Read-only; "
+            .. "OGKevin's kobo.koplugin). Read-only; "
             .. "covers and opening depend on that plugin. Kobo devices only."),
         checked_func = function()
             return BookshelfSettings.read("kobo_shelf") == true
@@ -4097,7 +4097,7 @@ function Settings:_pickChipFontScale(touchmenu_instance)
         dismissable = false,  -- nudge-dialog lockdown; see _pickCoverBadgeFontScale
         -- Open below the chip bar, not over it: this dialog resizes the strip.
         anchor = self:_chipBarAnchor(),
-        title = _("Chip bar font scale"),
+        title = _("Shelf menu font scale"),
         buttons = {
             {
                 { text = "-10",  callback = function() nudge(-10) end },
@@ -4763,7 +4763,7 @@ end
 -- _textSizeSubItems() -- single home for every font-scale knob in the
 -- plugin (issue #60). Pre-#60 these were scattered: Hero in Edit hero
 -- card, Cover badges in Cover display, Expanded shelf labels in
--- Expanded shelf, Chip bar in Tabs..., and stack/folder labels weren't
+-- Expanded shelf, Shelf menu in Tabs..., and stack/folder labels weren't
 -- configurable at all. Bringing them under one Settings menu makes the
 -- "where do I dial X smaller?" question single-answer.
 function Settings:_textSizeSubItems()
@@ -4796,7 +4796,7 @@ function Settings:_textSizeSubItems()
         row(_("Cover labels"),          "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
         row(_("Cover badges"),          "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
         row(_("Stack & folder labels"), "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
-        row(_("Chip bar"),              "chip_font_scale",           100, "_pickChipFontScale"),
+        row(_("Shelf menu"),              "chip_font_scale",           100, "_pickChipFontScale"),
         -- Adjacent to the chip bar because a list row is built to the same
         -- shape -- same face, same base size, same band arithmetic
         -- (lib/bookshelf_band_metrics.lua) -- and at 100 on both they render
@@ -5224,12 +5224,12 @@ function Settings:_tabsMenuItems()
         UIManager_ref:close(container, "ui")
     end
 
-    -- Chip bar font scale moved to Settings -> Text size (#60).
+    -- Shelf menu font scale moved to Settings -> Text size (#60).
     local items = {
         {
-            text = _("Flexible chip widths"),
-            help_text = _("Off: every chip gets the same width. On: each "
-                .. "chip is sized to its label, so single-icon chips stay "
+            text = _("Flexible shelf widths"),
+            help_text = _("Off: every shelf gets the same width. On: each "
+                .. "shelf is sized to its label, so single-icon shelves stay "
                 .. "narrow and longer text labels get more room. Falls "
                 .. "back to equal widths when natural sizes don't fit."),
             checked_func   = function()
@@ -5244,7 +5244,7 @@ function Settings:_tabsMenuItems()
         },
         {
             text = _("Uppercase labels"),
-            help_text = _("On: chip labels and the drill breadcrumb are shown"
+            help_text = _("On: shelf names and the drill breadcrumb are shown"
                 .. " in capitals, the default look. Off: each label reads"
                 .. " exactly as you typed it, so \"Sci-Fi\" stays \"Sci-Fi\"."),
             checked_func   = function()
@@ -5303,7 +5303,7 @@ function Settings:_tabsMenuItems()
 
     -- Footer: add a new custom tab and open its editor immediately.
     items[#items + 1] = {
-        text = _("+ Add new chip"),
+        text = _("+ Add new shelf"),
         callback = function(touchmenu_instance)
             -- Generate a unique custom_N id.
             local fresh = TabModel.load()
@@ -5320,7 +5320,7 @@ function Settings:_tabsMenuItems()
             local new_id = "custom_" .. n
             local new_tab = {
                 id            = new_id,
-                label         = _("New chip"),
+                label         = _("New shelf"),
                 icon          = nil,
                 source        = { kind = "all" },
                 filter        = {},

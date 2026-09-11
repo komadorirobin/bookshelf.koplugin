@@ -229,7 +229,7 @@ local function showSettings(ctx)
         title_align  = "center",
         width_factor = 0.65,
         buttons      = {
-            { srcBtn(_("Current chip"), "chip"), srcBtn(_("All books"), "all") },
+            { srcBtn(_("Current shelf"), "chip"), srcBtn(_("All books"), "all") },
             { statusBtn(_("Unread"), "unread") },
             { statusBtn(_("In progress"), "reading") },
             { statusBtn(_("On hold"), "on_hold") },

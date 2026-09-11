@@ -96,7 +96,7 @@ function M.confirmDelete(opts)
     end
     local n = Catalogs.chipsUsing(OpdsSource.serverKey(item.url))
     local text = (n > 0)
-        and T(_("Delete \"%1\"? %2 chip(s) use this catalog and will stop working."),
+        and T(_("Delete \"%1\"? %2 shelves use this catalog and will stop working."),
               item.title or item.url, n)
         or  T(_("Delete \"%1\"?"), item.title or item.url)
     UIManager:show(ConfirmBox:new{

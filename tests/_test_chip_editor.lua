@@ -139,26 +139,26 @@ t.test("applySourceDefaults leaves a user-edited label alone", function()
 end)
 
 t.test("applySourceDefaults relabels an untouched 'New chip' to the source label", function()
-    local draft = { source = { kind = "genres" }, label = "New chip" }
+    local draft = { source = { kind = "genres" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     -- SOURCE_LABEL.genres() -> _("Genres") -> identity in tests.
     eq(draft.label, "Genres")
 end)
 
 t.test("applySourceDefaults uses a specific source id as the label", function()
-    local draft = { source = { kind = "author", id = "Ursula K. Le Guin" }, label = "New chip" }
+    local draft = { source = { kind = "author", id = "Ursula K. Le Guin" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Ursula K. Le Guin")
 end)
 
 t.test("applySourceDefaults uses the folder basename for folder sources", function()
-    local draft = { source = { kind = "folder", id = "/mnt/us/ebooks/Sci-Fi" }, label = "New chip" }
+    local draft = { source = { kind = "folder", id = "/mnt/us/ebooks/Sci-Fi" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Sci-Fi")
 end)
 
 t.test("applySourceDefaults is a no-op for an unknown source kind", function()
-    local draft = { source = { kind = "totally_unknown" }, label = "New chip" }
+    local draft = { source = { kind = "totally_unknown" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, nil)   -- no defaults applied
 end)
@@ -201,20 +201,20 @@ t.test("SOURCE_SORT_DEFAULTS.kindle sorts by title", function()
 end)
 
 t.test("applySourceDefaults sets up a Kindle draft", function()
-    local draft = { source = { kind = "kindle" }, label = "New chip" }
+    local draft = { source = { kind = "kindle" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, { { key = "title", reverse = false } })
     eq(draft.label, "Kindle Virtual Library")
 end)
 
 t.test("applySourceDefaults leaves sort_priority = {} for an opds draft", function()
-    local draft = { source = { kind = "opds", id = "k1" }, label = "New chip" }
+    local draft = { source = { kind = "opds", id = "k1" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.sort_priority, {})
 end)
 
 t.test("applySourceDefaults uses the OPDS server title (not the raw key) as the label", function()
-    local draft = { source = { kind = "opds", id = "k1" }, label = "New chip" }
+    local draft = { source = { kind = "opds", id = "k1" }, label = "New shelf" }
     D.applySourceDefaults(draft)
     eq(draft.label, "Server One")
 end)

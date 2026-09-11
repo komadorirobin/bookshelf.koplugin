@@ -1954,7 +1954,7 @@ function BookshelfWidget:_rebuild()
                 ratings=1, favorites=1 }
             if _source_kind and not builtin_kinds[_source_kind] then
                 placeholder_text = string.format(
-                    _("No books in %s yet \xC2\xB7 Long-press the chip to edit its source or filter"),
+                    _("No books in %s yet \xC2\xB7 Long-press the shelf to edit its source or filter"),
                     _tab and _tab.label or self.chip)
             else
                 placeholder_text = string.format(_("No books in %s yet"), self:_chipLabel())
@@ -1968,7 +1968,7 @@ function BookshelfWidget:_rebuild()
         if _tab and _tab.filter and Filter.isActive(_tab.filter) then
             local label = _tab.label or self:_chipLabel()
             placeholder_text = string.format(
-                _("Nothing in %s yet \xC2\xB7 Long-press the chip to edit its filter"),
+                _("Nothing in %s yet \xC2\xB7 Long-press the shelf to edit its filter"),
                 label)
         end
 
@@ -19090,7 +19090,7 @@ function BookshelfWidget:_showBookDetail(book, opts)
                             end
                             -- Pin this genre as a nav chip (global -- surfaces
                             -- every book with the genre), mirroring the collection
-                            -- "Pin to chip bar". Splices the chip after the current
+                            -- "Pin to shelf menu". Splices the chip after the current
                             -- one and switches to it, like the stack-hold pin.
                             local function pinGenreChip(gname)
                                 local TabModel = require("lib/bookshelf_tab_model")
@@ -19182,14 +19182,14 @@ function BookshelfWidget:_showBookDetail(book, opts)
                                     buttons = {
                                         { { text = _("Rename"),
                                             callback = function() hclose(); renameTag(gname) end },
-                                          { text = _("Pin to chip bar"),
+                                          { text = _("Pin to shelf menu"),
                                             callback = function() hclose(); pinGenreChip(gname) end } },
                                         { { text = "\xE2\x9C\x95 " .. _("Delete"), callback = doDelete },
                                           { text = _("Cancel"), callback = hclose } },
                                     }
                                 else
                                     buttons = {
-                                        { { text = _("Pin to chip bar"),
+                                        { { text = _("Pin to shelf menu"),
                                             callback = function() hclose(); pinGenreChip(gname) end },
                                           { text = _("Cancel"), callback = hclose } },
                                     }
@@ -20199,7 +20199,7 @@ function BookshelfWidget:_openOpdsNavMenu(rec)
         }}
     else
         buttons[#buttons + 1] = {{
-            text = T(_("Start this chip at \"%1\""), label),
+            text = T(_("Start this shelf at \"%1\""), label),
             callback = function()
                 UIManager:close(dialog)
                 self:_setOpdsStartFeed(rec.opds.feed_url, label)
@@ -20292,23 +20292,23 @@ function BookshelfWidget:_openGroupMenu(group, kind)
     local prompt
     if sel_state == "all" then
         prompt = string.format(
-            _("Pin %s to the chip bar for quick access,\nor remove its %d books from your selection."),
+            _("Pin %s to the shelf menu for quick access,\nor remove its %d books from your selection."),
             this_kind, n_for_prompt)
     elseif sel_state == "some" then
         -- Partial overlap: surface both numbers in the prompt so the
         -- two action buttons read unambiguously without parsing.
         prompt = string.format(
-            _("Pin %s to the chip bar for quick access,\nor add %d more / remove the %d already selected."),
+            _("Pin %s to the shelf menu for quick access,\nor add %d more / remove the %d already selected."),
             this_kind, remaining_count, in_sel_count)
     else  -- "none"
         prompt = string.format(
-            _("Pin %s to the chip bar for quick access,\nor select its %d books for bulk edits."),
+            _("Pin %s to the shelf menu for quick access,\nor select its %d books for bulk edits."),
             this_kind, n_for_prompt)
     end
 
     local function create_chip()
         -- Find a free custom_N id by walking existing tabs. Same pattern
-        -- the chip editor's "+ Add new chip" footer uses.
+        -- the chip editor's "+ Add new shelf" footer uses.
         local TabModel = require("lib/bookshelf_tab_model")
         local tabs = TabModel.load()
         local n = 1

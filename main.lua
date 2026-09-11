@@ -694,7 +694,7 @@ function Bookshelf:buildMenuItems(menu_items)
     }
 
     menu_items.bookshelf_shelf_tabs = {
-        text                = _("Bookshelf chips\xE2\x80\xA6"),
+        text                = _("Bookshelf shelves\xE2\x80\xA6"),
         sub_item_table_func = function()
             S._bw = _live_widget
             return S:_tabsMenuItems()
@@ -945,25 +945,25 @@ function Bookshelf:onDispatcherRegisterActions()
     Dispatcher:registerAction("bookshelf_next_tab", {
         category = "none",
         event    = "BookshelfNextChip",
-        title    = _("Bookshelf: next chip"),
+        title    = _("Bookshelf: next shelf"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_prev_tab", {
         category = "none",
         event    = "BookshelfPrevChip",
-        title    = _("Bookshelf: previous chip"),
+        title    = _("Bookshelf: previous shelf"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_next_chip_page", {
         category = "none",
         event    = "BookshelfNextChipPage",
-        title    = _("Bookshelf: next page of chips"),
+        title    = _("Bookshelf: next page of shelves"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_prev_chip_page", {
         category = "none",
         event    = "BookshelfPrevChipPage",
-        title    = _("Bookshelf: previous page of chips"),
+        title    = _("Bookshelf: previous page of shelves"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_toggle_hero", {
