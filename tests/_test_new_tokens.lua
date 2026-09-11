@@ -31,15 +31,24 @@ package.loaded["bookshelf_i18n"] = _i18n
 package.loaded["lib/bookshelf_i18n"] = _i18n
 
 -- The SSH plugin, present or absent, is the whole input to the ssh tokens.
-local _ssh_running, _ssh_present = false, true
-package.loaded["pluginloader"] = {
-    enabled_plugins = setmetatable({}, { __index = function(_, k)
-        if k == 1 and _ssh_present then
-            return { name = "SSH", isRunning = function() return _ssh_running end }
-        end
-        return nil
-    end }),
-}
+--
+-- A PLAIN ARRAY, rebuilt per case, because the real enabled_plugins is one and
+-- the expander walks it with ipairs. An earlier version of this stub faked the
+-- array with an __index metamethod, which passes under Lua 5.2+ (where ipairs
+-- honours metamethods) and finds NOTHING under LuaJIT, where ipairs is raw.
+-- The device runs LuaJIT, so the interpreter that mattered was the one the
+-- stub did not work under.
+local _ssh_running = false
+local _plugins = {}
+package.loaded["pluginloader"] = { enabled_plugins = _plugins }
+
+local function ssh(present, running)
+    _ssh_running = running
+    _plugins[1] = present
+        and { name = "SSH", isRunning = function() return _ssh_running end }
+        or nil
+end
+ssh(true, false)
 
 -- Quotes: one book, two highlights, so a re-rolling pick is detectable.
 local _quote = nil
@@ -81,27 +90,27 @@ t.test("%ssh_icon is empty while the server is down", function()
     -- Empty, not an "off" glyph: a server that is not running is the normal
     -- state and does not earn permanent chrome. It also makes the token
     -- self-hiding without an [if:] wrapper.
-    _ssh_present, _ssh_running = true, false
+    ssh(true, false)
     eq(Tokens.expand("%ssh_icon", {}, {}), "")
 end)
 
 t.test("%ssh_icon shows a glyph while the server is up", function()
-    _ssh_present, _ssh_running = true, true
+    ssh(true, true)
     local out = Tokens.expand("%ssh_icon", {}, {})
     assert(out ~= "" and out ~= "%ssh_icon", "no glyph while SSH is running")
 end)
 
 t.test("[if:ssh] gates on the same state", function()
-    _ssh_present, _ssh_running = true, true
+    ssh(true, true)
     eq(Tokens.expand("[if:ssh]up[/if]", {}, {}), "up")
-    _ssh_running = false
+    ssh(true, false)
     eq(Tokens.expand("[if:ssh]up[/if]", {}, {}), "")
 end)
 
 t.test("a device without the SSH plugin reads as down, not as broken", function()
     -- No plugin means no server, which is the same answer -- and must not
     -- error on the many devices that never ship it.
-    _ssh_present, _ssh_running = false, false
+    ssh(false, false)
     eq(Tokens.expand("%ssh_icon", {}, {}), "")
     eq(Tokens.expand("[if:ssh]up[/if]", {}, {}), "")
 end)
