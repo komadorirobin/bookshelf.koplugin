@@ -1653,11 +1653,19 @@ function BookshelfWidget:_rebuild()
                 -- to pop their open book back into the hero slot, not
                 -- to leave the stack/folder they're browsing.
                 local was_expanded = self._expanded
-                local prior_fp = self._preview_book and self._preview_book.filepath
-                local lastfile_fp = Repo.currentFilepath and Repo.currentFilepath()
+                -- Whatever the shelf is currently highlighting, not just the
+                -- preview: a d-pad cell or a pending expanded tap selects too
+                -- (see _selectedFilepath), and all of them are cleared below.
+                local prior_fp = self:_selectedFilepath()
+                -- Captured BEFORE the rebuild below replaces the widgets (see
+                -- _shelfSlotRect): this is the band that has to reach the
+                -- panel, and it is nowhere near the hero-and-chips band the
+                -- refresh below covers.
+                local prior_rect = self:_shelfSlotRect(prior_fp)
                 self:_clearDpadFocus()
                 self._hero_mode    = "current"
                 self._preview_book = nil
+                self._tap_selected_fp = nil
                 self:_setExpanded(false)
                 if was_expanded then
                     -- Leaving expanded mode shifts the shelf row count — full
@@ -1668,12 +1676,28 @@ function BookshelfWidget:_rebuild()
                     -- Only the hero + chips change; scope the refresh to that
                     -- band rather than flashing the whole screen.
                     self:_rebuildRefreshHeroAndChips()
-                    -- If a non-lastfile book was previewed and is showing a
-                    -- highlight ring on a visible shelf cover, clear it with a
-                    -- scoped per-cover repaint (otherwise the ring lingers,
-                    -- which is what previously forced a full refresh here).
-                    if prior_fp and prior_fp ~= lastfile_fp then
-                        self:_repaintSelectionHighlight(prior_fp, nil)
+                    -- The rebuild above already dropped the highlight from
+                    -- the tree; what is left is getting that part of the
+                    -- SCREEN refreshed, since the band above covers only the
+                    -- hero and the chips.
+                    --
+                    -- Unconditional. This used to run only when the previewed
+                    -- book was not the one being read, on the reasoning that
+                    -- there would be nothing highlighted otherwise -- but the
+                    -- shelf highlights whatever is previewed, that book
+                    -- included. On a spine shelf the highlight is a LIFT, so
+                    -- the book stayed standing out of the row until something
+                    -- else refreshed it (device report: "a lifted book is not
+                    -- always dropped when the currently reading button is
+                    -- tapped").
+                    if prior_rect then
+                        local pad = math.max(Screen:scaleBySize(12),
+                                             self._spine_lift_headroom or 0)
+                        prior_rect.y = math.max(0, prior_rect.y - pad)
+                        prior_rect.h = prior_rect.h + pad
+                        UIManager:setDirty(self, function()
+                            return "ui", prior_rect, self.dithered
+                        end)
                     end
                 end
                 return
@@ -7098,6 +7122,37 @@ function BookshelfWidget:_repaintListSelection(old_fp, new_fp)
     logger.dbg(string.format(
         "[bookshelf perf] _repaintListSelection: rows=%d TOTAL=%.0fms",
         #old_rows, (_gettime() - _perf_t0) * 1000))
+end
+
+-- _shelfSlotRect(fp) — where the shelf is currently PAINTING the book with
+-- this filepath, in screen coordinates, or nil if it is not on the page.
+--
+-- Read it BEFORE anything rebuilds the rows. A rebuilt widget has not been
+-- painted yet, so its dimen still sits at the origin, and a refresh computed
+-- from it dirties the top of the screen instead of the shelf (which is how a
+-- lifted book survived the currently-reading tap: the tree was correct, the
+-- band that reached the panel was not).
+function BookshelfWidget:_shelfSlotRect(fp)
+    local d = self._shelf_dims
+    if not (fp and self._inner_vgroup and d) then return nil end
+    local found
+    local function walk(node, depth)
+        if found or type(node) ~= "table" or depth > 8 then return end
+        local b = rawget(node, "book")
+        if b and b.filepath == fp then
+            local dm = rawget(node, "dimen")
+            if dm and dm.w and dm.h and dm.h > 0 then found = dm:copy() return end
+        end
+        for i = 1, #node do walk(node[i], depth + 1) end
+    end
+    -- From the ROWS, not from the whole column: the hero carries a .book too,
+    -- and it is usually this very book, so a walk from the top finds the hero
+    -- and dirties the band the refresh already covers.
+    for r = 1, (d.n_shelves or 1) do
+        walk(self._inner_vgroup[(d.shelf_top_idx or 1) + 2 * (r - 1)], 0)
+        if found then break end
+    end
+    return found
 end
 
 -- _repaintSelectionHighlight(old_fp, new_fp) — preview-tap fast path.

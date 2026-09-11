@@ -35,7 +35,7 @@ M.MIN_H_FRAC    = 0.45   -- ...nor one shrunk (to fit a narrow gap) below this s
                          -- a speck beside tall books looked wrong (user report)
 M.HEIGHT_FRAC   = 0.8    -- height as a fraction of the books' stand height
 M.CHANCE        = 0.5    -- fraction of eligible gaps that get an ornament
-M.GROUP_CHANCE  = 0.18   -- ...and of the gaps BETWEEN sections on a grouping
+M.GROUP_CHANCE  = 0.08   -- ...and of the gaps BETWEEN sections on a grouping
                          -- chip, which are far more numerous: the same odds
                          -- there would put a plant between every other series
 M.CACHE_MAX     = 12     -- rendered bitmaps kept (path x size x night)
