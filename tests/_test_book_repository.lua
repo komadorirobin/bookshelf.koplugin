@@ -5455,6 +5455,68 @@ test("kindleFilepaths is NOT folded into getAllFilepaths", function()
     package.loaded["lib/bookshelf_kindle_source"] = nil
 end)
 
+-- ── the page count scan reaches every consumer ─────────────────────────────
+--
+-- "Extract page counts" persists what it finds into the shelf's own store,
+-- not into the book's sidecar: a count for a never-opened book must not be
+-- the reason a sidecar appears. progressFor is what every lazy consumer asks
+-- (the Pages column, the %page_count token, the sort key), so it has to look
+-- there too, or the scan shows up in the spine widths -- which read the store
+-- directly -- and nowhere else.
+
+local function with_scan_store(counts, fn)
+    local previous = package.loaded["lib/bookshelf_spine_shelf"]
+    package.loaded["lib/bookshelf_spine_shelf"] = {
+        cachedProgress = function(fp)
+            local n = counts[fp]
+            if not n then return nil, nil, false end
+            return n, nil, false
+        end,
+    }
+    local ok, err = pcall(fn)
+    package.loaded["lib/bookshelf_spine_shelf"] = previous
+    if not ok then error(err, 0) end
+end
+
+test("a scanned page count reaches progressFor for an unopened book", function()
+    _G._test_docsettings_data = nil          -- no sidecar: never opened
+    with_scan_store({ ["/lib/scanned.epub"] = 412 }, function()
+        local _pct, _status, _rating, pages, opened =
+            Repo.progressFor("/lib/scanned.epub")
+        assert(pages == 412, "expected the scan's count, got " .. tostring(pages))
+        assert(opened == false, "the book is still unopened")
+    end)
+end)
+
+test("a filename marker still outranks the scan store", function()
+    -- p(N) in the name is free and authoritative; the store often holds a
+    -- persisted echo of that same number.
+    with_scan_store({ ["/lib/marked p(250).epub"] = 999 }, function()
+        local _p, _s, _r, pages = Repo.progressFor("/lib/marked p(250).epub")
+        assert(pages == 250, "expected the filename marker, got " .. tostring(pages))
+    end)
+end)
+
+test("no scanned count leaves the answer nil rather than zero", function()
+    with_scan_store({}, function()
+        local _p, _s, _r, pages = Repo.progressFor("/lib/unknown.epub")
+        assert(pages == nil, "expected nil, got " .. tostring(pages))
+    end)
+end)
+
+test("the shelf module missing is not an error", function()
+    -- The repository must load and answer on its own; the shelf requires it
+    -- back, so this lookup is lazy and has to tolerate an absent module.
+    local previous = package.loaded["lib/bookshelf_spine_shelf"]
+    package.loaded["lib/bookshelf_spine_shelf"] = nil
+    local ok, pages = pcall(function()
+        return select(4, Repo.progressFor("/lib/whatever.epub"))
+    end)
+    package.loaded["lib/bookshelf_spine_shelf"] = previous
+    assert(ok, "progressFor must not raise when the shelf module is absent")
+    assert(pages == nil, "expected nil, got " .. tostring(pages))
+end)
+
 -- ── KOReader custom metadata (issue #381) ──────────────────────────────────
 -- KOReader lets any of title / authors / series / series_index / language /
 -- keywords / description be overwritten per book from Book information, and

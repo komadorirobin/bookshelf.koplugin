@@ -2369,11 +2369,44 @@ end
 -- Deliberately NOT wired into any fetch path. This is a lazy per-rendered-item
 -- lookup, bounded by PROGRESS_CACHE_TTL, not a fifth field for buildBookMeta
 -- to populate across the whole library.
+-- _scannedPageCount(filepath) -> the count the "Extract page counts" scan
+-- found for this book, or nil.
+--
+-- The scan persists into the shelf's own page-count store rather than into the
+-- book's sidecar, deliberately: a count for a never-opened book must not be
+-- the reason a sidecar appears, since stock KOReader reads one as "this has
+-- been read". (The publisher-list case is the exception -- it also writes
+-- pagemap_doc_pages, the key ReaderPageMap owns.) So for most books that store
+-- is the ONLY place a scanned count lives, and anything answering "how many
+-- pages" has to look there. Without this the scan showed up in the spine
+-- widths, which read the store directly, and nowhere else -- device report:
+-- "our page count scan worked for book spine width but doesn't populate the
+-- page_count token".
+--
+-- Required lazily: the shelf module requires this one back, and a load-time
+-- pair would be a cycle. By the time anything asks for a page count both are
+-- loaded. Costs a table lookup; the store only stats a sidecar to validate
+-- entries that came FROM one, which a scanned count did not.
+local function _scannedPageCount(filepath)
+    if not filepath then return nil end
+    local ok, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
+    if not ok or type(SpineShelf) ~= "table"
+            or type(SpineShelf.cachedProgress) ~= "function" then
+        return nil
+    end
+    local ok2, pages = pcall(SpineShelf.cachedProgress, filepath)
+    return ok2 and tonumber(pages) or nil
+end
+
 function Repo.progressFor(filepath)
     if not filepath then return nil, nil, nil, nil, false end
     if _hasSidecar(filepath) then
         local pct, status, rating, pages, page_num = Repo.readProgress(filepath)
-        return pct, status, rating, pages, true, page_num
+        -- An opened book usually knows its own count; a scanned one is the
+        -- fallback for the reflowable that has been opened but never paged
+        -- far enough for KOReader to commit a total.
+        return pct, status, rating, pages or _scannedPageCount(filepath),
+               true, page_num
     end
     -- No sidecar means never opened: no percentage, status or rating exists to
     -- read. A page count still can -- pageCountFromFilename (#159) is a match
@@ -2382,7 +2415,9 @@ function Repo.progressFor(filepath)
     -- sort key instead of going blank exactly where the sort has a value.
     -- No sidecar means never opened, so there is no current page either --
     -- page_num stays nil rather than being synthesised as page 1.
-    return nil, nil, nil, pageCountFromFilename(filepath), false, nil
+    return nil, nil, nil,
+           pageCountFromFilename(filepath) or _scannedPageCount(filepath),
+           false, nil
 end
 
 -- Repo.fileSizeFor(filepath) -> bytes, or nil.
