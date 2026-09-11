@@ -4376,6 +4376,24 @@ end
 -- must get that answer whatever the user's settings say. Nothing calls
 -- _rebuild under the pin, so the mode stamped into _shelf_dims.view_mode is
 -- always the real one.
+-- The same pin held ACROSS a dialog rather than around one call.
+--
+-- "Edit shelf size" sets the cover grid's rows and columns -- deliberately,
+-- since those are the numbers the shelf's height comes from whatever style is
+-- rendering it. Opened over a list or spine shelf, the reader was adjusting
+-- one thing and watching another: neither the rows nor the columns on screen
+-- were the ones moving (maintainer report). Holding this makes the preview
+-- show what is being edited, and the dialog releases it on the way out.
+--
+-- Reference-counted and floored at zero, so an unbalanced release cannot make
+-- a later balanced pair leak a shelf permanently stuck in covers.
+function BookshelfWidget:pinCoverPreview()
+    _covers_pin = _covers_pin + 1
+end
+function BookshelfWidget:unpinCoverPreview()
+    if _covers_pin > 0 then _covers_pin = _covers_pin - 1 end
+end
+
 function BookshelfWidget:_viewMode()
     if _covers_pin > 0 then return ViewMode.COVERS end
     -- A chip pinned to either mode wins outright, over all three globals.

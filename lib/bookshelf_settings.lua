@@ -3766,6 +3766,30 @@ function Settings:_openLayoutEditor(touchmenu_instance)
 
     local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
 
+    -- Preview the thing being edited. These are the COVER GRID's rows and
+    -- columns whatever style is on screen (see the readers below), so over a
+    -- list or spine shelf the reader was adjusting one set of numbers and
+    -- watching another change. Held for the dialog's life and released once,
+    -- in close(), which both exits funnel through -- the dialog is
+    -- dismissable = false, so there is no third way out.
+    local unpinned = false
+    local function unpinCovers()
+        if unpinned then return end
+        unpinned = true
+        if bw and bw.unpinCoverPreview then bw:unpinCoverPreview() end
+        if bw and bw._rebuild then
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end
+    end
+    if bw and bw.pinCoverPreview then
+        bw:pinCoverPreview()
+        if bw._rebuild then
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end
+    end
+
     -- Effective current grid, reading through the widget so an unset (legacy)
     -- value still shows the real column/row count being rendered.
     --
@@ -3821,6 +3845,7 @@ function Settings:_openLayoutEditor(touchmenu_instance)
     end
     local function close()
         UIManager:close(dialog)
+        unpinCovers()
         restoreMenu()
     end
     -- Both exits force the full-quality covers immediately (cancelling the
@@ -3841,9 +3866,29 @@ function Settings:_openLayoutEditor(touchmenu_instance)
         close()
     end
 
+    -- What these two numbers really set is how the screen is DIVIDED, which
+    -- neither label says on its own -- and the shelf switching to covers under
+    -- the dialog needs a reason on screen, or it reads as a bug.
+    local Font_          = require("ui/font")
+    local TextBoxWidget_ = require("ui/widget/textboxwidget")
+    local Size_          = require("ui/size")
+    local Screen_        = require("device").screen
+    local dlg_w  = math.floor(math.min(Screen_:getWidth(), Screen_:getHeight()) * 0.6)
+    local help_w = dlg_w - 2 * Size_.border.window - 2 * Size_.padding.button
+                   - 2 * (Size_.padding.large + Size_.margin.title)
+    local help_widget = TextBoxWidget_:new{
+        text  = _("Rows and columns set how much of the screen the shelf takes; the hero area above fills whatever is left. List and spine shelves use that same space with their own row counts, so covers are shown here while you adjust it."),
+        face  = Font_:getFace("x_smallinfofont"),
+        width = help_w,
+    }
+    help_widget.not_focusable = true
+
     dialog = ButtonDialog:new{
         dismissable = false,  -- explicit Cancel/Accept; tap-outside disabled
         title = _("Edit shelf size"),
+        title_align = "left",
+        use_info_style = false,
+        _added_widgets = { help_widget },
         width_factor = 0.6,
 
         buttons = {
