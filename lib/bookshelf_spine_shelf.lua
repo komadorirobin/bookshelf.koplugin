@@ -1658,7 +1658,12 @@ function SpineShelf.plan(items, opts)
                 local _tp = _gettime()
                 pcall(function()
                     local _pct, st, _rating, pc = Repo.readProgress(src.filepath)
-                    if pc then
+                    -- Only when nothing better is in hand. BIM's count (the
+                    -- record's own, set for fixed-layout formats) is what the
+                    -- hero and the rows show, and a spine whose width came
+                    -- from the sidecar's last-render figure instead read a few
+                    -- pixels narrower than the same book everywhere else.
+                    if pc and not src.page_count then
                         pages = pc
                         src.page_count = pc
                     end
@@ -1667,6 +1672,14 @@ function SpineShelf.plan(items, opts)
                 end)
                 _t_pages = _t_pages + (_gettime() - _tp)
             end
+            -- The tail of the ladder, owned by the repository, and the result
+            -- written back onto the RECORD. The width used to take a count
+            -- from the persisted store into a local and leave the record
+            -- empty, so anything reading entry.page_count later saw nothing.
+            if ok_repo and Repo and Repo.pageCountFor then
+                pages = Repo.pageCountFor(src.filepath, pages)
+            end
+            if pages and not src.page_count then src.page_count = pages end
             -- The glyph resolver's lazy fallback opens the sidecar whenever
             -- status is nil; a checked record with no status is a book that
             -- has genuinely never been opened.
