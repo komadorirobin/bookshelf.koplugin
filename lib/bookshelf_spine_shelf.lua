@@ -2069,6 +2069,11 @@ function SpineShelf.rowWidget(opts)
                         -- the heart badge on top of it doubles the message
                         -- and breaks the skeuomorphism (user ruling).
                         suppress_favorite_badge = true,
+                        -- Same argument for the "#N" and "<n>p" pills: the
+                        -- spines beside it already number their series on the
+                        -- foot, and a book's length is its width here (user
+                        -- ruling). The progress bar and status glyphs stay.
+                        suppress_number_badges  = true,
                         is_bulk_selected = is_bulk,
                         -- No frame around a face-out on this shelf, so the
                         -- bulk flag keeps its circle off the card's edges.

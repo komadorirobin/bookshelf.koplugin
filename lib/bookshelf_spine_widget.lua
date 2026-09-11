@@ -766,6 +766,20 @@ local SpineWidget = InputContainer:extend{
     -- if it dangled; lift it fully inside the cover when titles are
     -- visible. Regular grid: glyph can dangle for character.
     show_titles         = false,
+    -- Drop the two CORNER PILLS -- the "#N" series number and the "<n>p"
+    -- page count -- while keeping everything else the cover shows. The
+    -- spine shelf's face-out books are the caller: a face-out stands in a
+    -- row of spines that already carry their series number on the foot and
+    -- state their length by how wide they are, so the pills repeat what the
+    -- shelf says and break the skeuomorphism the same way the favourite
+    -- heart did (user ruling, and the same one that gave us
+    -- suppress_favorite_badge).
+    --
+    -- Deliberately NOT show_progress=false: that switch also takes the
+    -- top-edge progress bar and the read-status glyphs, which a face-out
+    -- does want -- it is the only cover on the shelf big enough to read
+    -- them.
+    suppress_number_badges = false,
     -- True when this cover renders inside a single-series view (drilled
     -- into a series stack OR a chip whose source.kind = "single_series").
     -- Consumed by _showSeriesNum's "in_series" three-state choice so the
@@ -956,7 +970,20 @@ function SpineWidget:_statusIndicators()
         return { bar = false, bar_pct = 0, glyph = nil }
     end
     local ind = CoverProgress.decide(self.book)
-    if self.show_progress then return ind end
+    if self.show_progress then
+        -- The page-count pill is a NUMBER BADGE, so it leaves with the series
+        -- one; the bar and the glyphs stay. Decided here rather than at the
+        -- paint site so every "which surface shows which chrome" rule lives
+        -- in one function -- which is also the only way the split is
+        -- testable (see tests/_test_spine_status_gate.lua).
+        if self.suppress_number_badges and ind.page_count then
+            local copy = {}
+            for k, v in pairs(ind) do copy[k] = v end
+            copy.page_count = false
+            return copy
+        end
+        return ind
+    end
     return {
         bar          = false,
         bar_pct      = 0,
@@ -1461,6 +1488,7 @@ function SpineWidget:_renderShadowedCard(inner)
     --        series stacks reuse SpineWidget but opt out).
     --      * Setting bookshelf_show_series_num (default ON).
     if self.show_progress and _showSeriesNum(self.in_series)
+            and not self.suppress_number_badges
             and self.book and self.book.series_num then
         local TextWidget     = require("ui/widget/textwidget")
         local colors        = CoverProgress.resolvedColors()

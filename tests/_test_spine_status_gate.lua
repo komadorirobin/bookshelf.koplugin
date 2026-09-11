@@ -262,4 +262,59 @@ t.test("the in-progress glyph still paints behind the cover", function()
         "the in-progress glyph now paints in FRONT of the cover")
 end)
 
+-- ── The spine shelf's face-out books ───────────────────────────────────────
+--
+-- A face-out is the one cover on that shelf big enough to read, so unlike the
+-- list thumbnail it DOES want the bar and the glyphs. What it does not want is
+-- the two corner pills: the spines beside it already number their series on
+-- the foot, and a book's length is its width there, so "#3" and "412p" repeat
+-- what the shelf has said and break the skeuomorphism (user ruling, the same
+-- one that took the favourite heart off a face-out).
+
+t.test("suppress_number_badges drops the page-count pill", function()
+    local ind = ask{ show_progress = true, suppress_number_badges = true }
+    eq(ind.page_count, false)
+end)
+
+t.test("...and keeps everything a face-out is big enough to show", function()
+    -- The reason this is not show_progress=false, which would take the lot.
+    local ind = ask{ show_progress = true, suppress_number_badges = true }
+    eq(ind.bar, true, "a part-read face-out still shows how far in it is")
+    eq(ind.bar_pct, 42)
+    eq(ind.glyph, "complete_bookmark")
+    eq(ind.on_hold, true)
+    eq(ind.on_hold_fade, true)
+end)
+
+t.test("the grid is untouched by the flag it does not set", function()
+    local ind = ask{ show_progress = true }
+    eq(ind.page_count, true, "the pills left the grid as well")
+end)
+
+t.test("suppressing does not mutate decide()'s own table", function()
+    -- decide() may hand back a table it keeps. Clearing the field in place
+    -- would turn one face-out into a shelf-wide setting, and the next grid
+    -- render would silently lose its pills.
+    ask{ show_progress = true, suppress_number_badges = true }
+    eq(_G.__decide_result.page_count, true, "decide()'s answer was edited in place")
+end)
+
+-- The series pill has no entry in decide()'s answer -- it is painted straight
+-- from book.series_num -- so its gate can only be checked in the source.
+t.test("the series pill is gated on the same flag", function()
+    local src = assert(io.open("lib/bookshelf_spine_widget.lua")):read("*a")
+    local cond = src:match("(if self%.show_progress and _showSeriesNum.-then)")
+    assert(cond, "the series-number badge condition moved or was renamed")
+    assert(cond:find("suppress_number_badges", 1, true),
+        "the series pill still renders on a face-out")
+end)
+
+t.test("the face-out tile asks for both pills to go", function()
+    local src = assert(io.open("lib/bookshelf_spine_shelf.lua")):read("*a")
+    local tile = src:match("CoverTile:new{(.-)}")
+    assert(tile, "the face-out tile construction moved")
+    assert(tile:find("suppress_number_badges%s*=%s*true"),
+        "the shelf stopped asking, so the pills are back")
+end)
+
 t.done()
