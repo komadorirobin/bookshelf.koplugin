@@ -2231,10 +2231,10 @@ function Settings:_hardcoverSubItems()
         })
     end
 
-    -- Bulk auto-link: scan the whole library and link any book that carries
-    -- an embedded ISBN / Hardcover id -- the single-book "Auto link" applied
-    -- across the library. Throttled to ~1 request/second to stay under
-    -- Hardcover's 60/min API limit; shows cancellable progress.
+    -- Bulk exact-edition linking has two scopes: inspect only unlinked books
+    -- for routine imports, or inspect everything to repair changed BookOrbit
+    -- edition metadata. Throttled to stay under Hardcover's API limit and
+    -- presented as cancellable progress.
     -- Shared driver for the long Hardcover scans (auto-link, refresh). Runs one
     -- item per scheduler tick so the UI event loop keeps running between books:
     -- the progress message stays tappable (cancel works) and nothing freezes,
@@ -2302,7 +2302,7 @@ function Settings:_hardcoverSubItems()
         UIManager:nextTick(step)
     end
 
-    local function autoLinkAll(touchmenu_instance)
+    local function autoLinkAll(touchmenu_instance, only_unlinked)
         local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
         if not ok_hc or not Hardcover
                 or not (Hardcover.isAvailable and Hardcover.isAvailable()) then
@@ -2324,9 +2324,15 @@ function Settings:_hardcoverSubItems()
                 candidates[#candidates + 1] = fp
             end
         end
+        if only_unlinked then
+            -- Filtering uses only the two local link stores. Already-linked
+            -- files are never opened for OPF/identifier inspection here.
+            candidates = Hardcover.unlinkedFiles(candidates)
+        end
         local total = #candidates
         if total == 0 then
-            notify(_("No books to scan."))
+            notify(only_unlinked and _("No unlinked books to auto-link.")
+                or _("No books to scan."))
             return
         end
 
@@ -2429,9 +2435,16 @@ function Settings:_hardcoverSubItems()
 
         local ButtonDialog = require("ui/widget/buttondialog")
         local dialog
-        dialog = ButtonDialog:new{
+        local title
+        if only_unlinked then
+            title = T(_("Scan %1 unlinked book(s) for embedded Hardcover edition IDs?\n\nAlready linked books are skipped without opening their files. Books without an edition ID are left unlinked. Hardcover is contacted only when an edition ID is found. Cancellable, with a report at the end."),
+                tostring(total))
+        else
             title = T(_("Scan %1 book(s) for embedded Hardcover edition IDs?\n\nBooks without an edition ID are skipped. Unlinked books are linked, and existing links are corrected when they point to another edition. Hardcover is contacted only for books that need updating. Cancellable, with a report at the end."),
-                tostring(total)),
+                tostring(total))
+        end
+        dialog = ButtonDialog:new{
+            title = title,
             title_align = "center",
             buttons = {
                 {{
@@ -2463,16 +2476,25 @@ function Settings:_hardcoverSubItems()
             enabled_func = function() return false end,
         },
         {
-            -- Primary action: the first thing a new Hardcover user wants is to
-            -- link their library, so it sits at the top.
-            text = _("Auto-link books with edition IDs"),
-            help_text = _("Scan the library for embedded Hardcover edition IDs. Books without one are skipped. Unlinked books are linked to that exact edition, while existing links are corrected if they point to a different edition. Correct links are left untouched. A report lists what changed. Contacts Hardcover only for books needing an update, with cancellable progress."),
+            text = _("Auto-link unlinked books"),
+            help_text = _("For newly imported books: enumerate the library, then inspect only books that do not already have a Hardcover link. Already linked books are not opened or re-scanned. An unlinked book is linked only when it contains an embedded Hardcover edition ID."),
             enabled_func = function()
                 local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
                 return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
             end,
             callback = function(touchmenu_instance)
-                autoLinkAll(touchmenu_instance)
+                autoLinkAll(touchmenu_instance, true)
+            end,
+        },
+        {
+            text = _("Re-scan all books with edition IDs"),
+            help_text = _("Scan every book for an embedded Hardcover edition ID. Unlinked books are linked, incorrect existing links are corrected, and correct links are left untouched. Use this after changing edition metadata across the library; for normal imports, use Auto-link unlinked books instead."),
+            enabled_func = function()
+                local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
+                return (ok_hc and HC and HC.isAvailable and HC.isAvailable()) or false
+            end,
+            callback = function(touchmenu_instance)
+                autoLinkAll(touchmenu_instance, false)
             end,
         },
         {

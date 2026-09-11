@@ -810,6 +810,20 @@ function Hardcover.getLink(filepath)
     return type(link) == "table" and link.book_id and link or nil
 end
 
+-- Return only paths that do not already have a usable Hardcover link. This is
+-- deliberately metadata-free: incremental auto-linking still enumerates the
+-- library to discover new files, but it does not open old EPUBs just to prove
+-- their embedded edition ID has not changed.
+function Hardcover.unlinkedFiles(filepaths)
+    local out = {}
+    for _i, filepath in ipairs(filepaths or {}) do
+        if type(filepath) == "string" and not Hardcover.getLink(filepath) then
+            out[#out + 1] = filepath
+        end
+    end
+    return out
+end
+
 function Hardcover.linkBook(filepath, hc_book)
     if not (filepath and hc_book) then
         return false, "Missing book link data"

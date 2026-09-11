@@ -161,6 +161,22 @@ test("linkBook stores a Bookshelf-owned link", function()
     assert(link.title == "A Book", "missing title")
 end)
 
+test("unlinkedFiles skips links from both Hardcover stores", function()
+    reset()
+    assert(Hardcover.linkBook("/books/c.epub", {
+        id = 321,
+        edition_id = 654,
+        title = "Linked C",
+    }))
+    local paths = Hardcover.unlinkedFiles({
+        "/books/a.epub", -- external Hardcover link
+        "/books/c.epub", -- Bookshelf-owned link
+        "/books/d.epub", -- no link
+    })
+    assert(#paths == 1 and paths[1] == "/books/d.epub",
+        "incremental scan did not retain only unlinked files")
+end)
+
 test("re-linking preserves per-book enrichment choices", function()
     reset()
     assert(Hardcover.linkBook("/books/a.epub", { id = 123, title = "Old link" }))
