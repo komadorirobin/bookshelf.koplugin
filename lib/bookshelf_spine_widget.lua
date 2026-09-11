@@ -1736,7 +1736,38 @@ function SpineWidget:_renderCover(bb)
             end
         end
         local ok_img, ImageSource = pcall(require, "lib/bookshelf_image_source")
-        local external_bb = ok_img and ImageSource.loadImage(external_cover, img_w, img_h) or nil
+        local external_bb
+        if ok_img then
+            -- How big the file actually is, read from its header rather than
+            -- from a decode (ImageSource.probeSize). When it holds fewer
+            -- pixels than the slot wants, asking the renderer for slot-sized
+            -- output is an UPSCALE through MuPDF -- the direction that
+            -- corrupts on Kindle, which is why the embedded-cover path below
+            -- uses bb:scale instead -- and it invents no detail either way.
+            -- Load it at its own size and grow it the safe way.
+            local nat_w, nat_h = ImageSource.probeSize(external_cover)
+            if nat_w and nat_h and (nat_w < img_w or nat_h < img_h) then
+                local native = ImageSource.loadImageNative(external_cover)
+                if native then
+                    -- Owned by ImageSource's cache: copy it, never free it.
+                    local ok_g, grown = pcall(function()
+                        if self.cover_fill then
+                            return _coverFillBB(native, img_w, img_h)
+                        end
+                        local sw, sh = native:getWidth(), native:getHeight()
+                        local f = math.min(img_w / sw, img_h / sh)
+                        return native:scale(math.max(1, math.floor(sw * f)),
+                                            math.max(1, math.floor(sh * f)))
+                    end)
+                    if ok_g then external_bb = grown end
+                end
+            end
+            -- The file is big enough (or the header could not be read): the
+            -- renderer downscales, which is the safe direction.
+            if not external_bb then
+                external_bb = ImageSource.loadImage(external_cover, img_w, img_h)
+            end
+        end
         if external_bb then
             local paint_bb = external_bb
             if ck then paint_bb = ScaledCoverCache:put(ck, external_bb) end

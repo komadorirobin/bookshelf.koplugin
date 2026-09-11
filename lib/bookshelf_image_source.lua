@@ -352,6 +352,107 @@ local function _evictIfNeeded()
     end
 end
 
+-- ── how big is this file, without decoding it ───────────────────────────────
+--
+-- Both container formats we meet declare their pixel dimensions in a header
+-- near the front of the file, so the size can be read from the first few
+-- hundred bytes instead of from a decoded bitmap. Worth having because the
+-- alternatives are both expensive in the wrong way: decoding to find out
+-- costs the decode we were trying to decide about, and guessing costs an
+-- upscale through MuPDF, which is the direction that corrupts on Kindle.
+--
+--   PNG  -- an 8-byte signature, then the IHDR chunk: 4-byte length, the tag,
+--           then width and height as big-endian 32-bit integers.
+--   JPEG -- SOI, then a chain of segments, each a 0xFF marker byte and a
+--           2-byte length. The frame header (SOF) carries height then width
+--           as big-endian 16-bit integers after a one-byte sample precision.
+--           Every SOF marker in C0..CF is a frame header EXCEPT C4, C8 and CC,
+--           which are the Huffman table, an extension and the arithmetic
+--           coding table -- they are ordinary segments and must be skipped, or
+--           the first quantisation table in the file reads as a picture size.
+--
+-- Returns nil for anything else, for a truncated header, and for a JPEG whose
+-- frame header sits past the window we read (a huge EXIF thumbnail can do
+-- that). nil means "ask the decoder", which is what the callers did before.
+local PROBE_BYTES   = 64 * 1024
+local PNG_SIGNATURE = "\137PNG\r\n\26\n"
+
+local function _u16(s, at)
+    local hi, lo = s:byte(at, at + 1)
+    if not (hi and lo) then return nil end
+    return hi * 256 + lo
+end
+
+local function _u32(s, at)
+    local a, b, c, d = s:byte(at, at + 3)
+    if not (a and b and c and d) then return nil end
+    return ((a * 256 + b) * 256 + c) * 256 + d
+end
+
+local function _pngSize(head)
+    if head:sub(1, 8) ~= PNG_SIGNATURE then return nil end
+    if head:sub(13, 16) ~= "IHDR" then return nil end
+    return _u32(head, 17), _u32(head, 21)
+end
+
+local function _jpegSize(head)
+    if head:sub(1, 2) ~= "\255\216" then return nil end   -- SOI
+    local at = 3
+    while at + 3 <= #head do
+        -- Markers may be preceded by any number of fill bytes.
+        if head:byte(at) ~= 0xFF then return nil end
+        while head:byte(at) == 0xFF do at = at + 1 end
+        local marker = head:byte(at)
+        at = at + 1
+        if not marker then return nil end
+        -- Standalone markers carry no length: the restart set, SOI/EOI, TEM.
+        if (marker >= 0xD0 and marker <= 0xD9) or marker == 0x01 then
+            -- nothing to skip
+        else
+            local seg_len = _u16(head, at)
+            if not seg_len or seg_len < 2 then return nil end
+            if marker >= 0xC0 and marker <= 0xCF
+                    and marker ~= 0xC4 and marker ~= 0xC8 and marker ~= 0xCC then
+                -- length(2) + precision(1), then height then width.
+                local h = _u16(head, at + 3)
+                local w = _u16(head, at + 5)
+                if w and h and w > 0 and h > 0 then return w, h end
+                return nil
+            end
+            at = at + seg_len
+        end
+    end
+    return nil
+end
+
+-- Memoised on (path, mtime): the shelf asks about the same cover on every
+-- render, and the answer only changes when the file does.
+local _size_memo = {}
+local _size_memo_n = 0
+local SIZE_MEMO_MAX = 256
+
+-- probeSize(image_path) -> w, h  (nil when it cannot be read from the header)
+function ImageSource.probeSize(image_path)
+    if type(image_path) ~= "string" or image_path == "" then return nil end
+    local attr = lfs.attributes(image_path)
+    if not attr or attr.mode ~= "file" then return nil end
+    local key = image_path .. "|" .. tostring(attr.modification or 0)
+    local hit = _size_memo[key]
+    if hit then return hit[1], hit[2] end
+    local f = io.open(image_path, "rb")
+    if not f then return nil end
+    local head = f:read(PROBE_BYTES)
+    f:close()
+    if type(head) ~= "string" or #head < 24 then return nil end
+    local w, h = _pngSize(head)
+    if not w then w, h = _jpegSize(head) end
+    if not (w and h and w > 0 and h > 0) then return nil end
+    if _size_memo_n >= SIZE_MEMO_MAX then _size_memo, _size_memo_n = {}, 0 end
+    _size_memo[key] = { w, h }
+    _size_memo_n = _size_memo_n + 1
+    return w, h
+end
+
 -- Load `image_path` and return a BlitBuffer scaled to (w, h). Returns
 -- nil if the file is missing or RenderImage fails. The returned bb is
 -- owned by the cache; callers must NOT free it directly (pass

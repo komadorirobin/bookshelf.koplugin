@@ -1077,6 +1077,17 @@ function Hardcover.autoDecideFlags(book, enrichment)
                 local ew, eh = _parseSizetag(book.cover_sizetag)
                 local hw = tonumber(enrichment.cover_width)
                 local hh = tonumber(enrichment.cover_height)
+                if not (hw and hh) and type(enrichment.cover_path) == "string" then
+                    -- Hardcover usually reports the image's dimensions; when
+                    -- it does not, read them from the file we just downloaded
+                    -- rather than falling through to "keep the embedded
+                    -- cover" on a missing number.
+                    local ok_img, ImageSource =
+                        pcall(require, "lib/bookshelf_image_source")
+                    if ok_img and ImageSource.probeSize then
+                        hw, hh = ImageSource.probeSize(enrichment.cover_path)
+                    end
+                end
                 if ew and eh and hw and hh then
                     adopt = (hw * hh) > (ew * eh)
                 end
