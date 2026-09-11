@@ -2317,7 +2317,7 @@ function Bookshelf:scanPageCounts()
                     else
                         if i % 20 == 1 then
                             if not Trapper:info(T(_(
-                                    "Checking publisher page numbers\u{2026} %1 of %2"),
+                                    "Checking publisher page numbers\xe2\x80\xa6 %1 of %2"),
                                     i, #todo)) then
                                 report.cancelled = true
                                 rest[#rest + 1] = fp
@@ -2408,7 +2408,7 @@ function Bookshelf:scanPageCounts()
                     end)
                     return tostring(ok_pc and pc or "")
                 end,
-                T(_("Paginating\u{2026} %1 of %2\n%3"), i, #todo, name),
+                T(_("Paginating\xe2\x80\xa6 %1 of %2\n%3"), i, #todo, name),
                 true)
                 if completed or (_gettime() - t0) > 1.0 then break end
             end
@@ -2475,7 +2475,7 @@ function Bookshelf:refreshHardcoverDetails()
     local function refresh()
         closeInfo()
         info = InfoMessage:new{
-            text = T(_("Refreshing Hardcover details\u{2026} %1 of %2"),
+            text = T(_("Refreshing Hardcover details\xe2\x80\xa6 %1 of %2"),
                      st.i, #files),
             dismiss_callback = function()
                 if armed then st.cancelled = true end

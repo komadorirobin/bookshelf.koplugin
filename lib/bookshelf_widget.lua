@@ -5702,8 +5702,8 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
         -- hyphen set too tight at this size (same treatment as the cover
         -- page-count badge; the spaces live in the msgid so translators
         -- keep or drop them deliberately).
-        text = open_ended and T(_("%1\u{200A}-\u{200A}%2 of %3+"), range_first, range_last, range_total)
-                          or T(_("%1\u{200A}-\u{200A}%2 of %3"), range_first, range_last, range_total),
+        text = open_ended and T(_("%1\xe2\x80\x8a-\xe2\x80\x8a%2 of %3+"), range_first, range_last, range_total)
+                          or T(_("%1\xe2\x80\x8a-\xe2\x80\x8a%2 of %3"), range_first, range_last, range_total),
         -- Adopt the Bookshelf UI font (a FontList-resolvable face), like the
         -- rest of the chrome; falls back to cfont in follow mode. Button
         -- resolves text_font_face via Font:getFace, and the UI-font setting
