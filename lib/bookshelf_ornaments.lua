@@ -3,12 +3,19 @@
 -- way a shop dresses a half-empty shelf with a plant or a figurine.
 --
 -- Deliberately undocumented -- a thing to find. The first spine render creates
--- <KOReader data dir>/bookshelf.ornaments/ holding template.svg (a potted
--- plant, carrying the conventions in its comments) and cactus.svg; both are
--- ordinary ornaments, and any *.svg dropped beside them joins the pool. The folder is a
--- sibling of plugins/, so plugin updates never touch it, and the template is
--- written only when the folder is first created -- a user who deletes the
--- plant keeps it deleted.
+-- <KOReader data dir>/icons/bookshelf.ornaments/ holding template.svg (a
+-- potted plant, carrying the conventions in its comments) and cactus.svg; both
+-- are ordinary ornaments, and any *.svg dropped beside them joins the pool.
+-- The template is written only when the folder is first created -- a user who
+-- deletes the plant keeps it deleted.
+--
+-- INSIDE icons/ on purpose. That is KOReader's own user-asset directory (see
+-- iconwidget.lua, which prepends <data dir>/icons to its search path), so it
+-- is where a reader already goes to manage SVGs of their own. A
+-- bookshelf.ornaments/ folder in the root of KOReader's storage would be one
+-- plugin helping itself to the top level (maintainer ruling). Still namespaced
+-- by the folder name, so it cannot collide with an icon a reader drops in, and
+-- still outside plugins/, so a plugin update never touches it.
 --
 -- Conventions the SVG follows (also in the template): the bottom of the
 -- viewBox is the plank surface the ornament stands on; a comment
@@ -26,6 +33,10 @@ local Widget = require("ui/widget/widget")
 
 local M = {}
 
+-- KOReader does not create icons/ itself (it is absent from datastorage's
+-- initDataDir list and iconwidget only reads it if it happens to exist), so
+-- the parent is created alongside the ornaments folder.
+M.PARENT        = "icons"
 M.SUBDIR        = "bookshelf.ornaments"
 M.TEMPLATE_NAME = "template.svg"
 M.MIN_GAP_DP    = 48     -- a gap narrower than this stays empty
@@ -140,9 +151,14 @@ function M.dataDir()
     return nil
 end
 
-function M.dir()
+function M.parentDir()
     local d = M.dataDir()
-    return d and (d .. "/" .. M.SUBDIR) or nil
+    return d and (d .. "/" .. M.PARENT) or nil
+end
+
+function M.dir()
+    local p = M.parentDir()
+    return p and (p .. "/" .. M.SUBDIR) or nil
 end
 
 -- ensureTemplate(): create the folder with the template in it, ONCE, and only
@@ -156,6 +172,14 @@ function M.ensureTemplate()
     local fs = lfs()
     if not (d and fs) then return end
     if fs.attributes(d, "mode") ~= nil then return end
+    -- The parent may not exist: KOReader only creates icons/ if a reader has
+    -- made it themselves. mkdir is not recursive, so do it a level at a time,
+    -- and tolerate an existing parent.
+    local parent = M.parentDir()
+    if parent and fs.attributes(parent, "mode") == nil then
+        pcall(fs.mkdir, parent)
+        if fs.attributes(parent, "mode") ~= "directory" then return end
+    end
     local ok_mk = pcall(fs.mkdir, d)
     if not ok_mk or fs.attributes(d, "mode") ~= "directory" then return end
     for _i, seed in ipairs(M.SEED_FILES) do

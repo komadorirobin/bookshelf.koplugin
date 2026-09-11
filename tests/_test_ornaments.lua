@@ -154,16 +154,36 @@ t.test("ensureTemplate creates the folder with the template, once", function()
     O._data_dir = d
     O._lfs = lfs_shim
     O.ensureTemplate()
-    assert(exists(d .. "/bookshelf.ornaments/template.svg"), "template should be written")
-    assert(exists(d .. "/bookshelf.ornaments/cactus.svg"), "cactus should be written")
+    assert(exists(O.dir() .. "/template.svg"), "template should be written")
+    assert(exists(O.dir() .. "/cactus.svg"), "cactus should be written")
+    -- The folder lives inside KOReader's own user-icons directory, not at
+    -- the root of its storage.
+    eq(O.dir(), d .. "/icons/bookshelf.ornaments")
     -- A user deletes the plant: a later session must not bring it back.
-    os.remove(d .. "/bookshelf.ornaments/template.svg")
+    os.remove(O.dir() .. "/template.svg")
     local O2 = fresh()
     O2._data_dir = d
     O2._lfs = lfs_shim
     O2.ensureTemplate()
-    assert(not exists(d .. "/bookshelf.ornaments/template.svg"),
+    assert(not exists(O2.dir() .. "/template.svg"),
         "an existing folder must never be re-seeded")
+    os.execute("rm -rf '" .. d .. "'")
+end)
+
+t.test("an icons folder a reader already has is reused, not disturbed", function()
+    -- KOReader only creates icons/ if the reader made it themselves, so both
+    -- branches are real: we may be creating it, or joining one that already
+    -- holds their own SVGs. Joining must not touch what is in it.
+    local O = fresh()
+    local d = scratch()
+    O._data_dir = d
+    O._lfs = lfs_shim
+    assert(os.execute("mkdir -p '" .. d .. "/icons'"))
+    local mine = io.open(d .. "/icons/my-own-icon.svg", "w")
+    mine:write("<svg/>"); mine:close()
+    O.ensureTemplate()
+    assert(exists(O.dir() .. "/template.svg"), "ornaments folder not created inside icons/")
+    assert(exists(d .. "/icons/my-own-icon.svg"), "a reader's own icon was disturbed")
     os.execute("rm -rf '" .. d .. "'")
 end)
 
@@ -173,9 +193,9 @@ t.test("list finds SVGs and reads their headers", function()
     O._data_dir = d
     O._lfs = lfs_shim
     O.ensureTemplate()
-    local f = io.open(d .. "/bookshelf.ornaments/cat.SVG", "w")
+    local f = io.open(O.dir() .. "/cat.SVG", "w")
     f:write('<svg viewBox="0 0 120 80"><!-- bookshelf:overhang=16 --></svg>'); f:close()
-    local f2 = io.open(d .. "/bookshelf.ornaments/notes.txt", "w"); f2:write("x"); f2:close()
+    local f2 = io.open(O.dir() .. "/notes.txt", "w"); f2:write("x"); f2:close()
     local list = O.list()
     eq(#list, 3, "cat + the two seeded svgs, the txt ignored")
     eq(list[1].name, "cactus.svg")
