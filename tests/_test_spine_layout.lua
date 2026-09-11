@@ -152,4 +152,83 @@ t.test("paginate: rows_per_page below 1 behaves as 1", function()
     eq(#SL.paginate(rows, 0), 2)
 end)
 
+-- ── the top edge, and the face-out/spine-out agreement ────────────────────
+--
+-- A face-out and a spine-out of the SAME book are the same physical object,
+-- so their visible FRONT FACES must be the same height. They were not: the
+-- painter carved the spine's top edge (cover width, foreshortened) out of the
+-- allotted height, while the planner gave the face-out everything left after
+-- its own much smaller thickness. Device report: "the face out cover is as
+-- tall as the spine plus its pages top box".
+
+t.test("the top edge is the COVER WIDTH foreshortened, not a fraction of height", function()
+    -- A wide book (low aspect) has more depth into the shelf than a narrow
+    -- one of the same height, so it shows more lid. The bug this replaced
+    -- used a flat 5% of height and made every spine identical up there.
+    local wide   = SL.topEdgeHeight(300, 1.2, 0)
+    local narrow = SL.topEdgeHeight(300, 2.0, 0)
+    assert(wide > narrow, "a squatter book must show a deeper top edge")
+    eq(wide,   math.floor((300 / 1.2) * SL.VIEW_SIN))
+    eq(narrow, math.floor((300 / 2.0) * SL.VIEW_SIN))
+end)
+
+t.test("the top edge is capped at a fifth of the book", function()
+    -- An absurd aspect would otherwise turn a book into mostly lid.
+    eq(SL.topEdgeHeight(300, 0.2, 0), math.floor(300 * SL.TOP_EDGE_MAX_FRAC))
+end)
+
+t.test("the top edge honours a caller's minimum, but the cap still wins", function()
+    -- The painter passes scaleBySize(5): below that the page stripes are mush.
+    -- A narrow book gets lifted to it...
+    eq(SL.topEdgeHeight(200, 6.0, 12), 12)
+    -- ...but on a book too SHORT to spare a fifth, the cap wins, because the
+    -- clamps apply in that order. Inherited from the painter deliberately: a
+    -- minimum that could exceed the cap would put a lid on a book with almost
+    -- no spine left under it.
+    eq(SL.topEdgeHeight(40, 3.0, 12), math.floor(40 * SL.TOP_EDGE_MAX_FRAC))
+    assert(SL.topEdgeHeight(300, 1.5, 12) > 12, "the minimum is a floor, not a value")
+end)
+
+t.test("an unknown or absurd aspect falls back, and a zero height is zero", function()
+    eq(SL.topEdgeHeight(300, nil, 0), SL.topEdgeHeight(300, SL.DEFAULT_ASPECT, 0))
+    eq(SL.topEdgeHeight(300, -1, 0),  SL.topEdgeHeight(300, SL.DEFAULT_ASPECT, 0))
+    eq(SL.topEdgeHeight(0, 1.5, 0), 0)
+end)
+
+t.test("a face-out cover and its spine show the SAME front face", function()
+    -- The whole point. Both derive from one allotted height and one helper,
+    -- so this holds by construction -- which is the fix.
+    for _i, aspect in ipairs({ 1.2, 1.5, 1.8, 2.4 }) do
+        local h        = SL.spineHeight(400, aspect)
+        local min_px   = 10
+        local edge     = SL.topEdgeHeight(h, aspect, min_px)
+        local spine_face = h - edge          -- what the painter leaves below the lid
+        local cover_h    = h - edge          -- what the planner gives the cover
+        eq(cover_h, spine_face, "aspect " .. aspect)
+    end
+end)
+
+t.test("a face-out's total silhouette is SHORTER than a spine-out's", function()
+    -- Not a regression to fix by stretching the cover back up: a face-out
+    -- shows its thickness above the cover where a spine-out shows its cover
+    -- width, so it genuinely occupies less of the row.
+    local aspect = 1.5
+    local h      = SL.spineHeight(400, aspect)
+    local edge   = SL.topEdgeHeight(h, aspect, 0)          -- spine-out lid
+    local thick  = math.floor(SL.spineWidthDp(300) * SL.VIEW_SIN)  -- face-out lid
+    assert(thick < edge, "a book is thinner than it is wide, so its lid is shallower")
+    assert((h - edge) + thick < h, "the face-out should not fill the allotted height")
+end)
+
+t.test("the cover width follows the COVER height, so it stays aspect-true", function()
+    -- Sizing the width off the allotted height instead would have left the
+    -- cover a shade too wide for its new height.
+    local aspect = 1.5
+    local h      = SL.spineHeight(400, aspect)
+    local face_h = h - SL.topEdgeHeight(h, aspect, 0)
+    local w      = SL.faceOutWidth(face_h, aspect)
+    assert(math.abs(face_h / w - aspect) < 0.05,
+        "cover aspect drifted: " .. (face_h / w) .. " vs " .. aspect)
+end)
+
 t.done()

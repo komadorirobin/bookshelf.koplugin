@@ -75,7 +75,10 @@ SpineShelf.TILT_TOP_SIN    = 0.616   -- sin(38 deg): tipped top = thickness * th
 -- (the book is turned 90 degrees, so its depth into the shelf is the cover).
 -- Before this the face-out used an arbitrary 0.3 x thickness and the spine a
 -- flat 5% of its height, so face-outs read as thick as spines were wide.
-SpineShelf.VIEW_SIN        = 0.208   -- sin(12 deg)
+-- Single-sourced in lib/bookshelf_spine_layout.lua so the planner (which
+-- sizes a face-out) and the painter (which carves a spine's top edge) cannot
+-- drift apart. Kept as a field here because callers already read it.
+SpineShelf.VIEW_SIN        = SpineLayout.VIEW_SIN   -- sin(12 deg)
 
 -- The gap a FACE-OUT needs against anything it isn't serially attached to:
 -- covers standing 2dp apart read as one slab (obvious once "All books"
@@ -917,11 +920,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         -- VIEW_SIN) -- not a fraction of its height, which made every spine
         -- show the same thin sliver regardless of the book behind it.
         local aspect = (e.look and e.look.aspect) or SpineLayout.DEFAULT_ASPECT
-        if not aspect or aspect <= 0 then aspect = SpineLayout.DEFAULT_ASPECT end
-        edge_h = math.floor((spine_h / aspect) * SpineShelf.VIEW_SIN)
-        local e_min, e_max = Screen:scaleBySize(5), math.floor(spine_h * 0.2)
-        if edge_h < e_min then edge_h = e_min end
-        if edge_h > e_max then edge_h = e_max end
+        edge_h = SpineLayout.topEdgeHeight(spine_h, aspect, Screen:scaleBySize(5))
     end
     -- Where the book landed in this render, for the tilt painter's shading
     -- pass (the face below the page block darkens as it tips away from the
@@ -1711,7 +1710,7 @@ function SpineShelf.plan(items, opts)
                 end
             end)
         end
-        local w_dp, w, depth
+        local w_dp, w, depth, face_h
         if face_out then
             -- The page block above a face-out cover is the book's THICKNESS:
             -- the same page-count width its spine would have had (auto scale
@@ -1730,7 +1729,17 @@ function SpineShelf.plan(items, opts)
             local d_max = math.floor(h * 0.15)
             if depth > d_max then depth = d_max end
             if depth < Screen:scaleBySize(3) then depth = Screen:scaleBySize(3) end
-            w = SpineLayout.faceOutWidth(h - depth, aspect)
+            -- The COVER's height, which is the book's front face, and so is
+            -- exactly what this book's spine would show if it were turned the
+            -- other way: the allotted height less the top edge a spine-out
+            -- carves (see SpineLayout.topEdgeHeight). NOT `h - depth`: that
+            -- left the cover a whole spine's top edge taller than its
+            -- neighbours, because a book's thickness is far smaller than its
+            -- cover width.
+            face_h = h - SpineLayout.topEdgeHeight(h, aspect, Screen:scaleBySize(5))
+            if face_h < Screen:scaleBySize(24) then face_h = Screen:scaleBySize(24) end
+            -- Width from the COVER height, so the cover stays aspect-true.
+            w = SpineLayout.faceOutWidth(face_h, aspect)
             w_dp = math.floor(w / (Screen:scaleBySize(100) / 100) + 0.5)
         else
             w_dp = SpineLayout.spineWidthDp(pages) * auto_thick
@@ -1815,7 +1824,7 @@ function SpineShelf.plan(items, opts)
         entries[#entries + 1] = {
             book = bk, item = f.item, item_idx = f.item_idx,
             w = w, h = h, w_dp = w_dp, ref_w_dp = ref_w_dp,
-            look = look, depth = depth,
+            look = look, depth = depth, face_h = face_h,
             face_out = face_out, favourite = fav, label = label,
             author = src.author or (src.authors and src.authors[1]) or nil,
             series_num = series_num, gap_before = gap_before,
@@ -2044,9 +2053,17 @@ function SpineShelf.rowWidget(opts)
                                + Screen:scaleBySize(6)
                     end
                     local fo_stand = stand_h - push
-                    local depth = math.min(e.depth or 0,
-                                           math.max(0, math.min(e.h, fo_stand) - 10))
-                    local cover_h = math.min(e.h, fo_stand) - depth
+                    local avail = math.min(e.h, fo_stand)
+                    local depth = math.min(e.depth or 0, math.max(0, avail - 10))
+                    -- The cover is its own height (the planner's face_h: the
+                    -- front face this book shows either way round), NOT
+                    -- "everything left after the page block". The difference
+                    -- is what made a face-out overtop the spine beside it.
+                    -- The slack this leaves at the top of the row is correct:
+                    -- a face-out shows only its THICKNESS up there where a
+                    -- spine-out shows its cover width, so its whole
+                    -- silhouette really is shorter.
+                    local cover_h = math.min(e.face_h or (avail - depth), avail - depth)
                     -- A tall cover shrinks to make room for the lift rather
                     -- than losing the gap.
                     if lift > 0 and cover_h + depth + lift > fo_stand then

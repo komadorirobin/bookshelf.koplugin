@@ -96,6 +96,48 @@ function SpineLayout.spineHeight(row_h, aspect)
     return h
 end
 
+-- The camera: sin(12 deg). A horizontal depth d into the shelf projects to
+-- d * VIEW_SIN of screen height. Lives here, with the rest of the geometry,
+-- so both the painter and the planner read one number (SpineShelf.VIEW_SIN
+-- aliases it).
+SpineLayout.VIEW_SIN = 0.208
+-- The visible top edge is capped at a fifth of the book, so an extreme aspect
+-- cannot turn a book into mostly lid.
+SpineLayout.TOP_EDGE_MAX_FRAC = 0.2
+
+-- topEdgeHeight(book_h, aspect, min_px) -> px
+--
+-- The page-block sliver you see above a SPINE-OUT book: its depth into the
+-- shelf is the COVER WIDTH (book_h / aspect), foreshortened by the camera's
+-- pitch. The painter carves this out of the book's allotted height, so a
+-- spine-out book's visible FRONT FACE is book_h minus this.
+--
+-- Exposed, and the face-out planner subtracts the SAME value, because the two
+-- have to agree: a face-out and a spine-out of the same book are the same
+-- physical object, so their front faces must be identical on screen. They
+-- were not -- the face-out subtracted its own (much smaller) thickness
+-- instead, which left its cover taller than the neighbouring spine by very
+-- nearly that spine's whole top edge. Device report: "the face out cover is
+-- as tall as the spine plus its pages top box".
+--
+-- What legitimately differs is the top box ABOVE the front face: a spine-out
+-- shows its cover width up there, a face-out only its thickness. So a
+-- face-out's total silhouette is genuinely SHORTER, and the space it leaves
+-- at the top of the row is correct rather than a gap to fill.
+function SpineLayout.topEdgeHeight(book_h, aspect, min_px)
+    book_h = tonumber(book_h) or 0
+    if book_h <= 0 then return 0 end
+    aspect = tonumber(aspect)
+    if not aspect or aspect <= 0 then aspect = SpineLayout.DEFAULT_ASPECT end
+    local edge = math.floor((book_h / aspect) * SpineLayout.VIEW_SIN)
+    local e_max = math.floor(book_h * SpineLayout.TOP_EDGE_MAX_FRAC)
+    min_px = tonumber(min_px) or 0
+    if edge < min_px then edge = min_px end
+    if edge > e_max then edge = e_max end
+    if edge < 0 then edge = 0 end
+    return edge
+end
+
 -- faceOutWidth(spine_h, aspect) -> px
 -- The cover width when a favourite faces outwards at its spine height.
 function SpineLayout.faceOutWidth(spine_h, aspect)
