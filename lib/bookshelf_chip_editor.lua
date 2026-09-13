@@ -1228,32 +1228,24 @@ function Editor:editTab(tab_id, opts)
         end)
     end
 
+    -- The same high anchor every picker this editor opens uses: over the hero,
+    -- above the shelf menu bar. It opened in the bottom third before, so the
+    -- chip strip stayed visible for the Move-left / Move-right chevrons -- but
+    -- the strip sits BELOW the hero, so clearing the hero leaves it visible
+    -- anyway, and an editor placed somewhere different from the dialogs it
+    -- spawns reads as a different kind of thing (maintainer report).
+    --
+    -- _highAnchor takes its width off the laid-out MovableContainer, so the
+    -- container is held here for it to read rather than built inline.
+    local movable = MovableContainer:new{
+        frame,
+        anchor = _highAnchor(function() return dialog end),
+    }
+    dialog.movable = movable
     dialog[1] = WidgetContainer:new{
         align = "center",
         dimen = Geom:new{ x = 0, y = 0, w = sw, h = sh },
-        MovableContainer:new{
-            frame,
-            -- Anchor just below the chip strip so the strip stays visible
-            -- while the user taps the Move-left / Move-right chevrons.
-            -- The anchor is evaluated ONCE on the first paint (MovableContainer
-            -- sets _anchor_ensured = true after that), so subsequent rebuild()
-            -- calls never shift the dialog.
-            anchor = function()
-                local fsize = frame:getSize()
-                -- Anchor the dialog in the bottom third of the screen so it
-                -- sits below the hero card + chip strip and over the lower
-                -- shelf rows, leaving the top half (hero, chips) visible.
-                -- Clamp so a tall dialog doesn't fall off the bottom edge.
-                local target_y = math.floor(sh * 2 / 3)
-                local max_y    = sh - fsize.h
-                return Geom:new{
-                    x = math.floor((sw - fsize.w) / 2),
-                    y = math.min(target_y, max_y),
-                    w = fsize.w,
-                    h = fsize.h,
-                }
-            end,
-        },
+        movable,
     }
 
     UIManager:show(dialog, function() return "partial", frame.dimen end)
@@ -1512,9 +1504,17 @@ function Editor:_pickGroupDisplay(draft, on_change, chrome)
         -- Columns/Rows editor and under the cover grid's own pinch. List
         -- columns and rows divide nothing but the shelf band, which is what
         -- makes them safe to vary per chip.
-        local show_covers = (mode ~= ViewMode.LIST and mode ~= ViewMode.SPINES)
-        local show_list   = (mode ~= ViewMode.COVERS and mode ~= ViewMode.SPINES)
-        local show_spines = (mode == ViewMode.SPINES)
+        --
+        -- chipPin, not `mode`: Covers is stored as ABSENCE, so mode is nil for
+        -- a Covers chip and every `mode ~= COVERS` test silently passed. That
+        -- is how a Covers chip came to be offered List columns and List rows,
+        -- controls for a view it is pinned away from. These three lines were
+        -- written when nil meant Auto and were not revisited when the default
+        -- flipped (cf885a1); the radios above were.
+        local pin = ViewMode.chipPin(mode)
+        local show_covers = (pin ~= ViewMode.LIST and pin ~= ViewMode.SPINES)
+        local show_list   = (pin ~= ViewMode.COVERS and pin ~= ViewMode.SPINES)
+        local show_spines = (pin == ViewMode.SPINES)
                             and not (chrome and chrome.is_opds)
         local bw = chrome and chrome.bw
 

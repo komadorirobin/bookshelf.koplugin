@@ -181,69 +181,62 @@ function SpineShelf.invalidateRender(fp)
     end
 end
 
--- Sampled looks persist across launches: sampling means a full BIM cover
--- decode per book, and a Kindle page of 50+ spines would otherwise pay
--- seconds of flash I/O on every cold page. Loaded lazily once; saved back
--- (in-memory, the store's normal flush cadence persists it) whenever a
--- plan added new samples -- see flushLooks().
-local _persist, _persist_dirty
-local PERSIST_KEY = "spine_looks"
-local PERSIST_MAX = 1200
+-- Sampled looks, scanned page counts and cached read status persist across
+-- launches in lib/bookshelf_book_facts_db (SQLite). They used to be one Lua
+-- table in the settings file, rewritten in full on every flush -- see that
+-- module's header for the measurements, and for why the 1200-book cap that
+-- lived here had to go rather than be raised.
+local PERSIST_KEY = "spine_looks"   -- the legacy settings key, migrated once
+local FactsDB, _migrated
 
-local function _persistTable()
-    if _persist then return _persist end
-    local ok, BookshelfSettings = pcall(require, "lib/bookshelf_settings_store")
-    if ok and BookshelfSettings and BookshelfSettings.read then
-        local t = BookshelfSettings.read(PERSIST_KEY)
-        _persist = type(t) == "table" and t or {}
-    else
-        _persist = {}
+-- _facts() -> the store, or nil when it will not open (a shelf must still
+-- paint without it; everything here degrades to "we know nothing yet").
+local function _facts()
+    if FactsDB == nil then
+        local ok, m = pcall(require, "lib/bookshelf_book_facts_db")
+        FactsDB = (ok and m) or false
     end
-    return _persist
-end
-
--- flushLooks() — hand new samples to the settings store, and schedule a
--- REAL disk flush shortly after: an in-memory save is lost when KOReader is
--- killed rather than exited, and every lost look is a cover decode paid
--- again next session (the suspected '5s per page, every session' shape).
-local _flush_scheduled
-local function _flushLooks()
-    if not _persist_dirty then return end
-    _persist_dirty = nil
-    pcall(function()
-        local BookshelfSettings = require("lib/bookshelf_settings_store")
-        local n = 0
-        for _k in pairs(_persist) do n = n + 1 end
-        if n > PERSIST_MAX then
-            -- Whole-table reset rather than LRU bookkeeping: resampling is
-            -- the cost of a cold page, once, and only after a library far
-            -- larger than the cap has cycled through.
-            _persist = {}
-            _persist_dirty = nil
+    if FactsDB and not _migrated then
+        _migrated = true
+        -- Lift whatever the settings file still holds, ONCE. The new store is
+        -- written and committed before the old key is dropped, so a migration
+        -- interrupted half way costs nothing and simply runs again next
+        -- launch -- the worst case is doing it twice, which is idempotent.
+        pcall(function()
+            local BookshelfSettings = require("lib/bookshelf_settings_store")
+            local legacy = BookshelfSettings.read(PERSIST_KEY)
+            if type(legacy) ~= "table" or next(legacy) == nil then return end
+            local n = FactsDB.migrateFrom(legacy)
+            FactsDB.flush()
             BookshelfSettings.save(PERSIST_KEY, nil)
-            return
-        end
-        BookshelfSettings.save(PERSIST_KEY, _persist)
-        if not _flush_scheduled and BookshelfSettings.flush then
-            _flush_scheduled = true
-            local ok_ui, UIManager = pcall(require, "ui/uimanager")
-            if ok_ui and UIManager then
-                UIManager:scheduleIn(3, function()
-                    _flush_scheduled = nil
-                    pcall(function() BookshelfSettings.flush() end)
-                end)
-            else
-                _flush_scheduled = nil
-            end
-        end
-    end)
+            if BookshelfSettings.flush then BookshelfSettings.flush() end
+            logger.dbg(string.format(
+                "[bookshelf] migrated %d books of shelf facts out of the settings file", n))
+        end)
+    end
+    return FactsDB or nil
 end
 
--- Public flush for bulk writers (the page-count scanner persists hundreds
--- of entries in one pass and must not lose them to a mid-scan crash).
+local function _flushLooks()
+    local F = _facts()
+    if F then F.flush() end
+end
+
+-- Public flush for bulk writers (the page-count scanner persists hundreds of
+-- entries in one pass and must not lose them to a mid-scan crash). One
+-- transaction, not one commit per book.
 function SpineShelf.flushPersist()
     _flushLooks()
 end
+
+-- prefetchFacts(fps) -- one read for a whole page of books, so the per-book
+-- lookups below are table hits. The plan calls this before it walks its
+-- entries.
+function SpineShelf.prefetchFacts(fps)
+    local F = _facts()
+    if F then pcall(F.prefetch, fps) end
+end
+
 
 -- cachedProgress / persistProgress: page count and read status ride the
 -- same persisted table as the looks, so a page of spines costs its sidecar
@@ -271,13 +264,16 @@ local function _sidecarMtime(fp)
 end
 
 function SpineShelf.cachedProgress(fp)
-    local e = fp and _persistTable()[fp]
+    local F = fp and _facts()
+    local e = F and F.get(fp)
     if not e then return nil, nil, false end
     if e.sk and not _progress_validated[fp] then
         _progress_validated[fp] = true
         if _sidecarMtime(fp) ~= (e.m or 0) then
-            e.p, e.s, e.sk, e.m = nil, nil, nil, nil
-            _persist_dirty = true
+            -- The sidecar moved under us: forget what we cached about its
+            -- READ STATE. The scanned page count is not the sidecar's to
+            -- invalidate, so it stays.
+            F.put(fp, { s = false, sk = false, m = false })
             return nil, nil, false
         end
     end
@@ -286,18 +282,15 @@ end
 
 function SpineShelf.persistProgress(fp, pages, status)
     if not fp then return end
-    local t = _persistTable()
-    local e = t[fp]
-    if not e then
-        e = {}
-        t[fp] = e
-    end
-    if pages then e.p = pages end
-    e.s = status or nil
-    e.sk = true
-    e.m = _sidecarMtime(fp)
+    local F = _facts()
+    if not F then return end
+    F.put(fp, {
+        p  = pages or nil,
+        s  = status or false,
+        sk = true,
+        m  = _sidecarMtime(fp),
+    })
     _progress_validated[fp] = true
-    _persist_dirty = true
 end
 
 local function _sampleAverage(bb)
@@ -359,7 +352,8 @@ function SpineShelf.bookLook(book)
     if hit then return hit end
 
     -- A look sampled in a previous session skips the cover decode entirely.
-    local kept = _persistTable()[fp]
+    local F = _facts()
+    local kept = F and F.get(fp)
     if type(kept) == "table" and kept.r then
         local look = { r = kept.r, g = kept.g, b = kept.b,
                        aspect = kept.a, sampled = true }
@@ -415,9 +409,10 @@ function SpineShelf.bookLook(book)
         end
         _look_cache[fp] = look
         _look_count = _look_count + 1
-        _persistTable()[fp] = { r = look.r, g = look.g, b = look.b,
-                                a = look.aspect }
-        _persist_dirty = true
+        local F = _facts()
+        if F then
+            F.put(fp, { r = look.r, g = look.g, b = look.b, a = look.aspect })
+        end
     end
     return look
 end
@@ -433,14 +428,38 @@ function SpineShelf.invalidateBook(fp)
     SpineShelf.invalidateRender(fp)
 end
 
+-- clearScannedPageCounts() -> number of books cleared
+-- Drops the counts the "Extract page counts" scan produced, and only those:
+-- the sampled colours and cached status stay, so the shelf does not go cold.
+-- Counts already written into a book's own sidecar are KOReader's to keep
+-- (maintainer's ruling) and are untouched.
+function SpineShelf.clearScannedPageCounts()
+    local F = _facts()
+    if not F then return 0 end
+    local n = 0
+    pcall(function() n = F.clearPageCounts() or 0 end)
+    _look_cache, _look_count = {}, 0
+    _progress_validated = {}
+    return n
+end
+
+-- scannedPageCountTotal() -> how many books carry a scanned count.
+function SpineShelf.scannedPageCountTotal()
+    local F = _facts()
+    if not F then return 0 end
+    local n = 0
+    pcall(function() n = F.countPageCounts() or 0 end)
+    return n
+end
+
 function SpineShelf.dropLook(fp)
     if fp and _look_cache[fp] then
         _look_cache[fp] = nil
         _look_count = math.max(0, _look_count - 1)
     end
-    if fp and _persist and _persist[fp] then
-        _persist[fp] = nil
-        _persist_dirty = true
+    if fp then
+        local F = _facts()
+        if F then F.drop(fp) end
     end
 end
 
@@ -538,6 +557,63 @@ local function _plankBandColor(y_rel, surf_h, mul)
     -- lit front face still top it.
     local f = (0.50 + 0.45 * t) * (mul or 1)
     return _plankShade(f)
+end
+
+-- ── The chamfer where a book meets the shelf ────────────────────────────────
+--
+-- A real book's corners are never square against a shelf, and taking the
+-- corner pixel off lets the shelf show through -- which is what stops a row of
+-- spines reading as a bar chart.
+--
+-- The corner is REMOVED: the pixel is replaced by what would be there if the
+-- book were not. Two earlier attempts painted a shadowed plank tone into it,
+-- which read as nothing at all against the book's own dark border, and then a
+-- bigger version of the same, which read as a notch cut into a square foot
+-- (maintainer, both times).
+--
+-- It cannot be done by copying what is underneath, which was the obvious
+-- answer: a spine renders into its OWN offscreen buffer (see the render
+-- cache), filled with the page ground and blitted opaquely, so nothing behind
+-- it is visible to this code at all. Reading a pixel there returns the page
+-- ground or uninitialised memory, not the plank. The colour is therefore
+-- computed the same way the lifted book's under-strip reproduces the plank --
+-- _plankBandColor with the same quantisation -- so the cut matches the shelf
+-- it exposes instead of approximating it.
+--
+-- behind(yy) -> the colour the shelf shows at that row: the plank's own band
+-- where the surface reaches, the page ground above it (a lifted book's corner
+-- shows the page, which is the point of keeping the cut when it lifts).
+local function _behindAt(plank, slot_bottom, lifted)
+    return function(yy)
+        if plank and not lifted then
+            local surf_h   = 3 * plank.b
+            local surf_top = slot_bottom + plank.inset - surf_h
+            if yy >= surf_top then
+                -- The SHADOWED band, not the lit one. The plank a pixel below
+                -- the book is in full light; the pixel the corner exposes is
+                -- under the book, in its own contact shadow, and taking the
+                -- lit tone read as a bright speck on the corner (maintainer).
+                -- 0.72 is the same darkening the lifted book's contact patch
+                -- uses, so a book's foot shadow is one value wherever it is
+                -- drawn.
+                return _plankBandColor(yy - surf_top, surf_h, 0.72)
+            end
+        end
+        -- Page ground in PRE-INVERT space, matching the buffer the slot is
+        -- filled with, so night mode inverts it with everything else.
+        return Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+    end
+end
+
+-- _cutFootCorners(bb, x, bottom, w, n, behind) -- n px square off each BOTTOM
+-- corner. `bottom` is one past the book's last row.
+local function _cutFootCorners(bb, x, bottom, w, n, behind)
+    for dy = 0, n - 1 do
+        local yy = bottom - 1 - dy
+        local c = behind(yy)
+        bb:paintRectRGB32(x, yy, n, 1, c)
+        bb:paintRectRGB32(x + w - n, yy, n, 1, c)
+    end
 end
 
 local function _plankLit(t, mul)
@@ -939,12 +1015,12 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- the hint of a chamfer where the book stands. Only while it STANDS --
     -- a lifted book floats in front of the page, and the plank-toned nicks
     -- read as white specks cut into its corners there.
-    if not lifted then
-        local nick_c = _plankShade(0.42)
-        local by = body_top + body_h - hairline
-        bb:paintRectRGB32(x, by, hairline, hairline, nick_c)
-        bb:paintRectRGB32(x + spine_w - hairline, by, hairline, hairline, nick_c)
-    end
+    -- Kept when LIFTED too (maintainer request): the pixel is replaced by
+    -- whatever is actually beneath the book, so a lifted book's corners show
+    -- the page rather than a plank-toned speck -- which is what made the
+    -- earlier painted version look wrong off the shelf.
+    _cutFootCorners(bb, x, body_top + body_h, spine_w, hairline,
+                    _behindAt(self.plank, y + self.height, lifted))
     -- A lifted book leaves its shadow on the plank where it stood. The
     -- under-strip REPRODUCES the plank's banded surface (same quantisation,
     -- via plankBandT) and darkens those same bands for the shadow, so the
@@ -1195,12 +1271,15 @@ function FaceOutTopBlock:paintTo(bb, x, y)
         end
     end
     local fill = _boardColor(self.look, night)
-    -- BOTH top corner pixels come off, the same chamfer the spine feet get
-    -- where they meet the plank (the first cut nicked only the left; the
-    -- silhouette read square on the right -- user ruling).
+    -- The TOP-LEFT corner pixel comes off, the same chamfer the spine feet get
+    -- where they meet the plank. The left only: this block was briefly notched
+    -- at both ends, and the right one read wrong, because the right side is
+    -- the board standing slightly PROUD of the page edges it wraps -- a cut
+    -- there takes the corner off the wrong thing (user ruling, reversing the
+    -- earlier both-ends one).
     local ch = math.max(2, Screen:scaleBySize(1))
     bb:paintRectRGB32(x, y + ch, board, h - ch, fill)     -- left board, below the chamfer
-    bb:paintRectRGB32(x + ch, y, w - 2 * ch, board, fill) -- top board, notched both ends
+    bb:paintRectRGB32(x + ch, y, w - ch, board, fill)     -- top board, notched at the left
     bb:paintRectRGB32(x + w - rb, y + board, rb, h - board, fill)  -- right sliver
 end
 
@@ -1217,9 +1296,8 @@ function FaceOutFeet:paintTo(bb, x, y)
     local w, h = self.dimen.w, self.dimen.h
     local hl = Screen:scaleBySize(1)
     if hl < 1 then hl = 1 end
-    local c = _plankShade(0.42)
-    bb:paintRectRGB32(x, y + h - hl, hl, hl, c)
-    bb:paintRectRGB32(x + w - hl, y + h - hl, hl, hl, c)
+    _cutFootCorners(bb, x, y + h, w, hl,
+                    _behindAt(self.plank, y + h, self.lifted))
 end
 
 -- ── Shelf-edge section badges ───────────────────────────────────────────────
@@ -1231,8 +1309,27 @@ end
 -- run that wraps keeps its name in view on every shelf it crosses.
 local ShelfBadges = Widget:extend{}
 
+-- A badge hangs BELOW its plank by design, and by more than the inter-row
+-- gap once the label is large (a high DPI, a tall UI font). Painted in row
+-- order it loses: the next row's books paint over it, and on the last row the
+-- footer does. So in deferred mode the badge only RECORDS where it would
+-- draw, and SpineShelf.badgeOverlay -- which the shelf paints last of all --
+-- does the drawing. The space it hangs into is empty in every case that
+-- matters: books never descend below their own plank, not even lifted.
 function ShelfBadges:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
+    if self.deferred then return end
+    self:drawAt(bb, x, y)
+end
+
+-- Paint at the position the last paintTo recorded. No-op until the row has
+-- been painted once and the position is known.
+function ShelfBadges:paintDeferred(bb)
+    if not (self.dimen and self.dimen.x and self.dimen.y) then return end
+    self:drawAt(bb, self.dimen.x, self.dimen.y)
+end
+
+function ShelfBadges:drawAt(bb, x, y)
     local h = self.dimen.h
     local ok_sd, StackDisplay = pcall(require, "lib/bookshelf_stack_display")
     if not (ok_sd and StackDisplay and StackDisplay.ribbonColors) then return end
@@ -1302,6 +1399,29 @@ function ShelfBadges:paintTo(bb, x, y)
             end)
         end
     end
+end
+
+-- badgeOverlay(get_badges, w, h) -> a full-screen widget that paints every
+-- row's section badges after everything else. `get_badges` is called at paint
+-- time rather than a list being captured, so an in-place shelf swap (which
+-- replaces the row widgets without rebuilding the window) cannot leave the
+-- overlay painting badges that belong to rows that are gone.
+local BadgeOverlay = Widget:extend{}
+
+function BadgeOverlay:paintTo(bb, _x, _y)
+    local list = self.get_badges and self.get_badges() or nil
+    if not list then return end
+    for i = 1, #list do
+        local b = list[i]
+        if b and b.paintDeferred then b:paintDeferred(bb) end
+    end
+end
+
+function SpineShelf.badgeOverlay(get_badges, w, h)
+    return BadgeOverlay:new{
+        dimen      = Geom:new{ w = w, h = h },
+        get_badges = get_badges,
+    }
 end
 
 -- ── The shelf plank ─────────────────────────────────────────────────────────
@@ -1432,6 +1552,85 @@ end
 -- }
 -- opts: content_w, row_h (px), gap (px), n_rows, face_out (bool),
 --       height_pct (50..100, scales the spine height budget).
+-- _flattenItems(items) -> flat
+--
+-- One entry per spine the page will stand, in order. Pulled out of plan() so
+-- the run bookkeeping can be tested on its own: it decides three things that
+-- are easy to get subtly wrong, and a shelf full of spines is a poor place to
+-- notice.
+--
+--   item_idx   what the CURSOR counts -- one per item the fetch returned.
+--   run_idx    the VISUAL run: what gets a wider gap either side and a name
+--              badge under it. The same thing as item_idx for a group (one
+--              item, one run), but NOT for a shelf whose items are the books
+--              themselves and whose runs are a tag they share -- the
+--              Home-folders source, where a folder with more books than fit a
+--              page could never be paged through if the folder were the item.
+--   first_of_group  the head of a run of more than one, which the "first in
+--              series" face-out mode stands cover-forward.
+function SpineShelf._flattenItems(items)
+    local flat, n_items = {}, 0
+    local run_n, prev_key = 0, nil
+    for i = 1, #items do
+        local it = items[i]
+        if it then
+            n_items = n_items + 1
+            local members = it.books
+            if members and #members > 0 then
+                run_n = run_n + 1
+                -- A group is its own run whatever stands next to it.
+                prev_key = nil
+                for m = 1, #members do
+                    flat[#flat + 1] = { item = it, book = members[m],
+                                        item_idx = n_items, run_idx = run_n,
+                                        in_group = #members > 1,
+                                        -- The "first in series/stack"
+                                        -- face-out mode stands this one
+                                        -- cover-forward at the head of
+                                        -- its run.
+                                        first_of_group = m == 1
+                                            and #members > 1 or nil }
+                end
+            else
+                -- A plain book. Consecutive books sharing a section tag are
+                -- one run; untagged ones each stand alone, exactly as every
+                -- book-list chip has always done.
+                local key = it.shelf_section
+                if not (key and key == prev_key) then
+                    run_n = run_n + 1
+                    prev_key = key
+                end
+                flat[#flat + 1] = { item = it, book = it,
+                                    item_idx = n_items, run_idx = run_n,
+                                    section_label = key, in_group = false }
+            end
+        end
+    end
+    -- A tagged run of one is a lone book, not a section: it gets the badge
+    -- (single-member groups do too) but not the wider boundary gap.
+    do
+        local run_len, run_head = {}, {}
+        for i = 1, #flat do
+            local r = flat[i].run_idx
+            run_len[r] = (run_len[r] or 0) + 1
+            if run_head[r] == nil then run_head[r] = i end
+        end
+        for i = 1, #flat do
+            local f = flat[i]
+            if f.section_label and run_len[f.run_idx] > 1 then
+                f.in_group = true
+                -- The head of the run, which the "first in series" face-out
+                -- mode stands cover-forward -- the same thing a group's first
+                -- member gets above. A Home-folders shelf had no heads at all
+                -- without this: its books are their own items, so the group
+                -- branch never sees them and nothing ever faced out.
+                if run_head[f.run_idx] == i then f.first_of_group = true end
+            end
+        end
+    end
+    return flat
+end
+
 function SpineShelf.plan(items, opts)
     local entries = {}
     local budget = opts.row_h
@@ -1494,29 +1693,40 @@ function SpineShelf.plan(items, opts)
     -- (folders) stay as one drillable spine.
     local _t0 = _gettime()
     local _t_hydrate, _t_look, _t_pages, _t_fav, _n_hydrated = 0, 0, 0, 0, 0
-    local flat, n_items = {}, 0
-    for i = 1, #items do
-        local it = items[i]
-        if it then
-            n_items = n_items + 1
-            local members = it.books
-            if members and #members > 0 then
-                for m = 1, #members do
-                    flat[#flat + 1] = { item = it, book = members[m],
-                                        item_idx = n_items,
-                                        in_group = #members > 1,
-                                        -- The "first in series/stack"
-                                        -- face-out mode stands this one
-                                        -- cover-forward at the head of
-                                        -- its run.
-                                        first_of_group = m == 1
-                                            and #members > 1 or nil }
-                end
-            else
-                flat[#flat + 1] = { item = it, book = it,
-                                    item_idx = n_items, in_group = false }
-            end
+    --
+    -- run_idx is the VISUAL run -- what gets a wider gap either side and a
+    -- name badge under it. item_idx is what the CURSOR counts. They are the
+    -- same thing for a group (one item, one run), but not for a shelf where
+    -- the books themselves are the items and the run is a tag they share:
+    -- the Home-folders source hands over books carrying the folder they live
+    -- in, because a folder with more books than fit a page could never be
+    -- paged through if the folder were the item (see Repo.getFolderSections).
+    local flat = SpineShelf._flattenItems(items)
+
+    -- Resume INSIDE an item. A group bigger than a page cannot be paged
+    -- through in item units, so a page that starts partway through one is
+    -- given the count of spines already seen and drops them. item_idx is left
+    -- alone: it still names the item in the caller's array, which is what
+    -- next_item is reported in.
+    local skip = tonumber(opts.skip) or 0
+    if skip > 0 and skip < #flat then
+        local kept = {}
+        for j = skip + 1, #flat do kept[#kept + 1] = flat[j] end
+        flat = kept
+    elseif skip >= #flat then
+        skip = 0            -- a stale skip past the end starts the item over
+    end
+
+    -- One read for the whole page's facts (look, count, cached status), so
+    -- the per-book lookups below are table hits rather than a query each.
+    do
+        local fps = {}
+        for j = 1, #flat do
+            local bk = flat[j] and flat[j].book
+            local fp = bk and bk.filepath
+            if fp then fps[#fps + 1] = fp end
         end
+        SpineShelf.prefetchFacts(fps)
     end
 
     local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
@@ -1788,7 +1998,7 @@ function SpineShelf.plan(items, opts)
             local prev_e = entries[#entries]
             local prev_face = prev_e and prev_e.face_out
             local face_gap  = Screen:scaleBySize(SpineShelf.FACE_GAP_DP)
-            if prev.item_idx == f.item_idx then
+            if prev.run_idx == f.run_idx then
                 -- Same run: tight, unless BOTH neighbours are covers
                 -- (the "All books" wall) -- covers need air.
                 gap_before = (face_out and prev_face) and face_gap or book_gap
@@ -1823,6 +2033,7 @@ function SpineShelf.plan(items, opts)
         end
         entries[#entries + 1] = {
             book = bk, item = f.item, item_idx = f.item_idx,
+            run_idx = f.run_idx, section_label = f.section_label,
             w = w, h = h, w_dp = w_dp, ref_w_dp = ref_w_dp,
             look = look, depth = depth, face_h = face_h,
             face_out = face_out, favourite = fav, label = label,
@@ -1848,19 +2059,64 @@ function SpineShelf.plan(items, opts)
     end
     local rows = SpineLayout.fillRows(widths, opts.content_w, gaps)
     while #rows > (opts.n_rows or 1) do table.remove(rows) end
+    -- Even the shelves out. The fill has decided WHICH books are on this page
+    -- -- greedy packs the most it can, and the cursor step, the page map and
+    -- the footer range are all built on that -- so this re-breaks the SAME
+    -- run of books across the SAME rows, purely to share the slack out. Rows
+    -- are painted centred, so without it sixteen books on a two-row shelf
+    -- read as fifteen books and one marooned mid-plank. run_idx tells the
+    -- balancer where the sections are, so a series or a folder resists being
+    -- cut in half; on a chip with no grouping every book is its own run and
+    -- the preference costs nothing.
+    if #rows > 1 then
+        local runs = {}
+        for i = 1, #entries do runs[i] = entries[i].run_idx end
+        local even = SpineLayout.balanceRows(widths, opts.content_w, gaps,
+                                             rows[#rows].last, #rows,
+                                             { runs = runs })
+        if even then rows = even end
+    end
 
     -- shown is in ITEM units (what the cursor counts): the last item whose
-    -- spines ALL made it onto the page. A group cut off mid-run repeats
-    -- from its start on the next page -- with the floor of one so a group
-    -- larger than a whole page can still be advanced past.
-    local shown = 0
+    -- spines ALL made it onto the page. Kept for the callers that still speak
+    -- item units.
+    --
+    -- next_item / next_skip say where the NEXT page begins, and they exist
+    -- because item units alone CANNOT express it. A group bigger than one page
+    -- is a single item, so "how many items did this page finish?" is zero for
+    -- it -- and the floor of one that used to paper over that meant the cursor
+    -- stepped past the WHOLE group. Every book after the first pageful of a
+    -- large genre or author was unreachable, forwards and backwards alike.
+    --
+    -- The next page now resumes INSIDE the item, next_skip spines in.
+    local shown, next_item, next_skip = 0, nil, 0
     if #rows > 0 then
         local last_entry = rows[#rows].last
-        local last_item = entries[last_entry].item_idx
-        local fully = last_entry == #entries
-                      or entries[last_entry + 1].item_idx ~= last_item
+        local last_item  = entries[last_entry].item_idx
+        local after      = entries[last_entry + 1]
+        local fully      = (after == nil) or after.item_idx ~= last_item
         shown = fully and last_item or (last_item - 1)
         if shown < 1 then shown = 1 end
+        if after then
+            next_item = after.item_idx
+            if not fully then
+                -- How many of this item's spines this page showed, so the
+                -- next one carries on instead of starting the group again.
+                local k, j = 0, last_entry
+                while j >= 1 and entries[j].item_idx == next_item do
+                    k = k + 1
+                    j = j - 1
+                end
+                -- Walked off the start: the item was already part-consumed
+                -- before this page, so those spines count too.
+                if j == 0 then k = k + skip end
+                next_skip = k
+            end
+        else
+            -- The whole window fit. The caller knows whether more items
+            -- exist; this just names the one after the last.
+            next_item = last_item + 1
+        end
     end
     _flushLooks()
     SpineShelf._last_plan = {
@@ -1875,7 +2131,8 @@ function SpineShelf.plan(items, opts)
         "[bookshelf perf] spine plan TOTAL=%.0fms entries=%d hydrate=%.0fms/%d look=%.0fms pages=%.0fms fav=%.0fms",
         (_gettime() - _t0) * 1000, #entries, _t_hydrate * 1000, _n_hydrated,
         _t_look * 1000, _t_pages * 1000, _t_fav * 1000))
-    return { entries = entries, rows = rows, shown = shown }
+    return { entries = entries, rows = rows, shown = shown,
+             next_item = next_item, next_skip = next_skip }
 end
 
 -- ── Row widget ──────────────────────────────────────────────────────────────
@@ -1985,18 +2242,21 @@ function SpineShelf.rowWidget(opts)
                 group[#group + 1] = HorizontalSpan:new{ width = gap_w }
                 cursor = cursor + gap_w
             end
-            if e.item and e.item.books then
+            if (e.item and e.item.books) or e.section_label then
                 -- Every GROUP gets a badge, single-member ones included --
                 -- on a grouping chip each item is a section, and an
                 -- unbadged lone book reads as a stray (user report: the
                 -- narrator-split singles looked like anonymous duplicates).
                 -- e.in_group stays the >1 flatten/gap semantics.
                 local seg = badge_spans[#badge_spans]
-                if seg and seg.item == e.item then
+                if seg and seg.run == e.run_idx then
                     seg.w = (cursor + e.w) - seg.x
                 else
                     local it = e.item or {}
-                    local label = it.series_name or it.label or it.name
+                    -- A section tag names its own run (the folder it came
+                    -- from); a group's name comes off the group.
+                    local label = e.section_label
+                                  or it.series_name or it.label or it.name
                     -- Author sections sort by SURNAME, and the surname is
                     -- what a shopper scans the shelf edge for -- so the
                     -- badge always reads "Last, First", whatever the
@@ -2011,6 +2271,7 @@ function SpineShelf.rowWidget(opts)
                     end
                     badge_spans[#badge_spans + 1] = {
                         item  = e.item,
+                        run   = e.run_idx,
                         x     = cursor,
                         w     = e.w,
                         label = label,
@@ -2136,19 +2397,18 @@ function SpineShelf.rowWidget(opts)
                             look  = e.look,
                         }
                     end
-                    if lift > 0 then
-                        stack[#stack + 1] = cover
-                    else
-                        -- Standing: nick the cover's bottom corners into
-                        -- the plank, like the spine feet (FaceOutFeet).
-                        stack[#stack + 1] = OverlapGroup:new{
-                            dimen = Geom:new{ w = e.w, h = cover_h },
-                            cover,
-                            FaceOutFeet:new{
-                                dimen = Geom:new{ w = e.w, h = cover_h },
-                            },
-                        }
-                    end
+                    -- The cover's corners come off the same way a spine's
+                    -- do, standing OR lifted: the cut copies what is behind,
+                    -- so it is the plank on the shelf and the page off it.
+                    stack[#stack + 1] = OverlapGroup:new{
+                        dimen = Geom:new{ w = e.w, h = cover_h },
+                        cover,
+                        FaceOutFeet:new{
+                            dimen  = Geom:new{ w = e.w, h = cover_h },
+                            plank  = { b = b, inset = inset },
+                            lifted = lift > 0 or nil,
+                        },
+                    }
                     if push + lift > 0 then
                         if lift > 0 then
                             -- The lifted book's shadow where it stood.
@@ -2234,13 +2494,20 @@ function SpineShelf.rowWidget(opts)
         children[#children + 1] = gap_ornaments[_i]
     end
     if ornament then children[#children + 1] = ornament end
+    local badges
     if #badge_spans > 0 then
-        children[#children + 1] = ShelfBadges:new{
-            dimen = Geom:new{ w = opts.width, h = opts.height },
-            spans = badge_spans,
+        badges = ShelfBadges:new{
+            dimen    = Geom:new{ w = opts.width, h = opts.height },
+            spans    = badge_spans,
+            deferred = opts.defer_badges or nil,
         }
+        children[#children + 1] = badges
     end
-    return OverlapGroup:new(children)
+    local row_group = OverlapGroup:new(children)
+    -- The shelf collects these for its overlay; it still paints as a child
+    -- here, which is how it learns where it sits.
+    row_group._shelf_badges = badges
+    return row_group
 end
 
 -- The tilt's lighting, matched to the PLANK's: the plank paints as if lit

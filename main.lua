@@ -309,6 +309,19 @@ end
 
 function Bookshelf:init()
     _installBroadcastTag()
+    -- The panel's night-mode inversion flag is kernel-side and outlives the
+    -- KOReader process, but Device:init() only ever sets it, never clears it.
+    -- A session that ended without Device:exit() can therefore leave the
+    -- panel inverting while this one thinks it is in day mode, which paints
+    -- every cover negative. One comparison, and only ever a write when the
+    -- two genuinely disagree. See lib/bookshelf_night_mode_sync.lua.
+    pcall(function()
+        local NightModeSync = require("lib/bookshelf_night_mode_sync")
+        if NightModeSync.repair(require("device").screen) then
+            logger.info("[bookshelf] panel night-mode flag was out of step with "
+                .. "Screen.night_mode; reset it to match")
+        end
+    end)
     -- Run once per init -- no settings flag needed because the clean is
     -- idempotent and cheap (one lfs.dir scan over the plugin root).
     _cleanLegacyLayout()
@@ -1449,6 +1462,11 @@ function Bookshelf:_safeShow(profile_key, target_file)
     -- competing close-document home callbacks from racing this Bookshelf return.
     readerui.tearing_down = true
 
+    -- Announce this takeover so upstream's positive onShow gate suppresses
+    -- the transient FileManager paint while our guarded return path runs.
+    _expect_onshow_takeover = true
+    UIManager:scheduleIn(5, function() _expect_onshow_takeover = false end)
+
     local function close_notice()
         if our_close_msg then
             pcall(function()
@@ -2481,7 +2499,17 @@ end
 -- init+nextTick(_takeOver) path becomes a no-op fallback via show()'s
 -- idempotency check.
 function Bookshelf:onShow()
-    if G_reader_settings:readSetting("start_with") ~= "bookshelf" then return end
+    -- NOT gated on "Start with". Where the shelf goes when a book CLOSES was
+    -- decoupled from that setting deliberately (#98): the destination is
+    -- whatever opened the book, not a restart preference. This handler never
+    -- got the memo, so for a reader whose Start with is History the takeover
+    -- was refused, the file manager stood alone, and the repaint that landed
+    -- on it was the flash (#385 -- their own trace shows it at 645ms).
+    --
+    -- Nothing is lost by dropping it: the ANNOUNCEMENT is the gate now, and
+    -- only a route that means to take this Show sets one. Cold boot still
+    -- announces just for Start with = Bookshelf, so an unannounced Show is
+    -- still left alone whatever the setting says.
     if self.ui and self.ui.document then return end
     if _live_widget and UIManager:isWidgetShown(_live_widget) then return end
     if not _expect_onshow_takeover then
@@ -3141,6 +3169,17 @@ function Bookshelf:scanPageCounts()
                         end
                         if not report.cancelled then
                             local n = Probe.publisherPages(fp)
+                            -- libarchive's allocations are ffi.gc-wrapped, so
+                            -- they come back only when LuaJIT collects the
+                            -- small cdata that owns them -- and LuaJIT paces
+                            -- its collector off the Lua heap, which this loop
+                            -- barely moves. Measured over 249 real EPUBs:
+                            -- +69MB across the scan without this, +11MB with,
+                            -- same books found, same wall time. A 1200-book
+                            -- library on a 512MB device does not survive the
+                            -- difference -- it dies at a different book every
+                            -- run, which is what issue 388 reported.
+                            if i % 25 == 0 then collectgarbage("collect") end
                             if n and n > 0 then
                                 persist(fp, n, true)
                                 report.publisher[#report.publisher + 1] =
@@ -3198,6 +3237,12 @@ function Bookshelf:scanPageCounts()
         end
         local processed = 0
         local _gettime = require("lib/bookshelf_gettime")
+        -- Every subprocess below is a fork of this one, so it needs room.
+        -- The passes above hand their C allocations back only on a full
+        -- collect; without this the first fork on a large library can fail
+        -- outright, and a failed fork is indistinguishable from the reader
+        -- dismissing the book (issue 388).
+        collectgarbage("collect")
         for i, fp in ipairs(todo) do
             local name = fp:match("([^/]+)$") or fp
             -- Up to one retry per book: a dismissal within a second of the
@@ -3208,6 +3253,7 @@ function Bookshelf:scanPageCounts()
             -- Device report: tapping Paginate produced an instant
             -- "report (cancelled)" with no book attempted.
             local completed, pages_s
+            local elapsed = 0
             for attempt = 1, 2 do
                 local t0 = _gettime()
                 completed, pages_s = Trapper:dismissableRunInSubprocess(
@@ -3226,10 +3272,19 @@ function Bookshelf:scanPageCounts()
                 end,
                 T(_("Paginating\xe2\x80\xa6 %1 of %2\n%3"), i, #todo, name),
                 true)
-                if completed or (_gettime() - t0) > 1.0 then break end
+                elapsed = _gettime() - t0
+                if completed or elapsed > 1.0 then break end
             end
             if not completed then
                 report.cancelled = true
+                -- Trapper answers a fork that never started exactly as it
+                -- answers a dismissed book. Nothing attempted, twice, both
+                -- inside a second, is not someone tapping: it is the fork
+                -- failing, and saying "cancelled" sends the reader looking
+                -- for a stray tap they never made.
+                if processed == 0 and elapsed <= 1.0 then
+                    report.could_not_start = true
+                end
                 break
             end
             processed = i
