@@ -459,5 +459,264 @@ test("filename key derives from filepath when no filename field (#235)", functio
         "expected filename order 2,1,3 (Mythos, Heroes, Mythology), got " .. table.concat(ids(books), ","))
 end)
 
+-- ── mixed group + standalone lists (issue #400) ────────────────────────────
+--
+-- A Series source with "standalone and books in series" hands the comparator
+-- BOTH series-group shapes and standalone book shapes. Sorted by Name -- which
+-- on a group chip is the series_name key -- every standalone used to land at
+-- the end, because cachedSeriesKey read only `series_name or series` and a
+-- standalone has neither. cmp's isMissing then fired and SORT_TO_END put the
+-- lot behind the groups, so the shelf looked partitioned: all series first,
+-- all loose books after, each run alphabetical.
+--
+-- Reported with photos from a Kindle Colorsoft: "The Dark Tower" (a 7-book
+-- group) sat ahead of Abraham Lincoln, Cujo and Eye of the Needle, when by
+-- name it belongs between Cujo and Eye.
+--
+-- The standalone shape already carries title/filename precisely so it can
+-- interleave -- its own comment says the fields are there "so _groupShapeCmp
+-- interleaves the mixed list for free" -- and the filename key already has the
+-- mirror-image fallback from issue #235. This is the same repair on the series
+-- key, scoped to shapes flagged `standalone` so real Book records keep today's
+-- behaviour in the author / library / genre chains, where a seriesless book
+-- sinking below an author's series runs is wanted.
+
+test("sort: a standalone interleaves with group names, not after them", function()
+    -- Leading articles ARE stripped now, for both kinds (issue 412), so "The
+    -- Dark Tower" files under D. The point this test makes is the older one:
+    -- the group takes a place in the sequence at all, rather than being
+    -- hoisted above every loose book.
+    local items = {
+        { standalone = true, title = "Cujo" },
+        { series_name = "The Dark Tower", filepaths = { "a", "b" } },
+        { standalone = true, title = "Abraham Lincoln" },
+        { standalone = true, title = "Eye of the Needle" },
+        { standalone = true, title = "The Outsider: A Novel" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    local names = {}
+    for _i, it in ipairs(items) do
+        names[#names + 1] = it.series_name or it.title
+    end
+    local got = table.concat(names, " | ")
+    assert(got == "Abraham Lincoln | Cujo | The Dark Tower | "
+                  .. "Eye of the Needle | The Outsider: A Novel",
+        "the group did not take its alphabetical place, got: " .. got)
+end)
+
+-- ── ISSUE 412: a leading article must not decide where a series files ──────
+--
+-- "when the shelf source is 'Series', Sort 1 does not have the option to sort
+-- by 'Title'. As such, books and series that start with the, a, an, etc. sort
+-- based on that vs. the second word in the title/name."
+--
+-- Title was not the answer. A Series shelf holds series GROUP shapes, which
+-- carry no title at all, so offering that key would have sent every group to
+-- the end of the shelf -- issue 400 in reverse. What the reporter actually
+-- wants is the article-insensitive ordering that the Title key already got in
+-- 120960a, applied to the key a Series shelf really sorts on.
+--
+-- Calibre cannot help here the way it helps titles: there is no stored series
+-- sort field. Calibre derives one by running its title-sort algorithm over the
+-- series name and never persists it, so the heuristic is all there is.
+
+test("sort: a leading article does not decide where a series files (412)", function()
+    local items = {
+        { series_name = "The Dark Tower", filepaths = { "a" } },
+        { series_name = "Culture",        filepaths = { "b" } },
+        { series_name = "An Ember in the Ashes", filepaths = { "c" } },
+        { series_name = "Broken Earth",   filepaths = { "d" } },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    local names = {}
+    for _i, it in ipairs(items) do names[#names + 1] = it.series_name end
+    local got = table.concat(names, " | ")
+    assert(got == "Broken Earth | Culture | The Dark Tower | An Ember in the Ashes",
+        "series names still file under their article, got: " .. got)
+end)
+
+test("sort: the article strip reaches a degraded single-book series (412)", function()
+    -- A one-book series shown as a card carries series_name and no title, so
+    -- it takes the same path as a group; a standalone carries title and no
+    -- series_name and takes the fallback. Both must strip.
+    -- Data chosen so the two orders actually differ. Unstripped this reads
+    -- A Zoo | Beta | The Ant; stripped it reads The Ant | Beta | A Zoo. A
+    -- test whose answer is the same either way proves nothing.
+    local items = {
+        { series_name = "The Ant" },                  -- degraded single
+        { standalone = true, title = "A Zoo" },       -- loose book
+        { series_name = "Beta", filepaths = { "a" } },-- ordinary group
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    local names = {}
+    for _i, it in ipairs(items) do names[#names + 1] = it.series_name or it.title end
+    local got = table.concat(names, " | ")
+    assert(got == "The Ant | Beta | A Zoo",
+        "a card or a loose book kept its article, got: " .. got)
+end)
+
+test("sort: an article that IS the whole name is left alone", function()
+    -- Stripping here would leave an empty key, and an empty key is missing,
+    -- and a missing key sinks to the end of the shelf.
+    local items = {
+        { series_name = "The",  filepaths = { "a" } },
+        { series_name = "Zoo",  filepaths = { "b" } },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    assert(items[1].series_name == "The",
+        "a one-word name lost its key and sank")
+end)
+
+-- ── The letter jump has to agree with the visible order ───────────────────
+--
+-- sortKeyValue's own docstring calls itself "the SAME derivation the KEYS
+-- comparators use ... rather than a re-derived approximation that can
+-- diverge". It diverged: neither the title-sort preference (120960a) nor the
+-- article strip reached it, so on a title-sorted shelf a book filed under L
+-- was still being looked for under T.
+
+test("sort: the letter jump derives titles the way the comparator does", function()
+    local a = { title = "The Locked Tomb" }
+    local b = { title = "Whatever", title_sort = "Zzz, curated" }
+    assert(SortEngine.sortKeyValue(a, "title"):sub(1, 1) == "l",
+        "the jump looks for a stripped title under its article: "
+        .. tostring(SortEngine.sortKeyValue(a, "title")))
+    assert(SortEngine.sortKeyValue(b, "title"):sub(1, 1) == "z",
+        "the jump ignores calibre's title_sort, which the comparator prefers: "
+        .. tostring(SortEngine.sortKeyValue(b, "title")))
+end)
+
+test("sort: the letter jump derives series names the way the comparator does", function()
+    local g = { series_name = "The Dark Tower", filepaths = { "a" } }
+    local s = { standalone = true, title = "An Ember in the Ashes" }
+    assert(SortEngine.sortKeyValue(g, "series_name"):sub(1, 1) == "d",
+        "the jump files a series under its article: "
+        .. tostring(SortEngine.sortKeyValue(g, "series_name")))
+    assert(SortEngine.sortKeyValue(s, "series_name"):sub(1, 1) == "e",
+        "the jump misses the standalone fallback the comparator has: "
+        .. tostring(SortEngine.sortKeyValue(s, "series_name")))
+end)
+
+test("sort: a standalone falls back to filename when it has no title", function()
+    local items = {
+        { series_name = "Zork", filepaths = { "a" } },
+        { standalone = true, filename = "Alpha" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    assert(items[1].filename == "Alpha",
+        "a titleless standalone did not fall back to its filename")
+end)
+
+test("sort: a real BOOK with no series still sinks to the end", function()
+    -- The scope guard. These chains -- author, library, genre -- sort
+    -- author_surname then series_name, and a seriesless book belongs after
+    -- that author's series runs rather than interleaved among them. Only
+    -- shapes explicitly flagged `standalone` get the fallback.
+    local items = {
+        { title = "Aaa book", filename = "Aaa book" },          -- no series, no flag
+        { series_name = "Zzz series", filepaths = { "a" } },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "series_name", reverse = false } })
+    assert(items[1].series_name == "Zzz series",
+        "a seriesless BOOK record was interleaved; the fallback is not scoped "
+        .. "to standalone shapes")
+end)
+
+-- ── Sorting by title: calibre's title_sort, then articles (issue #401) ────
+--
+-- "Would prefer that books starting with 'the' sort based on the second word
+-- of the title (or whatever is defined as the Title sort."
+--
+-- calibre computes title_sort itself, with its own language-aware rules, and
+-- writes it to metadata.calibre (it is in PUBLICATION_METADATA_FIELDS). Using
+-- it means the reader's own metadata decides, rather than us imposing English
+-- grammar on every library.
+--
+-- The fallback is the interesting half. A library mixing calibre-managed and
+-- sideloaded books would otherwise sort inconsistently -- "Locked Tomb, The"
+-- under L, "The Locked Tomb" under T, on the same shelf. So where calibre has
+-- not answered we approximate by dropping a leading English article. That is a
+-- guess, but it is only ever a guess in the gap, and it is what makes the
+-- order coherent.
+
+test("sort: title_sort is used when calibre supplied it", function()
+    local items = {
+        { title = "The Locked Tomb", title_sort = "Locked Tomb, The" },
+        { title = "Midnight Library", title_sort = "Midnight Library" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "title", reverse = false } })
+    assert(items[1].title == "The Locked Tomb",
+        "calibre's sort title was ignored: got " .. items[1].title)
+end)
+
+test("sort: a leading article is dropped when calibre has not answered", function()
+    -- Sideloaded book, no calibre data. Without the fallback it would sort
+    -- under T and land away from its calibre-managed neighbours.
+    local items = {
+        { title = "Midnight Library" },
+        { title = "The Locked Tomb" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "title", reverse = false } })
+    assert(items[1].title == "The Locked Tomb",
+        "the article was not dropped: got " .. items[1].title)
+end)
+
+test("sort: calibre-managed and sideloaded books interleave correctly", function()
+    -- The point of the fallback: one coherent order across a mixed library.
+    local items = {
+        { title = "The Zoo",           title_sort = "Zoo, The" },  -- calibre
+        { title = "An Apple" },                                    -- sideloaded
+        { title = "The Middle" },                                  -- sideloaded
+        { title = "A Beginning",       title_sort = "Beginning, A" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "title", reverse = false } })
+    local order = {}
+    for _i, it in ipairs(items) do order[#order + 1] = it.title end
+    local got = table.concat(order, " | ")
+    assert(got == "An Apple | A Beginning | The Middle | The Zoo",
+        "mixed library did not interleave: " .. got)
+end)
+
+test("sort: only a leading article is dropped, not one mid-title", function()
+    local items = {
+        { title = "Theory of Everything" },   -- NOT "The ory"
+        { title = "The Apple" },
+    }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "title", reverse = false } })
+    assert(items[1].title == "The Apple",
+        '"Theory" was mistaken for a leading article: got ' .. items[1].title)
+end)
+
+test("sort: a title that is only an article is left alone", function()
+    -- Stripping would leave nothing to sort on.
+    local items = { { title = "The" }, { title = "Apple" } }
+    table.sort(items, SortEngine.chainedComparator{
+        { key = "title", reverse = false } })
+    assert(items[1].title == "Apple", "got " .. items[1].title)
+end)
+
+test("registry: sorting by title prefers calibre's title_sort", function()
+    -- Folded into `title` rather than offered separately, matching how
+    -- author_surname silently prefers author_sort. A second "Title (sort)"
+    -- row would have asked the reader to understand a distinction their own
+    -- metadata already settles.
+    local src = io.open("lib/bookshelf_sort_engine.lua"):read("a")
+    assert(not src:find("title_sort%s*=%s*{"),
+        "title_sort is a separate sort key again; it belongs inside title")
+    local body = src:match("local function cachedTitleKey.-\nend")
+    assert(body and body:find("b.title_sort", 1, true),
+        "the title key no longer consults calibre's title_sort")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

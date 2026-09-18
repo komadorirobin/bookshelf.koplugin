@@ -16,6 +16,7 @@
 -- as itself -- the same constantInNight treatment stack_display's ribbon
 -- uses. The shelf line is UI chrome and inverts with the rest of the UI.
 
+local BookshelfSettings = require("lib/bookshelf_settings_store")
 local Blitbuffer     = require("ffi/blitbuffer")
 local Device         = require("device")
 local Screen         = Device.screen
@@ -44,9 +45,13 @@ do
     end
 end
 
--- Gap between neighbouring spines, dp. Books on a real shelf touch; a hair
--- of daylight keeps the hairline borders from doubling up.
-SpineShelf.BOOK_GAP_DP = 2
+-- Gap between neighbouring spines, dp. Books on a real shelf TOUCH, and now
+-- so do these: at 2dp a strip of wallpaper showed between every pair and the
+-- row read as a rank of separate objects rather than a packed shelf
+-- (maintainer). The hair of daylight was there to stop the hairline borders
+-- doubling up; at zero they meet instead, and two adjacent board edges are
+-- exactly what the join between two real books looks like.
+SpineShelf.BOOK_GAP_DP = 0
 -- Gap either side of a flattened group's run of spines, dp -- the visual
 -- seam that keeps a series reading as a series once its stack is flattened.
 SpineShelf.GROUP_GAP_DP = 12
@@ -86,12 +91,161 @@ SpineShelf.VIEW_SIN        = SpineLayout.VIEW_SIN   -- sin(12 deg)
 -- boundaries must still read as the wider break. A face-out followed by
 -- its own series' SPINES keeps the tight book gap: that adjacency is what
 -- shows the run belongs to it (user ruling).
-SpineShelf.FACE_GAP_DP = 8
+SpineShelf.FACE_GAP_DP = 12
 
--- Rotation for the title run. 90 = reads bottom-to-top ("running up the
--- spine"); if a build's rotatedCopy turns the other way, this is the one
--- constant to flip to 270.
-local TITLE_ROTATION = 90
+-- The shelf recess (see rowWidget): how far up the books' stand height the
+-- darkening reaches, how many bands it is built from, and how dark it gets at
+-- the feet. Subtle on purpose -- this is meant to read as depth, not as a grey
+-- stripe behind the books.
+-- _liftBoxColor(night) -> the fill for the space a lifted book vacates.
+--
+-- SOLID, not a gradient (maintainer ruling, arrived at by accident: a
+-- translucent black meant for a soft ramp had its alpha dropped by the
+-- device's BB8A slot buffer and came out as a flat black box -- which reads
+-- better than the ramp did. It says "this book is out" at a glance, and it is
+-- a rectangle rather than five bands and a blend).
+--
+-- Hard-coded per mode so it always paints DARK ON SCREEN, the same rule the
+-- card drop shadow follows: black by day, white at night, which the frame
+-- inversion turns back into black. Painting one value in both modes would
+-- give a black hole by day and a white one at night.
+local function _liftBoxColor(night)
+    return night and Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+                  or  Blitbuffer.ColorRGB32(0x00, 0x00, 0x00, 0xFF)
+end
+
+-- The shelf recess: the shadow the books cast on the backboard behind them.
+--
+-- Runs from the plank's BACK EDGE -- where it starts at roughly the tone the
+-- plank itself has there, so the two join rather than meeting at a step -- up
+-- behind the books and a little past their tops. Only that little bit past
+-- shows on a packed shelf; the rest is behind the books, and that is the
+-- point: the shadow is continuous with the shelf, not a band floating above
+-- the spines.
+--
+-- The top and side reaches are SEPARATE. A shadow that clears the spines by as
+-- much above as beside them reads as a band floating over the shelf; what looks
+-- like a book sitting in its own shadow is a tight top and a wider spill to the
+-- sides, where the light rakes past the ends of the run.
+--
+-- Five bands to match plankBandT's own quantisation, so the shadow steps on
+-- the same boundaries the plank surface does.
+local RECESS_BANDS      = 5
+local RECESS_MAX        = 0.46
+-- What is left of the shadow at the TOP of its run. Not zero: the top is the
+-- only part a packed shelf shows, and a gradient that reaches nothing there
+-- is a shadow nobody can see. The plank end stays at full strength, so the
+-- join is still seamless -- this only sets how far it has faded by the time
+-- it clears the spines.
+local RECESS_TOP_FRAC   = 0.50
+local RECESS_HALO_DP    = 6      -- above the spines: tight
+local RECESS_SIDE_DP    = 14     -- past the ends of the run: wider
+-- Columns the end wedge is sliced into. Its top edge steps down across these
+-- to meet the plank -- a raked shadow rather than a block bolted to the last
+-- spine. On a 16-grey panel a stepped diagonal reads as a diagonal.
+local RECESS_WEDGE_SLICES = 7
+-- How much of the wedge's strength is lost by its far edge. 1.0 would fade it
+-- to nothing exactly at the tip.
+local RECESS_WEDGE_FADE   = 0.85
+-- Banded on the halo's own height, so its fade is smooth over those few
+-- pixels instead of one flat step.
+-- How finely a raked span is sliced, and the height difference below which a
+-- span is not worth slicing at all. A shelf of similar spines has a flat
+-- horizon and must keep painting one strip per column, or this costs blends
+-- for nothing.
+local RECESS_RAKE_SLICES = 7
+-- Ceiling on the slices one span may cost. Each strip is up to eleven blends,
+-- so an unbounded "one slice per pixel" rake is a real bill on a busy row.
+local RECESS_RAKE_MAX_SLICES = 16
+local RECESS_RAKE_MIN_DP = 2
+
+-- recessHorizon(cols, px) -> how tall the shadow stands at px, in the same
+-- units as a column's h (px above the plank's back edge).
+--
+-- THE 45-DEGREE RULE, applied between books as well as past the ends of a
+-- run. A book's shadow does not stop at its own edge and it does not extend
+-- sideways at full height either: it leans over whatever is next to it and
+-- falls away one pixel per pixel travelled. So the horizon at any point is
+-- the tallest of (each book's height minus the distance to it).
+--
+-- A flat neighbour-max was tried here once and rejected -- the painter's own
+-- comment records why: a short spine took a face-out's FULL shadow height
+-- and the cover's outline stopped reading. This is not that. The tall book's
+-- influence is gone again within its own height, so the outline survives and
+-- the square step between the two does not.
+--
+-- Distance is measured to the first clear pixel on the right and to the
+-- book's own first pixel on the left, so the two sides differ by one pixel
+-- at the boundary. That is deliberate rather than worth a branch: one pixel
+-- at the foot of a rake nobody can point at.
+-- `field` picks what is being raked: "h" (default) is the shadow's TOP, the
+-- shoulder it stands at; "foot" is its BASE on the plank. A face-out stands
+-- one inset further back than the spines beside it, so its foot sits higher
+-- up the board, and the gap between them used to drop square to the spines'
+-- foot line hard against the cover. Same rule, same 45 degrees, other edge.
+-- `reach` caps how far sideways a book's shadow is allowed to carry. Without
+-- it a 250px spine ramps for 250px, which is both further than a shadow goes
+-- and far too long to draw: the slices that have to render the diagonal get
+-- spread over the whole run and come out as steps you can count -- most
+-- obvious across a gap holding an ornament, which is the widest gap a row has
+-- (maintainer). Same reach the end-of-run wedge uses, so a shadow travels the
+-- same distance whether it leaves the run sideways or past its end.
+function SpineShelf.recessHorizon(cols, px, field, reach)
+    px = tonumber(px)
+    if type(cols) ~= "table" or not px then return 0 end
+    field = field or "h"
+    reach = tonumber(reach)
+    local best = 0
+    for i = 1, #cols do
+        local c = cols[i]
+        if type(c) == "table" then
+            local cx = tonumber(c.x) or 0
+            local cw = tonumber(c.w) or 0
+            local ch = tonumber(c[field]) or 0
+            local d
+            if px < cx then d = cx - px
+            elseif px >= cx + cw then d = px - (cx + cw)
+            else d = 0 end
+            if not reach or d <= reach then
+                local v = ch - d
+                if v > best then best = v end
+            end
+        end
+    end
+    return best
+end
+
+local RECESS_HALO_BANDS = 6
+-- Exponent on the halo's ramp. Above 1 it hugs zero for most of the run and
+-- only lifts close to the spine, so the outer edge of the shadow disappears
+-- into the wallpaper instead of starting at a visible step.
+local RECESS_HALO_EASE  = 2.2
+
+-- Rotation for the title run, and the reader's choice of it.
+--
+-- 270 = reads TOP-TO-BOTTOM, which is how a British or American book is
+-- printed: stand one on a shelf and you tilt your head to the right to read
+-- it. 90 = bottom-to-top, which is what Continental European printing uses.
+-- A convention rather than a fact, and the shelf should match the shelf its
+-- reader is looking at, so it is a setting (issue 410) with the British and
+-- American form as the default.
+--
+-- Anything unrecognised comes back as the default rather than reaching
+-- rotatedCopy, which takes 90/180/270 and would otherwise fail at paint time,
+-- a long way from the setting that caused it.
+--
+-- THE GRADIENT BAND MOVES WITH THIS, and is derived from it at the one place
+-- both are used rather than kept as a second constant that merely agrees.
+-- Rotation maps scratch rows to screen columns, so reversing the rotation
+-- reverses which end of the ramp the title band carries; leave the flip alone
+-- and the band sits mirrored against the spine body it is painted on.
+SpineShelf.TEXT_DIR_SETTING = "spine_text_direction"
+
+function SpineShelf.titleRotation()
+    local v = BookshelfSettings.read(SpineShelf.TEXT_DIR_SETTING, "top_down")
+    if v == "bottom_up" then return 90 end
+    return 270
+end
 
 -- White text needs to stay legible on the cover-derived fill, so the fill's
 -- Rec.601 luminance is capped here; anything brighter is scaled down
@@ -161,7 +315,12 @@ local function _renderCachePut(key, bbuf)
     end
     _render_cache[key] = bbuf
     _render_bytes = _render_bytes + _bbBytes(bbuf)
-    while _render_bytes > RENDER_CACHE_MAX_BYTES and #_render_order > 1 do
+    -- Over a wallpaper the slot buffers are BB8A, two bytes a pixel, so the
+    -- same byte cap holds half as many slots and a page turn misses twice as
+    -- often. The cap grows with them, within what a 512MB device can spare.
+    local cap = SpineShelf.has_wallpaper and RENDER_CACHE_MAX_BYTES * 7 / 5
+                or RENDER_CACHE_MAX_BYTES
+    while _render_bytes > cap and #_render_order > 1 do
         local old_key = table.remove(_render_order, 1)
         _renderCacheDrop(old_key)
     end
@@ -421,6 +580,7 @@ end
 -- drops the persisted look/progress, the hydration answers, and every
 -- cached render, so the next plan and paint rebuild it all fresh.
 function SpineShelf.invalidateBook(fp)
+    _plan_cache = nil
     if not fp then return end
     SpineShelf.dropLook(fp)
     _hydrate_cache[fp] = nil
@@ -490,10 +650,9 @@ end
 -- centre column is the base colour, so the contrast clamp still holds where
 -- the text sits.
 local GRAD_D = 0.13
--- The rotated title band's prefill must carry the same ramp; rotation maps
--- scratch rows to screen columns, and this flag picks the direction (flip
--- if a seam shows mirrored against the body).
-local GRAD_BAND_FLIP = false
+-- The rotated title band's prefill must carry the same ramp. See
+-- SpineShelf.titleRotation: the flip is computed from the rotation where both
+-- are used, so the two cannot disagree.
 
 local function _rampF(col, w)
     local t = (w and w > 1) and (col / (w - 1)) or 0.5
@@ -517,12 +676,19 @@ local function _plankRGB()
     return r, g, b
 end
 
+-- How many bands the plank's top surface is drawn in. The board fills each
+-- band with the colour of its own TOP row, so it is not a smooth gradient --
+-- it is five steps, which is what e-ink can actually show. Declared HERE,
+-- above plankBandT, because Lua closes over the upvalue that exists at the
+-- time the function body is compiled: put it below and plankBandT reads nil.
+local PLANK_BANDS = 5
+
 -- plankBandT(y_rel, surf_h) -> the lit fraction of the plank's top surface
 -- at y_rel px below its far edge. ONE quantisation, shared by ShelfPlank and
 -- by the slots' lift shadows, so the patch under a lifted book matches the
 -- plank around it exactly.
 function SpineShelf.plankBandT(y_rel, surf_h)
-    local bands = 5
+    local bands = PLANK_BANDS
     local i = math.floor(y_rel * bands / math.max(1, surf_h))
     if i < 0 then i = 0 elseif i > bands - 1 then i = bands - 1 end
     return i / (bands - 1)
@@ -559,6 +725,22 @@ local function _plankBandColor(y_rel, surf_h, mul)
     return _plankShade(f)
 end
 
+-- _plankRowAt(y_rel, surf_h, mul) -> the colour the PLANK PAINTED at that row.
+--
+-- NOT the same as _plankBandColor(y_rel, ...). That answers "what tone belongs
+-- at this depth"; the board asks it once per band, for the band's top row, and
+-- fills the whole band with the answer. Ask it for a row in the middle of a
+-- band and the quantisation can land a step away, so anything reproducing the
+-- board -- a corner nick, a lifted book's patch, a contact shadow -- comes out
+-- a shade off the pixels beside it. Everything that has to MATCH the board
+-- goes through here; only the board's own loop may call _plankBandColor.
+local function _plankRowAt(y_rel, surf_h, mul)
+    if not surf_h or surf_h <= 0 then return _plankBandColor(0, 1, mul) end
+    local i = math.floor(y_rel * PLANK_BANDS / surf_h)
+    if i < 0 then i = 0 elseif i > PLANK_BANDS - 1 then i = PLANK_BANDS - 1 end
+    return _plankBandColor(math.floor(surf_h * i / PLANK_BANDS), surf_h, mul)
+end
+
 -- ── The chamfer where a book meets the shelf ────────────────────────────────
 --
 -- A real book's corners are never square against a shelf, and taking the
@@ -586,21 +768,37 @@ end
 local function _behindAt(plank, slot_bottom, lifted)
     return function(yy)
         if plank and not lifted then
-            local surf_h   = 3 * plank.b
+            local surf_h   = SpineShelf.plankSurfaceOf(plank)
             local surf_top = slot_bottom + plank.inset - surf_h
             if yy >= surf_top then
-                -- The SHADOWED band, not the lit one. The plank a pixel below
-                -- the book is in full light; the pixel the corner exposes is
-                -- under the book, in its own contact shadow, and taking the
-                -- lit tone read as a bright speck on the corner (maintainer).
-                -- 0.72 is the same darkening the lifted book's contact patch
-                -- uses, so a book's foot shadow is one value wherever it is
-                -- drawn.
-                return _plankBandColor(yy - surf_top, surf_h, 0.72)
+                -- The CONTACT shade, not the lit band and not the lifted
+                -- book's softer patch. The plank a pixel below the book is in
+                -- full light; the pixel the corner exposes is UNDER the book,
+                -- where nothing reaches. Taking the lit tone read as a bright
+                -- speck, and 0.72 -- the lifted patch's value, tried next --
+                -- still came out brighter than the spine's own dark board
+                -- edge, so the nick read as a highlight on the corner rather
+                -- than as a corner coming off (maintainer, twice).
+                return _plankRowAt(yy - surf_top, surf_h,
+                                   SpineShelf.PLANK_CONTACT_SHADE)
             end
         end
         -- Page ground in PRE-INVERT space, matching the buffer the slot is
         -- filled with, so night mode inverts it with everything else.
+        --
+        -- Transparent over a wallpaper, for the same reason as the head's
+        -- notch: a lifted book's foot corners should show the picture behind
+        -- it, and white there is a speck rather than a chamfer.
+        if SpineShelf.has_wallpaper then
+            -- NIL, not a transparent colour. The slot buffer is BB8A on a
+            -- greyscale device and an RGB32 alpha does not survive the
+            -- conversion -- so "transparent" painted as solid BLACK, which is
+            -- invisible by day and inverts to bright white pixels in night
+            -- mode (maintainer: bright corners on a lifted spine, night
+            -- only). Nil means "paint nothing", and what is already in the
+            -- buffer there is the transparency we wanted.
+            return nil
+        end
         return Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
     end
 end
@@ -611,8 +809,11 @@ local function _cutFootCorners(bb, x, bottom, w, n, behind)
     for dy = 0, n - 1 do
         local yy = bottom - 1 - dy
         local c = behind(yy)
+        -- nil = leave it alone; see _behindAt.
+        if type(c) == "nil" then goto continue end
         bb:paintRectRGB32(x, yy, n, 1, c)
         bb:paintRectRGB32(x + w - n, yy, n, 1, c)
+        ::continue::
     end
 end
 
@@ -630,11 +831,6 @@ end
 -- the look-coloured boards). paintBorder flattens colour to luminance, so
 -- borders paint as four colour-safe rects.
 local BOARD_SHADE = 0.45
--- How far the cover boards rise above the page block at the head -- the
--- binding's "square" -- as a fraction of the visible top edge. A real
--- hardback's is small; too much of one and the boards read as ears rather
--- than as the cover standing slightly proud of the paper.
-local BOARD_LIP_FRAC = 0.10
 
 local function _boardColor(look, night)
     local r = look.r * BOARD_SHADE
@@ -660,6 +856,108 @@ local function _tintColor(look, f, night)
     local b = math.floor(math.min(255, look.b * f) + 0.5)
     if night then r, g, b = 255 - r, 255 - g, 255 - b end
     return Blitbuffer.ColorRGB32(r, g, b, 0xFF)
+end
+
+-- ── Face out: which covers stand front-on ──────────────────────────────────
+--
+-- This was ONE exclusive choice, stored as a string (or nil/true/false). It is
+-- now a SET -- favourites AND currently-reading AND the newest few -- because
+-- those are reasons a book is interesting, and a book can be interesting for
+-- more than one of them at once.
+--
+-- The old values all still mean what they meant. A stored string is not a
+-- legacy shape to migrate away from: it is a set with one member, and
+-- normalising rather than rewriting means a reader who never touches the new
+-- menu never has their shelf change.
+--
+--   nil / true   -> favourites          (the long-standing default)
+--   false        -> none
+--   "first"      -> first in series
+--   { ... }      -> the set itself
+SpineShelf.FACE_REASONS = { "favorites", "first", "reading", "unread", "recent" }
+SpineShelf.FACE_RECENT_DEFAULT = 5
+
+-- faceOutSpec(v) -> { favorites=, first=, reading=, all=, recent=N|nil }
+function SpineShelf.faceOutSpec(v)
+    if v == false then return {} end
+    if v == nil or v == true then return { favorites = true } end
+    if type(v) == "string" then
+        if v == "none" then return {} end
+        if v == "all"  then return { all = true } end
+        return { [v] = true }
+    end
+    if type(v) ~= "table" then return { favorites = true } end
+    local out = {}
+    if v.all then return { all = true } end
+    for _i, k in ipairs(SpineShelf.FACE_REASONS) do
+        if k == "recent" then
+            local n = tonumber(v.recent)
+            if n and n > 0 then out.recent = math.floor(n) end
+        elseif v[k] then
+            out[k] = true
+        end
+    end
+    return out
+end
+
+-- faceOutEmpty(spec) -> true when nothing would face out.
+function SpineShelf.faceOutEmpty(spec)
+    if spec.all then return false end
+    for _i, k in ipairs(SpineShelf.FACE_REASONS) do
+        if spec[k] then return false end
+    end
+    return true
+end
+
+-- recentSet(flat, n) -> { [filepath] = true } for the n most recently ADDED.
+--
+-- Over the shelf's whole item list, not the visible page: a new book should
+-- face out wherever it lands, not only when it happens to fall on page one.
+--
+-- Ties and missing dates sort last rather than being dropped -- a library that
+-- has never recorded date_added would otherwise face out nothing at all, with
+-- no way for the reader to tell why.
+function SpineShelf.recentSet(flat, n)
+    if not n or n <= 0 then return nil end
+    local pool = {}
+    for _i, f in ipairs(flat or {}) do
+        local src = f.book or f.item
+        local fp  = src and src.filepath
+        if fp then
+            pool[#pool + 1] = { fp = fp, at = tonumber(src.date_added) or 0 }
+        end
+    end
+    if #pool == 0 then return nil end
+    table.sort(pool, function(a, b)
+        if a.at ~= b.at then return a.at > b.at end
+        return a.fp < b.fp          -- stable, so the set does not shuffle
+    end)
+    local set = {}
+    for i = 1, math.min(n, #pool) do set[pool[i].fp] = true end
+    return set
+end
+
+-- isUnread(src) -> the book has never been read. (#403: a shelf of spines for
+-- what you have read and covers for what you have not.)
+--
+-- THE FLAG IS NOT OPTIONAL. The planner's status ladder fills src.status and
+-- only then sets _spine_status_checked, so a checked record with no status is
+-- a book that has genuinely never been opened -- the same predicate the spine
+-- status glyph uses. A record that has NOT been through the ladder also has no
+-- status, for a reason we know nothing about, and reading that as "unread"
+-- would stand the entire shelf face out. Absent evidence is not evidence.
+--
+-- Three spellings reach records in the wild. Nil is the common one; "new" and
+-- "unread" come from records built by the Kindle and Kobo sources, and the
+-- sort engine already treats all three alike (STATUS_RANK's zero bucket), so
+-- this agrees with the ordering a reader sees rather than inventing a fourth
+-- opinion about what counts as started.
+function SpineShelf.isUnread(src)
+    if type(src) ~= "table" or src._spine_status_checked ~= true then
+        return false
+    end
+    local st = src.status
+    return st == nil or st == "new" or st == "unread"
 end
 
 -- ── Vertical CJK title ─────────────────────────────────────────────────────
@@ -1024,8 +1322,11 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
         -- after rotation, so the prefill carries the body's gradient ramp
         -- row-by-row -- a flat band would sit as a stripe on the gradient.
         local band_off = math.floor((band_w - sh) / 2)
+        -- Read ONCE, outside the row loop: this runs per scratch row.
+        local rot_deg   = SpineShelf.titleRotation()
+        local band_flip = (rot_deg == 270)
         for ry = 0, sh - 1 do
-            local jx = GRAD_BAND_FLIP and (sh - 1 - ry) or ry
+            local jx = band_flip and (sh - 1 - ry) or ry
             scratch:paintRectRGB32(0, ry, sw, 1,
                 _tintColor(look, _rampF(band_off + jx, band_w), night))
         end
@@ -1036,7 +1337,7 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
                         math.floor((sh - asz.h) / 2))
             atw:free()
         end
-        local rot = scratch:rotatedCopy(TITLE_ROTATION)
+        local rot = scratch:rotatedCopy(rot_deg)
         scratch:free()
         local rw, rh = rot:getWidth(), rot:getHeight()
         -- Centre across the spine, centre along the run.
@@ -1183,6 +1484,51 @@ end
 -- book) -- selection taps felt slow because ~30 titles re-rendered per tap.
 -- The cache re-renders only when the slot's state key changes; book/look
 -- refreshes go through invalidate().
+-- Is something painted behind the shelf right now?
+--
+-- Set by the shelf widget before it builds. A slot renders into its OWN
+-- buffer and blits it, so the ground it starts from decides whether anything
+-- behind the books can be seen at all: opaque page white on a plain page,
+-- nothing at all when there is a wallpaper. Module-level rather than threaded
+-- through every constructor because it is one answer for the whole screen and
+-- a slot that disagreed with its neighbour would be a visible seam.
+SpineShelf.has_wallpaper = false
+
+-- shadowsEnabled() -> should the shelf paint its depth (the recess behind the
+-- books, and the shading either side of each spine that reads as a cast
+-- shadow)? On unless the reader turned it off in Advanced > Performance
+-- tweaks. Read live rather than cached: it changes at most once in a session,
+-- and a rebuild follows the toggle, so there is nothing to invalidate.
+function SpineShelf.shadowsEnabled()
+    return BookshelfSettings.read("spine_no_shadows", false) ~= true
+end
+function SpineShelf.setHasWallpaper(v)
+    -- No cache flush needed: the ground is part of the render key, so a
+    -- render made on the other ground simply misses and ages out of the LRU
+    -- on its own. Flushing would throw away renders that are still correct
+    -- for the state being returned to.
+    SpineShelf.has_wallpaper = v and true or false
+end
+
+-- _themeChar(night) -> "T" (dark look) or "t", memoised on the settings
+-- generation and the night flag. _renderKey runs for every visible slot on
+-- every paint, only to look the cache up; it was requiring cover_progress and
+-- resolving the theme each time.
+local _theme_memo = nil
+local function _themeChar(night)
+    local gen = BookshelfSettings.generation and BookshelfSettings.generation() or 0
+    local m = _theme_memo
+    if m and m.gen == gen and m.night == night then return m.v end
+    local v = "-"
+    local ok, CP = pcall(require, "lib/bookshelf_cover_progress")
+    if ok and CP and CP.theme then
+        local ok_t, dark = pcall(CP.theme)
+        v = (ok_t and dark) and "T" or "t"
+    end
+    _theme_memo = { gen = gen, night = night, v = v }
+    return v
+end
+
 function SpineBookSlot:_renderKey(night)
     local e = self.entry
     local fp = (self.book and self.book.filepath) or self.entry.label or "?"
@@ -1191,7 +1537,19 @@ function SpineBookSlot:_renderKey(night)
         self.is_selected and "s" or "-",
         self.is_bulk_selected and "B" or "-",
         night and "n" or "d",
+        -- The shelf's own theme, separately from the device's night flag.
+        -- A render bakes palette colours (the plank, the border, the badge),
+        -- and those now follow a setting that can change while the device
+        -- flag does not -- so a key that only knew the flag would serve a
+        -- light-themed spine to a dark shelf.
+        _themeChar(night),
         self.show_author == false and "A" or "a",
+        -- The ground is part of the picture: a render made over page white
+        -- has the page baked into every pixel the book does not cover.
+        SpineShelf.has_wallpaper and "W" or "-",
+        -- The title run's direction is baked in too: without this the shelf
+        -- keeps painting the old rotation until something else evicts it.
+        SpineShelf.titleRotation(),
     }, "|")
 end
 
@@ -1208,11 +1566,22 @@ function SpineBookSlot:paintTo(bb, x, y)
             -- keep RGB32.
             local btype = (Screen.bb and Screen.bb.getType and Screen.bb:getType())
                           or Blitbuffer.TYPE_BBRGB32
+            if SpineShelf.has_wallpaper then
+                -- An alpha-capable buffer, and NO ground painted into it.
+                -- Blitbuffer.new callocs, so a fresh one is already fully
+                -- transparent; the book then draws itself opaquely on top and
+                -- everything it does not cover stays see-through.
+                if btype ~= Blitbuffer.TYPE_BBRGB32 then
+                    btype = Blitbuffer.TYPE_BB8A
+                end
+            end
             local c = Blitbuffer.new(self.width, self.height, btype)
-            -- Page ground, pre-invert space (white displays black in night
-            -- via the frame invert, same as the shelf's own background).
-            c:paintRectRGB32(0, 0, self.width, self.height,
-                             Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+            if not SpineShelf.has_wallpaper then
+                -- Page ground, pre-invert space (white displays black in night
+                -- via the frame invert, same as the shelf's own background).
+                c:paintRectRGB32(0, 0, self.width, self.height,
+                                 Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+            end
             self:_renderInto(c, night)
             _renderCachePut(key, c)
             cached = c
@@ -1226,7 +1595,14 @@ function SpineBookSlot:paintTo(bb, x, y)
         SpineShelf._render_ms = (SpineShelf._render_ms or 0)
                                 + (_gettime() - _tr) * 1000
     end
-    bb:blitFrom(cached, x, y, 0, 0, self.width, self.height)
+    -- alphablit only when there is something to blend with: it is markedly
+    -- dearer than a straight copy, and on a plain page the slot is opaque
+    -- anyway so the two would give the same pixels.
+    if SpineShelf.has_wallpaper then
+        bb:alphablitFrom(cached, x, y, 0, 0, self.width, self.height)
+    else
+        bb:blitFrom(cached, x, y, 0, 0, self.width, self.height)
+    end
 end
 
 function SpineBookSlot:invalidate()
@@ -1280,7 +1656,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     local lifted = false
     if self.is_selected or tilt then
         local pk = self.plank
-        local clear = (pk and (3 * pk.b - pk.inset) or Screen:scaleBySize(18))
+        local clear = (pk and SpineShelf.plankLift(pk.b) or Screen:scaleBySize(18))
                       + Screen:scaleBySize(6)
         if tilt then
             -- The opening tilt CONTINUES the selection lift (user ruling):
@@ -1353,10 +1729,32 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
     -- patch is indistinguishable from the shelf around it; above the
     -- surface's far edge the page ground stays. Row-by-row, but the render
     -- is cached per slot.
-    if lifted and self.plank then
+    -- OVER A GROUND, SHADE RATHER THAN REPAINT.
+    --
+    -- Reproducing the plank here never matched: the band came out flat (86,
+    -- then 71, measured) against a plank running 51 to 103, and the wedges
+    -- either side stayed at full strength and read as dark lines down the
+    -- sides of the gap. Leaving it transparent instead was seamless but left
+    -- a lifted spine casting no shadow at all (maintainer).
+    --
+    -- The answer is the one the face-out's LiftShadow reached: don't paint a
+    -- colour, paint a DARKENING, so whatever the row put behind this slot --
+    -- plank, recess, wedges -- shows through it at the same strength the
+    -- recess uses. A translucent black into an alpha buffer does exactly
+    -- that once the slot alphablits: dst * (1 - a). Same result as
+    -- Wallpaper.shade, which cannot be used here because it blends against
+    -- the buffer's own pixels and this buffer is empty.
+    if lifted and self.plank and SpineShelf.has_wallpaper then
         local foot = body_top + body_h
         local slot_bottom = y + self.height
-        local surf_h = 3 * self.plank.b
+        local span = slot_bottom - foot
+        if span > 0 then
+            bb:paintRectRGB32(x, foot, spine_w, span, _liftBoxColor(night))
+        end
+    elseif lifted and self.plank then
+        local foot = body_top + body_h
+        local slot_bottom = y + self.height
+        local surf_h = SpineShelf.plankSurfaceOf(self.plank)
         local surf_top = slot_bottom + self.plank.inset - surf_h
         local start = math.max(foot, surf_top)
         local air_end = math.min(foot + math.max(2, hairline), slot_bottom)
@@ -1364,18 +1762,30 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
         for yy = start, slot_bottom - 1 do
             if yy < air_end or spine_w <= 2 * ins then
                 bb:paintRectRGB32(x, yy, spine_w, 1,
-                                  _plankBandColor(yy - surf_top, surf_h))
+                                  _plankRowAt(yy - surf_top, surf_h))
             else
-                local band = _plankBandColor(yy - surf_top, surf_h)
+                local band = _plankRowAt(yy - surf_top, surf_h)
                 bb:paintRectRGB32(x, yy, ins, 1, band)
                 bb:paintRectRGB32(x + ins, yy, spine_w - 2 * ins, 1,
-                                  _plankBandColor(yy - surf_top, surf_h, 0.72))
+                                  _plankRowAt(yy - surf_top, surf_h, 0.72))
                 bb:paintRectRGB32(x + spine_w - ins, yy, ins, 1, band)
             end
         end
     end
     if edge_h > 0 then
-        local lip     = math.max(1, math.floor(edge_h * BOARD_LIP_FRAC))
+        -- ONE pixel above the paper. Given to the pixel by the maintainer,
+        -- for a book eight thick:
+        --
+        --     0 1 0 0 0 0 1 0
+        --     1 1 2 2 2 2 1 1
+        --
+        -- 1 board, 2 pages, 0 the shadow behind. So: the boards rise a single
+        -- row above the paper; in that row only each board's INNER pixel is
+        -- drawn, its outer one left to the shadow, which is the nick; and the
+        -- span between the boards up there is shadow too, not paper and not a
+        -- filled hollow. A fraction of the edge was wrong twice over -- it
+        -- grew with the book's thickness, so a fat book wore ears.
+        local lip     = hairline
         local board_w = math.max(2, math.min(Screen:scaleBySize(3),
                                              math.floor(spine_w * 0.1)))
         local function tone(v)
@@ -1401,10 +1811,41 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
                 bb:paintRectRGB32(cx, sy0, lw, sh_edge, tone(0xA8))
             end
         end
-        -- The boards, rising the lip above the paper, in the board shade.
+        -- The boards, rising the lip above the paper, in the board shade --
+        -- each with its top OUTER corner left unpainted, which is the nick
+        -- that makes the tips read as curving outward rather than as square
+        -- ends.
+        --
+        -- Cut by OMISSION, not by painting over afterwards. That is what the
+        -- old cut did and it could never work: the board went down first, so
+        -- on a plain page the corner was repainted white (fine) and over a
+        -- ground the cut "painted nothing" -- leaving the board's own pixels
+        -- exactly where the hole was supposed to be, which is why the nick
+        -- vanished the moment any ground was set (maintainer: "there's no
+        -- corner nick still ... at the top ends of the boards").
+        --
+        -- Omission is right in both modes for the same reason the foot
+        -- corners are: over a ground the slot buffer is calloc'd and starts
+        -- transparent, so an unpainted pixel shows whatever is behind; with
+        -- no ground the buffer was pre-filled with page white, so it shows
+        -- the page. Either way the corner is the thing behind the book.
         local bc = _boardColor(e.look, night)
-        bb:paintRectRGB32(x, top, board_w, edge_h, bc)
-        bb:paintRectRGB32(x + spine_w - board_w, top, board_w, edge_h, bc)
+        local rx = x + spine_w - board_w
+        -- Row two down: both boards, full width, beside the paper.
+        bb:paintRectRGB32(x,  top + lip, board_w, edge_h - lip, bc)
+        bb:paintRectRGB32(rx, top + lip, board_w, edge_h - lip, bc)
+        -- Row one: each board's inner pixel, and NOTHING else. The 0s in the
+        -- diagram are the shadow behind the head, and they get it by being
+        -- left alone -- the recess ramp now runs one row further down, over
+        -- exactly this row, so the gradient already above the book continues
+        -- into the nick and the span between the boards (see place() in the
+        -- recess painter). Painting a flat tone here instead was far too dark
+        -- and did not match that gradient (maintainer).
+        local nick = hairline
+        if board_w > nick then
+            bb:paintRectRGB32(x + nick, top, board_w - nick, lip, bc)
+            bb:paintRectRGB32(rx,       top, board_w - nick, lip, bc)
+        end
         -- The joint: where the boards meet the spine they are thicker than
         -- along their length, so the page block's bottom inside corners take
         -- a pixel of board. One pixel each side is enough to read as the
@@ -1415,19 +1856,6 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             bb:paintRectRGB32(sx0 + sw_edge - hairline, jy, hairline, hairline, bc)
         end
     end
-    -- The top corners come off too, matching the chamfered feet (user
-    -- ruling) -- in page ground rather than plank shade, since that is
-    -- what sits behind the book's head. Works for both silhouettes:
-    -- board tops when the page block shows, the body's own corners on a
-    -- spine too short for one.
-    do
-        -- Page ground, pre-invert space: white displays as the theme
-        -- background in both modes, same as the slot's own ground fill.
-        local g = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
-        bb:paintRectRGB32(x, top, hairline, hairline, g)
-        bb:paintRectRGB32(x + spine_w - hairline, top, hairline, hairline, g)
-    end
-
     local pad = Screen:scaleBySize(3)
     local cur_top = body_top + pad
     local bottom = top + spine_h - pad
@@ -1539,18 +1967,29 @@ function LiftShadow:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local w, h = self.dimen.w, self.dimen.h
     local ins = Screen:scaleBySize(2)
+    local night = _nightMode()
     local pk = self.plank
-    if pk then
-        -- The shadow lies ON the plank's top surface, never in the air the
-        -- book lifted through: painting the whole drop made it stick up
-        -- past the shelf's back edge (user report). Clamp to the surface
-        -- band, darkening the same tones the plank paints there.
-        local surf_h = 3 * pk.b
+    if pk and SpineShelf.has_wallpaper then
+        -- The wallpaper look: one solid box filling exactly the space the
+        -- lift opened, as SpineBookSlot paints under a lifted spine over a
+        -- ground. Maintainer's call, from what began as an accident: it reads
+        -- more clearly than a gradient, and it meets the wedge shadows either
+        -- side without a seam.
+        local lift_h = math.floor(tonumber(self.shadow_h) or 0)
+        if lift_h <= 0 or lift_h > h then lift_h = h end
+        if lift_h > 0 then
+            bb:paintRectRGB32(x, y, w, lift_h, _liftBoxColor(night))
+        end
+        return
+    elseif pk then
+        -- The plain shelf keeps the banded plank shadow it always had, which
+        -- is also what a lifted SPINE paints there: one gesture, one shadow.
+        local surf_h   = SpineShelf.plankSurfaceOf(pk)
         local surf_top = y + h + pk.inset - surf_h
         local y0 = math.max(y, surf_top)
         for yy = y0, y + h - 1 do
             bb:paintRectRGB32(x + ins, yy, math.max(1, w - 2 * ins), 1,
-                              _plankBandColor(yy - surf_top, surf_h, 0.72))
+                              _plankRowAt(yy - surf_top, surf_h, 0.72))
         end
         return
     end
@@ -1622,6 +2061,50 @@ function FaceOutFeet:paintTo(bb, x, y)
     local w, h = self.dimen.w, self.dimen.h
     local hl = Screen:scaleBySize(1)
     if hl < 1 then hl = 1 end
+    -- CONTACT SHADOW, straight across the cover's width (user spec).
+    --
+    -- The recess's occlusion runs down the gaps on either side of a face-out
+    -- and then has nothing to join across the cover's own width, so it broke
+    -- off at both edges and the cover sat on a fully lit board looking like
+    -- it was floating. A spine does not show this: it ends in its own dark
+    -- board edge, which reads as the join whether or not anything is painted
+    -- under it. A cover ends in artwork, frequently white.
+    --
+    -- Runs from the cover's foot forward by one INSET, which is exactly where
+    -- the neighbouring spines' feet are, so the band meets the gap columns at
+    -- the same row and the shadow reads as one continuous thing across the
+    -- run. Darkest at the cover and easing to the board's own tone at the
+    -- front, which is the whole of the ambient occlusion principle: the
+    -- shadow is deepest where the two surfaces meet.
+    local pk = self.plank
+    if pk and not self.lifted then
+        local inset = math.floor(tonumber(pk.inset) or 0)
+        -- Cover foot to the plank's front edge, and from there back one inset
+        -- to where the neighbouring SPINES stand. That second line is where
+        -- the band has to stop: past it the board is lit in front of every
+        -- book, face-out or not, and a strip running on to the lip would be
+        -- the only dark thing on the row's front edge.
+        local lip  = math.floor(tonumber(pk.lip) or (2 * inset))
+        local rows = lip - inset
+        if rows > 0 then
+            local surf_h   = SpineShelf.plankSurfaceOf(pk)
+            -- The plank indexed its bands from its OWN front edge, so this
+            -- has to as well. Deriving it from the cover's foot plus an inset
+            -- put it a whole inset out, and the strip ended BRIGHTER than the
+            -- board it was supposed to be shading.
+            local surf_top = y + h + lip - surf_h
+            local base     = SpineShelf.PLANK_CONTACT_SHADE
+            for i = 0, rows - 1 do
+                local yy  = y + h + i
+                -- i+1 over rows, so the last row is already back at the
+                -- board's own tone and there is no step where it ends.
+                local t   = (i + 1) / rows
+                local mul = base + (1 - base) * t
+                bb:paintRectRGB32(x, yy, w, 1,
+                                  _plankRowAt(yy - surf_top, surf_h, mul))
+            end
+        end
+    end
     _cutFootCorners(bb, x, y + h, w, hl,
                     _behindAt(self.plank, y + h, self.lifted))
 end
@@ -1782,6 +2265,127 @@ function SpineShelf.plankFace(row_h)
     return math.max(1, math.floor(SpineShelf.plankUnit(row_h) * 1.4))
 end
 
+-- badgeDrop(row_h) -> px a row's section badge hangs BELOW the row.
+--
+-- ShelfBadges paints the badge at y + h - plankFace(h) - 2, text_h + 2*pad_y
+-- tall (see ShelfBadges:drawAt; the face and paddings here must stay those),
+-- so it overhangs the plank by that height less the face and the 2px it
+-- starts above the face's foot. The layout keeps at least this much after the
+-- last row, or the badge sits on the footer panel: the fixed PAD used to
+-- clear it by luck, and the balanced gap split trimmed the last gap under it
+-- (maintainer: "at least 1px separation"). The text height is measured once
+-- per face size, since it depends on the font, not on the row.
+function SpineShelf.badgeDrop(row_h)
+    local scale = 100
+    pcall(function()
+        local BookshelfSettings = require("lib/bookshelf_settings_store")
+        scale = BookshelfSettings.read("stack_label_font_scale", 100) or 100
+    end)
+    local size = math.max(8, math.floor(14 * scale / 100 + 0.5))
+    SpineShelf._badge_text_h = SpineShelf._badge_text_h or {}
+    local text_h = SpineShelf._badge_text_h[size]
+    if not text_h then
+        local ok = pcall(function()
+            local face = BFont:getFace(BFont.getUIFontFace() or "cfont", size)
+            local tw = TextWidget:new{ text = "Xg", face = face, padding = 0 }
+            text_h = tw:getSize().h
+            tw:free()
+        end)
+        if not ok or not text_h then text_h = math.floor(size * 1.9) end
+        SpineShelf._badge_text_h[size] = text_h
+    end
+    local pad_y = Screen:scaleBySize(2)
+    local drop  = text_h + 2 * pad_y - SpineShelf.plankFace(row_h) - 2
+    return math.max(0, drop)
+end
+
+-- The plank's THREE numbers, and the accessors that read them. They were two
+-- literals -- `3 * b` in five places and `math.floor(b * 0.8)` in three --
+-- and the tilt and lift maths reads them as a PAIR, so changing either in one
+-- place moved a book without moving the shelf it stands on.
+--
+-- They are three because they mean three different things, and the old code
+-- had two of them sharing one number by accident:
+--
+--   INSET    how much surface shows in FRONT of the feet. Small on purpose:
+--            the books stand almost on the lip, which is how they sit on a
+--            real shelf (maintainer, when this was tried the other way). It
+--            is the one that costs book height, since the stand height is
+--            the row minus the front face minus this.
+--   SURFACE  the whole painted top face. Mostly HIDDEN behind the books, and
+--            visible in the gaps between them and past the ends of a run --
+--            which is exactly where a reader reads the shelf's depth. NOT a
+--            multiple of the edge unit: see plankSurface.
+--   LIFT     how far a held book rises off the plank. Nothing to do with how
+--            deep the board is; it was the old surface value and it stays
+--            that value, or deepening the shelf would double the jump.
+SpineShelf.PLANK_INSET_UNITS  = 0.8
+SpineShelf.PLANK_LIFT_UNITS   = 3.0
+-- A board is a little deeper than what stands on it. Barely -- the point is
+-- only that the shelf must never read as SHALLOWER than the books, which is
+-- what it did: a 24px top surface under a 43px page block (maintainer).
+SpineShelf.PLANK_DEPTH_FACTOR = 1.06
+-- The far edge is flat against the back wall, so its corner gets a nick
+-- rather than a chamfer: a 45 degree cut of this many pixels at most.
+SpineShelf.PLANK_BACK_CHAMFER_MAX = 3
+-- How dark the plank goes where a book TOUCHES it. Contact occlusion is the
+-- darkest shadow on a shelf -- there is no angle from which light reaches the
+-- join -- so it is well under the 0.72 a LIFTED book's soft patch uses. One
+-- value for both places it appears: the nick taken off a foot corner, and the
+-- strip in front of a face-out cover.
+SpineShelf.PLANK_CONTACT_SHADE = 0.42
+
+-- plankInset(b) and plankLift(b) take the EDGE UNIT, because the callers that
+-- need them hold a stashed `plank.b` and never saw the row. plankSurface
+-- takes the ROW HEIGHT, because it is derived from the books, not the unit.
+function SpineShelf.plankInset(b)
+    return math.max(0, math.floor((tonumber(b) or 0) * SpineShelf.PLANK_INSET_UNITS))
+end
+
+-- plankLift(b) -> how far a selected or tipping book rises above its feet, so
+-- there is daylight between it and the shelf (user ruling: the old fixed lift
+-- still overlapped the plank's top surface).
+function SpineShelf.plankLift(b)
+    return math.max(0, math.floor((tonumber(b) or 0) * SpineShelf.PLANK_LIFT_UNITS)
+                       - SpineShelf.plankInset(b))
+end
+
+-- plankSurface(row_h) -> the painted top surface in px.
+--
+-- THE SHELF IS AS DEEP AS THE BOOKS. Both are horizontal surfaces under the
+-- same 12-degree camera, so a spine's page block and the plank's top face are
+-- the same kind of measurement and the eye compares them directly. A board
+-- projecting LESS than the books standing on it is not a shallow shelf, it is
+-- an impossible one, and that is what it looked like.
+--
+-- So it asks SpineLayout for the depth the row's TALLEST book would show --
+-- the same call the painter makes to carve that book's top edge -- rather
+-- than being one more multiple of the edge unit that happens to look close.
+-- Change the camera angle or the default aspect and the board follows.
+function SpineShelf.plankSurface(row_h)
+    row_h = tonumber(row_h) or 0
+    if row_h <= 0 then return 1 end
+    local b     = SpineShelf.plankUnit(row_h)
+    local stand = row_h - SpineShelf.plankFace(row_h) - SpineShelf.plankInset(b)
+    local depth = SpineLayout.topEdgeHeight(stand, SpineLayout.DEFAULT_ASPECT)
+    return math.max(1, math.floor(depth * SpineShelf.PLANK_DEPTH_FACTOR))
+end
+
+-- plankSurfaceOf(pk) -> the band for a STASHED plank descriptor.
+--
+-- Three painters (the corner cut behind a lifted book, its under-strip, and
+-- its drop shadow) reproduce the plank's own bands and have to quantise over
+-- the same height the plank painted, or the patch stops matching the shelf
+-- around it. They hold a descriptor, not a row, so rowWidget stashes the
+-- answer on it. The fallback is what those sites used before the board was
+-- deepened, so a descriptor built without one still paints a coherent shelf.
+function SpineShelf.plankSurfaceOf(pk)
+    if type(pk) ~= "table" then return 1 end
+    local s = tonumber(pk.surf)
+    if s and s > 0 then return s end
+    return math.max(1, SpineShelf.plankLift(pk.b) + (tonumber(pk.inset) or 0))
+end
+
 -- The plank in 3D (user spec): the upward-facing top surface rises TWO edge
 -- units behind the books, the front-top edge is a thin dark line, and below
 -- it the plank's front face drops (see plankFace), darker. Shading is
@@ -1802,8 +2406,8 @@ function ShelfPlank:paintTo(bb, x, y)
     -- Top surface, receding: darker at the far (top) edge, lighter as it
     -- reaches the front. Three units deep, so the books stand back from
     -- the lip with surface showing in front of their feet.
-    local surf_h = 3 * b
-    local bands = 5
+    local surf_h = SpineShelf.plankSurface(h)
+    local bands = PLANK_BANDS
     for i = 0, bands - 1 do
         local by0 = front_y - surf_h + math.floor(surf_h * i / bands)
         local by1 = front_y - surf_h + math.floor(surf_h * (i + 1) / bands)
@@ -1818,20 +2422,56 @@ function ShelfPlank:paintTo(bb, x, y)
     bb:paintRectRGB32(x, front_y - line, w, line, _plankLit(0.55))
     bb:paintRectRGB32(x, front_y, w, fh, _plankLit(0.12))
     -- Chamfered ends: a board's corners are eased, not sliced square at the
-    -- screen's edge (user report: the ends looked harshly cut off). A 45deg
-    -- bevel the height of the face at each corner of the band -- far edge
-    -- and front-bottom, both ends -- painted back to the row's ground
-    -- (paper white in pre-invert space, which is what night displays as the
-    -- shelf's black background).
-    local c = math.max(2, fh)
+    -- screen's edge (user report: the ends looked harshly cut off). Painted
+    -- back to the row's ground (paper white in pre-invert space, which is
+    -- what night displays as the shelf's black background).
+    --
+    -- TWO PROFILES, because the two corners are doing different jobs.
+    --
+    -- The FRONT face is vertical and barely foreshortens: its corner is a
+    -- true 45 degree bevel `c` pixels each way, which is what stops the board
+    -- reading as sliced square at the screen's edge.
+    --
+    -- The FAR edge sits flat against the back wall (user ruling), so it gets
+    -- no easing to speak of -- just a small 45 degree nick so the corner is
+    -- not a sharp point. A pixel or three: this is a corner against a wall,
+    -- not a visible end of the board. It is deliberately NOT derived from
+    -- `c`. An earlier version cut both corners in one loop, and because the
+    -- top surface recedes, an 11px vertical cut up there was the equivalent
+    -- of 11 / VIEW_SIN -- nearly five times `c` -- of real board. That passed
+    -- unnoticed while the surface was shallow and read as a slice taken off
+    -- the corner the moment it was deepened (maintainer).
+    local c  = math.max(2, fh)
+    local cb = math.max(1, math.min(SpineShelf.PLANK_BACK_CHAMFER_MAX,
+                                    Screen:scaleBySize(1)))
     local band_top = front_y - surf_h
     local ground = Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF)
+    -- Over a wallpaper there is no ground COLOUR to paint back to -- the
+    -- ground is a photograph -- so the bevel is cut by putting the wallpaper's
+    -- own pixels back. Wallpaper.restore refuses an offscreen target and
+    -- answers false, which falls through to the paint below, so a plank
+    -- rendered anywhere other than the screen keeps its old behaviour.
+    local Wallpaper = SpineShelf.has_wallpaper
+                      and select(2, pcall(require, "lib/bookshelf_wallpaper"))
+                      or nil
+    local function cut(cx, cy, cw)
+        if Wallpaper and Wallpaper.restore
+                and Wallpaper.restore(bb, cx, cy, cw, 1) then
+            return
+        end
+        bb:paintRectRGB32(cx, cy, cw, 1, ground)
+    end
+    -- Far (top) edge: a nick, square 45 degrees, a few pixels at most.
+    for j = 0, cb - 1 do
+        local run = cb - j
+        cut(x, band_top + j, run)
+        cut(x + w - run, band_top + j, run)
+    end
+    -- Front-bottom: a vertical face, so a square 45 degree bevel.
     for i = 0, c - 1 do
         local run = c - i
-        bb:paintRectRGB32(x, band_top + i, run, 1, ground)
-        bb:paintRectRGB32(x + w - run, band_top + i, run, 1, ground)
-        bb:paintRectRGB32(x, y + h - 1 - i, run, 1, ground)
-        bb:paintRectRGB32(x + w - run, y + h - 1 - i, run, 1, ground)
+        cut(x, y + h - 1 - i, run)
+        cut(x + w - run, y + h - 1 - i, run)
     end
 end
 
@@ -1957,6 +2597,94 @@ function SpineShelf._flattenItems(items)
     return flat
 end
 
+-- rowEndSide(base, k) -> "left" | "right": the side the k-th row-end
+-- ornament on a screen stands on, alternating down the screen from the base.
+-- k counts PIECES, not rows: a row left to the books (see ROW_END_CHANCE)
+-- does not put the next two pieces on the same side with a gap between.
+function SpineShelf.rowEndSide(base, k)
+    base = (base == "left") and "left" or "right"
+    if (tonumber(k) or 1) % 2 == 1 then return base end
+    return base == "left" and "right" or "left"
+end
+
+-- rowEndBase(page_index) -> "left" | "right": the side a page's FIRST
+-- row-end ornament stands on. The page's parity, so neighbouring pages
+-- mirror each other: with pieces on most rows there are only two
+-- arrangements, and taking the first side from a hash of the page's first
+-- book landed neighbours on the same one half the time -- the pieces stayed
+-- put while the spines changed, which the maintainer said "ruins the effect
+-- of looking at a different shelf". A page index is stable within a chip,
+-- so a page still composes the same way every time it is shown (a far jump
+-- between two pages of one parity shows the same pattern; accepted). No
+-- page -- the pagination plan spans them all -- reads as the first.
+function SpineShelf.rowEndBase(page_key)
+    -- Takes the page's NAME (its first book) as well as an ordinal: the
+    -- ordinal reaches the render through a lookup that can go stale, and a
+    -- stale one made neighbouring pages mirror the wrong way round. Hashed
+    -- either way, so the two cases behave alike.
+    local p = tonumber(page_key)
+    if not p then
+        local ok, Orn = pcall(require, "lib/bookshelf_ornaments")
+        p = (ok and Orn and Orn.hash) and Orn.hash("side:" .. tostring(page_key)) or 1
+    end
+    if p % 2 == 0 then return "left" end
+    return "right"
+end
+
+-- ── The entries cache ──────────────────────────────────────────────────────
+--
+-- plan() builds one entry per flattened item -- look, favourite, progress,
+-- width, twenty-odd fields -- for EVERY item the chip holds, on every call,
+-- and a page turn calls it to show six of them. Measured on a PW5 at 1234
+-- entries: 0.6-1.0s a turn, warm, which was most of the turn.
+--
+-- So the full entry list is kept between calls and sliced per page. It is
+-- keyed on the items table itself (the fetch cache hands the same table
+-- back turn after turn), the settings generation, the night flag, and every
+-- option that shapes an entry. It is dropped by dropPlanCache (every shelf
+-- rebuild: chip switch, return from a book, theme change) and by
+-- invalidateBook (a book's status or progress moved). It is stored ONLY
+-- from a plan that hydrated nothing: a pass that was still filling in
+-- stubs would freeze those stubs for every later page.
+local _plan_cache = nil
+
+function SpineShelf.dropPlanCache()
+    _plan_cache = nil
+end
+
+local function _optsKey(opts)
+    local parts = {}
+    local keys = {}
+    for k in pairs(opts or {}) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    for _i = 1, #keys do
+        local k = keys[_i]
+        -- skip, n_rows, rows_per_page and page_index are page-relative and
+        -- balance only shapes rows: none of them is an entry input, and the
+        -- pagination plan (n_rows = math.huge, balance = false) must share the
+        -- slot with the page plans.
+        if k ~= "skip" and k ~= "n_rows" and k ~= "balance"
+                and k ~= "rows_per_page" and k ~= "page_index" then
+            local v = opts[k]
+            if type(v) == "table" then
+                local sub = {}
+                for sk, sv in pairs(v) do sub[#sub + 1] = tostring(sk) .. "=" .. tostring(sv) end
+                table.sort(sub)
+                v = "{" .. table.concat(sub, ",") .. "}"
+            end
+            parts[#parts + 1] = k .. "=" .. tostring(v)
+        end
+    end
+    -- NOT the settings generation: the page position is saved on every
+    -- turn (active_page, deferred) and every save bumps it, so a key that
+    -- carried it missed on every turn -- the first device round with this
+    -- cache built the entries every time. Every setting that shapes an
+    -- entry ends in a rebuild, and a rebuild drops the cache.
+    parts[#parts + 1] = "night=" .. tostring(_nightMode())
+    parts[#parts + 1] = "wp=" .. tostring(SpineShelf.has_wallpaper)
+    return table.concat(parts, "|")
+end
+
 function SpineShelf.plan(items, opts)
     local entries = {}
     local budget = opts.row_h
@@ -1983,9 +2711,9 @@ function SpineShelf.plan(items, opts)
     -- Face-out policy: which books stand cover-forward. Mode string from
     -- the chip editor's picker; the old boolean pins normalise onto it
     -- (true/nil were "favourites face out: yes", false was "no").
-    local face_mode = opts.face_out
-    if face_mode == nil or face_mode == true then face_mode = "favorites" end
-    if face_mode == false then face_mode = "none" end
+    -- A SET now, not one exclusive mode. faceOutSpec normalises every shape
+    -- the setting has ever held, so an untouched shelf keeps its behaviour.
+    local face_spec = SpineShelf.faceOutSpec(opts.face_out)
     -- Ornaments BETWEEN sections, on a grouping chip. Decided here rather
     -- than at paint time because the space has to be RESERVED: fillRows packs
     -- the row out of these gaps, so an ornament conjured later would stand on
@@ -1997,18 +2725,81 @@ function SpineShelf.plan(items, opts)
         if ok_o and Orn then
             local b     = SpineShelf.plankUnit(opts.row_h)
             local fh    = SpineShelf.plankFace(opts.row_h)
-            local inset = math.floor(b * 0.8)
+            local inset = SpineShelf.plankInset(b)
             orn = {
                 mod       = Orn,
                 stand_h   = math.max(1, opts.row_h - fh - inset),
                 pad       = math.max(book_gap, b),
                 max_below = inset + fh,
                 -- Never more than a quarter of the row: a section break is
-                -- an aside, not an exhibit.
-                budget    = math.floor((opts.content_w or 0) * 0.25),
+                -- an aside, not an exhibit. Same share the row-end slot asks
+                -- for; see Orn.ASIDE_SHARE.
+                budget    = math.floor((opts.content_w or 0)
+                                       * (Orn.ASIDE_SHARE or 0.25)),
             }
+            -- Row-end reservation, at the higher frequencies only.
+            --
+            -- Everywhere else an ornament is opportunistic: it appears when a
+            -- gap happens to be wide enough. That means a densely packed shelf
+            -- never gets one, however high the setting -- there is simply
+            -- never room. Reserving takes the width off the row BEFORE the
+            -- books are packed, so the shelf ends a little short and the
+            -- ornament stands in the space it asked for.
+            --
+            -- Nominal width, because which ornament lands here is not known
+            -- until pick() runs: one stand-height square, which is the widest
+            -- a portrait or square piece can come out. A wider one is scaled
+            -- down to the budget by pick itself.
+            if (Orn.frequency and Orn.frequency() > 0)
+                    or (Orn.reservesRowEnds and Orn.reservesRowEnds()) then
+                -- The most a row-end piece may be OFFERED: all but one
+                -- book's width. Not a share of the row and not a
+                -- stand-height square -- a piece drawn to span the shelf
+                -- spans the shelf, and the row it stands on simply carries
+                -- no books ("I have no issue with a png taking a full shelf,
+                -- we don't always need to have a book").
+                --
+                -- One book's width is still held back, and the book it is
+                -- measured for is the WIDEST a row can hold: a face-out
+                -- cover, not an average spine. Holding back four average
+                -- spines was not enough -- a face-out is wider than all four
+                -- -- so the row seated one anyway and painted it past the end
+                -- of the plank. With a cover's width kept, no row is ever
+                -- forced to overflow; a row that still cannot fit its book
+                -- stands empty instead (SpineLayout.fillRows, empty_ok).
+                --
+                -- Derived from opts alone: the ACTUAL widths on a row are
+                -- not something the two planning passes can agree on, since
+                -- one plans a page and the other the whole library.
+                local face_h = SpineLayout.spineHeight(opts.row_h,
+                                                       SpineLayout.DEFAULT_ASPECT)
+                orn.keep = SpineLayout.faceOutWidth(face_h,
+                                                    SpineLayout.DEFAULT_ASPECT)
+                           + book_gap
+                local square = math.floor(orn.stand_h * Orn.HEIGHT_FRAC)
+                local room   = (opts.content_w or 0) - orn.keep - 2 * orn.pad
+                -- Never offered less than it was before the widening.
+                orn.row_end = math.max(square, room) + 2 * orn.pad
+            end
             pcall(Orn.ensureTemplate)
+            -- One page, one set: plan() runs once per page and before any row
+            -- is built, so this is where "what is already standing" resets.
+            pcall(Orn.beginScreen)
         end
+    end
+    -- Width the books may use. The reservation comes off here, ONCE, so
+    -- fillRows and balanceRows agree about how much room there is; give one
+    -- the full width and it packs a book into the strip the other paints an
+    -- ornament in.
+    --
+    -- Dropped entirely on a shelf too narrow to spare it. Normally the slot
+    -- is sized to leave exactly `keep` behind, so this only bites when the
+    -- stand-height floor above pushed it past that -- tall rows on a narrow
+    -- screen, where a reservation would cost books to gain decoration.
+    local content_w_books = opts.content_w or 0
+    if orn and orn.row_end and orn.row_end > 0
+            and content_w_books - orn.row_end < (orn.keep or 0) then
+        orn.row_end = nil
     end
 
     -- ── Flatten ─────────────────────────────────────────────────────────
@@ -2019,6 +2810,16 @@ function SpineShelf.plan(items, opts)
     -- (folders) stay as one drillable spine.
     local _t0 = _gettime()
     local _t_hydrate, _t_look, _t_pages, _t_fav, _n_hydrated = 0, 0, 0, 0, 0
+    local _t_balance, _n_balance, _r_balance = 0, 0, 0
+    -- KOReader's debug-logging switch (frontend/dbg.lua), the same one that
+-- turns logger.dbg into a no-op. Read once per plan.
+    -- KOReader's debug-logging switch (frontend/dbg.lua), the same one that
+    -- turns logger.dbg into a no-op. Read once per plan.
+    local _verbose = false
+    do
+        local ok_d, dbg = pcall(require, "dbg")
+        _verbose = ok_d and type(dbg) == "table" and dbg.is_on and true or false
+    end
     --
     -- run_idx is the VISUAL run -- what gets a wider gap either side and a
     -- name badge under it. item_idx is what the CURSOR counts. They are the
@@ -2028,6 +2829,9 @@ function SpineShelf.plan(items, opts)
     -- in, because a folder with more books than fit a page could never be
     -- paged through if the folder were the item (see Repo.getFolderSections).
     local flat = SpineShelf._flattenItems(items)
+    -- The newest N across this shelf's WHOLE list, worked out once: a per-book
+    -- test would re-sort the library for every spine.
+    local face_recent = SpineShelf.recentSet(flat, face_spec.recent)
 
     -- Resume INSIDE an item. A group bigger than a page cannot be paged
     -- through in item units, so a page that starts partway through one is
@@ -2035,16 +2839,38 @@ function SpineShelf.plan(items, opts)
     -- alone: it still names the item in the caller's array, which is what
     -- next_item is reported in.
     local skip = tonumber(opts.skip) or 0
-    if skip > 0 and skip < #flat then
-        local kept = {}
-        for j = skip + 1, #flat do kept[#kept + 1] = flat[j] end
-        flat = kept
-    elseif skip >= #flat then
+    if skip >= #flat then
         skip = 0            -- a stale skip past the end starts the item over
+    end
+    -- The entry loops below run over the FULL flat (so their result can be
+    -- kept for the next page); the page's own slice is taken afterwards.
+    -- The items are keyed by CONTENT, not identity: the shelf hands plan()
+    -- a fresh array on every turn (the device round with an identity check
+    -- said items=false, key=true on every warm plan). One identifier per
+    -- item plus its member count; ~100 items, well under a millisecond.
+    local ids = {}
+    for i = 1, #items do
+        local it = items[i]
+        ids[i] = tostring(it and (it.filepath or it.key or it.id or it.label) or "?")
+                 .. ":" .. tostring(it and it.books and #it.books or 0)
+    end
+    local cache_key = _optsKey(opts) .. "|n=" .. #flat .. "|" .. table.concat(ids, ",")
+    local cached = _plan_cache
+                   and _plan_cache.key == cache_key
+                   and _plan_cache.entries or nil
+    if _verbose then
+        logger.dbg(string.format(
+            "[bookshelf perf] spine plan: entries %s (slot=%s key=%s)",
+            cached and "CACHED" or "built",
+            _plan_cache and "yes" or "empty",
+            tostring(_plan_cache and _plan_cache.key == cache_key)))
     end
 
     -- One read for the whole page's facts (look, count, cached status), so
     -- the per-book lookups below are table hits rather than a query each.
+    if cached then
+        entries = cached
+    else
     do
         local fps = {}
         for j = 1, #flat do
@@ -2222,12 +3048,20 @@ function SpineShelf.plan(items, opts)
         end
         -- Decided AFTER the status block: the "reading" mode needs
         -- src.status. Books only -- a plain folder keeps its spine.
+        -- ANY reason is enough. They are not ranked: a book that is both a
+        -- favourite and newly added is not more face-out than one that is
+        -- only a favourite, it simply qualifies twice.
         local face_out = false
         if src.filepath then
-            if face_mode == "favorites"   then face_out = fav
-            elseif face_mode == "first"   then face_out = f.first_of_group == true
-            elseif face_mode == "reading" then face_out = src.status == "reading"
-            elseif face_mode == "all"     then face_out = true
+            if face_spec.all then
+                face_out = true
+            else
+                face_out = (face_spec.favorites and fav)
+                    or (face_spec.first and f.first_of_group == true)
+                    or (face_spec.reading and src.status == "reading")
+                    or (face_spec.unread and SpineShelf.isUnread(src))
+                    or (face_recent ~= nil and face_recent[src.filepath] == true)
+                    or false
             end
         end
         if face_out and src.has_cover == nil and src.filepath
@@ -2327,7 +3161,15 @@ function SpineShelf.plan(items, opts)
             if prev.run_idx == f.run_idx then
                 -- Same run: tight, unless BOTH neighbours are covers
                 -- (the "All books" wall) -- covers need air.
-                gap_before = (face_out and prev_face) and face_gap or book_gap
+                -- EITHER side, not both. This used to need both neighbours
+                -- to be covers, so a face-out standing among its own series'
+                -- spines got the tight book gap -- which was a deliberate
+                -- ruling once ("that adjacency is what shows the run belongs
+                -- to it") and has been reversed: a cover wants air on both
+                -- sides wherever it stands (maintainer, on device, after the
+                -- constant was widened and nothing appeared to change --
+                -- because this branch never reached it).
+                gap_before = (face_out or prev_face) and face_gap or book_gap
             else
                 if prev.in_group or f.in_group then
                     gap_before = group_gap
@@ -2343,6 +3185,12 @@ function SpineShelf.plan(items, opts)
                             min_h     = Screen:scaleBySize(orn.mod.MIN_H_DP),
                             max_below = orn.max_below,
                             chance    = orn.mod.GROUP_CHANCE,
+                            -- Damped at the lower levels: this is the most
+                            -- numerous channel on a grouping chip, so the raw
+                            -- level puts several on a page the reader asked to
+                            -- keep sparse. See M.GROUP_LEVEL.
+                            level     = orn.mod.groupLevel
+                                        and orn.mod.groupLevel() or nil,
                         })
                         if pl then
                             ornament_here = pl
@@ -2370,20 +3218,165 @@ function SpineShelf.plan(items, opts)
             -- reservation above); rowWidget paints it.
             ornament = ornament_here,
         }
-        logger.dbg(string.format(
-            "[bookshelf perf] spine plan: %-24s w_dp=%.1f pages=%s aspect=%s rgb=%d,%d,%d sampled=%s fav=%s face_out=%s item=%d",
-            label:sub(1, 24), w_dp, tostring(pages),
-            tostring(aspect and string.format("%.2f", aspect)),
-            look.r, look.g, look.b, tostring(look.sampled),
-            tostring(fav), tostring(face_out), f.item_idx))
+        -- Gated on the flag, not on logger.dbg: a disabled logger.dbg is a
+        -- no-op, but its ARGUMENTS are still built, and this is a ten-field
+        -- format per entry, ~1200 entries a plan, three plans a rebuild.
+        if _verbose then
+            logger.dbg(string.format(
+                "[bookshelf perf] spine plan: %-24s w_dp=%.1f pages=%s aspect=%s rgb=%d,%d,%d sampled=%s fav=%s face_out=%s item=%d",
+                label:sub(1, 24), w_dp, tostring(pages),
+                tostring(aspect and string.format("%.2f", aspect)),
+                look.r, look.g, look.b, tostring(look.sampled),
+                tostring(fav), tostring(face_out), f.item_idx))
+        end
     end
 
+    if _n_hydrated == 0 then
+        _plan_cache = { key = cache_key, entries = entries }
+    end
+    end -- cached
+    -- The page's slice. Entries carry no page-relative state: a row start
+    -- drops its leading gap in the layout, and next_skip is derived below
+    -- from skip itself.
+    if skip > 0 then
+        local sliced = {}
+        for j = skip + 1, #entries do sliced[#sliced + 1] = entries[j] end
+        entries = sliced
+    end
     local widths, gaps = {}, {}
     for i = 1, #entries do
         widths[i] = entries[i].w
         gaps[i]   = entries[i].gap_before
     end
-    local rows = SpineLayout.fillRows(widths, opts.content_w, gaps)
+    -- Row-end ornaments, decided HERE and per row. The piece that will stand
+    -- at a row's end is picked before the row is packed, so the row gives up
+    -- exactly that piece's width -- and a row that gets none keeps the whole
+    -- shelf. (It used to be one nominal square off EVERY row, with the pick
+    -- rolled later by the row widget: a row that rolled nothing kept the
+    -- hole, and one that did still had the difference between the square
+    -- and the piece. Maintainer: books should fill the shelf when there is
+    -- no ornament.) Seeded on the page's first book and the row index, so a
+    -- page composes the same way each time it is shown. Not every reserved
+    -- row takes a piece: ROW_END_CHANCE (scaled by the frequency level inside
+    -- pick) leaves the odd row to the books even at Lots, and a row that
+    -- rolls nothing keeps the whole shelf.
+    -- ROW-END ORNAMENTS, decided identically by BOTH of plan()'s callers.
+    --
+    -- plan() is called two ways. The render plans ONE page: n_rows is the
+    -- shelf count and opts.page_index says which page. _spinePageFirsts plans
+    -- the WHOLE library in one call (n_rows = math.huge) and then cuts the
+    -- rows into pages of rows_per_page, and THAT is where page numbers come
+    -- from. Anything decided here changes how many books fit on a row, so if
+    -- the two passes decide differently they disagree about where pages
+    -- start -- which is how the same page number arrived twice.
+    --
+    -- Two things were wrong. The loop stopped at 8 rows, which in the
+    -- pagination pass is the first 8 rows of the entire library rather than 8
+    -- rows of each page. And the seed was the plan's first book, which is the
+    -- chip's first book in one pass and the page's first book in the other.
+    --
+    -- Everything now comes from the row's position in its PAGE, which both
+    -- passes can state: the render knows it directly, the pagination pass
+    -- derives it from rows_per_page. Decided lazily, as fillRows asks, so
+    -- there is no cap and no wasted pick.
+    local per_page = tonumber(opts.rows_per_page)
+        or (opts.n_rows and opts.n_rows < math.huge and opts.n_rows) or 1
+    if per_page < 1 then per_page = 1 end
+    local paginating = not (opts.n_rows and opts.n_rows < math.huge)
+    local function pageOf(r)
+        if paginating then
+            return math.floor((r - 1) / per_page) + 1, ((r - 1) % per_page) + 1
+        end
+        return tonumber(opts.page_index) or 1, r
+    end
+    -- WHICH PAGE THIS IS, named by its own first book rather than by an
+    -- ordinal.
+    --
+    -- The ordinal was the third thing to go wrong here and the worst,
+    -- because it is silent. The render does not work its page number out; it
+    -- is handed one, from a lookup into the page map that the OTHER planning
+    -- pass builds. When that map and the render disagree about where a page
+    -- starts -- and the reservation below is itself part of what decides that,
+    -- so they can -- two consecutive renders come through with the same
+    -- number. The device log caught exactly that: `page_index=3` twice, once
+    -- starting at "Shards of Honour" and once at "The Burning Side", and both
+    -- pages were handed the same ornament.
+    --
+    -- A page's first book is not a lookup. The render's is the book it is
+    -- actually drawing; the pagination pass records each page's as it reaches
+    -- it. Both are "the first book on this page", so they agree when the
+    -- boundaries agree and neither can go stale when they do not.
+    --
+    -- The earlier reverted attempt seeded on `the plan's first book`, which
+    -- is the CHIP's first book in the pagination pass and the page's in the
+    -- render -- a different quantity in each. Tracking it per page is the
+    -- correction to that.
+    local page_name = {}
+    local function pageKey(r, i)
+        local page = pageOf(r)
+        if page_name[page] == nil then
+            local e = i and entries[i]
+            page_name[page] = e and ((e.book and e.book.filepath)
+                                     or e.name or e.title) or false
+        end
+        return page_name[page] or ("p" .. page)
+    end
+    local row_orn, row_seen, placed_on = {}, {}, {}
+    local function rowPiece(r, i)
+        if row_seen[r] then return row_orn[r] end
+        row_seen[r] = true
+        local key = pageKey(r, i)
+        if not (orn and orn.row_end and orn.row_end > 0) then return nil end
+        local Orn = orn.mod
+        local page, within = pageOf(r)
+        -- A promised page stands one piece on its FIRST row whatever the odds
+        -- say; every other row takes the ordinary chance. Deliberately not
+        -- conditional on what the section gaps found: those are decided in the
+        -- render only, so asking about them here would split the two passes
+        -- again. A page that gets both is a page with two ornaments on it,
+        -- which is no worse than a page with one.
+        local owed = within == 1 and Orn.pageGuaranteed
+                     and Orn.pageGuaranteed(key)
+        local ok_p, pl = pcall(Orn.pick,
+            "page[" .. tostring(key) .. "]|rowend|" .. within,
+            orn.row_end - 2 * orn.pad, orn.stand_h, nil, {
+                min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
+                min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
+                -- Lower than a gap's floor on purpose: a wide piece spread
+                -- across the slot comes out low, and at a row end there is
+                -- nothing above it for that to look wrong against.
+                min_h_frac = Orn.ROW_END_MIN_H_FRAC,
+                max_below = orn.max_below,
+                chance    = owed and Orn.CHANCE_CERTAIN or Orn.ROW_END_CHANCE,
+                -- Damped like the section breaks, and zero at Rarely, so that
+                -- setting is exactly its per-page promise. The promise itself
+                -- passes CHANCE_CERTAIN above and is unaffected by the level.
+                level     = (not owed) and Orn.rowEndLevel
+                            and Orn.rowEndLevel() or nil,
+            })
+        if ok_p and pl then
+            -- Which side the page's first piece stands on is the PAGE's
+            -- parity, so neighbouring pages mirror each other; pieces below it
+            -- alternate, counted by PIECE so a row that took none does not
+            -- leave two neighbours on the same side.
+            placed_on[key] = (placed_on[key] or 0) + 1
+            pl.side = SpineShelf.rowEndSide(SpineShelf.rowEndBase(key),
+                                            placed_on[key])
+            row_orn[r] = pl
+        end
+        return row_orn[r]
+    end
+    local function availAt(r, i)
+        local pl = r and rowPiece(r, i)
+        if pl then return content_w_books - (pl.w + 2 * orn.pad) end
+        return content_w_books
+    end
+    -- A row may stand as its ornament alone, but only a row that HAS one:
+    -- everywhere else the "at least one book" rule still holds. rowPiece is
+    -- memoised per row, so both planning passes answer this the same way.
+    local rows = SpineLayout.fillRows(widths, availAt, gaps, function(r)
+        return rowPiece(r) ~= nil
+    end)
     while #rows > (opts.n_rows or 1) do table.remove(rows) end
     -- Even the shelves out. The fill has decided WHICH books are on this page
     -- -- greedy packs the most it can, and the cursor step, the page map and
@@ -2394,14 +3387,27 @@ function SpineShelf.plan(items, opts)
     -- balancer where the sections are, so a series or a folder resists being
     -- cut in half; on a chip with no grouping every book is its own run and
     -- the preference costs nothing.
-    if #rows > 1 then
+    -- Balance the rows a PAGE will show. A caller planning every row of the
+    -- chip (n_rows = math.huge, for pagination) says balance = false; the
+    -- cap is a backstop, since the DP is rows x books and the visible shelf
+    -- never has more than a handful of rows.
+    -- An empty row is a row the balancer cannot speak about: it re-breaks a
+    -- run of books across a fixed number of rows and has no way to express
+    -- "this one holds none". Keep the greedy break in that case.
+    local has_empty = false
+    for r = 1, #rows do if rows[r].empty then has_empty = true break end end
+    if #rows > 1 and opts.balance ~= false and #rows <= 8 and not has_empty then
         local runs = {}
         for i = 1, #entries do runs[i] = entries[i].run_idx end
-        local even = SpineLayout.balanceRows(widths, opts.content_w, gaps,
+        local _tb = _gettime()
+        _n_balance, _r_balance = rows[#rows].last, #rows
+        local even = SpineLayout.balanceRows(widths, availAt, gaps,
                                              rows[#rows].last, #rows,
                                              { runs = runs })
+        _t_balance = _gettime() - _tb
         if even then rows = even end
     end
+    for r = 1, #rows do rows[r].ornament = row_orn[r] end
 
     -- shown is in ITEM units (what the cursor counts): the last item whose
     -- spines ALL made it onto the page. Kept for the callers that still speak
@@ -2454,11 +3460,13 @@ function SpineShelf.plan(items, opts)
         pages_ms   = _t_pages * 1000,
     }
     logger.dbg(string.format(
-        "[bookshelf perf] spine plan TOTAL=%.0fms entries=%d hydrate=%.0fms/%d look=%.0fms pages=%.0fms fav=%.0fms",
+        "[bookshelf perf] spine plan TOTAL=%.0fms entries=%d hydrate=%.0fms/%d look=%.0fms pages=%.0fms fav=%.0fms balance=%.0fms/%d/%d",
         (_gettime() - _t0) * 1000, #entries, _t_hydrate * 1000, _n_hydrated,
-        _t_look * 1000, _t_pages * 1000, _t_fav * 1000))
+        _t_look * 1000, _t_pages * 1000, _t_fav * 1000,
+        _t_balance * 1000, _n_balance, _r_balance))
     return { entries = entries, rows = rows, shown = shown,
-             next_item = next_item, next_skip = next_skip }
+             next_item = next_item, next_skip = next_skip,
+             row_ends = (orn and orn.row_end and orn.row_end > 0) and true or false }
 end
 
 -- ── Row widget ──────────────────────────────────────────────────────────────
@@ -2485,13 +3493,16 @@ function SpineShelf.rowWidget(opts)
             Orn.ensureTemplate()
             local b       = SpineShelf.plankUnit(opts.height)
             local fh      = SpineShelf.plankFace(opts.height)
-            local inset   = math.floor(b * 0.8)
+            local inset   = SpineShelf.plankInset(b)
             local stand_h = math.max(1, opts.height - fh - inset)
             local margin  = SpineShelf.endMargin(opts.height)
             local seed    = tostring(opts.page_key or "") .. "|empty|"
                             .. tostring(opts.row_index or 0)
             local pl = Orn.pick(seed, opts.width - 2 * margin, stand_h, nil, {
                 min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
+                -- Render-only, so it can take a ceiling: it paints into
+                -- space the books already left, changing no packing.
+                budgeted  = true,
                 min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
                 max_below = inset + fh,
             })
@@ -2515,7 +3526,10 @@ function SpineShelf.rowWidget(opts)
     -- underneath this group).
     local b = SpineShelf.plankUnit(opts.height)
     local fh = SpineShelf.plankFace(opts.height)
-    local inset = math.floor(b * 0.8)
+    local inset = SpineShelf.plankInset(b)
+    -- Stashed for the three painters that reproduce the plank's bands
+    -- from a descriptor rather than from the row.
+    local surf = SpineShelf.plankSurface(opts.height)
     local stand_h = math.max(1, opts.height - fh - inset)
     local group = HorizontalGroup:new{ align = "top" }
     -- Books stand CENTRED on their plank (user ruling, made obvious by the
@@ -2533,13 +3547,30 @@ function SpineShelf.rowWidget(opts)
             end
         end
     end
-    local lead = math.max(SpineShelf.endMargin(opts.height),
-                          math.floor((opts.width - content_w) / 2))
+    -- With a row-end piece decided by the plan, the piece takes exactly its
+    -- width (plus the pad) at its end and the books centre in what is left;
+    -- otherwise the books centre in the whole row as they always did.
+    local lead
+    do
+        local margin0 = SpineShelf.endMargin(opts.height)
+        local rowo = opts.row and opts.row.ornament
+        if rowo then
+            local pad_o   = math.max(opts.gap or 0, SpineShelf.plankUnit(opts.height))
+            local reserve = rowo.w + pad_o
+            local span    = opts.width - 2 * margin0 - reserve
+            lead = margin0 + (rowo.side == "left" and reserve or 0)
+                   + math.max(0, math.floor((span - content_w) / 2))
+        else
+            lead = math.max(margin0, math.floor((opts.width - content_w) / 2))
+        end
+    end
     group[#group + 1] = HorizontalSpan:new{ width = lead }
     -- Section badges: collect each flattened group's run in THIS row (x
     -- extent in row coordinates) so ShelfBadges can hang its name off the
     -- plank beneath it.
     local cursor, badge_spans = lead, {}
+    local recess_cols = {}
+    local slots_by_fp = {}
     local gap_ornaments = {}
     for i = opts.row.first, opts.row.last do
         local e = opts.plan.entries[i]
@@ -2582,7 +3613,7 @@ function SpineShelf.rowWidget(opts)
                     -- A section tag names its own run (the folder it came
                     -- from); a group's name comes off the group.
                     local label = e.section_label
-                                  or it.series_name or it.label or it.name
+                                  or it.label or it.series_name or it.name
                     -- Author sections sort by SURNAME, and the surname is
                     -- what a shopper scans the shelf edge for -- so the
                     -- badge always reads "Last, First", whatever the
@@ -2636,7 +3667,7 @@ function SpineShelf.rowWidget(opts)
                     if is_sel then
                         -- Clear the plank's top surface plus an air gap,
                         -- accounting for the extra push face-outs sit at.
-                        lift = math.max(0, 3 * b - inset - push)
+                        lift = math.max(0, SpineShelf.plankLift(b) - push)
                                + Screen:scaleBySize(6)
                     end
                     local fo_stand = stand_h - push
@@ -2657,6 +3688,15 @@ function SpineShelf.rowWidget(opts)
                         cover_h = math.max(Screen:scaleBySize(40),
                                            fo_stand - depth - lift)
                     end
+                    -- The silhouette this actually draws, recorded for the
+                    -- recess. A face-out is SHORTER than its slot -- it shows
+                    -- only its thickness up top where a spine shows its full
+                    -- width (see the comment above) -- so a shadow placed from
+                    -- e.h hangs in the air above the cover instead of hugging
+                    -- it. Recorded rather than recomputed: the height is four
+                    -- clamped terms, and a second copy of that arithmetic is
+                    -- exactly what drifts.
+                    e._drawn_h = cover_h + depth
                     local cover = CoverTile:new{
                         book          = e.book,
                         width         = e.w,
@@ -2705,12 +3745,17 @@ function SpineShelf.rowWidget(opts)
                     -- foot vacates with the plank's own banded surface.
                     local tilt_lift = 0
                     if lift == 0 then
-                        tilt_lift = math.max(0, 3 * b - inset - push)
+                        tilt_lift = math.max(0, SpineShelf.plankLift(b) - push)
                                     + Screen:scaleBySize(6)
                     end
                     cover.faceout_fx = { depth = depth, look = e.look,
                                          below = push + inset + b,
                                          plank_b = b, plank_face = fh,
+                                         -- The board's real depth. It used to
+                                         -- be reconstructed as 3 * plank_b,
+                                         -- which was the surface height back
+                                         -- when that was what it meant.
+                                         plank_surf = surf,
                                          lift = tilt_lift }
                     local stack = VerticalGroup:new{ align = "center" }
                     local head = fo_stand - cover_h - depth - lift
@@ -2731,7 +3776,14 @@ function SpineShelf.rowWidget(opts)
                         cover,
                         FaceOutFeet:new{
                             dimen  = Geom:new{ w = e.w, h = cover_h },
-                            plank  = { b = b, inset = inset },
+                            -- `lip` is the cover's foot to the plank's front edge:
+                            -- a face-out is pushed back by `push`, and
+                            -- then every book stands one inset behind
+                            -- the lip. The contact strip needs it to
+                            -- index the plank's bands the way the plank
+                            -- itself did.
+                            plank  = { b = b, inset = inset, surf = surf,
+                                       lip = push + inset },
                             lifted = lift > 0 or nil,
                         },
                     }
@@ -2741,7 +3793,7 @@ function SpineShelf.rowWidget(opts)
                             stack[#stack + 1] = LiftShadow:new{
                                 dimen    = Geom:new{ w = e.w, h = push + lift },
                                 shadow_h = lift,
-                                plank    = { b = b, inset = inset },
+                                plank    = { b = b, inset = inset, surf = surf },
                             }
                         else
                             stack[#stack + 1] = VerticalSpan:new{
@@ -2775,10 +3827,62 @@ function SpineShelf.rowWidget(opts)
                     show_author = opts.show_author,
                     is_selected = is_sel,
                     is_bulk_selected = is_bulk,
-                    plank       = { b = b, inset = inset, face = fh },
+                    plank       = { b = b, inset = inset, face = fh, surf = surf },
                 }
             end
+            if e.book and e.book.filepath and tile then
+                slots_by_fp[e.book.filepath] = tile
+            end
             group[#group + 1] = tile
+            -- Where this spine stands and how tall it is, for the recess
+            -- below: its darkening follows the books' own silhouette rather
+            -- than cutting a straight line above them.
+            -- A SELECTED book rises off the plank (see the lift in
+            -- _renderInto), and its shadow has to rise with it -- otherwise
+            -- the head pokes out above its own shadow the moment it is
+            -- picked. Same arithmetic as the lift itself, so the two cannot
+            -- drift apart.
+            -- A SELECTED item rises off the plank, and its shadow has to rise
+            -- with it or the head pokes out above its own shadow the moment it
+            -- is picked.
+            --
+            -- Two formulas, matching the two lifts: a spine clears the plank's
+            -- surface (3b - inset), a face-out already sits an inset forward
+            -- and so clears one less. Both then take the same air gap. Kept in
+            -- step with _renderInto's `clear` and the face-out branch above --
+            -- a shadow lifted by the wrong amount is worse than one that does
+            -- not lift at all, because it detaches on one side only.
+            local lift = 0
+            if is_sel then
+                local back = e.face_out and (SpineShelf.plankLift(b) - inset)
+                                or SpineShelf.plankLift(b)
+                lift = math.max(0, back) + Screen:scaleBySize(6)
+            end
+            -- _drawn_h when the item recorded one (face-outs do): the shadow
+            -- follows what is on screen, not what the plan reserved.
+            -- `foot` is how far ABOVE the row's foot line this item stands:
+            -- a selection lift, plus the inset a face-out is pushed back by.
+            -- The recess rakes the shadow's base to it, so the board's shadow
+            -- follows the feet instead of squaring off at the tallest one.
+            -- THE SHADOW DOES NOT LIFT WITH THE BOOK (maintainer ruling).
+            --
+            -- It used to: h carried + lift, so a selected book's occlusion
+            -- rose with it. That is more literal, and worse on e-ink -- the
+            -- shadow moving meant the books either side of the lifted one had
+            -- to redraw too, and a partial update over several columns is
+            -- visibly glitchy. Holding the shadow still makes the selection
+            -- one clean slice: the book moves, nothing else does.
+            --
+            -- It also deletes a whole class of bug. The recess is per ROW and
+            -- a selection flip does not rebuild it, so anything in here that
+            -- depended on which book was selected had to be kept in step by
+            -- hand, and twice was not.
+            recess_cols[#recess_cols + 1] = {
+                x = cursor, w = e.w,
+                h = (e._drawn_h or e.h or 0),
+                foot = (e.face_out and inset or 0),
+                fp = e.book and e.book.filepath or nil,
+            }
             cursor = cursor + e.w
         end
     end
@@ -2798,11 +3902,29 @@ function SpineShelf.rowWidget(opts)
         local first  = opts.plan.entries[opts.row.first]
         local seed   = tostring(first and first.book and first.book.filepath or "")
                        .. "|" .. tostring(opts.row.first) .. "|" .. tostring(opts.row.last)
-        local pl = Orn.pick(seed, gap, stand_h, nil, {
-            min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
-            min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
-            max_below = inset + fh,
-        })
+        -- When the row END IS RESERVED (the higher frequencies), the slack
+        -- above is not an accident of packing -- plan() took that width off
+        -- before the books were laid out, precisely so something could stand
+        -- here. Leaving it empty on a dice roll would cost a book's width for
+        -- nothing, so at those settings the only question left is whether an
+        -- ornament fits.
+        -- The plan may already have decided this row's piece (row_ends): use
+        -- it, so the reserve the books were packed around is what stands
+        -- here. Otherwise the old opportunistic pick in the packing slack.
+        local pl = opts.row and opts.row.ornament
+        if not pl then
+            local reserved = Orn.reservesRowEnds and Orn.reservesRowEnds()
+                             and not (opts.plan and opts.plan.row_ends)
+            pl = Orn.pick(seed, gap, stand_h, nil, {
+                min_gap   = Screen:scaleBySize(Orn.MIN_GAP_DP),
+                -- Render-only, so it can take a ceiling: it paints into
+                -- space the books already left, changing no packing.
+                budgeted  = true,
+                min_h     = Screen:scaleBySize(Orn.MIN_H_DP),
+                max_below = inset + fh,
+                chance    = reserved and 1 or nil,
+            })
+        end
         if not pl then return end
         local x
         if pl.side == "left" then
@@ -2815,7 +3937,356 @@ function SpineShelf.rowWidget(opts)
         w_.overlap_offset = { x, stand_h - pl.above }
         ornament = w_
     end)
+    -- ── Shelf recess ──────────────────────────────────────────────
+    --
+    -- A cover gets a drop shadow to lift it off the page; a spine had nothing,
+    -- and over a picture the books sat ON the wallpaper rather than IN a
+    -- shelf. On a real shelf the back of the recess is the darkest thing in
+    -- view -- light does not reach behind the books.
+    --
+    -- So: darken the ground just behind where the books stand, strongest at
+    -- their feet and fading up. Banded rather than a true gradient, the same
+    -- trick the tilt's cast shadow uses -- a handful of rects cost nothing on
+    -- e-ink, and 16 greys cannot show a smooth ramp anyway.
+    --
+    -- Painted between the plank and the books, so the books cover most of it
+    -- and what shows is the gaps between them and the air above -- which is
+    -- exactly where a shelf reads as deep.
+    --
+    -- On EVERY ground, not just a picture. This was wallpaper-only, on the
+    -- reasoning that a plain page separates the books well enough on its own
+    -- and a wash behind them would change everyone's shelf to solve a problem
+    -- they did not have. It reads better than that: the depth is what makes
+    -- the shelf a shelf, and it is just as welcome on a plain background
+    -- (maintainer, comparing the two side by side). Wallpaper.shadeRect never
+    -- needed a picture anyway -- it is a darken on whatever pixels are there.
+    --
+    -- The escape hatch is Advanced > Performance tweaks > "Disable spine mode
+    -- shadows": the painter issues a band per column per slot, and a device
+    -- whose blitter cannot keep up now meets it on shelves that used to be
+    -- exempt. shadeRect already refuses a buffer with no C blitter, so this
+    -- is for the ones that are merely slow.
+    local recess
+    do
+        local ok_wp, Wallpaper = pcall(require, "lib/bookshelf_wallpaper")
+        if ok_wp and SpineShelf.shadowsEnabled()
+                and Wallpaper.shadeRect and #recess_cols > 0 then
+            local night = _nightMode()
+            local cols  = recess_cols
+            local halo = Screen:scaleBySize(RECESS_HALO_DP)
+            local side = Screen:scaleBySize(RECESS_SIDE_DP)
+            recess = Widget:extend{}
+            function recess:paintTo(bb, x, y)
+                pcall(function()
+                    -- Strongest at the plank's back edge, fading to nothing by
+                    -- the top. plankBandT is 0 at that back edge -- its least
+                    -- lit band -- so the shadow is darkest exactly where the
+                    -- plank is, and the join does not read as an edge.
+                    -- Two ramps, because they cover very different heights.
+                    --
+                    -- The BODY runs from the plank's back edge up to the
+                    -- spine's shoulder -- hundreds of pixels, and mostly
+                    -- hidden behind the book. plankBandT is 0 at that back
+                    -- edge, its least lit band, so starting at full strength
+                    -- there joins the shadow to the plank with no step.
+                    --
+                    -- The HALO is the handful of pixels clear of the spine,
+                    -- and it is the only part a packed shelf shows. Banded on
+                    -- its own height rather than the column's: sharing the
+                    -- body's bands put the whole halo inside band 0 at one
+                    -- flat strength, which gave it a hard top edge.
+                    -- ease > 1 bends the ramp so it stays faint for most of
+                    -- its run and only climbs near the end. The halo uses it:
+                    -- a straight line reached a quarter strength within a few
+                    -- pixels of the top edge, which read as the shadow
+                    -- starting abruptly rather than fading in out of nothing.
+                    local function ramp(bx, bw, top, bottom, from, to, n, ease)
+                        if bw <= 0 or bottom <= top then return end
+                        local h    = bottom - top
+                        n = math.max(1, math.min(n, h))
+                        local step = math.max(1, math.floor(h / n))
+                        for k = 0, n - 1 do
+                            local t = (k + 1) / n
+                            if ease and ease ~= 1 then t = t ^ ease end
+                            local f  = from + (to - from) * t
+                            local by = top + k * step
+                            local bh = (k == n - 1) and (bottom - by) or step
+                            if bh > 0 and f > 0 then
+                                Wallpaper.shadeRect(bb, x + bx, y + by, bw, bh, f, night)
+                            end
+                        end
+                    end
+                    -- mult scales the whole column. The wedge uses it to fade
+                    -- with DISTANCE as well as height: without it the wedge's
+                    -- bottom stayed at full strength across its entire reach,
+                    -- which is the square block sitting on the shelf line.
+                    -- halo_only: the strip is an ITEM's own column, so the
+                    -- body below its shoulder is covered by the item standing
+                    -- in front of it -- every band there is a full-height
+                    -- blend for pixels nobody can see. Measured at 423 blends
+                    -- a row before this; the body bands were the largest
+                    -- rects in that count.
+                    --
+                    -- Gaps and wedges still paint theirs: those ARE open to
+                    -- the plank.
+                    local function column(bx, bw, top, shoulder, mult, bottom,
+                                          halo_only)
+                        if bw <= 0 then return end
+                        if top < 0 then top = 0 end
+                        if shoulder < top then shoulder = top end
+                        mult = mult or 1
+                        if mult <= 0 then return end
+                        local peak = RECESS_MAX * mult
+                        local mid  = peak * RECESS_TOP_FRAC
+                        ramp(bx, bw, top, shoulder, 0, mid, RECESS_HALO_BANDS,
+                             RECESS_HALO_EASE)
+                        if halo_only then return end
+                        ramp(bx, bw, shoulder, bottom or stand_h, mid, peak,
+                             RECESS_BANDS)
+                    end
+                    -- The silhouette, DILATED by the halo: each strip takes the
+                    -- tallest book within a halo of it, so the shadow clears a
+                    -- spine's shoulders by the same margin on every side.
+                    -- Strips are disjoint -- these blends compound, and an
+                    -- overlap would show as a darker seam down every gap.
+                    -- An item's own height, NOT its neighbourhood's.
+                    --
+                    -- This used to take the tallest of the column and its two
+                    -- neighbours, to approximate a horizontal spread. Between
+                    -- spines of similar height that is invisible; put a
+                    -- face-out cover among them and the shadow stops hugging
+                    -- anything -- a short spine beside a tall cover gets the
+                    -- cover's shadow height, and the cover's own outline stops
+                    -- reading. The GAPS still bridge to the taller neighbour,
+                    -- which is where a spread actually belongs.
+                    local function place(bx, bw, tall, halo_only)
+                        local shoulder = stand_h - math.min(tall, stand_h)
+                        local top      = stand_h - math.min(tall + halo, stand_h)
+                        -- One row PAST the book's top edge for its own column.
+                        -- The head leaves that row to the shadow -- the boards
+                        -- rise a pixel above the paper and only their inner
+                        -- pixels are drawn -- so the ramp has to reach it, or
+                        -- the nick and the gap between the boards come out
+                        -- bright while a gradient sits right above them
+                        -- (maintainer: "it should be the same shadow that we
+                        -- can see as a gradient above the spine top box").
+                        -- The board pixels are painted over it either way.
+                        if halo_only then
+                            shoulder = shoulder + Screen:scaleBySize(1)
+                        end
+                        column(bx, bw, top, shoulder, nil, nil, halo_only)
+                    end
+                    -- strip(bx, bw, own_h, tall): one slice of a raked span.
+                    --
+                    -- `tall` is where the SHADOW stands (the horizon) and
+                    -- `own_h` is how far up the BOOK reaches. They differ
+                    -- wherever a taller neighbour leans over this one, and
+                    -- the band between them is open wallpaper -- so it takes
+                    -- the body ramp, not the halo-only shortcut. Where they
+                    -- are equal the body is empty and this is exactly what
+                    -- place() did.
+                    local function strip(bx, bw, own_h, tall, foot)
+                        if bw <= 0 then return end
+                        local shoulder = stand_h - math.min(tall, stand_h)
+                        local top      = stand_h - math.min(tall + halo, stand_h)
+                        -- The base stops at whichever is higher: the book
+                        -- standing here, or the raked foot line. foot 0 makes
+                        -- this exactly what it was.
+                        local bottom   = stand_h - math.max(foot or 0,
+                                                    math.min(own_h, stand_h))
+                        column(bx, bw, top, shoulder, nil, bottom,
+                               bottom <= shoulder)
+                    end
+                    -- paintSpan(sx, sw, own_h): a book's column or the gap
+                    -- after it, raked to the 45-degree horizon.
+                    --
+                    -- Sliced ONLY where the horizon actually varies across
+                    -- the span. On a shelf of similar spines it does not, so
+                    -- this emits the single strip it always did; the slicing
+                    -- cost is paid per height step, which in practice means
+                    -- per face-out.
+                    local rake_min = Screen:scaleBySize(RECESS_RAKE_MIN_DP)
+                    local function paintSpan(sx, sw, own_h)
+                        if sw <= 0 then return end
+                        local base = math.max(own_h or 0, 0)
+                        -- `side` is the end wedge's reach; one distance for
+                        -- every direction a shadow leaves a run.
+                        local function hz(px)
+                            return math.max(base,
+                                       SpineShelf.recessHorizon(cols, px, "h", side))
+                        end
+                        local function ft(px)
+                            return SpineShelf.recessHorizon(cols, px, "foot", side)
+                        end
+                        local hl, hr = hz(sx), hz(sx + sw - 1)
+                        local fl, fr = ft(sx), ft(sx + sw - 1)
+                        -- One strip unless something actually varies across
+                        -- the span. A shelf of similar spines varies in
+                        -- neither, so it paints exactly what it always did.
+                        if math.abs(hl - hr) <= rake_min
+                                and math.abs(hl - base) <= rake_min
+                                and fl == fr then
+                            strip(sx, sw, own_h, math.max(hl, hr), fl)
+                            return
+                        end
+                        -- Slice finely enough to DRAW the ramp. Its slope is
+                        -- one pixel per pixel, so a drop of d needs about d
+                        -- slices or the diagonal comes out as a stair -- and
+                        -- the foot ramp is only a few pixels tall, sitting on
+                        -- the plank where a stair is the most obvious.
+                        local need = math.max(math.abs(hl - hr),
+                                              math.abs(fl - fr),
+                                              RECESS_RAKE_SLICES)
+                        local n = math.max(1, math.min(sw, need,
+                                                       RECESS_RAKE_MAX_SLICES))
+                        -- Spread the remainder across every slice rather than
+                        -- dumping it on the last one: a floor(sw/n) step left
+                        -- the final strip holding all the slack, which on a
+                        -- 13px gap was six 1px slices and then one 7px block
+                        -- sitting exactly where the ramp was.
+                        for k = 0, n - 1 do
+                            local x0 = sx + math.floor(k * sw / n)
+                            local x1 = sx + math.floor((k + 1) * sw / n)
+                            local w0 = x1 - x0
+                            if w0 > 0 then
+                                local mid = x0 + math.floor(w0 / 2)
+                                strip(x0, w0, own_h, hz(mid), ft(mid))
+                            end
+                        end
+                    end
+                    -- Past the ENDS of the run, where the backboard is open
+                    -- and the shadow actually has somewhere to fall. Without
+                    -- these the run's outermost spines have shadow above them
+                    -- and none beside them, which reads as a band rather than
+                    -- as two books standing in front of something.
+                    -- wedge(bx, bw, tall, near): the shadow past the END of a
+                    -- run, raked away to the backboard instead of stopping at
+                    -- a square edge.
+                    --
+                    -- A rectangle here reads as a block bolted to the last
+                    -- spine. Light passing the end of a run does not stop
+                    -- dead -- the shadow shortens as it goes, so the top edge
+                    -- slopes down and meets the plank. Sliced into narrow
+                    -- columns whose tops descend: on a 16-grey panel a
+                    -- stepped diagonal is a diagonal.
+                    --
+                    -- near = "left" when the books are to the LEFT of this
+                    -- strip (the right-hand end of the run), so the tall side
+                    -- is whichever side the books are on.
+                    -- `foot` lifts the whole wedge: a face-out stands a few
+                    -- pixels further back than a spine, so the shadow beside
+                    -- it has to start where ITS feet are, not where a spine's
+                    -- would be (maintainer). Zero for a spine, which is what
+                    -- every other caller passes.
+                    local function wedge(bx, bw, tall, near, foot)
+                        if bw <= 0 then return end
+                        foot = math.max(0, math.floor(tonumber(foot) or 0))
+                        local n    = RECESS_WEDGE_SLICES
+                        local step = math.max(1, math.floor(bw / n))
+                        local full = stand_h - math.min(tall + halo, stand_h)
+                        for k = 0, n - 1 do
+                            local sx = bx + k * step
+                            local sw = (k == n - 1) and (bx + bw - sx) or step
+                            -- 0 at the book, 1 at the far edge.
+                            local away = (near == "left") and ((k + 1) / n)
+                                                          or (1 - k / n)
+                            local top  = full + (stand_h - full) * away
+                            local sh   = stand_h - math.min(tall + halo, stand_h)
+                            -- BOTTOM lifts one px per px travelled: the
+                            -- shadow's lower edge leaves the spine's foot at
+                            -- 45 degrees and runs back to the wall, instead of
+                            -- squaring off along the plank line. That flat
+                            -- full-strength base was the block on the shelf.
+                            local dist = away * bw
+                            local bot  = stand_h - foot - math.floor(dist)
+                            if sw > 0 and top < bot then
+                                -- Fades with distance as well as shortening:
+                                -- a shadow thrown past the end of a run gets
+                                -- weaker as it goes, it does not simply get
+                                -- shorter at full strength.
+                                column(sx, sw, top, math.max(top, sh),
+                                       1 - away * RECESS_WEDGE_FADE, bot)
+                            end
+                        end
+                    end
+                    local first, last = cols[1], cols[#cols]
+                    if first and side > 0 then
+                        local lx = math.max(0, first.x - side)
+                        wedge(lx, first.x - lx, first.h, "right", first.foot)
+                    end
+                    -- The wedge is for OPEN SHELF beside a book -- past the
+                    -- ends of a run, or across a gap wide enough for an
+                    -- ornament. It slopes its top down, lifts its base and
+                    -- fades with distance, which is right when the shadow has
+                    -- somewhere to go and wrong between two books: tried
+                    -- there, it replaced the shorter neighbour's own shadow
+                    -- with a fading one, and a lifted book took half the
+                    -- shadow off the books either side of it (maintainer).
+                    -- Book-to-book steps take the horizon rake instead, which
+                    -- keeps both books' shadows at full strength.
+                    for i = 1, #cols do
+                        local c = cols[i]
+                        -- A book's own column, at its OWN height and nothing
+                        -- else. It used to take the 45-degree horizon, so a
+                        -- taller neighbour leaned over it and left a spike
+                        -- rising off its near edge -- visible on any short
+                        -- book standing beside a tall one (maintainer). The
+                        -- horizon was there to smooth the step between two
+                        -- books; with the book gap at zero there is no step
+                        -- to smooth, because the books touch and the join is
+                        -- behind them. What is left above them should follow
+                        -- each book's own top, which is what a real shelf
+                        -- does. Every shadow that shows is now one of two
+                        -- shapes: this halo, or a wedge into open shelf.
+                        place(c.x, c.w, c.h, true)
+                        local nxt = cols[i + 1]
+                        if nxt then
+                            local gx, gw = c.x + c.w, nxt.x - (c.x + c.w)
+                            -- EVERY GAP IS TWO RUN ENDS. Neighbouring
+                            -- spines touch now, so a gap only exists where
+                            -- something deliberately separates books: a group
+                            -- break, the air either side of a face-out, the
+                            -- space an ornament stands in. All of those are
+                            -- open shelf, and the books facing them want what
+                            -- the outermost books of a run get -- the wedge:
+                            -- top sloping down to the plank, base lifting
+                            -- away, fading as it goes (maintainer ruling).
+                            --
+                            -- This used to be gated on the gap being wide,
+                            -- because a 2dp gap between two spines is not
+                            -- open shelf and wedging it took shadow away from
+                            -- both. With the book gap at zero that case no
+                            -- longer exists and the gate goes with it.
+                            --
+                            -- Each wedge is capped at half the gap so the two
+                            -- cannot overlap: these blends compound, and an
+                            -- overlap shows as a darker seam down the middle.
+                            -- Anything left between them is further from
+                            -- either book than a shadow reaches.
+                            if gw > 0 then
+                                local ww = math.min(side, math.floor(gw / 2))
+                                if ww > 0 then
+                                    wedge(gx, ww, c.h, "left", c.foot)
+                                    wedge(gx + gw - ww, ww, nxt.h, "right",
+                                          nxt.foot)
+                                else
+                                    paintSpan(gx, gw, 0)
+                                end
+                            end
+                        end
+                    end
+                    if last and side > 0 then
+                        local rx = last.x + last.w
+                        local rw = math.min(side, math.max(0, opts.width - rx))
+                        wedge(rx, rw, last.h, "left", last.foot)
+                    end
+                end)
+            end
+            recess = recess:new{ dimen = Geom:new{ w = opts.width, h = opts.height } }
+        end
+    end
     local children = { dimen = dimen, plank, group }
+    if recess then table.insert(children, 2, recess) end
     for _i = 1, #gap_ornaments do
         children[#children + 1] = gap_ornaments[_i]
     end
@@ -2832,6 +4303,13 @@ function SpineShelf.rowWidget(opts)
     local row_group = OverlapGroup:new(children)
     -- The shelf collects these for its overlay; it still paints as a child
     -- here, which is how it learns where it sits.
+    -- Slots by filepath, so a selection change can reach the ONE book that
+    -- moved instead of rebuilding the row. A spine selects by LIFTING, and
+    -- the slot bakes is_selected into its render key -- so flipping the field
+    -- and repainting that rect is the whole job (maintainer: "just build the
+    -- bit that needs to move"; the row rebuild this replaced is what the v5
+    -- pass removed from paging).
+    row_group._slots_by_fp = slots_by_fp
     row_group._shelf_badges = badges
     return row_group
 end
@@ -2904,8 +4382,50 @@ function SpineShelf.paintOpeningTilt(slot)
         local c = Blitbuffer.new(slot.width, slot.height, bb:getType())
         -- Same page ground the cached render starts from, so the strip the
         -- shrinking spine vacates reads as the shelf background behind it.
-        c:paintRectRGB32(0, 0, slot.width, slot.height,
-                         Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+        --
+        -- Over a wallpaper that ground is a photograph, not a colour, so the
+        -- picture's own pixels go in instead -- Wallpaper.patch, because this
+        -- buffer is slot-sized and restore only serves screen-sized targets.
+        -- Unlike the cached render this frame cannot alphablit its way out of
+        -- the problem: the screen still holds the UNtilted spine, which would
+        -- show through the strip the tilt vacates. Same fall-through as the
+        -- plank's bevel cut -- no wallpaper, or an unusable one, and the white
+        -- ground is still correct.
+        local Wallpaper = SpineShelf.has_wallpaper
+                          and select(2, pcall(require, "lib/bookshelf_wallpaper"))
+                          or nil
+        local patched = Wallpaper and Wallpaper.patch
+            and Wallpaper.patch(c, 0, 0, d.x, d.y, slot.width, slot.height)
+        if patched then
+            -- patch() restores the RAW picture, which is a step brighter than
+            -- the shelf around it: the recess shadow painted over this slot
+            -- during the row's own paint is not in the backdrop. Put an
+            -- equivalent back, or the book tilts forward out of a bright hole.
+            --
+            -- RAMPED, not flat. Flat was chosen because this is one
+            -- transient frame and the slot is mostly covered by the tilting
+            -- book -- but the part that is NOT covered is the strip above it,
+            -- which is exactly where a uniform rectangle reads as a block
+            -- pasted over the shelf (maintainer). The real recess fades in
+            -- from nothing at the top, so fade this in too: same bands, same
+            -- ease, same peak.
+            pcall(function()
+                local peak = RECESS_MAX * RECESS_TOP_FRAC
+                local n    = RECESS_HALO_BANDS
+                local step = math.max(1, math.floor(slot.height / n))
+                for k = 0, n - 1 do
+                    local t  = ((k + 1) / n) ^ RECESS_HALO_EASE
+                    local by = k * step
+                    local bh = (k == n - 1) and (slot.height - by) or step
+                    if bh > 0 then
+                        Wallpaper.shadeRect(c, 0, by, slot.width, bh, peak * t, night)
+                    end
+                end
+            end)
+        else
+            c:paintRectRGB32(0, 0, slot.width, slot.height,
+                             Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+        end
         slot._tilt = true
         slot:_renderInto(c, night)
         slot._tilt = nil
@@ -2991,13 +4511,51 @@ function SpineShelf.paintFaceOutTilt(tile)
         end
         src:free()
         scaled:free()
-        -- Page ground over whatever the rising silhouette no longer
-        -- covers above the block (pre-invert space, same as the slot
-        -- renders paint), then the block, dropped/risen to meet the
-        -- squashed cover's top.
+        -- The ground over whatever the rising silhouette no longer covers
+        -- above the block, then the block, dropped/risen to meet the squashed
+        -- cover's top.
+        --
+        -- Over a wallpaper that ground is the PICTURE, put back from the
+        -- backdrop we already hold. A flat 0xFF here is the page colour in
+        -- pre-invert space -- correct on paper, and a white hole by day or a
+        -- black one at night over a picture, exactly the size of the gap the
+        -- book vacates as it tilts. restore() takes screen coordinates and
+        -- this paints straight to the framebuffer, so it is the plain
+        -- restore, not the offscreen patch.
         if block_y > top0 then
-            bb:paintRectRGB32(rect.x, top0, rect.w, block_y - top0,
-                              Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+            local wp_ok = false
+            local ok_wp, Wallpaper = pcall(require, "lib/bookshelf_wallpaper")
+            if ok_wp and Wallpaper.restore then
+                wp_ok = Wallpaper.restore(bb, rect.x, top0, rect.w,
+                                          block_y - top0)
+                -- Same as the spine tilt: restore() brings back the bare
+                -- picture, without the recess shadow that was over it.
+                -- Ramped, for the same reason as the spine tilt: this strip
+                -- is the part NOT covered by the tipping book, so a flat
+                -- shade over it reads as a block pasted on the shelf.
+                if wp_ok and Wallpaper.shadeRect then
+                    pcall(function()
+                        local h_    = block_y - top0
+                        local peak  = RECESS_MAX * RECESS_TOP_FRAC
+                        local n     = RECESS_HALO_BANDS
+                        local step  = math.max(1, math.floor(h_ / n))
+                        local night_ = _nightMode()
+                        for k = 0, n - 1 do
+                            local t  = ((k + 1) / n) ^ RECESS_HALO_EASE
+                            local by = top0 + k * step
+                            local bh = (k == n - 1) and (top0 + h_ - by) or step
+                            if bh > 0 then
+                                Wallpaper.shadeRect(bb, rect.x, by, rect.w, bh,
+                                                    peak * t, night_)
+                            end
+                        end
+                    end)
+                end
+            end
+            if not wp_ok then
+                bb:paintRectRGB32(rect.x, top0, rect.w, block_y - top0,
+                                  Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))
+            end
         end
         local block = FaceOutTopBlock:new{
             dimen = Geom:new{ w = rect.w, h = depth + grow },
@@ -3010,11 +4568,16 @@ function SpineShelf.paintFaceOutTilt(tile)
         if lift > 0 then
             local pb = fx.plank_b or Screen:scaleBySize(6)
             local pf = fx.plank_face or pb
-            local surf_top = rect.y + rect.h + (fx.below or 0) - (3 * pb + pf)
+            -- The board's own depth, passed through. Reconstructing it as
+            -- 3 * pb was right only while the surface WAS three edge units;
+            -- once the board was deepened to match the books this refilled
+            -- the vacated strip with a shelf less than half the right size.
+            local ps = fx.plank_surf or (3 * pb)
+            local surf_top = rect.y + rect.h + (fx.below or 0) - (ps + pf)
             for yy = rect.y + rect.h - lift, rect.y + rect.h - 1 do
                 if yy >= surf_top then
                     bb:paintRectRGB32(rect.x, yy, rect.w, 1,
-                                      _plankBandColor(yy - surf_top, 3 * pb))
+                                      _plankRowAt(yy - surf_top, ps))
                 else
                     bb:paintRectRGB32(rect.x, yy, rect.w, 1,
                                       Blitbuffer.ColorRGB32(0xFF, 0xFF, 0xFF, 0xFF))

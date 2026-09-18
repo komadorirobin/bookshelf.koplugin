@@ -16,6 +16,7 @@ local SHELF_FIELDS = {
     "spine_thickness_pct",
     "spine_face_out",
     "spine_show_author",
+    "ornament_frequency",
 }
 
 local function settingsStore()

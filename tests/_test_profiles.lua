@@ -87,12 +87,15 @@ test("profile shelf settings are isolated per profile and chip", function()
     Profiles.saveShelfSettings(comics, "profile_manga", {
         view_mode = "spines",
         spine_rows = 3,
+        ornament_frequency = 0.5,
     })
     local fiction = Profiles.shelfSettings(prose, "profile_fiction")
     local manga = Profiles.shelfSettings(comics, "profile_manga")
     assert(fiction.view_mode == "list" and fiction.list_rows == 5)
     assert(fiction.spine_rows == nil)
     assert(manga.view_mode == "spines" and manga.spine_rows == 3)
+    assert(manga.ornament_frequency == 0.5)
+    assert(fiction.ornament_frequency == nil)
     assert(Profiles.shelfSettings(prose, "profile_nonfiction").view_mode == nil)
 end)
 
@@ -102,12 +105,14 @@ test("profile shelf settings preserve false and discard unrelated fields", funct
         view_mode = "spines",
         spine_face_out = false,
         spine_show_author = false,
+        ornament_frequency = 0,
         label = "must not replace a fixed profile label",
     })
     local got = Profiles.shelfSettings(comics, "profile_comics")
     assert(got.view_mode == "spines")
     assert(got.spine_face_out == false)
     assert(got.spine_show_author == false)
+    assert(got.ornament_frequency == 0)
     assert(got.label == nil)
 end)
 

@@ -25,6 +25,7 @@ local RightContainer  = require("ui/widget/container/rightcontainer")
 local TopContainer    = require("ui/widget/container/topcontainer")
 local TextWidget      = require("ui/widget/textwidget")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
+local TransparentTextBox = require("lib/bookshelf_transparent_text")
 local RenderText      = require("ui/rendertext")
 local Widget          = require("ui/widget/widget")
 local GestureRange    = require("ui/gesturerange")
@@ -462,8 +463,39 @@ end
 -- knowing the mode exists -- which is exactly what the shelf does (the page
 -- background in bookshelf_widget.lua's _rebuild is an unconditional
 -- COLOR_WHITE, and the cells below take TextWidget's default black).
+-- ...and that reasoning holds for the DEVICE's night mode and nowhere else.
+-- The shelf now has a theme of its own that the frame knows nothing about, so
+-- a row painting unconditional white paper and black ink came out as white on
+-- white the moment the shelf went dark without the device following
+-- (maintainer: the list content went invisible). setTheme is called by the
+-- shelf on every rebuild; the defaults below are what a plain light shelf
+-- gets and what every existing caller saw.
 ListRow.ROW_BG = Blitbuffer.COLOR_WHITE
 ListRow.ROW_FG = Blitbuffer.COLOR_BLACK
+
+-- Is the shelf painting a ground behind us (a wallpaper, or a background
+-- colour) with its chrome scrim over it? Then the row paints NO paper of its
+-- own: that scrim panel is the surface the listing sits on, and a plate per
+-- row covered it, leaving the picture showing only in the gutters between
+-- rows (maintainer, on device: "listing rows already sit on the scrim panel,
+-- they don't need an extra background panel for each row").
+--
+-- ROW_BG is deliberately left alone. It stays the NOTIONAL paper -- the
+-- muted-ink blend below works out its greys from it, and the focus ring is
+-- drawn in it -- and this flag only decides whether it is ever filled in.
+-- Module-level and read at BUILD time, like the spine renderer's own flag, so
+-- the shelf has to set it before it builds anything.
+ListRow.OVER_GROUND = false
+function ListRow.setOverGround(on)
+    ListRow.OVER_GROUND = on and true or false
+end
+
+-- setTheme(bg, fg): the paper and ink a row paints, from the shelf's palette.
+-- Either may be nil to keep the default.
+function ListRow.setTheme(bg, fg)
+    if type(bg) ~= "nil" then ListRow.ROW_BG = bg end
+    if type(fg) ~= "nil" then ListRow.ROW_FG = fg end
+end
 
 -- How far the inter-row rule travels from paper towards ink.
 --
@@ -545,14 +577,19 @@ local function dividerColor()
 end
 ListRow.dividerColor = dividerColor
 
--- How far the text of every line BELOW THE FIRST travels from paper towards
--- ink: the muted half of "smaller and secondary".
+-- How far a muted element travels from paper towards ink.
 --
--- Which lines are muted is a rule, not a per-line setting, and deliberately:
--- the first line is the item's subject and everything under it is a note about
--- that subject, whatever the user has put there. A per-line colour would be a
--- sixth field on a shape that is already the hero's, and the hero has no such
--- field either.
+-- THE LIST'S TEXT NO LONGER USES THIS. Every line takes the row's ink, first
+-- or not: "listing text colour should all use ink colour, currently everything
+-- except the first line is faded" (maintainer). Once the ink is the reader's
+-- to choose, an ink that only the first line obeys is a suggestion rather than
+-- a setting, and the size difference already separates the item's subject from
+-- the notes under it.
+--
+-- What still uses it: the off-state tick, which is an affordance rather than
+-- text, and the divider, which is derived through the same interpolation and
+-- checked against this value so a rule can never end up darker than the type
+-- it separates.
 --
 -- Two thirds, which on this surface's endpoints paints byte 85 -- exactly
 -- Blitbuffer.COLOR_GRAY_5, which is this plugin's declared MUTED role
@@ -1059,9 +1096,8 @@ function ListRow.pageLayout(opts)
         line_pad = 0
     end
 
-    -- Everything the renderer needs per line, resolved once for the page. The
-    -- first line takes the row's own ink and every line under it the muted
-    -- grey -- see SECONDARY_INK for why that is a rule and not a setting.
+    -- Everything the renderer needs per line, resolved once for the page.
+    -- EVERY line takes the row's own ink, first or not.
     local lines = {}
     for i, s in ipairs(styles) do
         local def = model.lines[i]
@@ -1084,7 +1120,14 @@ function ListRow.pageLayout(opts)
             box_bold  = s.box_bold,
             uppercase = def.uppercase == true,
             alignment = def.alignment or "left",
-            fgcolor   = (i == 1) and ListRow.ROW_FG or secondaryColor(),
+            -- Lines below the first used to paint the muted grey (see
+            -- SECONDARY_INK). That stopped being right when the ink became
+            -- the reader's to choose: an ink only the first line obeys is a
+            -- suggestion, not a setting. Size still separates the subject
+            -- from the notes under it, which was always the other half of
+            -- the treatment and the half that survives a device ignoring
+            -- fgcolor.
+            fgcolor   = ListRow.ROW_FG,
             padding   = line_pad,
             -- ONE rendered line of this line, which is what ListGeom.fillRow
             -- allocates in and what a line that does not wrap occupies.
@@ -1378,6 +1421,30 @@ local function balancedFirstLine(i, line, flat, box_w)
 end
 
 local function wrapBox(line, flat, inner_w, height)
+    -- Over a ground this cannot be a TextBoxWidget at all. It fills its own
+    -- background whatever the card does (textboxwidget.lua:50), so every
+    -- wrapping paragraph would punch the row's plate back through the scrim a
+    -- line at a time. TransparentTextBox composites the same glyphs as an
+    -- alpha mask in a single ink instead -- the hero column's solution, see
+    -- lib/bookshelf_transparent_text.lua. Only paragraphs need it: the
+    -- single-line TextWidget paints glyphs and no paper.
+    if ListRow.OVER_GROUND then
+        return TransparentTextBox:new{
+            text      = flat,
+            face      = line.box_face or line.face,
+            bold      = (line.box_bold ~= nil) and line.box_bold or line.bold,
+            -- fgcolor, not ink: TransparentTextBox takes its ink FROM fgcolor
+            -- at init and overwrites the field, so passing `ink` hands it
+            -- nothing and it falls back to black. That shipped for one build
+            -- and put black descriptions on the dark shelf (maintainer: "the
+            -- listing ink is still black in places on a dark background").
+            fgcolor   = line.fgcolor or ListRow.ROW_FG,
+            width     = inner_w,
+            height    = height,
+            height_overflow_show_ellipsis = canEllipsis(line.face, inner_w),
+            alignment = line.alignment or "left",
+        }
+    end
     return TextBoxWidget:new{
         text      = flat,
         -- box_face, not face: a paragraph is one face, so a [font=] tag that
@@ -2304,14 +2371,35 @@ function ListRow.new(opts)
     -- through it. The row's frame stays (it is the background and the ring
     -- reservation) and simply never colours in.
     local marks_itself = fill_tile ~= nil
+    -- Over a ground the card is a frame around nothing: no paper, and no
+    -- border either, because the border is drawn in ROW_BG when the row is
+    -- unfocused and would outline the very plate we are not painting. The
+    -- border's width is the focus ring's reservation, so its space is handed
+    -- to the padding instead -- drop it and every row in the band loses two
+    -- ring widths of height. A focused row still draws its ring, at the same
+    -- geometry as always.
+    --
+    -- Assigned through a branch rather than `over and nil or ROW_BG`, which
+    -- is ROW_BG every time: `nil` cannot survive an `and`/`or` chain.
+    local over_ground = ListRow.OVER_GROUND
+    local ring        = focused and not marks_itself
+    local card_bg     = ListRow.ROW_BG
+    local card_border = BORDER
+    local card_pad    = INNER
+    if over_ground then
+        card_bg = nil
+        if not ring then
+            card_border = 0
+            card_pad    = INNER + BORDER
+        end
+    end
     local content = FrameContainer:new{
-        bordersize = BORDER,
+        bordersize = card_border,
         radius     = RADIUS,
-        color      = (focused and not marks_itself) and ListRow.ROW_FG
-                     or ListRow.ROW_BG,
-        background = ListRow.ROW_BG,
+        color      = ring and ListRow.ROW_FG or ListRow.ROW_BG,
+        background = card_bg,
         margin     = OUTER,
-        padding    = INNER,
+        padding    = card_pad,
         group,
     }
     -- No ring. Selection is the tint (focus) and the checkbox (bulk); a
@@ -2321,6 +2409,24 @@ function ListRow.new(opts)
     -- see ListGeom.ROW_RING_DP, where that reservation is what lets the row be
     -- packed to the height of its own text.
     local card = content
+    -- A row is an opaque white card by design (see ROW_BG above: it draws its
+    -- own paper so a %spacer's elastic gap shows page white). With a wallpaper
+    -- behind the shelf that reasoning inverts -- the paper is exactly what
+    -- must stop being drawn -- but the row cannot simply go transparent,
+    -- because every TextBoxWidget inside it fills its own background too.
+    -- So the whole card composites as an alpha mask instead; one wrap covers
+    -- the frame and all its text at once. See lib/bookshelf_wallpaper.lua.
+    -- NO MASK. The card used to composite as an alpha mask so its opaque
+    -- white paper would stop covering the wallpaper. That works for text and
+    -- is wrong for everything else in the row: a mask has ONE colour and uses
+    -- luminance as coverage, so the cover inside it came out as a silhouette
+    -- -- and once the ink went white for the dark theme, an inverted one
+    -- (maintainer).
+    --
+    -- The row does not need inverting or masking. It needs its paper and its
+    -- ink to follow the theme, which is what ROW_BG and ROW_FG now do
+    -- (maintainer: "we just need to make the text white"). The cover is then
+    -- simply painted, as a picture should be.
     -- Centring a (content_w, content_h) card inside the full (width, row_h)
     -- box leaves exactly RING on every side.
     local positioned = CenterContainer:new{

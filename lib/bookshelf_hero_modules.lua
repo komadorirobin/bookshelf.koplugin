@@ -53,6 +53,48 @@ local HeroModules = {}
 -- panel. Falls back to white where blitbuffer is unavailable (test runner).
 local HERO_CARD_BG = Modules.CARD_BG or Blitbuffer.COLOR_WHITE
 
+-- _moduleCardBg() -> the card fill, from the palette, falling back to what it
+-- was before the setting existed.
+--
+-- SOLID, always. A semi-transparent card was tried and reverted: the widgets
+-- inside a module blit opaque white buffers of their own, so over a tint every
+-- line of text showed as a white box. A card cannot be less opaque than its
+-- own contents, which is why the knob is a COLOUR and not an alpha.
+--
+-- Read per card rather than cached at load: the value follows the day/night
+-- key, and a grid outlives a mode change without being rebuilt from here.
+local function _moduleCardBg()
+    local ok, CoverProgress = pcall(require, "lib/bookshelf_cover_progress")
+    if not (ok and CoverProgress and CoverProgress.resolvedColors) then
+        return HERO_CARD_BG
+    end
+    local ok_c, colors = pcall(CoverProgress.resolvedColors)
+    if ok_c and colors and colors.module_bg then return colors.module_bg end
+    return HERO_CARD_BG
+end
+
+-- _cardBorderInk() -> the hairline's colour.
+--
+-- FrameContainer defaults its border to BLACK, and on the light card that is
+-- exactly right: a black hairline on 0xEE. Device night mode inverts the whole
+-- frame and the same hairline arrives white, which is the look this is copying.
+-- The shelf's OWN dark theme inverts nothing, so the border stayed black on a
+-- near-black card and every edge disappeared -- the cards read as vague
+-- lighter patches instead of objects, which is why true night mode looked
+-- better than the theme meant to imitate it (maintainer).
+--
+-- COLOR_PRIMARY rather than a computed grey: on the light theme it IS black,
+-- so this reproduces the old look exactly rather than approximating it.
+--
+-- The attribute is `color`. FrameContainer spells its border colour that way
+-- ("color = Blitbuffer.COLOR_BLACK, -- border color"), and the obvious guess,
+-- bordercolor, is simply an unread field on the table -- no error, no warning,
+-- the border just stays black.
+local function _cardBorderInk()
+    if type(Modules.COLOR_PRIMARY) ~= "nil" then return Modules.COLOR_PRIMARY end
+    return Blitbuffer.COLOR_BLACK
+end
+
 -- Full rebuild + repaint after a module tap or edit. Does NOT bump the module
 -- generation: that counter keys the per-open caches several modules share
 -- (quote_of_day, shelf_size, …), so bumping it here would re-roll the quote
@@ -504,18 +546,36 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, 
     -- margin blends in. Held in a local so the tap handler below can
     -- translate a screen tap into module-local coordinates (clip.dimen +
     -- the recorded child centring offsets).
+    -- Modules.CARD_BG, not a fresh resolve: build() set it from
+    -- _moduleCardBg() before any cell was made, and reading it back is both
+    -- cheaper (one table lookup against a pcall + a palette walk, per cell)
+    -- and stricter -- the card cannot end up a different colour from the text
+    -- drawn on it, which is the pairing the whole setting exists to keep.
+    local card_bg = Modules.CARD_BG or _moduleCardBg()
     local clip = ClipContainer:new{
         w = inner_w,
         h = inner_h,
-        bg = HERO_CARD_BG,
+        bg = card_bg,
         content,
     }
+    -- Hairline, where this used to be borderless. It costs nothing on a plain
+    -- page and it keeps a card's edge readable when its fill happens to match
+    -- what is behind it -- a wallpaper, or another card.
+    --
+    -- Taken OUT OF THE PADDING, not added to it. FrameContainer:getSize()
+    -- counts border + padding + margin, so a border added on top widens every
+    -- cell by 2*border and the row overflows content_w by 2*border per card --
+    -- which reads as the grid having less air on the right than on the left,
+    -- because the row is left-aligned and the overflow all lands at the far
+    -- end. Eating the padding keeps the outer dimen at cell_w/cell_h exactly.
+    local card_border = Screen:scaleBySize(1)
     local frame = FrameContainer:new{
-        background = HERO_CARD_BG,
-        bordersize = 0,
-        radius     = radius,
-        padding    = card_pad,
-        margin     = press_b, -- empty ring at rest; becomes the pressed border
+        background  = card_bg,
+        bordersize  = card_border,
+        color       = _cardBorderInk(),
+        radius      = radius,
+        padding     = math.max(0, card_pad - card_border),
+        margin      = press_b, -- empty ring at rest; becomes the pressed border
         clip,
     }
     -- Wrap in a focus ring when navigable: border when focused, equal margin at
@@ -525,11 +585,12 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, 
     local outer = frame
     if focus_b > 0 then
         outer = FrameContainer:new{
-            background = nil,
-            bordersize = focused and focus_b or 0,
-            margin     = focused and 0 or focus_b,
-            radius     = radius,
-            padding    = 0,
+            background  = nil,
+            bordersize  = focused and focus_b or 0,
+            color       = _cardBorderInk(),
+            margin      = focused and 0 or focus_b,
+            radius      = radius,
+            padding     = 0,
             frame,
         }
     end
@@ -581,11 +642,12 @@ function HeroModules._emptyState(bw, content_w, hero_h)
     local inner_w  = math.max(1, content_w - 2 * (border + card_pad))
     local inner_h  = math.max(1, hero_h   - 2 * (border + card_pad))
     local frame = FrameContainer:new{
-        background = HERO_CARD_BG,
-        bordersize = border,
-        radius     = radius,
-        padding    = card_pad,
-        margin     = 0,
+        background  = _moduleCardBg(),
+        bordersize  = border,
+        color       = _cardBorderInk(),
+        radius      = radius,
+        padding     = card_pad,
+        margin      = 0,
         CenterContainer:new{
             dimen = Geom:new{ w = inner_w, h = inner_h },
             TextWidget:new{
@@ -680,6 +742,29 @@ end
 function HeroModules.build(bw, content_w, hero_h, PAD, opts)
     opts = opts or {}
     _build_surface = opts.surface or "hero"
+    -- Point the whole module system at the card colour BEFORE anything
+    -- renders: the modules read it at render time, and the text they draw
+    -- paints it as its own background. See Modules.setCardBg.
+    if Modules.setCardBg then Modules.setCardBg(_moduleCardBg()) end
+    -- ...and the ink that has to read on it. A card colour without a matching
+    -- ink is half a theme: the cards went dark and their text stayed black
+    -- (maintainer).
+    if Modules.setInk then
+        local ok_cp, CP = pcall(require, "lib/bookshelf_cover_progress")
+        local ink, muted
+        if ok_cp and CP and CP.ink then ink = CP.ink() end
+        if ink then
+            local ok_l, lum = pcall(function() return ink:getColor8().a end)
+            if ok_l and type(lum) == "number" then
+                -- A third of the way from the ink toward the card, which is
+                -- what the light theme's 0x55 is between black and 0xEE.
+                local card = (lum > 128) and 0x11 or 0xEE
+                local m = math.floor(lum + (card - lum) / 3 + 0.5)
+                muted = Blitbuffer.Color8(m)
+            end
+        end
+        Modules.setInk(ink, muted)
+    end
     -- Arm the light-touch home-screen crash marker before building the grid
     -- (issue #163). If a module hard-crashes during the hero paint, the sentinel
     -- file survives and the next launch comes up with the cover hero instead of

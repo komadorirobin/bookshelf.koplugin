@@ -86,7 +86,32 @@ local TAB_FONT_KEYS = {
 -- label row, set via Settings > Text size > Modal tabs -- unlike the
 -- per-tab content sizes above.
 local TAB_LABEL_FONT_KEY     = "modal_tab_font_scale"
-local TAB_LABEL_FONT_BASE    = 13
+-- 20: the midpoint, arrived at by trying both ends on a real device.
+--
+-- The size was applied TWICE for a long time (Font:getFace scales its
+-- argument, and it was handed a pre-scaled one), so what every reader
+-- actually saw was 13 x scale x scale. On a 1236px short edge that is 56px,
+-- and 56px is what "my tabs were fine before" refers to. Simply removing the
+-- double scaling would have halved it.
+--
+-- The size was applied TWICE for years (Font:getFace scales its argument, and
+-- it was handed a pre-scaled one), so readers saw 13 x scale x scale: 56px on
+-- a 1236px short edge. Removing the double scaling alone left 27, which read
+-- as too small; restoring the old 56 then read as too large. 20 is the middle
+-- of those two, measured on the device rather than reasoned about.
+--
+--     short edge / override      was     now
+--     600, none                   13      20
+--     1236 (PW5)                  56      42
+--     1404                        73      47
+--     1236 + 400dpi override      69      46
+--
+-- The point of the change is the SHAPE, not the number: growth is linear in
+-- the screen scale instead of squared, which is why other readers' tabs
+-- looked worse the bigger their device or the higher their DPI override. The
+-- reader-facing "Modal tabs" scale still multiplies this, so the number is a
+-- starting point rather than a verdict.
+local TAB_LABEL_FONT_BASE    = 20
 
 -- Nerd Font zoom glyphs for the font-size buttons, rendered via KOReader's
 -- built-in "symbols" face (the bundled Nerd Font symbols font).
@@ -149,7 +174,14 @@ function TabBar:init()
     self.pad_v      = Screen:scaleBySize(6)
     self.border     = Size.border.thin         -- segmented-control frame + separators
     self.sep_w      = Size.border.thin
-    self.face       = Font:getFace("cfont", Screen:scaleBySize(self.font_size or 13))
+    -- UNSCALED. Font:getFace runs Screen:scaleBySize over its size argument
+    -- itself, so a pre-scaled one is scaled twice -- and the error grows with
+    -- the panel, because that scale is a function of the screen's short edge.
+    -- At 600px it is 1 and nothing looks wrong; on a 1236x1648 panel it is
+    -- about 2, which put these labels at 56px beside a UI using 31
+    -- (maintainer: "our tabs are huge apparently by default", from several
+    -- screenshots -- it was every larger screen, not one device).
+    self.face       = Font:getFace("cfont", self.font_size or 13)
 
     -- Pack tabs into rows that fit self.width, wrapping when the next tab would
     -- overflow (so a narrow screen / high DPI keeps every tab reachable instead

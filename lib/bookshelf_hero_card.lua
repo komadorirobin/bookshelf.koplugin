@@ -28,6 +28,44 @@ local _gettime        = require("lib/bookshelf_gettime")
 local BFont           = require("lib/bookshelf_fonts")
 local Blitbuffer      = require("ffi/blitbuffer")
 local Screen          = require("device").screen
+
+-- The shelf theme's text colour. KOReader's TextWidget defaults to black, and
+-- a night frame inverts that to white -- which is why the hero has never
+-- needed to say. Under a dark shelf on a light device nothing inverts, so
+-- black title text lands on a black panel.
+local _ink_memo = nil
+local function _ink()
+    -- Twelve call sites per hero build; the answer moves only with the
+    -- settings generation or the night flag.
+    local gen   = BookshelfSettings.generation and BookshelfSettings.generation() or 0
+    local night = (G_reader_settings and G_reader_settings:isTrue("night_mode")) and true or false
+    local m = _ink_memo
+    if m and m.gen == gen and m.night == night then return m.v end
+    local v
+    local ok, CP = pcall(require, "lib/bookshelf_cover_progress")
+    if ok and CP and CP.ink then v = CP.ink() end
+    _ink_memo = { gen = gen, night = night, v = v }
+    return v
+end
+
+-- Which text-block widget the column builds with. Over a painted ground (a
+-- wallpaper, or the dark theme's own page) a stock TextBoxWidget blits an
+-- opaque box, so the column used to be rendered a second time through
+-- Wallpaper.mask as one single-colour stencil. TransparentTextBox composites
+-- through its own render instead, per block, so the second render of the
+-- text is gone (the stencil survives only around the progress bar, see
+-- HeroCard.buildStatusRow). On a plain page the stock widget's straight blit is the
+-- cheaper of the two and there is nothing to show through anyway.
+--
+-- Module state, set at the top of every _buildRightColumn from the card's
+-- has_wallpaper. A build that throws leaves it as it was, and the worst that
+-- does to the NEXT build is a transparent render over a plain page, which
+-- looks identical.
+local TransparentTextBox = require("lib/bookshelf_transparent_text")
+local _over_ground = false
+local function textBoxClass()
+    return _over_ground and TransparentTextBox or TextBoxWidget
+end
 local SpineWidget     = require("lib/bookshelf_spine_widget")
 local Tokens          = require("lib/bookshelf_tokens")
 local Regions         = require("lib/bookshelf_hero_regions")
@@ -40,6 +78,8 @@ local HC_HALF_STAR  = "\xef\x84\xa3" -- nf-fa-star_half_empty (U+F123)
 local HC_EMPTY_STAR = "\xef\x80\x86" -- nf-fa-star_o          (U+F006)
 
 local HeroCard = InputContainer:extend{
+    -- Set by the shelf when something is painted behind the card.
+    has_wallpaper = false,
     book                = nil,
     width               = nil,
     height              = nil,
@@ -172,12 +212,16 @@ function HeroCard:_renderEmpty()
         width      = self.width,
         height     = self.height,
         bordersize = Size.border.thin,
+        -- FrameContainer's border defaults to black, which on a dark panel is
+        -- an outline nobody can see.
+        color      = _ink(),
         padding    = 0,
         CenterContainer:new{
             dimen = Geom:new{ w = self.width, h = self.height },
-            TextBoxWidget:new{
+            (self.has_wallpaper and TransparentTextBox or TextBoxWidget):new{
                 text      = "Welcome to Bookshelf · Tap a cover to start reading",
                 face      = fontFace("infofont", 14),
+                fgcolor   = _ink(),
                 width     = self.width - Size.padding.large * 2,
                 alignment = "center",
             },
@@ -215,11 +259,13 @@ local function _buildSegmentedInline(text, face, bold, max_width, truncate_left)
     -- right-anchored tail -- battery/wifi/etc -- stays and the cut sits by the spacer).
     if max_width or not bold or not text:find("[\x80-\xFF]") then
         return TextWidget:new{ text = text, face = face, bold = bold or false,
+            fgcolor = _ink(),
             max_width = max_width, truncate_left = truncate_left or false }
     end
     local segments = TextSegments.labelSegments(text)
     if #segments <= 1 then
-        return TextWidget:new{ text = text, face = face, bold = bold }
+        return TextWidget:new{ text = text, face = face, bold = bold,
+                               fgcolor = _ink() }
     end
     local hg = HorizontalGroup:new{ align = "center" }
     for _i, seg in ipairs(segments) do
@@ -227,6 +273,7 @@ local function _buildSegmentedInline(text, face, bold, max_width, truncate_left)
             text = seg.text,
             face = face,
             bold = seg.class == "text",
+            fgcolor = _ink(),
         }
     end
     return hg
@@ -278,7 +325,10 @@ local function buildText(text, region, width, max_height)
                     text    = seg.text,
                     face    = face,
                     bold    = seg.class == "text",
-                    fgcolor = Blitbuffer.COLOR_BLACK,
+                    -- Was hard black. That is the status line and the hero's
+                    -- bold segments, which under a dark shelf land on a dark
+                    -- panel.
+                    fgcolor = _ink() or Blitbuffer.COLOR_BLACK,
                 }
             end
             -- HorizontalGroup doesn't honour region.alignment the way
@@ -296,10 +346,11 @@ local function buildText(text, region, width, max_height)
             return LeftContainer:new{ dimen = dimen, hg }
         end
     end
-    return TextBoxWidget:new{
+    return textBoxClass():new{
         text        = rendered,
         face        = face,
         bold        = is_bold,
+        fgcolor     = _ink(),
         width       = width,
         alignment   = region.alignment or "left",
         -- region.line_height (em multiplier) overrides TextBoxWidget's
@@ -553,6 +604,17 @@ buildLine = function(expanded, region, width, book, max_height, single_line)
             style      = style,
             colors     = colors,
         }
+        -- The bar is the one thing in the column that still goes through the
+        -- stencil. Its default track is a white fill, and over a wallpaper
+        -- there is no one colour to paint a track in; the stencil makes the
+        -- track nothing and the fill and border densities of the ink, which
+        -- is the look the whole column had when it was masked. It is a strip
+        -- a few thousand pixels big, so the second render costs nothing
+        -- worth measuring, unlike the text blocks it used to be wrapped with.
+        if _over_ground then
+            local ok, Wallpaper = pcall(require, "lib/bookshelf_wallpaper")
+            if ok then elastic_widget = Wallpaper.mask(true, elastic_widget, _ink()) end
+        end
         if slack > 0 then
             local hg_bar = HorizontalGroup:new{ align = "center" }
             hg_bar[1] = elastic_widget
@@ -583,7 +645,10 @@ end
 -- _buildRightColumn(book, regions, state, dimen) — builds the OverlapGroup
 -- that lives to the right of the cover. Both _renderFull and the live
 -- preview path call this so renders stay structurally identical.
+-- _buildRightColumn(...) -> the column widget.
 function HeroCard:_buildRightColumn(book, regions, state, dimen)
+    -- Every text block built below picks its widget through textBoxClass().
+    _over_ground = self.has_wallpaper and true or false
     local right_w = dimen.w
     local cover_h = dimen.h
 
@@ -693,6 +758,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                     text = glyph,
                     face = face,
                     bold = true,
+                    fgcolor = _ink(),
                 }
                 local sz = tw:getSize()
                 if hardcover_mode or not self.on_rating_change then
@@ -732,6 +798,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                         text = string.format("%d reviews", reviews_count),
                         face = fontFace(nil, math.max(10, math.floor(star_size * 0.65 + 0.5))),
                         bold = true,
+                        fgcolor = _ink(),
                     }
                 end
                 if self.on_hardcover_reviews_tap then
@@ -1059,10 +1126,11 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                         VerticalSpan:new{ width = gap }
                     total_h = total_h + gap
                 end
-                local pwid = TextBoxWidget:new{
+                local pwid = textBoxClass():new{
                     text                          = ptext,
                     face                          = desc_face,
                     bold                          = desc_bold,
+                    fgcolor                       = _ink(),
                     width                         = right_w,
                     height                        = rem,
                     alignment                     = desc_align,
@@ -1132,7 +1200,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- through. The earlier paper-white wipe was intended to prevent ghosting
     -- when a region's text re-wraps between renders, but ghosting hasn't been
     -- observed in practice and the white wipe clashes with applied themes.
-    return FrameContainer:new{
+    local column = FrameContainer:new{
         bordersize = 0,
         padding    = 0,
         width      = rd.w,
@@ -1143,6 +1211,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
             BottomContainer:new{ dimen = rd, right_bottom },
         },
     }
+    return column
 end
 
 function HeroCard:_renderFull()

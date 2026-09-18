@@ -28,6 +28,27 @@ local scanned = false
 local ok_bb, Blitbuffer = pcall(require, "ffi/blitbuffer")
 M.CARD_BG = ok_bb and Blitbuffer.COLOR_GRAY_E or nil
 
+-- setCardBg(c) -- point the card surface at a new colour, for the whole module
+-- system at once.
+--
+-- The card and the text drawn on it are ONE decision: every TextBoxWidget the
+-- Kit builds paints CARD_BG as its own background, because a text widget
+-- cannot be transparent. Let the two drift and every line of text grows a box
+-- behind it in the old colour.
+--
+-- Assignment, not a parameter, because the modules read this at RENDER time
+-- (`local CARD_BG = SM.CARD_BG` inside their render functions) and several are
+-- user-supplied drop-ins that cannot be asked to take a new argument.
+--
+-- The Kit is required lazily: it requires THIS file at load, so reaching for
+-- it up here would be a cycle.
+function M.setCardBg(c)
+    if not c then return end
+    M.CARD_BG = c
+    local ok, Kit = pcall(require, "lib/bookshelf_module_kit")
+    if ok and Kit then Kit.CARD_BG = c end
+end
+
 -- Shared text-colour roles for micromodules, so every card renders text the
 -- same way instead of each module hardcoding its own constants (which drifted
 -- -- some even pulled COLOR_* off ui/renderimage, where they're nil, so the
@@ -41,6 +62,53 @@ M.CARD_BG = ok_bb and Blitbuffer.COLOR_GRAY_E or nil
 -- giving ~0x99 of contrast against the card instead of ~0x66.
 M.COLOR_PRIMARY = ok_bb and Blitbuffer.COLOR_BLACK or nil
 M.COLOR_MUTED   = ok_bb and Blitbuffer.COLOR_GRAY_5 or nil
+
+-- setInk(primary, muted) -- the theme control that comment anticipated.
+--
+-- The shelf calls this beside setCardBg on every rebuild. Under its own dark
+-- theme the card goes near-black and black text on it is not muted, it is
+-- gone -- and unlike the device's night mode nothing inverts to rescue it.
+-- Either argument may be nil to keep the current value.
+--
+-- MUTED keeps the same relationship to the card it always had: a third of the
+-- way from the ink toward the surface, which is what 0x55 is between black
+-- ink and a 0xEE card. On a dark card that lands near 0xB0, so a label stays
+-- clearly secondary without dropping into the board.
+function M.setInk(primary, muted)
+    if type(primary) ~= "nil" then M.COLOR_PRIMARY = primary end
+    if type(muted)   ~= "nil" then M.COLOR_MUTED   = muted end
+    -- AND THE KIT'S COPIES, exactly as setCardBg does, and for the same
+    -- reason: bookshelf_module_kit re-exports these so a module needs one
+    -- require, and it does it by VALUE at load time --
+    --     Kit.COLOR_PRIMARY = SM.COLOR_PRIMARY
+    -- so a module reaching for Kit.COLOR_MUTED kept getting the black that was
+    -- current when the kit was first required, whatever this setter did
+    -- afterwards. Half the cards themed and half stayed black-on-black,
+    -- depending only on which of the two names that module happened to use.
+    --
+    -- Required lazily for the cycle setCardBg documents.
+    local ok, Kit = pcall(require, "lib/bookshelf_module_kit")
+    if ok and Kit then
+        if type(primary) ~= "nil" then Kit.COLOR_PRIMARY = primary end
+        if type(muted)   ~= "nil" then Kit.COLOR_MUTED   = muted end
+    end
+end
+
+-- resetTheme() -- the light defaults back, in both names.
+--
+-- The palette above is process-global and only the LIBRARY's hero build
+-- writes it (HeroModules.build, beside setCardBg). The start menu is also
+-- hosted by the reader, over a plain page the shelf theme never touches, so
+-- after a dark or wallpapered shelf its module cards kept the dark card and
+-- the white ink until the shelf was next rebuilt in light. The reader host
+-- calls this before it builds.
+local DEFAULT_CARD_BG = M.CARD_BG
+local DEFAULT_PRIMARY = M.COLOR_PRIMARY
+local DEFAULT_MUTED   = M.COLOR_MUTED
+function M.resetTheme()
+    M.setCardBg(DEFAULT_CARD_BG)
+    M.setInk(DEFAULT_PRIMARY, DEFAULT_MUTED)
+end
 
 -- Menu-open generation: StartMenu bumps this once per menu open, so modules
 -- may key per-open caches on it (the counter is stable across the menu's

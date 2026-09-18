@@ -661,7 +661,7 @@ t.test("Text size lists every scale key exactly once, on its own picker", functi
     eq(keys, {
         "Cover labels", "Cover badges", "Stack & folder labels",
         "Shelf menu", "List text",
-        "\xEE\x9E\xBD  Hero card", "\xEE\xB1\xAF  Hero micro-modules",
+        "\xEE\x9E\xBD  Top panel", "\xEE\xB1\xAF  Micro-modules",
         "Start menu", "Pagination footer", "Pagination top margin",
         "Pagination bottom margin", "Modal tabs",
     })

@@ -346,4 +346,86 @@ t.test("balance: a section too wide for one row is not defended", function()
     eq(rows[3], { first = 9, last = 12 })
 end)
 
+
+-- ── per-row width ─────────────────────────────────────────────────────────
+-- A row that will carry an ornament at its end gives up exactly that piece's
+-- width; every other row keeps the whole shelf. So the layout takes the
+-- available width per row, as a function of the row index.
+t.test("fillRows: the available width may differ per row", function()
+    local avail = function(r) return r == 1 and 82 or 200 end
+    local rows = SL.fillRows({ 40, 40, 40, 40, 40 }, avail, 2)
+    eq(#rows, 2)
+    eq(rows[1].first, 1); eq(rows[1].last, 2, "row 1 is narrow: two books")
+    eq(rows[2].first, 3); eq(rows[2].last, 5, "row 2 has the whole shelf")
+end)
+t.test("balanceRows: respects a narrower first row", function()
+    -- Four books of 40, row 1 can take 80, row 2 can take 160. {1-2},{3-4}
+    -- costs 0 + 80^2; {1},{2-4} costs 40^2 + 40^2 and wins. {1-3} on row 1 is
+    -- not allowed at all.
+    local avail = function(r) return r == 1 and 80 or 160 end
+    local rows = SL.balanceRows({ 40, 40, 40, 40 }, avail, 0, 4, 2)
+    assert(rows, "expected a balanced result")
+    eq(rows[1].first, 1); eq(rows[1].last, 1)
+    eq(rows[2].first, 2); eq(rows[2].last, 4)
+end)
+t.test("a plain number still means the same width on every row", function()
+    local a = SL.fillRows({ 40, 40, 40, 40, 40 }, 100, 2)
+    local b = SL.fillRows({ 40, 40, 40, 40, 40 }, function() return 100 end, 2)
+    eq(#a, #b)
+    for i = 1, #a do eq(a[i].first, b[i].first); eq(a[i].last, b[i].last) end
+end)
+
+-- ── a row may stand as its ornament alone ───────────────────────────────
+
+t.test("fill: without empty_ok every row still takes a book, however wide", function()
+    -- The old contract, unchanged where nothing is reserved: a book wider
+    -- than the shelf is seated and clipped rather than looping here forever.
+    local rows = SL.fillRows({ 500, 40, 40 }, 100, 0)
+    eq(#rows, 2)
+    eq(rows[1].first, 1); eq(rows[1].last, 1, "the overwide book stands alone")
+    eq(rows[2].first, 2); eq(rows[2].last, 3, "the two that fit share row 2")
+end)
+
+t.test("fill: a reserved row with no room for a book stands empty", function()
+    -- DEVICE REPORT: "a face out book appearing off the edge of the shelf".
+    -- Row 1 had given 85% of its width to an ornament, and the rule that
+    -- every row takes at least one book then seated a face-out cover in
+    -- space that could not hold it, so the cover was painted past the end
+    -- of the plank. A row carrying a wide piece is allowed to carry nothing
+    -- else: "we don't always need to have a book" (maintainer).
+    local avail = function(r) return r == 1 and 60 or 1000 end
+    local plain = SL.fillRows({ 200, 200, 200 }, avail, 0)
+    eq(plain[1].first, 1); eq(plain[1].last, 1,
+        "without the option the overwide book is still seated on row 1")
+    local rows = SL.fillRows({ 200, 200, 200 }, avail, 0, function(r) return r == 1 end)
+    eq(rows[1].first, 1); eq(rows[1].last, 0, "row 1 should carry no book")
+    assert(rows[1].empty, "an empty row must say so, so the balancer can skip it")
+    -- ...and no book is lost: the one that would not fit starts row 2.
+    eq(rows[2].first, 1); eq(rows[2].last, 3)
+end)
+
+t.test("fill: never two empty rows running", function()
+    -- The retry has to stop somewhere: a book wider than any row would push
+    -- an empty row in front of it forever. One empty row, then the book is
+    -- seated and clipped exactly as it always was.
+    local rows = SL.fillRows({ 500, 500 }, 10, 0, function() return true end)
+    for i = 2, #rows do
+        assert(not (rows[i].empty and rows[i - 1].empty),
+            "rows " .. (i - 1) .. " and " .. i .. " are both empty")
+    end
+    eq(rows[1].last, 0, "the first row took the offer")
+    eq(rows[2].first, 1); eq(rows[2].last, 1, "then the book was seated anyway")
+    -- Every book still lands somewhere.
+    local seated = 0
+    for i = 1, #rows do seated = seated + (rows[i].last - rows[i].first + 1) end
+    eq(seated, 2, "a book went missing")
+end)
+
+t.test("fill: an empty row is only offered where the caller allows it", function()
+    -- The shelf only allows it on a row that actually carries an ornament;
+    -- everywhere else a short row is just a short row.
+    local rows = SL.fillRows({ 200, 200 }, 60, 0, function() return false end)
+    for i = 1, #rows do assert(not rows[i].empty, "row " .. i .. " came back empty") end
+end)
+
 t.done()

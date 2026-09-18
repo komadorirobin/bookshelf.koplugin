@@ -328,11 +328,43 @@ end
 -- Safe to cache on the record: hydration (including Hardcover
 -- applyMetadata's title/series overrides) finishes before any sort runs,
 -- and records are rebuilt whenever metadata changes.
+-- Prefer calibre's curated title_sort over the raw title, exactly as
+-- cachedSurname prefers author_sort over a derived surname. If calibre wrote
+-- one, the reader has already said how this book should file, and with
+-- calibre's own language-aware rules rather than our guess (issue 401).
+--
+-- Failing that, drop a leading English article. The author key's fallback is a
+-- heuristic too -- it parses a surname out of a name -- so this is the same
+-- bargain: curated data when there is some, a sensible guess when there is
+-- not, and ONE ordering either way. Without it a mixed library files "Locked
+-- Tomb, The" under L and "The Locked Tomb" under T on the same shelf, which is
+-- worse than either rule alone.
+--
+-- Three articles, whole word, leading only, never when the article is the
+-- whole title. Neutral rather than helpful for other languages -- "Der Herr
+-- der Ringe" files under D either way -- so it costs them nothing.
+local ARTICLES = { ["the"] = true, ["a"] = true, ["an"] = true }
+
+-- Never when the article is the whole string: stripping that leaves an empty
+-- key, an empty key is a missing one, and a missing one sinks to the end of
+-- the shelf. Lifted out of cachedTitleKey when the series key needed the same
+-- rule (issue 412) -- two copies of a heuristic drift.
+local function stripLeadingArticle(v)
+    if type(v) ~= "string" or v == "" then return v end
+    local first, rest = v:match("^(%a+)%s+(.+)$")
+    if first and ARTICLES[first:lower()] then return rest end
+    return v
+end
+
 local function cachedTitleKey(b)
     ensureEpoch(b)
     local v = b._title_key_cache
     if v == nil then
-        v = b.title or (b.doc_props and b.doc_props.display_title) or b.name
+        v = b.title_sort
+        if v == nil or v == "" then
+            v = stripLeadingArticle(
+                b.title or (b.doc_props and b.doc_props.display_title) or b.name)
+        end
         v = (v ~= nil and v ~= "") and pinyinise(tostring(v):lower()) or false
         b._title_key_cache = v
     end
@@ -366,6 +398,43 @@ local function cachedSeriesKey(b)
     local v = b._series_key_cache
     if v == nil then
         v = b.series_name or b.series
+        -- A STANDALONE shape in a mixed group list has neither, and with no key
+        -- cmp's isMissing sends it to the end -- so a Series source showing
+        -- "standalone and books in series", sorted by Name (which on a group
+        -- chip IS the series_name key), came out partitioned: every series
+        -- group first, every loose book after, each run alphabetical
+        -- (issue 400). The standalone shape already carries title and filename
+        -- for exactly this reason; its own comment says they are there "so
+        -- _groupShapeCmp interleaves the mixed list for free".
+        --
+        -- Scoped to shapes flagged `standalone` so real Book records are
+        -- untouched. The author / library / genre / folder_flat chains sort
+        -- author_surname then series_name, and there a seriesless book belongs
+        -- AFTER that author's series runs rather than interleaved among them.
+        --
+        -- Mirror of the filename key's own fallback above (issue 235), which
+        -- repaired the same partitioning the other way round.
+        if (v == nil or v == "") and b.standalone then
+            v = b.title or b.filename
+        end
+        -- ISSUE 412. "books and series that start with the, a, an, etc. sort
+        -- based on that vs. the second word in the title/name." The Title key
+        -- has ignored a leading article since 120960a; a Series shelf sorts on
+        -- THIS key, so it had to learn the same rule.
+        --
+        -- Not by offering Title on that shelf, which is what the reporter
+        -- asked for: a series GROUP shape carries no title at all, so that key
+        -- would return nothing for every group and send the lot to the end of
+        -- the shelf -- issue 400 in reverse. One strip here instead reaches
+        -- all three shapes a Series shelf can hold: the group, the loose book
+        -- through the standalone fallback above, and the one-book series shown
+        -- as a card, which has a series_name and no title.
+        --
+        -- Calibre offers nothing to prefer here the way title_sort is
+        -- preferred for a book. It has no stored series sort field: it runs
+        -- its own title-sort algorithm over the series name when asked and
+        -- never persists the result, so the heuristic is all there is.
+        v = stripLeadingArticle(v)
         v = (v ~= nil and v ~= "") and pinyinise(tostring(v):lower()) or false
         b._series_key_cache = v
     end
@@ -385,26 +454,34 @@ end
 function SortEngine.sortKeyValue(item, key)
     if not item then return nil end
     refreshPinyinFlag()
+    -- THROUGH THE COMPARATORS' OWN MEMOS, never a second derivation of the
+    -- same idea. This function re-read item.title / item.series_name itself,
+    -- and so missed every refinement the keys gained afterwards: calibre's
+    -- title_sort (120960a), the leading-article strip (120960a, and 412 for
+    -- series), the standalone fallback (400) and the filepath-derived
+    -- filename (235). The visible order used those and the letter jump did
+    -- not, so a shelf sorted by title filed "The Locked Tomb" under L while
+    -- the jump looked for it under T.
     local v
     if key == "author_surname" then
         v = cachedSurname(item)
     elseif key == "author_name" then
         v = cachedGiven(item)
     elseif key == "title" then
-        v = item.title or (item.doc_props and item.doc_props.display_title) or item.name
+        v = cachedTitleKey(item)
     elseif key == "filename" then
-        v = item.filename or item.file or item.name or item.series_name
+        v = cachedFilenameKey(item)
     elseif key == "series_name" or key == "series_combined" then
-        v = item.series_name or item.series
+        v = cachedSeriesKey(item)
     end
-    if type(v) ~= "string" or v == "" then
-        v = item.title or (item.doc_props and item.doc_props.display_title)
-            or item.name or item.filename or item.file or item.series_name
-        if type(v) ~= "string" or v == "" then return nil end
-    end
-    -- cachedSurname/cachedGiven already pinyinised; raw derivations here
-    -- (title/filename/series + the title-ish fallback) get the same
-    -- treatment so a letter jump lands where the visible sort placed it.
+    -- Every branch above hands back a key its memo has already lowercased and
+    -- pinyinised, so it is returned untouched.
+    if type(v) == "string" and v ~= "" then return v end
+    -- Keys with no string identity (dates, progress, counts) land here, and
+    -- so does a record the branch above found nothing for.
+    v = item.title or (item.doc_props and item.doc_props.display_title)
+        or item.name or item.filename or item.file or item.series_name
+    if type(v) ~= "string" or v == "" then return nil end
     return pinyinise(v:lower())
 end
 

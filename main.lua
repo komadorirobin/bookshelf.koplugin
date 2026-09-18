@@ -50,14 +50,19 @@ local Bookshelf = WidgetContainer:extend{
 -- action, which probes addToMainMenu and hosts these in this order.
 -- Display order, banded with separators (set on the last item of each band in
 -- addToMainMenu): actions (Open) | customise (Shelf size, Chips) | configure
--- (Hardcover, Settings) | meta (Updates, About). The detail-view editor and
+-- (Hardcover, Settings) | meta (Updates, About). Background and colors
+-- joined the customise band in 5.1: it is what a reader changes to make the
+-- shelf look like theirs, and it was buried two levels down under Settings. The detail-view editor and
 -- collection manager moved under Settings in 4.0, and the selection-mode
 -- toggle left the menu entirely - it stays reachable from a book's Edit tab
 -- ("Select"), the stack menus ("Select N") and the assignable gesture action.
+local MenuIcons = require("lib/bookshelf_menu_icons")
+
 Bookshelf.MENU_ORDER = {
     "bookshelf_toggle",
     "bookshelf_shelf_size",
     "bookshelf_shelf_tabs",
+    "bookshelf_background",
     "bookshelf_hardcover",
     "bookshelf_settings",
     "bookshelf_updates",
@@ -727,6 +732,10 @@ function Bookshelf:buildMenuItems(menu_items)
     menu_items.bookshelf_tab = { icon = "book.opened", text = _("Bookshelf") }
 
     menu_items.bookshelf_toggle = {
+        -- NO ICON, deliberately. This row and About are the secondary pair:
+        -- one toggles a mode, the other is a dead end. Leaving them plain is
+        -- what makes the icons above them read as a group of destinations
+        -- rather than as decoration on every line (maintainer).
         text_func = function()
             return outer:_isShowing() and _("Close Bookshelf") or _("Open Bookshelf")
         end,
@@ -786,11 +795,12 @@ function Bookshelf:buildMenuItems(menu_items)
     -- for most. Live editor, so it needs the shelf on screen - same gating
     -- the detail-view editor had here before it moved under Settings.
     menu_items.bookshelf_shelf_size = {
-        text     = _("Edit shelf size") .. "\xE2\x80\xA6",
+        text     = MenuIcons.label(MenuIcons.SHELF_SIZE,
+                       _("Adjust shelf/top panel size") .. "\xE2\x80\xA6"),
         help_text = _("Open a small overlay that lets you set the number of"
             .. " columns and rows of books on the shelf, with the bookshelf"
             .. " visible behind it. Cover size follows the column count and"
-            .. " the hero area fills the space left over. Changes preview in"
+            .. " the top panel fills the space left over. Changes preview in"
             .. " realtime; Accept keeps them, Cancel reverts."),
         enabled_func   = function() return outer:_isShowing() end,
         keep_menu_open = true,
@@ -801,7 +811,8 @@ function Bookshelf:buildMenuItems(menu_items)
     }
 
     menu_items.bookshelf_shelf_tabs = {
-        text                = _("Bookshelf shelves\xE2\x80\xA6"),
+        text                = MenuIcons.label(MenuIcons.SHELVES,
+                                  _("Edit shelves\xE2\x80\xA6")),
         sub_item_table_func = function()
             S._bw = _live_widget
             return S:_tabsMenuItems()
@@ -817,12 +828,28 @@ function Bookshelf:buildMenuItems(menu_items)
     -- Manage collections). Only shown while the Hardcover plugin is live
     -- (installed and enabled); uninstalling/disabling it hides the menu and
     -- reverts all Hardcover data to native. Defined conditionally rather than
+    -- Everything that decides what the shelf LOOKS like, in one place and at
+    -- the top level: the theme, the background (picture, colour, shading), the
+    -- ornaments and the accent colours. They used to be split between
+    -- Settings > Colors and Settings > Wallpaper and ornaments, which put the
+    -- theme, the background colour and the panel shading in three different
+    -- menus (maintainer). Text size stays under Settings on purpose.
+    menu_items.bookshelf_background = {
+        text                = MenuIcons.label(MenuIcons.APPEARANCE,
+                                  _("Background and colors")),
+        sub_item_table_func = function()
+            S._bw = _live_widget
+            return S:_backgroundSubItems()
+        end,
+    }
+
     -- greyed out -- the order list keeps its slot and KOMenu skips a missing key.
     do
         local ok_hc, HC = pcall(require, "lib/bookshelf_hardcover")
         if ok_hc and HC and HC.isAvailable and HC.isAvailable() then
             menu_items.bookshelf_hardcover = {
-                text                = _("Hardcover enrichment"),
+                text                = MenuIcons.label(MenuIcons.HARDCOVER,
+                                          _("Hardcover enrichment")),
                 sub_item_table_func = function()
                     S._bw = _live_widget
                     return S:_hardcoverSubItems()
@@ -832,7 +859,7 @@ function Bookshelf:buildMenuItems(menu_items)
     end
 
     menu_items.bookshelf_settings = {
-        text                = _("Settings"),
+        text                = MenuIcons.label(MenuIcons.SETTINGS, _("Settings")),
         sub_item_table_func = function()
             S._bw = _live_widget
             return S:_settingsSubItems()
@@ -849,14 +876,16 @@ function Bookshelf:buildMenuItems(menu_items)
             local ok_u, Updater = pcall(require, "lib/bookshelf_updater")
             local available = ok_u and Updater.getAvailableUpdate()
             if available then
-                return _("Update available") .. ": v" .. available
+                return MenuIcons.label(MenuIcons.UPDATES,
+                    _("Update available") .. ": v" .. available)
             end
-            return _("Updates")
+            return MenuIcons.label(MenuIcons.UPDATES, _("Updates"))
         end,
         sub_item_table_func = function() return S:_updateSubItems() end,
     }
 
     menu_items.bookshelf_about = {
+        -- No icon: see the toggle above.
         text     = _("About"),
         callback = function() S:_about() end,
     }
@@ -1196,7 +1225,7 @@ function Bookshelf:onDispatcherRegisterActions()
     Dispatcher:registerAction("bookshelf_toggle_hero", {
         category = "none",
         event    = "BookshelfToggleHero",
-        title    = _("Bookshelf: expand or collapse hero"),
+        title    = _("Bookshelf: full screen shelves on or off"),
         general  = true,
     })
     Dispatcher:registerAction("bookshelf_toggle_selection_mode", {
@@ -2627,6 +2656,17 @@ function Bookshelf:onCloseDocument()
     -- Hot parking: any real close (different-book open tearing down the
     -- parked reader, History switch, KOReader exit) invalidates parking.
     require("lib/bookshelf_reader_park").noteRealClose()
+    -- The shelf that sat under this book is stale now; a shelf built after
+    -- this point (the onShow takeover's cold create) stays fresh, so the
+    -- next-tick re-show below finds nothing to repaint. The dither hint
+    -- onShowingReader took off goes back on here: CloseDocument is handled
+    -- before UIManager:close(reader, "full"), so the close refresh that
+    -- repaints the shelf underneath carries it and covers come back through
+    -- the panel's dither waveform, not the plain one.
+    if _live_widget then
+        _live_widget._tree_fresh = nil
+        if _live_widget._refreshDitherFlag then _live_widget:_refreshDitherFlag() end
+    end
     -- #204: enter the reader-return transition. The file manager will fire
     -- PathChanged echoes restoring its folder around the just-closed book;
     -- onPathChanged ignores them while this is set so the restored drilldown
@@ -2833,6 +2873,19 @@ Bookshelf.onRestart = Bookshelf.onExit
 -- never completes. Suppression only skips REpaints - pixels already on
 -- screen stay, so an open from the visible shelf is unaffected.
 function Bookshelf:onShowingReader()
+    -- A book is opening over the shelf: whatever it does to progress and
+    -- read state, the tree underneath is no longer current, so the next
+    -- warm show() must run its softRefresh (see _tree_fresh in _rebuild).
+    -- The dither hint comes off at the same time, as FileManager:onShowingReader
+    -- and ReaderUI:onShowingReader do with theirs: UIManager treats the flag
+    -- as viral (a setDirty("all"), or a close that leaves us underneath, tags
+    -- the whole queue), so a shelf left flagged paints the book's first page
+    -- through our covers' hint. Back on in onCloseDocument, before the
+    -- close's full refresh, and on any rebuild or warm show.
+    if _live_widget then
+        _live_widget._tree_fresh = nil
+        _live_widget.dithered = nil
+    end
     if _live_widget and UIManager:isWidgetShown(_live_widget) then
         _live_widget._suppress_transition_paint = true
         UIManager:scheduleIn(10, function()

@@ -230,6 +230,37 @@ function M.externalLabel(mode, name)
     return name
 end
 
+-- itemDrawsExternalLabel(item, mode) -> bool
+-- Whether the shelf prints a name BELOW this tile, with labels on and the
+-- folder display already resolved to `mode`. Mirrors what ShelfRow builds: a
+-- book gets its title under the cover; a folder or any other group gets its
+-- name there only in the modes whose artwork does not carry it (see
+-- needsExternalLabel); a nav tile is a Text tile and never does.
+function M.itemDrawsExternalLabel(item, mode)
+    if type(item) ~= "table" then return false end
+    if item.kind == nil then return true end
+    if item.kind == "opds_nav" then return false end
+    return M.externalLabel(mode, item.label) ~= nil
+end
+
+-- anyExternalLabel(items, override) -> bool
+-- Does ANY tile in this item set print a name below itself? The shelf asks
+-- before it budgets the label strip: a chip whose tiles all carry their name
+-- inside (a folder chip in the divider or text style) would otherwise show a
+-- blank strip under every row. `override` is the chip's raw folder-display
+-- value, resolved here the way ShelfRow resolves it, so the two agree.
+--
+-- pairs(), not ipairs(): a page's item list has holes for its empty slots,
+-- and the fetch result carries a flag field beside the items.
+function M.anyExternalLabel(items, override)
+    if type(items) ~= "table" then return false end
+    local mode = M.resolve(override)
+    for _, it in pairs(items) do
+        if M.itemDrawsExternalLabel(it, mode) then return true end
+    end
+    return false
+end
+
 -- Night mode is NOT a plain inversion of intent: KOReader inverts the whole
 -- framebuffer at refresh, so a colour that must LOOK the same in both modes is
 -- painted pre-inverted. Declared here, above its first use, because a `local`
@@ -566,6 +597,13 @@ local function pileShadow(depth)
     return Blitbuffer.gray(base * fadeAt(depth))
 end
 
+-- _pictureShowing() -> is a wallpaper picture up? The front cover's shadow
+-- is a translucent shade over one, opaque grey otherwise (see ShadowRect).
+local function _pictureShowing()
+    local ok, W = pcall(require, "lib/bookshelf_wallpaper")
+    return ok and W and W.isShowing and W.isShowing() or false
+end
+
 local function pileBorder(depth, body)
     return blend8(cardBorder(), body or pileBody(), borderFadeAt(depth))
 end
@@ -664,7 +702,29 @@ function SpinePile:paintTo(bb, x, y)
         -- when the group's members past the first are not even hydrated.
         local cw = lw - SpineWidget.SHADOW_OFFSET
         local ch = lh - SpineWidget.SHADOW_OFFSET
-        bb:paintRoundedRect(lx, ly, cw, ch, page, radius)
+        -- The body is painted in the colour of what will COVER it, not in
+        -- page white. On the shelf a layer's body is never seen: the card in
+        -- front hides most of it and that card's shadow hides the rest, its
+        -- straight edges landing exactly on this layer's border. But at the
+        -- bottom-right corner the shadow's arc and the border's inner arc are
+        -- drawn about different centres and part by under a pixel, and a
+        -- white body showed through the seam as a one-pixel crescent, on
+        -- every layer, against a dark shadow (maintainer, dark theme). Paint
+        -- the body in the covering shadow and the seam paints itself shut.
+        -- Layer 1 sits under the front cover's shadow; the layers behind sit
+        -- under the pile shadow of the layer above. Over a picture the front
+        -- shadow is a translucent shade and a white body under it is what
+        -- makes that band read as paper, so layer 1 keeps page white there.
+        -- The border still blends against page white (see pileBorder), so
+        -- nothing visible changes but the seam.
+        local body = page
+        if depth > 1 then
+            body = pileShadow(depth - 1)
+        elseif not _pictureShowing() and SpineWidget.shadowGray then
+            local ok_sg, sg = pcall(SpineWidget.shadowGray)
+            if ok_sg and type(sg) ~= "nil" then body = sg end
+        end
+        bb:paintRoundedRect(lx, ly, cw, ch, body, radius)
         -- NOT anti-aliased (issue #362). The arc blends against whatever is
         -- already in the buffer, and behind the OUTERMOST layer that is bare
         -- page -- so the corner pixels came out a blend of border and white,

@@ -59,11 +59,15 @@ package.preload["ui/geometry"] = function()
     return G
 end
 package.preload["ui/size"] = function()
-    return { padding = { fullscreen = 10, default = 5 }, border = { default = 1 } }
+    -- `line` is real KOReader API (Size.line.thin/medium/thick); the overlay
+    -- uses it for the footer hairline, so the stub has to carry it.
+    return { padding = { fullscreen = 10, default = 5 }, border = { default = 1 },
+             line = { thin = 1, medium = 2, thick = 3 } }
 end
 package.preload["ffi/blitbuffer"] = function()
     return { COLOR_WHITE = "white", COLOR_BLACK = "black",
-             Color8 = function(n) return { v = n } end }
+             Color8 = function(n) return { v = n } end,
+             gray = function(f) return { gray = f } end }
 end
 package.preload["device"] = function()
     return {
@@ -113,6 +117,9 @@ package.preload["lib/bookshelf_hero_card"] = function()
     return { buildStatusRow = function() return nil end }   -- no status row in reader
 end
 
+package.loaded["logger"] = package.loaded["logger"] or {
+    dbg = function() end, info = function() end,
+    warn = function() end, err = function() end }
 local FooterGeom    = require("lib/bookshelf_footer_geom")
 local ReaderButtons = require("lib/bookshelf_reader_buttons")
 local MicroFS       = require("lib/bookshelf_micro_fullscreen")
