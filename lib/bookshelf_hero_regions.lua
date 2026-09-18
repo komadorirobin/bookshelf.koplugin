@@ -5,6 +5,7 @@
 
 local Regions = {}
 
+
 Regions.SETTINGS_KEY = "bookshelf_hero_regions"
 
 -- Render order from top to bottom. Renderer and chooser modal both use
@@ -84,7 +85,7 @@ Regions.DEFAULTS = {
         disabled  = true,     -- off by default; user opts in
     },
     description = {
-        template  = "%description",
+        template  = "[if:rating]%rating \xC2\xB7 [/if]%description",
         font_face = nil,
         font_size = 14,
         bold      = false,
@@ -92,7 +93,7 @@ Regions.DEFAULTS = {
         -- no `uppercase` — would be hostile on a long blurb
     },
     progress = {
-        template   = "[if:page_num]%page_num / %page_count[else]%book_pct[/if]  %bar  [if:book_time_left]%book_time_left LEFT[/if]",
+        template   = "%book_pct  %bar  [if:book_time_left]%book_time_left[/if]",
         font_face  = nil,
         font_size  = 14,
         bold       = true,
