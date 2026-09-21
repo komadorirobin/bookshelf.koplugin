@@ -862,7 +862,38 @@ function M.unfill(active, ...)
         local w = select(i, ...)
         if type(w) == "table" then
             if type(w.frame) == "table" then
+                -- Button's own idiom for this, so anything that looks for the
+                -- stash finds it (Button:hide does exactly these two lines).
+                w.frame.orig_background = w.frame.background
                 w.frame.background = nil
+                -- ...and then the part Button never has to think about,
+                -- because it only ever unfills an ICON button.
+                --
+                -- With flash_ui on, a TEXT button's tap feedback inverts the
+                -- frame's fill in place rather than setting the invert flag:
+                --
+                --     if self[1].radius == nil or self.background then
+                --         self[1].background = self[1].background:invert()
+                --
+                -- There is no fill any more, and nil has no :invert(), so the
+                -- tap took KOReader down -- "attempt to index field
+                -- 'background' (a nil value)" in Button:_doFeedbackHighlight,
+                -- reported from a PW5 (#436). The page counter is a text
+                -- button and it is unfilled here, so every wallpapered shelf
+                -- had a crash sitting in its footer.
+                --
+                -- Both halves of that guard have to read false for the flag
+                -- branch to run instead, which is the right feedback anyway:
+                -- inverting the rect shows the tap without needing a fill.
+                -- A radius of 0 is what nil already meant to paintBorder, so
+                -- nothing moves on screen, and it is deliberately NOT
+                -- Size.radius.button, which is what _undoFeedbackHighlight
+                -- keys on to decide it must invert back.
+                if w.frame.radius == nil then w.frame.radius = 0 end
+                if w.background then
+                    w.orig_background = w.background
+                    w.background = nil
+                end
             end
             -- AND the icon, which is the other half and the less obvious one.
             -- ImageWidget defaults to alpha = false, and Button builds its
@@ -1216,7 +1247,7 @@ function M.free()
     end
 end
 
--- flipNight() -> true if the cached backdrop was flipped to the other mode.
+-- flipNight(target_night) -> true if the cached backdrop was moved to that mode.
 --
 -- A night toggle inverts the panel, so the wallpaper already on screen shows
 -- as a NEGATIVE until something repaints it pre-inverted the other way. The
@@ -1229,14 +1260,33 @@ end
 --
 -- The key has to follow, or the next M.bg call reads it as the wrong mode and
 -- throws this buffer away for an identical one.
-function M.flipNight()
+--
+-- TARGET MODE, NOT A BLIND TOGGLE (issue 426). This used to invert whatever it
+-- held, on the word of the caller, which is only safe if every caller stands
+-- for a real change of state. SetNightMode does not: KOReader's own
+-- DeviceListener compares the requested state to the stored one and returns
+-- without touching the panel when they already agree, and dispatcher.lua
+-- offers the event as `set_night_mode` with args={true,false} -- which is how
+-- a gesture, a profile or a home-screen UI turns night mode *on* rather than
+-- toggling it, and how autowarmth fires it on a schedule. Each redundant one
+-- inverted a backdrop that nothing was going to invert back, leaving a
+-- negative on screen until the deferred rebuild noticed the key no longer
+-- matched and paid for a full decode of the very same picture.
+--
+-- The buffer's own key records which mode it holds, so comparing against that
+-- is right whether this runs before or after DeviceListener -- which matters,
+-- because the answer depends on where the shelf sits in the window stack.
+function M.flipNight(target_night)
     local bg = M._bg
     if not (bg and bg.bb and bg.bb.invertRect and M._bg_key) then return false end
+    local holds_night = M._bg_key:sub(-2) == "|n"
+    local want_night  = target_night and true or false
+    if want_night == holds_night then return false end
     local ok = pcall(function()
         bg.bb:invertRect(0, 0, bg.bb:getWidth(), bg.bb:getHeight())
     end)
     if not ok then return false end
-    if M._bg_key:sub(-2) == "|n" then
+    if holds_night then
         M._bg_key = M._bg_key:sub(1, -3)
     else
         M._bg_key = M._bg_key .. "|n"
