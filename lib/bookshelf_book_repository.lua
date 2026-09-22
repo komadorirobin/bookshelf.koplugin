@@ -1065,6 +1065,14 @@ function Repo.getSortPriority(tab_id)
     if tab and tab.sort_priority and #tab.sort_priority > 0 then
         return tab.sort_priority
     end
+    -- Fixed SimpleUI profiles still expose shelves omitted from the new
+    -- four-tab defaults. Keep their built-in sorts unless a legacy sort exists.
+    if not tab and not BookshelfSettings.read("sort_" .. tab_id)
+            and TabModel.BUILTINS then
+        for _i, builtin in ipairs(TabModel.BUILTINS()) do
+            if builtin.id == tab_id then return builtin.sort_priority end
+        end
+    end
     -- Legacy fallback: translate the v1.1 single-string sort key into a
     -- one-level priority. Used only if a user's settings file has a stale
     -- shape (e.g., they downgraded and re-upgraded).

@@ -104,7 +104,20 @@ local function rig(opts)
         cachePath  = function() return "p" end,
         sweepCache = function() log.sweeps = (log.sweeps or 0) + 1 end,
     }
-    local feed = { fetch = function() return "<feed/>" end }
+    local current_pace = opts.initial_pace or 0
+    local feed = {
+        fetch = function() return "<feed/>" end,
+        RATE_LIMIT_MARKER = "\0\0bookshelf:ratelimited",
+        paceFor = function() return current_pace end,
+        notePaced = function()
+            log.refusals = (log.refusals or 0) + 1
+            current_pace = 0.5
+        end,
+        noteReachable = function()
+            log.recovered = (log.recovered or 0) + 1
+            current_pace = 0
+        end,
+    }
 
     local BookshelfWidget = {}
     local self_tbl = {
@@ -191,6 +204,7 @@ local function rig(opts)
         -- The ceiling the pool falls back to when an item carries no plan.
         OPDS_LOOKAHEAD_MAX_REQUESTS = 6,
         OPDS_FETCH_CONCURRENCY = 3,
+        OPDS_REFUSED_RETRIES = 3,
         OPDS_POOL_POLL         = 0.15,
         _androidSafeModeEnabled = function() return opts.safe_mode == true end,
     }
@@ -592,6 +606,38 @@ do
     r.poll()
     eq(r.log.fell_back and r.log.fell_back.n, 1,
         "a failed final item must not be mistaken for a drained queue")
+end
+
+do
+    local r = rig{ initial_pace = 0.5, fork_fails_after = 1 }
+    local q = resolve_queue(3)
+    local st = r.fresh_state()
+    r.start(q, 7, st)
+    eq(#r.log.launched, 1, "a known slow origin starts at one worker")
+    r.answer_all("")
+    r.poll()
+    eq(r.log.fell_back, nil, "the next item waits for the paced launch")
+    r.log.clock = r.log.clock + 1
+    r.poll()
+    eq(r.log.fell_back and r.log.fell_back.n, 2,
+        "a failed paced launch preserves its item and the remaining queue")
+end
+
+do
+    local r = rig()
+    local q = cover_queue(1)
+    local st = r.fresh_state()
+    r.start(q, 7, st)
+    for _i = 1, 12 do
+        r.answer_all("\0\0bookshelf:ratelimited")
+        r.log.clock = r.log.clock + 1
+        if not r.poll() then break end
+    end
+    eq(#r.log.launched, 4, "a refused cover gets at most three retries")
+    eq(q[1].cover_url, "u", "the parent retains the cover's origin")
+    eq(r.log.refusals, 4, "each refusal reaches the parent's pacing registry")
+    eq(st.landed, 0, "a refusal is never counted as a downloaded cover")
+    ok(not r.has_pending(), "persistent refusals terminate the chain")
 end
 
 print(string.format("opds cover pool: %d passed, %d failed", pass, fail))

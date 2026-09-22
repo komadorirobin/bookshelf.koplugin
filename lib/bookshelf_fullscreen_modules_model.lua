@@ -10,9 +10,9 @@ a different set behind the full-screen button. Mirrors bookshelf_hero_modules_mo
 difference: the full-screen view reflows ALL its modules (no per-page paging),
 so there is no `page` field and no Pg. assignment.
 
-First load seeds from a COPY of the hero list (minus any page field) so turning
-the full-screen surface on starts with the user's existing modules; the two
-lists then diverge independently.
+First load seeds from this module's own DEFAULTS. The two surfaces are
+independent from the outset -- this one no longer starts as a copy of the
+hero list.
 ]]
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local SMModel           = require("lib/bookshelf_start_menu_model")
@@ -30,11 +30,22 @@ function M.nextId()
     return "fsm" .. n
 end
 
--- Fallback default if the hero list is itself empty at seed time: the analogue
--- clock (works everywhere, no network / statistics dependency).
+-- What the full-screen surface ships with on a FRESH INSTALL. The
+-- maintainer's own arrangement, adopted as the default for the same reason
+-- Home ships as spines: a first launch should show what the surface is for,
+-- and a lone clock does not. Clock and quote carry over from the hero pair,
+-- with the three that only make sense given room -- reading stats, the
+-- library count, and goal progress.
+--
+-- The quote keeps size = 1 so it spans the row rather than sitting in a
+-- narrow cell; it is the one module here that is mostly text.
 function M.DEFAULTS()
     return {
         { id = "fsm_clock", type = "module", module = "analogue_clock" },
+        { id = "fsm_stats", type = "module", module = "stats"          },
+        { id = "fsm_quote", type = "module", module = "quote_of_day", size = 1 },
+        { id = "fsm_shelf", type = "module", module = "shelf_size"     },
+        { id = "fsm_goal",  type = "module", module = "reading_goal"   },
     }
 end
 
@@ -75,21 +86,20 @@ end
 -- per-instance fields preserved). Empty hero -> the clock default. Each entry
 -- is DEEP-copied (one level): the two lists must not share entry tables, or an
 -- in-session edit to one would leak into the other before the next reload.
-local function seedFromHero()
-    local ok, HeroModel = pcall(require, "lib/bookshelf_hero_modules_model")
-    local out = {}
-    if ok and HeroModel then
-        for _i, it in ipairs(HeroModel.load() or {}) do
-            if type(it) == "table" and it.type == "module" and type(it.module) == "string" then
-                local e = {}
-                for k, v in pairs(it) do if k ~= "page" then e[k] = v end end
-                out[#out + 1] = e
-            end
-        end
-    end
-    if #out == 0 then out = M.DEFAULTS() end
-    return out
-end
+-- Seeded from our own DEFAULTS, full stop.
+--
+-- This used to copy the hero list, so that someone who already had hero
+-- modules when this surface arrived found their own set behind the
+-- full-screen button. That was a reasonable migration aid when the surface
+-- was new, and it stopped being worth its weight: the two lists are
+-- independent stores that diverge the moment either is edited, the copy made
+-- a fresh install's full-screen view a bigger duplicate of the hero grid, and
+-- the rule for deciding WHICH readers got the copy was more machinery than
+-- the behaviour deserved (maintainer: "keep it simple, no need to support
+-- carry over ... both starting with our defaults").
+--
+-- Anyone who had already opened the full-screen view is untouched either way:
+-- the seed only ever runs once, behind the seeded flag.
 
 function M.load()
     local saved = BookshelfSettings.read(STORAGE_KEY)
@@ -99,7 +109,7 @@ function M.load()
         return out
     end
     if BookshelfSettings.isTrue(SEEDED_KEY) then return {} end
-    local seed = seedFromHero()
+    local seed = M.DEFAULTS()
     BookshelfSettings.save(STORAGE_KEY, seed)
     BookshelfSettings.save(SEEDED_KEY, true)
     return seed

@@ -172,7 +172,7 @@ end
 -- single, user-initiated, progress-backed fetch and keeps the generous default;
 -- the OPDS thumbnail fill is a serial batch on the main loop and asks for a
 -- much tighter budget so an unresponsive server cannot freeze the shelf.
-function CoverFetch.download(url, dest_path, user, password, opts)
+function CoverFetch.download(url, dest_path, user, password, opts, redirect_depth)
     if type(url) ~= "string" or url == "" or type(dest_path) ~= "string" then
         return nil, "bad args"
     end
@@ -226,22 +226,52 @@ function CoverFetch.download(url, dest_path, user, password, opts)
     if not file then return nil, "cannot open temp file" end
     local block_t = (opts and opts.block_timeout) or socketutil.LARGE_BLOCK_TIMEOUT
     local total_t = (opts and opts.total_timeout) or socketutil.LARGE_TOTAL_TIMEOUT
+    local response_headers
+    local Http = require("lib/bookshelf_http")
     local ok_req2, code = pcall(function()
         socketutil:set_timeout(block_t, total_t)
-        local c = socket.skip(1, http.request({
+        local headers = { ["User-Agent"] = "KOReader-Bookshelf" }
+        -- Authentication survives same-origin redirects, never foreign ones.
+        local a = Http.basicAuthHeader(auth_user, auth_pass)
+        if a then headers["Authorization"] = a end
+        local c, h = socket.skip(1, http.request({
             url = url, method = "GET",
-            headers = { ["User-Agent"] = "KOReader-Bookshelf" },
+            headers = headers,
             sink = ltn12.sink.file(file),
-            redirect = true,
+            redirect = false,
             user = auth_user,
             password = auth_pass,
         }))
+        response_headers = h
         socketutil:reset_timeout()
         return c
     end)
     pcall(function() socketutil:reset_timeout() end)
+    pcall(function() file:close() end)
+    if ok_req2 and Http.isRedirect(code) then
+        pcall(os.remove, tmp)
+        if (redirect_depth or 0) >= Http.MAX_REDIRECTS then
+            return nil, "too many redirects"
+        end
+        local target, same = Http.redirectTarget(url,
+            type(response_headers) == "table" and response_headers.location)
+        if not target then return nil, "unsafe redirect" end
+        return CoverFetch.download(target, dest_path,
+            same and auth_user or nil, same and auth_pass or nil,
+            opts, (redirect_depth or 0) + 1)
+    end
     if not ok_req2 or code ~= 200 then
         pcall(os.remove, tmp)
+        -- 429 gets the same word the feed layer uses, because the caller has
+        -- to be able to ACT on it rather than just log it. A rate-limited
+        -- cover is the commonest refusal of all -- a page of twenty books is
+        -- twenty requests -- and when it came back as an opaque "download
+        -- failed" string the pool could only narrow and carry on, spending
+        -- the window the server had just asked us to stop spending
+        -- (issue 434: measured, a capped server saw 7 refused cover requests
+        -- in a row and no back-off was recorded at all, because none of them
+        -- went through the feed fetch that knows about 429s).
+        if code == 429 then return nil, "ratelimited" end
         return nil, "download failed (" .. tostring(code) .. ")"
     end
     pcall(os.remove, dest_path)

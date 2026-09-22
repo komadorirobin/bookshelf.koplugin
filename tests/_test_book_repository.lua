@@ -1931,6 +1931,32 @@ test("getSortKey: returns chip default when setting missing", function()
     assert(Repo.getSortKey("latest") == "mtime")
 end)
 
+test("getSortPriority: omitted built-ins keep their defaults without adding tabs", function()
+    _G._test_settings = { home_dir = "/lib" }
+    local TabModel = require("lib/bookshelf_tab_model")
+    assert(TabModel.getById("authors") == nil)
+    assert(Repo.getSortPriority("authors")[1].key == "author_surname")
+    assert(Repo.getSortPriority("latest")[1].key == "date_added")
+    assert(#TabModel.load() == 4)
+end)
+
+test("getSortPriority: a saved legacy choice wins over omitted built-ins", function()
+    _G._test_settings = { home_dir = "/lib", bookshelf_sort_authors = "book_count" }
+    assert(Repo.getSortPriority("authors")[1].key == "book_count")
+end)
+
+test("getSortPriority: a saved tab choice wins over built-ins and legacy", function()
+    _G._test_settings = {
+        home_dir = "/lib", bookshelf_sort_authors = "book_count",
+        bookshelf_tabs = { {
+            id = "authors", enabled = true, source = { kind = "authors" },
+            sort_priority = { { key = "author_name", reverse = true } },
+        } },
+    }
+    local priority = Repo.getSortPriority("authors")
+    assert(priority[1].key == "author_name" and priority[1].reverse == true)
+end)
+
 test("getAll: default author sort uses surname first", function()
     Repo.invalidateWalkCache()
     _G._test_settings = { home_dir = "/lib" }
