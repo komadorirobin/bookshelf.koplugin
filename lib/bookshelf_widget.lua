@@ -4515,6 +4515,10 @@ function BookshelfWidget:_groundState()
         end
     end
     if m.strength > 0 then
+        local Wallpaper = require("lib/bookshelf_wallpaper")
+        m.transparent_labels_footer = Wallpaper.transparentLabelsAndFooter(function(k)
+            return BookshelfSettings.read(k)
+        end)
         local f = { self:_footerPanelRectRaw(m.strength) }
         if f[1] ~= nil then m.footer = f end
     end
@@ -4523,6 +4527,8 @@ end
 
 -- footerPanelRect() -> x, y, w, h, radius, strength, colour -- the footer's
 -- panel in SCREEN coordinates, or nil when there is no panel to draw.
+-- keep_boundary preserves a zero-height footer boundary when only its shading
+-- is disabled: shared list/module panels must stop there, not disappear too.
 --
 -- ONE definition, two painters: the shelf's footer row and the full-screen
 -- micro-module overlay, which repaints the footer's buttons at their real
@@ -4533,10 +4539,12 @@ end
 -- The height drops the hit extension: each footer button carries that much
 -- padding BELOW it to widen its tap target, so the row is taller than anything
 -- drawn and a panel matching the row leaves the glyphs against its top edge.
-function BookshelfWidget:footerPanelRect()
-    local f = self:_groundState().footer
-    if not f then return nil end
-    return f[1], f[2], f[3], f[4], f[5], f[6], f[7]
+function BookshelfWidget:footerPanelRect(keep_boundary)
+    local m = self:_groundState()
+    local f = m.footer
+    if not f or (m.transparent_labels_footer and not keep_boundary) then return nil end
+    local h = m.transparent_labels_footer and 0 or f[4]
+    return f[1], f[2], f[3], h, f[5], f[6], f[7]
 end
 
 function BookshelfWidget:_footerPanelRectRaw(strength)
@@ -10382,7 +10390,7 @@ function BookshelfWidget:_attachTopPanel(vgroup, opts)
         if list_full then
             -- Width and bottom from the footer's own definition, so this
             -- panel cannot drift from the one the shelf draws.
-            local fx, fy, fw, fh = self:footerPanelRect()
+            local fx, fy, fw, fh = self:footerPanelRect(true)
             if fx then
                 px, w2 = fx, fw
                 h2 = (fy + fh) - py

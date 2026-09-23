@@ -303,7 +303,7 @@ function MicroFullscreen:_build()
     -- build and hand the answer to the three places below that need it.
     local fp_x, fp_y, fp_w, fp_h, fp_radius, fp_strength, fp_ground
     if self.bw and self.bw.footerPanelRect then
-        local ok_p, a, b, c, d, e, f, g = pcall(function() return self.bw:footerPanelRect() end)
+        local ok_p, a, b, c, d, e, f, g = pcall(function() return self.bw:footerPanelRect(true) end)
         if ok_p and a then
             fp_x, fp_y, fp_w, fp_h, fp_radius, fp_strength, fp_ground = a, b, c, d, e, f, g
         end

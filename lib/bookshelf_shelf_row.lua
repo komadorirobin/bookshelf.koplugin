@@ -293,6 +293,11 @@ function ShelfRow.new(opts)
             plate_fill = nil
         end
     end
+    if plate_wp and plate_wp.transparentLabelsAndFooter(function(k)
+        return BookshelfSettings.read(k)
+    end) then
+        plate_fill = nil
+    end
     local PLATE_RADIUS = Screen:scaleBySize(2)
     local function plated(widget)
         if not plate_fill then return widget end

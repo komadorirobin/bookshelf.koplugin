@@ -2345,6 +2345,14 @@ msgstr ""
 msgid "How much to shade the top panel and the footer so the buttons stay legible over a picture. Transparent lets the wallpaper through untouched, which reads well over a plain texture and poorly over a busy photograph. Solid hides the picture behind those strips entirely."
 msgstr ""
 
+#: lib/bookshelf_settings.lua:1558
+msgid "Transparent book titles and page indicator"
+msgstr ""
+
+#: lib/bookshelf_settings.lua:1559
+msgid "Remove the backgrounds behind text below covers and the pagination bar. The book information panel and chip bar keep their panel shading."
+msgstr ""
+
 #: lib/bookshelf_settings.lua:1569
 msgid "Transparent"
 msgstr ""

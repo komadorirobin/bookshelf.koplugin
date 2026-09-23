@@ -1554,6 +1554,21 @@ function Settings:_wallpaperMenu()
                 return self:_scrimSubItems()
             end,
         },
+        {
+            text = _("Transparent book titles and page indicator"),
+            help_text = _("Remove the backgrounds behind text below covers and the pagination bar. "
+                .. "The book information panel and chip bar keep their panel shading."),
+            checked_func = function()
+                return BookshelfSettings.isTrue(Wallpaper.LABELS_FOOTER_SETTING)
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                BookshelfSettings.save(Wallpaper.LABELS_FOOTER_SETTING,
+                    not BookshelfSettings.isTrue(Wallpaper.LABELS_FOOTER_SETTING))
+                self:_markDirty("full")
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
     }
 end
 
@@ -1832,10 +1847,10 @@ end
 
 -- Repaint the shelf after a setting changes. Each sub-item builder used to
 -- define its own; this is the one they delegate to.
-function Settings:_markDirty()
+function Settings:_markDirty(refresh_mode)
     if self._bw and self._bw._rebuild then
         self._bw:_rebuild()
-        UIManager:setDirty(self._bw, "ui")
+        UIManager:setDirty(self._bw, refresh_mode or "ui")
     end
 end
 

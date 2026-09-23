@@ -455,6 +455,7 @@ Everything that decides how the shelf looks now lives in one place: **menu -> Ba
 - **Full screen shelves image** -- a different picture for full screen shelves. That view is wall-to-wall covers and spines, where a backdrop that reads well behind the top panel is often too busy.
 - **Background colour** -- the page ground. Useful on its own with no wallpaper at all, and it is what shows through anywhere the picture is kept out.
 - **Panel shading** -- how much the top panel and the footer are shaded so their buttons stay legible over a picture: **Transparent**, **Light**, **Heavy** (the default) or **Solid**. Transparent reads well over a plain texture and poorly over a busy photograph; Solid hides the picture behind those strips entirely.
+- **Transparent book titles and page indicator** -- remove the backgrounds below covers and behind the pagination bar without changing the book information panel or chip bar. Leave **Panel shading** at **Heavy** (or your preferred level) to keep those upper panels shaded. Off by default; turning it off restores the usual label and footer shading.
 
 ### Shelf theme
 

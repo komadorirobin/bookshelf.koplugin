@@ -77,6 +77,13 @@ function M.transparentButtons(read)
     return read(M.BUTTONS_SETTING) and true or false
 end
 
+-- Clear only the cover captions and pagination, leaving upper chrome alone.
+M.LABELS_FOOTER_SETTING = "wallpaper_transparent_labels_footer"
+
+function M.transparentLabelsAndFooter(read)
+    return type(read) == "function" and read(M.LABELS_FOOTER_SETTING) == true
+end
+
 
 -- ── Chrome scrim ───────────────────────────────────────────────────
 --
