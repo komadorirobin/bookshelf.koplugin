@@ -428,6 +428,37 @@ test("buildBook: EPUB page count ignores stale Bookshelf rendered cache when doc
     assert(b.page_count == 370, "expected doc_pages to beat stale rendered cache got " .. tostring(b.page_count))
 end)
 
+test("readProgress: page-count sources preserve fork precedence through cache and rebuild", function()
+    local cases = {
+        { data = { pagemap_use_page_labels = true, pagemap_doc_pages = 211, doc_pages = 312 },
+          pages = 211, source = "stable" },
+        { data = { pagemap_doc_pages = 211, doc_pages = 312, stats = { pages = 99 } },
+          pages = 312, source = "render" },
+        { data = { bookshelf_rendered_page_count = 312, stats = { pages = 99 } },
+          pages = 312, source = "render" },
+        { data = { pagemap_doc_pages = 211, stats = { pages = 99 } },
+          pages = 211, source = "stable" },
+        { data = { stats = { pages = 312 } }, pages = 312, source = "render" },
+    }
+    for i, case in ipairs(cases) do
+        local fp = "/books/page-source-" .. i .. ".epub"
+        _G._test_bim_data = { [fp] = { title = "Page source", pages = 10 } }
+        _G._test_docsettings_data = { [fp] = case.data }
+        local function check()
+            local _p, _s, _r, pages, _n, source = Repo.readProgress(fp)
+            assert(pages == case.pages, "wrong page count for source " .. i)
+            assert(source == case.source, "wrong source " .. tostring(source) .. " for " .. i)
+        end
+        Repo.invalidateProgressCache(fp)
+        check()
+        check()
+        Repo.buildBook(fp)
+        check()
+        Repo.invalidateProgressCache(fp)
+        check()
+    end
+end)
+
 test("buildBook: fixed-layout page count keeps BIM pages over DocSettings stats", function()
     local fp = "/books/fixed.pdf"
     _G._test_bim_data = {
@@ -2794,6 +2825,27 @@ test("getBySource: BookOrbit Want to Read paths stay inside the active profile s
     _teardownResolverLibrary()
     assert(comics_total == 1 and comics[1].title == "Alpha")
     assert(prose_total == 1 and prose[1].title == "Charlie")
+end)
+
+test("getBySource: a collection keeps its native KOReader order (#441)", function()
+    _setupResolverLibrary()
+    -- A native collection stores a per-item `order`, and KOReader's own
+    -- getOrderedCollection sorts on exactly that. Set here as the REVERSE of
+    -- alphabetical, so a path that discards the order and falls back to the
+    -- engine's title/filename tie-break cannot pass by accident.
+    package.loaded["readcollection"].coll.reading = {
+        ["/lib/novels/charlie.epub"] = { file = "/lib/novels/charlie.epub", order = 1 },
+        ["/lib/comics/bravo.epub"]   = { file = "/lib/comics/bravo.epub",   order = 2 },
+        ["/lib/comics/alpha.epub"]   = { file = "/lib/comics/alpha.epub",   order = 3 },
+    }
+    local list = Repo.getBySource({ kind = "collection", id = "reading" }, nil,
+                                  { { key = "collection_order", reverse = false } }, 0, 10)
+    _teardownResolverLibrary()
+    local got = {}
+    for i, b in ipairs(list) do got[i] = b.title end
+    got = table.concat(got, ",")
+    assert(got == "Charlie,Bravo,Alpha",
+        "expected the collection's own order, got " .. got)
 end)
 
 test("getBySource: genre kind filters books via BIM keywords->genres mapping", function()
@@ -6689,6 +6741,34 @@ test("getFolderSections: books arrive in tree order, tagged with their folder", 
         and mixed[3].filepath == "/lib/Discworld/d1.epub"
         and mixed[4].filepath == "/lib/Discworld/Witches/w1.epub",
         "mixed mode must retain tree order within the profile's roots")
+
+    -- Upstream's explicit folder root intersects the fixed profile roots.
+    local narrowed, narrowed_total = Repo.getFolderSections(20, 0, nil, scope, nil,
+        { root = "/lib/Discworld/Witches/", light_only = true })
+    assert(narrowed_total == 2 and narrowed[1].filepath == "/lib/Discworld/Witches/w1.epub")
+    local parent, parent_total = Repo.getFolderSections(20, 0, nil, scope, nil,
+        { root = "/lib" })
+    assert(parent_total == 5 and #parent == 5, "parent drill must not escape profile scope")
+    local denied, denied_total = Repo.getFolderSections(20, 0, nil,
+        { roots = { "/lib/Culture" } }, nil, { root = "/lib/Discworld" })
+    assert(denied_total == 0 and #denied == 0, "disjoint folder must not reveal another profile")
+    local _overlap, overlap_total = Repo.getFolderSections(20, 0, nil,
+        { roots = { "/lib/Discworld", "/lib/Discworld/Witches" } })
+    assert(overlap_total == 3, "overlapping profile roots must not duplicate books")
+
+    local was_spine = Repo.spine_light
+    Repo.spine_light = true
+    local pinned, pinned_total = Repo.getBySource(
+        { kind = "folder", id = "/lib/Discworld/Witches" }, nil, nil, 0, 20,
+        { light_only = true })
+    local scoped_pin, scoped_pin_total = Repo.getBySource(
+        { kind = "folder", id = "/lib/Culture" }, nil, nil, 0, 20, scope,
+        { light_only = true })
+    Repo.spine_light = was_spine
+    assert(pinned_total == 2 and pinned[1].filepath == "/lib/Discworld/Witches/w1.epub",
+        "an unscoped source must still forward its folder root")
+    assert(scoped_pin_total == 2 and scoped_pin[1].filepath == "/lib/Culture/c1.epub",
+        "a pinned profile folder must forward both the root and scope")
 end)
 
 test("getFolderSections: the window slices books, so a big folder still pages", function()

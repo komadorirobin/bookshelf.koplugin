@@ -52,8 +52,23 @@ t.test("both KOReader events still reach the same scheduler", function()
     assert(src:find("function BookshelfWidget:onSetNightMode(night_mode_on)", 1, true))
     -- CALLS only: the definition line carries the same text, so anchor on the
     -- indent that only a call site has.
+    --
+    -- Two callers, both events. The paint-time follower (_followScreenNight)
+    -- used to be a third; it now rebuilds INSIDE the paint instead, so the
+    -- first frame after a switch is already right (the shadows flashed while
+    -- it waited for a tick), and flips the wallpaper itself when no event did.
     local n = select(2, src:gsub("\n    _scheduleNightModeRebuild%(self,", ""))
-    eq(n, 2, "expected both handlers to call the scheduler with a target, found " .. n)
+    eq(n, 2, "expected the two event handlers, found " .. n)
+    for _i, name in ipairs({ "onToggleNightMode%(%)", "onSetNightMode%(night_mode_on%)" }) do
+        local body = src:match("\nfunction BookshelfWidget:" .. name .. "\n(.-)\nend\n")
+        assert(body and body:find("_scheduleNightModeRebuild(self,", 1, true),
+            name .. " no longer goes through the one scheduler")
+    end
+end)
+
+t.test("the deferred rebuild stands down when the paint already rebuilt", function()
+    assert(code:find("if self._rebuild and self._night_rebuild_pending then", 1, true),
+        "the tick rebuilds and repaints a second time: the flash again")
 end)
 
 t.done()

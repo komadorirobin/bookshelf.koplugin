@@ -41,17 +41,35 @@ local SortEngine = {}
 local _pinyin_on  = false
 local _pinyin_gen = -1
 local _key_epoch  = 0
+-- "Ignore The, A, An when sorting" (issue 428). On by default, which is how
+-- titles and series have sorted since 120960a / issue 412; off sorts by the
+-- title and series name exactly as written, calibre's title_sort included.
+-- Rides the same epoch as the pinyin flag, for the same reason: the keys it
+-- changes are memoised on every record.
+local _articles_on = true
 
 local function refreshPinyinFlag()
-    if not (Store and Pinyin) then return end
+    if not Store then return end
     local gen = Store.generation()
     if gen == _pinyin_gen then return end
     _pinyin_gen = gen
-    local on = Store.read("cjk_pinyin_sort") == true
-    if on ~= _pinyin_on then
+    local on = Pinyin ~= nil and Store.read("cjk_pinyin_sort") == true
+    local articles = Store.read("sort_ignore_articles") ~= false
+    if on ~= _pinyin_on or articles ~= _articles_on then
         _pinyin_on = on
+        _articles_on = articles
         _key_epoch = _key_epoch + 1
     end
+end
+
+-- keySignature() -> a short string naming every setting that changes how a
+-- sort KEY is derived (pinyin, the leading-article rule). Sort LEVELS are
+-- the caller's own and already in its cache keys; these are not, so a cache
+-- of sorted results that left them out went on serving the old order after
+-- the setting changed -- until something else invalidated it.
+function SortEngine.keySignature()
+    refreshPinyinFlag()
+    return (_pinyin_on and "P" or "") .. (_articles_on and "" or "W")
 end
 
 local function ensureEpoch(b)
@@ -360,10 +378,14 @@ local function cachedTitleKey(b)
     ensureEpoch(b)
     local v = b._title_key_cache
     if v == nil then
-        v = b.title_sort
-        if v == nil or v == "" then
-            v = stripLeadingArticle(
-                b.title or (b.doc_props and b.doc_props.display_title) or b.name)
+        local raw = b.title or (b.doc_props and b.doc_props.display_title) or b.name
+        if _articles_on then
+            v = b.title_sort
+            if v == nil or v == "" then v = stripLeadingArticle(raw) end
+        else
+            -- As written: calibre's title_sort IS the article rule, so it
+            -- goes too.
+            v = raw
         end
         v = (v ~= nil and v ~= "") and pinyinise(tostring(v):lower()) or false
         b._title_key_cache = v
@@ -434,7 +456,7 @@ local function cachedSeriesKey(b)
         -- preferred for a book. It has no stored series sort field: it runs
         -- its own title-sort algorithm over the series name when asked and
         -- never persists the result, so the heuristic is all there is.
-        v = stripLeadingArticle(v)
+        if _articles_on then v = stripLeadingArticle(v) end
         v = (v ~= nil and v ~= "") and pinyinise(tostring(v):lower()) or false
         b._series_key_cache = v
     end
@@ -596,6 +618,24 @@ SortEngine.KEYS = {
                         comparator = function(a, b)
                             return cmp(a.page_count or a.total_pages,
                                        b.page_count or b.total_pages)
+                        end },
+    -- Book record: a.collection_order (the `order` KOReader stores per item in
+    -- a collection; the repository's collection source copies it onto the
+    -- record). Meaningful only on a collection source -- everywhere else every
+    -- book is missing it, which cmp ties, so the level costs nothing and the
+    -- next one decides.
+    --
+    -- KOReader writes `order` only for a MANUALLY collated collection (see
+    -- ReadCollection:writeCollection); one carrying a collate of its own saves
+    -- nil for every item, and then this key ties across the board by the same
+    -- route. That is the intended behaviour, not a gap: it is what lets the
+    -- default pair this key with a real second level.
+    -- short repeats the label rather than a bare "Order": on its own in a
+    -- catalogue that msgid could be an instruction, a sequence or a purchase,
+    -- and "Name" already meant three different things here once.
+    collection_order = { label = tr("Collection order"), short = tr("Collection order"),
+                        comparator = function(a, b)
+                            return cmp(a.collection_order, b.collection_order)
                         end },
 }
 

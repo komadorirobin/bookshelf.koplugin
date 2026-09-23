@@ -68,6 +68,7 @@ local VALID_SORT_KEYS = {
     last_opened = true, date_added = true, percent_read = true,
     read_status = true, read_status_active = true, rating = true,
     page_count = true, book_count = true, size = true,
+    collection_order = true,
 }
 
 t.test("every SOURCE_SORT_DEFAULTS entry is a non-empty list of {key,reverse}, except fixed-order sources", function()
@@ -180,6 +181,202 @@ end)
 t.test("resolveSourceLabel handles an OPDS source with no id yet without erroring", function()
     local D2 = Editor._test.resolveSourceLabel
     eq(D2({ kind = "opds" }), "OPDS catalog")
+end)
+
+-- ── A collection keeps the order KOReader files it in (issue #441) ────────
+
+t.test("a new collection chip defaults to the collection's own order", function()
+    eq(D.SOURCE_SORT_DEFAULTS.collection, {
+        { key = "collection_order", reverse = false },
+        { key = "last_opened",      reverse = true  },
+    })
+end)
+
+t.test("the second level carries a collection KOReader stores no order for", function()
+    -- Only a manually collated collection persists an item order, so the
+    -- pairing is the whole design: with no manual order every book ties on
+    -- level one and the shelf still comes out most-recently-opened first,
+    -- which is what a collection chip did before this key existed.
+    local levels = D.SOURCE_SORT_DEFAULTS.collection
+    assert(#levels == 2, "expected a fallback level, got " .. #levels)
+    assert(levels[2].key == "last_opened" and levels[2].reverse == true,
+        "the fallback is no longer the old default")
+end)
+
+t.test("sourceSortDefaults hands out a copy, never the table itself", function()
+    local a = Editor.sourceSortDefaults("collection")
+    a[1].key = "clobbered"
+    assert(D.SOURCE_SORT_DEFAULTS.collection[1].key == "collection_order",
+        "the defaults table was handed out by reference and got mutated")
+    assert(Editor.sourceSortDefaults("collection")[1].key == "collection_order",
+        "a later caller saw the first caller's edit")
+end)
+
+t.test("sourceSortDefaults is nil for a kind with no defaults", function()
+    assert(Editor.sourceSortDefaults("not_a_real_kind") == nil)
+end)
+
+t.test("pinning a collection from the manager uses the same defaults", function()
+    -- The manager builds its own tab row rather than going through the
+    -- editor's draft, so it carried a SECOND copy of the collection default
+    -- and the two could drift. It asks for them now. Checked in the source
+    -- because the manager is a UI module with no standalone harness.
+    local src = assert(io.open("lib/bookshelf_collection_manager.lua")):read("*a")
+    local pin = src:match("local function _pinAsChip.-\nend")
+    assert(pin, "_pinAsChip moved or was renamed")
+    assert(pin:match('sourceSortDefaults%("collection"%)'),
+        "the pinned chip does not take its sort from the editor's defaults")
+    assert(not pin:match('sort_priority%s*=%s*{%s*{'),
+        "the pinned chip still carries a literal sort_priority")
+end)
+
+t.test("the sort picker offers Collection order on a collection chip only", function()
+    -- The default only reaches chips made from now on, so a chip that already
+    -- exists needs the key in the picker or the reader cannot ask for it.
+    -- Offered nowhere else: off a collection source every book's
+    -- collection_order is nil, so the row would be a no-op that still costs a
+    -- slot in a grid the file's own comment keeps compact.
+    local BD = package.loaded["ui/widget/buttondialog"]
+    local UI = package.loaded["ui/uimanager"]
+    local captured
+    BD.new   = function(_self, t) captured = t; return t end
+    UI.show  = function() end
+    UI.close = function() end
+    local function offered(kind)
+        captured = nil
+        Editor:_pickSortLevel({ source = { kind = kind }, sort_priority = {} },
+                              1, function() end)
+        local texts = {}
+        for _i, row in ipairs(captured and captured.buttons or {}) do
+            for _j, btn in ipairs(row) do texts[#texts + 1] = btn.text end
+        end
+        return table.concat(texts, " | ")
+    end
+    assert(offered("collection"):find("Collection order", 1, true),
+        "a collection chip cannot pick its own order: " .. offered("collection"))
+    assert(not offered("all"):find("Collection order", 1, true),
+        "Collection order offered on a source that has none")
+end)
+
+-- ── Arranging the collection from beside its key ───────────────────────────
+--
+-- The maintainer's request, straight after trying the key on a device:
+-- changing a collection's order meant leaving for KOReader's collections view.
+-- The button opens the arrange window over the picker, so confirming or
+-- backing out lands the reader back on the picker, where the key is.
+
+local function pickerFor(source, order_stub)
+    local BD = package.loaded["ui/widget/buttondialog"]
+    local UI = package.loaded["ui/uimanager"]
+    local captured
+    local calls = { closed = 0 }
+    BD.new   = function(_self, o) captured = o; return o end
+    UI.show  = function() end
+    UI.close = function() calls.closed = calls.closed + 1 end
+    package.loaded["lib/bookshelf_collection_order"] = order_stub or {
+        exists  = function(name) return name == "discworld" end,
+        arrange = function(name, on_saved)
+            calls.arranged = name; calls.on_saved = on_saved; return true
+        end,
+    }
+    calls.on_arranged = function() calls.arranged_fired = true end
+    Editor:_pickSortLevel({ source = source, sort_priority = {} }, 1,
+                          function() end, calls.on_arranged)
+    return captured, calls
+end
+
+t.test("a collection chip can arrange its collection from beside the key", function()
+    local d, calls = pickerFor({ kind = "collection", id = "discworld" })
+    local row = d.buttons[1]
+    eq(#row, 2, "the edit button is not beside the Collection order key")
+    assert(row[1].text:find("Collection order", 1, true), "row 1 is not the key")
+    assert(row[2].text:find("Edit collection order", 1, true),
+        "no Edit collection order button: " .. tostring(row[2] and row[2].text))
+    row[2].callback()
+    eq(calls.arranged, "discworld", "the button did not open that collection")
+    eq(calls.closed, 0,
+        "opening the arrange window closed the picker the reader comes back to")
+end)
+
+t.test("a confirmed arrangement is reported back to the editor", function()
+    -- The arrangement is written to KOReader at once, not held in the draft,
+    -- so the editor has to hear about it to repaint the shelf -- Cancel
+    -- included, because backing out of the editor does not undo it.
+    local d, calls = pickerFor({ kind = "collection", id = "discworld" })
+    d.buttons[1][2].callback()
+    assert(calls.on_saved, "the picker gave the arrange window nothing to call")
+    calls.on_saved()
+    eq(calls.arranged_fired, true, "the editor was never told the order changed")
+end)
+
+-- The editor's close paths. editTab is a large UI function with no standalone
+-- harness, so these are pinned in its source: the three that mean Cancel (the
+-- Cancel button, the title bar X, a tap outside) and Save.
+local editor_src = io.open("lib/bookshelf_chip_editor.lua"):read("*a")
+
+t.test("no close path repaints only on a visual change any more", function()
+    -- The condition every cancel-like path used. It left an arrangement --
+    -- already written to KOReader -- off the screen until something else
+    -- rebuilt the shelf.
+    assert(not editor_src:find("if visual_dirty and opts.on_change then", 1, true),
+        "a close path still ignores a confirmed arrangement")
+end)
+
+t.test("every cancel-like path repaints after an arrangement", function()
+    local n = select(2, editor_src:gsub("if repaintOnCancel%(%) and opts%.on_change then", ""))
+    eq(n, 3, "expected Cancel, the X and tap-outside to share the rule")
+    assert(editor_src:find("return visual_dirty or arranged", 1, true),
+        "the shared rule does not include an arrangement")
+end)
+
+t.test("a confirmed arrangement repaints the shelf straight away", function()
+    -- The maintainer, on the PW5: the order is saved the moment the arrange
+    -- window closes, so the shelf behind should show it then, not only once
+    -- the whole editor is closed. Through the editor's own debounced preview,
+    -- so the confirm tap is not held up by a shelf rebuild.
+    local body = editor_src:match("local function onArranged%(%)(.-)\n    end\n")
+    assert(body, "onArranged is gone, or became a one-liner again")
+    assert(body:find("arranged = true", 1, true), "the close paths no longer hear of it")
+    assert(body:find("schedulePreview()", 1, true),
+        "the shelf still waits for the editor to close")
+end)
+
+t.test("onArranged is declared below the preview it schedules", function()
+    -- A local function body resolves names at load: declared ABOVE
+    -- `local function schedulePreview`, it would read a nil GLOBAL at the
+    -- moment of the confirm and raise, with nothing at load time to warn.
+    local sched = editor_src:find("local function schedulePreview", 1, true)
+    local arr   = editor_src:find("local function onArranged", 1, true)
+    assert(sched and arr, "one of the two moved")
+    assert(arr > sched, "onArranged would call a nil schedulePreview")
+end)
+
+t.test("Save repaints after an arrangement too", function()
+    assert(editor_src:find("if (is_dirty() or arranged) and opts.on_change then", 1, true),
+        "Save can skip the repaint when the only change was the arrangement")
+end)
+
+t.test("all three sort levels hand the picker the arrangement hook", function()
+    local n = select(2, editor_src:gsub(
+        "Editor:_pickSortLevel%(draft, %d, function%(%) applyLivePreview%(true%); rebuild%(%) end, onArranged%)", ""))
+    eq(n, 3, "a sort level opens the picker without the arrangement hook")
+end)
+
+t.test("no edit button when there is no collection behind the chip", function()
+    -- A pinned TAG is kind "collection" with the tag as its id. The key still
+    -- shows -- it ties harmlessly -- but there is nothing to arrange.
+    local d = pickerFor({ kind = "collection", id = "sci-fi" })
+    eq(#d.buttons[1], 1, "an arrange button was offered for a tag")
+end)
+
+t.test("no edit button off a collection source", function()
+    local d = pickerFor({ kind = "all" })
+    for _i, row in ipairs(d.buttons) do
+        for _j, btn in ipairs(row) do
+            assert(not btn.text:find("Edit collection order", 1, true),
+                "the arrange button leaked onto a non-collection shelf")
+        end
+    end
 end)
 
 t.test("SOURCE_SORT_DEFAULTS.opds is the empty list (fixed feed order, no sort levels)", function()
