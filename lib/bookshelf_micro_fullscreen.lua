@@ -22,6 +22,7 @@ local Geom            = require("ui/geometry")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local Size            = require("ui/size")
+local Space           = require("lib/bookshelf_space")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
@@ -151,7 +152,7 @@ local function _closeGlyph(bw, button_dimen, reserve_ring, focused, exact)
         background = _glyphBacking(bw),
         bordersize = focused and fb or 0,
         margin     = focused and 0 or fb,
-        radius     = fb > 0 and Screen:scaleBySize(4) or 0,
+        radius     = fb > 0 and Space.px(4) or 0,
         padding    = 0,
         CenterContainer:new{
             dimen = Geom:new{ w = math.max(1, box.w - 2 * fb), h = math.max(1, box.h - 2 * fb) },
@@ -260,7 +261,7 @@ function MicroFullscreen:_build()
     -- range would swallow the top-edge menu tap, edge brightness swipes and
     -- corner gestures before they could reach FileManager.
     local margin = math.min(
-        math.floor(Size.padding.fullscreen * 2 * 0.8),
+        math.floor(Space.padding.fullscreen * 2 * 0.8),
         math.floor(sw * 0.03))
     local PAD       = margin
     local content_w = sw - 2 * margin

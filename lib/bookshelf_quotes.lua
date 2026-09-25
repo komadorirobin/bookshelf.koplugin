@@ -23,6 +23,21 @@ local SafeText = require("lib/bookshelf_text_safe")
 local Quotes = {}
 
 Quotes.REFRESH_KEY = "micromodule_quote_of_day_refresh" -- "daily" | "open"
+-- Issue 368: books and highlight colours the reader has left out.
+--   skip_books   filepath -> true: never the quote of the day (the book's own
+--                %quote token still draws from it: that is asked for by name)
+--   skip_colors  KOReader highlight colour name -> true: left out of both (a
+--                colour kept for names makes a poor quote anywhere)
+-- filter_gen counts changes to either, and is part of the daily cache key, so
+-- a pick persisted before a change is never adopted after it.
+-- Issue 258: where the quote of the day comes from -- the reader's highlights
+-- (the default, as always), quotes files, or both. A quotes file is SimpleUI's
+-- format, so a reader moving between the two keeps one:
+--   return { { q = "Quote text.", a = "Author", b = "Book (optional)" }, ... }
+Quotes.SOURCE_KEY = "micromodule_quote_of_day_source" -- "highlights" | "files" | "both"
+Quotes.SKIP_BOOKS_KEY  = "micromodule_quote_of_day_skip_books"
+Quotes.SKIP_COLORS_KEY = "micromodule_quote_of_day_skip_colors"
+local FILTER_GEN_KEY   = "micromodule_quote_of_day_filter_gen"
 
 local MAX_BOOKS  = 25  -- most-recent ReadHistory entries walked
 local MAX_QUOTES = 200 -- total highlights collected across those books
@@ -49,12 +64,33 @@ function Quotes.readRefresh()
     return v
 end
 
+local function readSet(key)
+    local Store = require("lib/bookshelf_settings_store")
+    local v = Store.read(key)
+    return type(v) == "table" and v or {}
+end
+
+function Quotes.readSource()
+    local Store = require("lib/bookshelf_settings_store")
+    local v = Store.read(Quotes.SOURCE_KEY, "highlights")
+    if v ~= "files" and v ~= "both" then v = "highlights" end
+    return v
+end
+
+local function filterGen()
+    local Store = require("lib/bookshelf_settings_store")
+    return tonumber(Store.read(FILTER_GEN_KEY)) or 0
+end
+
 local function cacheKey()
     if Quotes.readRefresh() == "open" then
         local Modules = require("lib/bookshelf_start_menu_modules")
         return "g" .. tostring(Modules.menu_generation) .. ":" .. _nonce
     end
-    return "d" .. os.date("%Y-%m-%d") .. ":" .. _nonce
+    local key = "d" .. os.date("%Y-%m-%d") .. ":" .. _nonce
+    local gen = filterGen()
+    if gen > 0 then key = key .. ":f" .. gen end
+    return key
 end
 
 local function truncateQuote(s)
@@ -67,7 +103,10 @@ end
 -- Collect every highlight from ONE book's sidecar into `quotes`. Used by both
 -- the all-books daily walk and the per-book token (issue #174). Caller wraps in
 -- pcall; this also guards each file access.
-local function _collectFromSidecar(fp, quotes)
+-- skip_colors: colour name -> true, highlights to leave out (nil: none).
+-- colours_seen: when a table, every highlight colour met is recorded in it,
+-- left out or not (the settings dialog lists them).
+local function _collectFromSidecar(fp, quotes, skip_colors, colours_seen)
     local DocSettings = require("docsettings")
     -- hasSidecarFile gates the heavier open and is correct for all three
     -- metadata locations (doc/dir/hash) -- never stat a sibling .sdr path.
@@ -126,8 +165,12 @@ local function _collectFromSidecar(fp, quotes)
                         -- `drawer` set = real highlight; bookmarks (no drawer)
                         -- carry auto-filler text we must not quote.
                         if type(a) == "table" and a.drawer then
-                            add(a.text, a.page, a.pos0, false, a.chapter,
-                                a.pageref or a.pageno)
+                            local colour = type(a.color) == "string" and a.color or nil
+                            if colour and colours_seen then colours_seen[colour] = true end
+                            if not (colour and skip_colors and skip_colors[colour]) then
+                                add(a.text, a.page, a.pos0, false, a.chapter,
+                                    a.pageref or a.pageno)
+                            end
                         end
                     end
                 else
@@ -160,27 +203,207 @@ end
 
 -- Walk ReadHistory newest-first, collecting from each book's sidecar. Caps keep
 -- the walk bounded; every file access is guarded inside _collectFromSidecar.
-local function collectQuotes()
+-- Skipped books are passed over before they count against MAX_BOOKS, so
+-- leaving one out does not shrink the pool.
+local function collectQuotes(colours_seen)
     local quotes = {}
+    local source = Quotes.readSource()
+    if source == "files" and not colours_seen then return Quotes.fileQuotes() end
     local DocSettings = require("docsettings")
     local rh = require("readhistory")
+    local skip_books  = readSet(Quotes.SKIP_BOOKS_KEY)
+    local skip_colors = readSet(Quotes.SKIP_COLORS_KEY)
     local n_books = 0
     for _i, entry in ipairs(rh.hist or {}) do
         if n_books >= MAX_BOOKS or #quotes >= MAX_QUOTES then break end
         local fp = entry.file
-        if fp and DocSettings:hasSidecarFile(fp) then
+        if fp and not skip_books[fp] and DocSettings:hasSidecarFile(fp) then
             n_books = n_books + 1
-            _collectFromSidecar(fp, quotes)
+            _collectFromSidecar(fp, quotes, skip_colors, colours_seen)
         end
     end
+    if source == "both" and not colours_seen then
+        for _i, q in ipairs(Quotes.fileQuotes()) do quotes[#quotes + 1] = q end
+    end
     return quotes
+end
+
+-- ── Quotes files (issue 258) ──────────────────────────────────────────────
+--
+-- Every .lua file in these folders is a list of quotes. Bookshelf's own folder
+-- first, then SimpleUI's, read where it is so nothing has to be copied. Read
+-- only; neither folder is created here except on request (ensureQuotesDir).
+local MAX_FILE_BYTES = 4 * 1024 * 1024
+
+function Quotes.quotesDirs()
+    local ok, DataStorage = pcall(require, "datastorage")
+    if not (ok and DataStorage) then return {} end
+    local base = DataStorage:getSettingsDir()
+    return { base .. "/bookshelf/quotes", base .. "/simpleui/sui_quotes" }
+end
+
+-- loadQuoteFile(path) -> a list of { text, author, title }, or {} on any
+-- failure. The file runs with an EMPTY environment: it is data, and a quotes
+-- file shared around should not be able to reach os or io.
+local function loadQuoteFile(path)
+    local f = io.open(path, "rb")
+    if not f then return {} end
+    local src = f:read(MAX_FILE_BYTES + 1)
+    f:close()
+    if not src or #src > MAX_FILE_BYTES then return {} end
+    -- load's env argument: LuaJIT has it as a Lua 5.2 extension, so one
+    -- call serves the device and the test interpreters. "t": text only, never
+    -- a precompiled chunk.
+    local chunk = load(src, "=" .. path, "t", {})
+    if not chunk then return {} end
+    local ok, list = pcall(chunk)
+    if not (ok and type(list) == "table") then return {} end
+    local out = {}
+    for _i, e in ipairs(list) do
+        if type(e) == "table" and type(e.q) == "string" and e.q:match("%S") then
+            out[#out + 1] = {
+                text   = SafeText.safe(e.q),
+                author = type(e.a) == "string" and e.a ~= "" and SafeText.safe(e.a) or nil,
+                title  = type(e.b) == "string" and e.b ~= "" and SafeText.safe(e.b) or nil,
+            }
+        end
+    end
+    return out
+end
+
+-- fileQuotes() -> every quote in every quotes file, cached on the files'
+-- names, sizes and mtimes so an edit is picked up without a restart.
+local _file_cache, _file_key
+function Quotes.fileQuotes()
+    local ok_l, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_l then return {} end
+    local files, key = {}, {}
+    for _i, d in ipairs(Quotes.quotesDirs()) do
+        if lfs.attributes(d, "mode") == "directory" then
+            local names = {}
+            pcall(function()
+                for name in lfs.dir(d) do
+                    if name:match("%.lua$") then names[#names + 1] = name end
+                end
+            end)
+            table.sort(names)
+            for _j, name in ipairs(names) do
+                local path = d .. "/" .. name
+                local attr = lfs.attributes(path)
+                if attr and attr.mode == "file" then
+                    files[#files + 1] = path
+                    key[#key + 1] = path .. ":" .. tostring(attr.size) .. ":" .. tostring(attr.modification)
+                end
+            end
+        end
+    end
+    key = table.concat(key, "|")
+    if _file_cache and _file_key == key then return _file_cache end
+    local out = {}
+    for _i, path in ipairs(files) do
+        for _j, q in ipairs(loadQuoteFile(path)) do out[#out + 1] = q end
+    end
+    _file_cache, _file_key = out, key
+    return out
 end
 
 -- Every highlight from a SINGLE book -- backs the per-book %quote token (#174).
 local function collectBookQuotes(fp)
     local quotes = {}
-    _collectFromSidecar(fp, quotes)
+    _collectFromSidecar(fp, quotes, readSet(Quotes.SKIP_COLORS_KEY))
     return quotes
+end
+
+-- A filter changed: bump the generation (the daily cache key carries it) and
+-- drop both in-memory picks so the next render draws from the new pool.
+local function filtersChanged()
+    local Store = require("lib/bookshelf_settings_store")
+    Store.save(FILTER_GEN_KEY, filterGen() + 1)
+    Store.flush()
+    _cache = nil
+    _book_cache = nil
+end
+
+function Quotes.setSource(v)
+    local Store = require("lib/bookshelf_settings_store")
+    Store.save(Quotes.SOURCE_KEY, v)
+    filtersChanged()
+end
+
+-- skipBook(fp, title): the title is kept with it so the settings can list
+-- what was left out by name (an older entry holds just true).
+function Quotes.skipBook(fp, title)
+    if type(fp) ~= "string" then return end
+    local Store = require("lib/bookshelf_settings_store")
+    local set = readSet(Quotes.SKIP_BOOKS_KEY)
+    set[fp] = (type(title) == "string" and title ~= "") and title or true
+    Store.save(Quotes.SKIP_BOOKS_KEY, set)
+    filtersChanged()
+end
+
+function Quotes.skippedBookCount()
+    local n = 0
+    for _fp in pairs(readSet(Quotes.SKIP_BOOKS_KEY)) do n = n + 1 end
+    return n
+end
+
+-- skippedBooks() -> { { fp, title }, ... } sorted by title. A book stored
+-- without a title (an older entry) is named from its file.
+function Quotes.skippedBooks()
+    local out = {}
+    for fp, v in pairs(readSet(Quotes.SKIP_BOOKS_KEY)) do
+        local title = type(v) == "string" and v
+                      or ((fp:match("([^/]+)$") or fp):gsub("%.[^.]+$", ""))
+        out[#out + 1] = { fp = fp, title = title }
+    end
+    table.sort(out, function(a, b) return a.title:lower() < b.title:lower() end)
+    return out
+end
+
+function Quotes.isBookSkipped(fp)
+    return readSet(Quotes.SKIP_BOOKS_KEY)[fp] ~= nil
+end
+
+function Quotes.unskipBook(fp)
+    local Store = require("lib/bookshelf_settings_store")
+    local set = readSet(Quotes.SKIP_BOOKS_KEY)
+    if set[fp] == nil then return end
+    set[fp] = nil
+    if next(set) then Store.save(Quotes.SKIP_BOOKS_KEY, set)
+    else Store.delete(Quotes.SKIP_BOOKS_KEY) end
+    filtersChanged()
+end
+
+function Quotes.unskipAllBooks()
+    local Store = require("lib/bookshelf_settings_store")
+    Store.delete(Quotes.SKIP_BOOKS_KEY)
+    filtersChanged()
+end
+
+function Quotes.isColorSkipped(colour)
+    return readSet(Quotes.SKIP_COLORS_KEY)[colour] == true
+end
+
+function Quotes.setColorSkipped(colour, skipped)
+    if type(colour) ~= "string" then return end
+    local Store = require("lib/bookshelf_settings_store")
+    local set = readSet(Quotes.SKIP_COLORS_KEY)
+    set[colour] = skipped and true or nil
+    if next(set) then Store.save(Quotes.SKIP_COLORS_KEY, set)
+    else Store.delete(Quotes.SKIP_COLORS_KEY) end
+    filtersChanged()
+end
+
+-- coloursInUse() -> sorted list of the highlight colours in the books the
+-- quote of the day draws from, left out or not. A sidecar walk, so for the
+-- settings dialog only.
+function Quotes.coloursInUse()
+    local seen = {}
+    pcall(collectQuotes, seen)
+    local out = {}
+    for c in pairs(seen) do out[#out + 1] = c end
+    table.sort(out)
+    return out
 end
 
 -- Pick one quote from the collection.

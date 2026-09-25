@@ -63,6 +63,12 @@ end)
 --
 -- rapidjson is stubbed rather than real here: the logic under test is the
 -- merge, not the parse, and the parse is covered on device.
+-- Every harvest the module writes during a withStubbedJson run, newest last.
+local DUMPS = {}
+-- lua-rapidjson decodes JSON null to a sentinel, rapidjson.null, not to nil.
+-- A plain table stands in for it: what matters is that it is a truthy non-nil
+-- value the module can only recognise by comparing against rapidjson.null.
+local NULL = setmetatable({}, { __tostring = function() return "rapidjson.null" end })
 local function withStubbedJson(books, harvest, home)
     home = home or "/lib"
     local META = "/lib/metadata.calibre"
@@ -73,7 +79,11 @@ local function withStubbedJson(books, harvest, home)
             if path == HARV then return { version = 1, books = harvest } end
             error("unexpected path " .. tostring(path))
         end,
-        dump = function() return true end,
+        null = NULL,
+        dump = function(obj, path)
+            DUMPS[#DUMPS + 1] = { obj = obj, path = path }
+            return true
+        end,
     }
     package.loaded["libs/libkoreader-lfs"] = {
         attributes = function(path, what)
@@ -219,5 +229,228 @@ t.test("a normal home_dir is unaffected", function()
     local e = M.entryFor("/lib/a/Dune.epub", true)
     assert(e and e.calibre and e.calibre.mood == "cosy")
 end)
+
+-- ── Harvest carry-forward: never drop a field this writer does not know ────
+--
+-- Both plugins write calibre.bookshelf.json from their own copy of this file,
+-- and users update one plugin without the other. The writer used to rebuild
+-- the whole file from the fields IT knew, so an older copy that had any reason
+-- to rewrite (a new book, an edited column) dropped every field added after it,
+-- for every book - title_sort was the first casualty. Now a field this writer
+-- does not recognise is carried forward from the file as it was.
+--
+-- A calibre-WRITTEN file (has author_sort / user_metadata), so the harvest is
+-- rebuilt from it and written.
+
+local function lastHarvest()
+    local d = DUMPS[#DUMPS]
+    return d and d.obj and d.obj.books
+end
+
+t.test("a field this writer does not recognise survives a rewrite", function()
+    DUMPS = {}
+    local written = {
+        -- author_sort changed, so there is a real reason to rewrite
+        { lpath = "a/Dune.epub", title = "Dune", author_sort = "Herbert, F." },
+    }
+    local previous = {
+        ["a/Dune.epub"] = { author_sort = "Herbert, Frank", from_the_future = "kept" },
+    }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Dune.epub", true)
+    local h = lastHarvest()
+    assert(h, "no harvest was written, so the test proves nothing")
+    assert(h["a/Dune.epub"].author_sort == "Herbert, F.", "owned field not updated")
+    assert(h["a/Dune.epub"].from_the_future == "kept",
+           "an unrecognised field was dropped on rewrite: "
+           .. tostring(h["a/Dune.epub"].from_the_future))
+end)
+
+t.test("it survives on a book with nothing this writer harvests any more", function()
+    DUMPS = {}
+    local written = {
+        { lpath = "a/Dune.epub", title = "Dune", author_sort = "Herbert, Frank" },
+        { lpath = "a/Bare.epub", title = "Bare" },   -- nothing owned to harvest
+    }
+    local previous = {
+        ["a/Dune.epub"] = { author_sort = "Old, Value" },   -- forces a write
+        ["a/Bare.epub"] = { from_the_future = "kept" },
+    }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Dune.epub", true)
+    local h = lastHarvest()
+    assert(h, "no harvest was written")
+    assert(h["a/Bare.epub"] and h["a/Bare.epub"].from_the_future == "kept",
+           "a book whose only harvested data is unrecognised lost it")
+end)
+
+t.test("a field this writer OWNS is replaced, not carried", function()
+    DUMPS = {}
+    local written = { { lpath = "a/Dune.epub", title = "Dune", author_sort = "New, A" } }
+    local previous = { ["a/Dune.epub"] = { author_sort = "Old, A" } }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Dune.epub", true)
+    local h = lastHarvest()
+    assert(h and h["a/Dune.epub"].author_sort == "New, A",
+           "an owned field kept its stale value")
+end)
+
+t.test("a book no longer in the library is dropped from the harvest", function()
+    DUMPS = {}
+    local written = { { lpath = "a/Dune.epub", title = "Dune", author_sort = "Herbert, Frank" } }
+    local previous = {
+        ["a/Dune.epub"] = { author_sort = "Old, A" },
+        ["a/Gone.epub"] = { author_sort = "Removed, A", from_the_future = "x" },
+    }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Dune.epub", true)
+    local h = lastHarvest()
+    assert(h, "no harvest was written")
+    assert(h["a/Gone.epub"] == nil, "a removed book was kept alive by carry-forward")
+end)
+
+t.test("carrying a field forward does not cause a rewrite on its own", function()
+    -- Flash wear: the write is skipped when nothing changed. A carried field is
+    -- equal by construction, so it must not look like a change every reload.
+    DUMPS = {}
+    local written = { { lpath = "a/Dune.epub", title = "Dune", author_sort = "Herbert, Frank" } }
+    local previous = {
+        ["a/Dune.epub"] = { author_sort = "Herbert, Frank", from_the_future = "kept" },
+    }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Dune.epub", true)
+    assert(#DUMPS == 0, "rewrote an unchanged harvest (" .. #DUMPS .. " writes)")
+end)
+
+-- ── title_sort, which the harvest claimed to carry and did not ─────────────
+--
+-- KOReader's wireless sync keeps author_sort but NOT title_sort (its
+-- used_metadata list, plugins/calibre.koplugin/metadata.lua), so without the
+-- harvest a sync sends bookshelf's title sort back to raw titles.
+
+t.test("title_sort is harvested from a calibre-written file", function()
+    DUMPS = {}
+    local written = {
+        { lpath = "a/Tomb.epub", title = "The Locked Tomb",
+          title_sort = "Locked Tomb, The", author_sort = "Muir, Tamsyn" },
+    }
+    local M = withStubbedJson(written, {})
+    M.entryFor("/lib/a/Tomb.epub", true)
+    local h = lastHarvest()
+    assert(h and h["a/Tomb.epub"], "no harvest entry for the book")
+    assert(h["a/Tomb.epub"].title_sort == "Locked Tomb, The",
+           "title_sort not harvested: " .. tostring(h["a/Tomb.epub"].title_sort))
+end)
+
+t.test("a change to title_sort alone still rewrites the harvest", function()
+    DUMPS = {}
+    local written = {
+        { lpath = "a/Tomb.epub", title = "The Locked Tomb",
+          title_sort = "Locked Tomb, The", author_sort = "Muir, Tamsyn" },
+    }
+    local previous = {
+        ["a/Tomb.epub"] = { author_sort = "Muir, Tamsyn", title_sort = "Tomb, The Locked" },
+    }
+    local M = withStubbedJson(written, previous)
+    M.entryFor("/lib/a/Tomb.epub", true)
+    local h = lastHarvest()
+    assert(h, "a title_sort-only change was not written")
+    assert(h["a/Tomb.epub"].title_sort == "Locked Tomb, The", "stale title_sort kept")
+end)
+
+t.test("title_sort is restored after a KOReader rewrite", function()
+    local stripped = { { lpath = "a/Tomb.epub", title = "The Locked Tomb" } }
+    local harvest = { ["a/Tomb.epub"] = { title_sort = "Locked Tomb, The" } }
+    local M = withStubbedJson(stripped, harvest)
+    local e = M.entryFor("/lib/a/Tomb.epub", true)
+    assert(e and e.title_sort == "Locked Tomb, The",
+           "title_sort not restored: " .. tostring(e and e.title_sort))
+end)
+
+t.test("any harvested field is restored, not only the ones listed here", function()
+    -- So the next field added to the harvest needs no change to the restore.
+    local stripped = { { lpath = "a/Dune.epub", title = "Dune" } }
+    local harvest = { ["a/Dune.epub"] = { from_the_future = "back" } }
+    local M = withStubbedJson(stripped, harvest)
+    local e = M.entryFor("/lib/a/Dune.epub", true)
+    assert(e and e.from_the_future == "back",
+           "an unrecognised harvested field was not restored")
+end)
+
+t.test("a value present in the file still wins over a restored one", function()
+    local stripped = { { lpath = "a/Dune.epub", title = "Dune", author_sort = "Live, A" } }
+    local harvest = { ["a/Dune.epub"] = { author_sort = "Harvested, A", from_the_future = "x" } }
+    local M = withStubbedJson(stripped, harvest)
+    local e = M.entryFor("/lib/a/Dune.epub", true)
+    -- author_sort present => this is a calibre-written file, so no restore at
+    -- all; either way the live value must be what comes back.
+    assert(e and e.author_sort == "Live, A", "harvest overwrote a live value")
+end)
+
+
+-- ── A REAL KOReader rewrite writes nulls, not missing keys ─────────────────
+--
+-- KOReader's calibre plugin rewrites the file through slim(), which writes every
+-- field it keeps as `book[k] or rapidjson.null` - and load_calibre has already
+-- dropped author_sort's value, so the rewritten file carries
+-- "author_sort": null (confirmed by running CalibreMetadata:init +
+-- cleanUnused over a genuine Calibre file). The calibre-written test was
+-- author_sort ~= nil, and the decoded null is not nil, so EVERY synced file
+-- passed as fresh from Calibre: the restore never ran, and the write path
+-- rebuilt the harvest from the stripped file, destroying it. The suite never
+-- saw it because its stripped fixtures deleted the keys instead.
+
+local KO_REWRITTEN = {
+    { lpath = "a/Tomb.epub", title = "The Locked Tomb", authors = { "Tamsyn Muir" },
+      author_sort = NULL, series = NULL, series_index = NULL, size = NULL, tags = {} },
+}
+local TOMB_HARVEST = {
+    ["a/Tomb.epub"] = { author_sort = "Muir, Tamsyn", title_sort = "Locked Tomb, The",
+                        calibre = { mood = "cosy" } },
+}
+
+t.test("a real KOReader rewrite is recognised as stripped and restored", function()
+    local M = withStubbedJson(KO_REWRITTEN, TOMB_HARVEST)
+    local e = M.entryFor("/lib/a/Tomb.epub", true)
+    assert(e, "no entry")
+    assert(e.author_sort == "Muir, Tamsyn",
+           "author_sort not restored after a real sync: " .. tostring(e.author_sort))
+    assert(e.title_sort == "Locked Tomb, The",
+           "title_sort not restored after a real sync: " .. tostring(e.title_sort))
+    local f = M.fieldsFor("/lib/a/Tomb.epub", true)
+    assert(f and f.mood == "cosy", "custom column not restored after a real sync")
+end)
+
+t.test("a real KOReader rewrite does not overwrite the harvest", function()
+    DUMPS = {}
+    local M = withStubbedJson(KO_REWRITTEN, TOMB_HARVEST)
+    M.entryFor("/lib/a/Tomb.epub", true)
+    assert(#DUMPS == 0, "the harvest was rewritten from a stripped file - it destroys itself")
+end)
+
+t.test("a null in the file never reaches a reader as a value", function()
+    local M = withStubbedJson(KO_REWRITTEN, {})
+    local e = M.entryFor("/lib/a/Tomb.epub", true)
+    assert(e, "no entry")
+    assert(e.series == nil, "the null sentinel leaked out as series: " .. tostring(e.series))
+    assert(e.author_sort == nil, "the null sentinel leaked out as author_sort")
+end)
+
+t.test("a null already saved in a harvest is not restored as a value", function()
+    -- The sidecar that the bug left behind on real devices: {author_sort: null}.
+    local M = withStubbedJson(KO_REWRITTEN, { ["a/Tomb.epub"] = { author_sort = NULL } })
+    local e = M.entryFor("/lib/a/Tomb.epub", true)
+    assert(e and e.author_sort == nil, "a saved null was restored: " .. tostring(e and e.author_sort))
+end)
+
+t.test("a fresh Calibre file is still trusted wholly, so a cleared column clears", function()
+    -- The reason detection exists: a column the user emptied in Calibre must
+    -- not be brought back from the harvest.
+    local fresh = { { lpath = "a/Tomb.epub", title = "The Locked Tomb", author_sort = "Muir, Tamsyn" } }
+    local M = withStubbedJson(fresh, TOMB_HARVEST)
+    local f = M.fieldsFor("/lib/a/Tomb.epub", true)
+    assert(not (f and f.mood), "a column cleared in Calibre came back from the harvest")
+end)
+
 
 t.done()

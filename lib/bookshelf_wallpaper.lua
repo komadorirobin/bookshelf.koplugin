@@ -564,9 +564,30 @@ M._list_key   = nil
 -- The mechanism stays: SimpleUI's folder is a genuine wallpaper folder, and so
 -- is /mnt/us/Wallpapers.
 M.EXTRA_DIRS = nil     -- override for the tests; nil = the defaults below
+-- Issue 419: a folder of the reader's own, chosen in the menu, for pictures
+-- kept for something else (another tool's folder, a synced one) that should
+-- not have to be copied here. Read only, like the others, and listed first,
+-- so its token wins if two folders end in the same name.
+M.USER_DIR_SETTING = "wallpaper_folder"
+function M.userDir()
+    local ok, Set = pcall(require, "lib/bookshelf_settings_store")
+    local d = ok and Set and Set.read(M.USER_DIR_SETTING)
+    if type(d) ~= "string" or d == "" then return nil end
+    return (d:gsub("/+$", ""))
+end
+function M.setUserDir(d)
+    local ok, Set = pcall(require, "lib/bookshelf_settings_store")
+    if not (ok and Set) then return end
+    if type(d) == "string" and d ~= "" then Set.save(M.USER_DIR_SETTING, (d:gsub("/+$", "")))
+    else Set.delete(M.USER_DIR_SETTING) end
+    Set.flush()
+    M._list_cache, M._list_key = nil, nil
+end
 function M.extraDirs()
     if M.EXTRA_DIRS then return M.EXTRA_DIRS end
     local out = {}
+    local user = M.userDir()
+    if user then out[#out + 1] = user end
     local settings = M.dataDir()
     if settings then out[#out + 1] = settings .. "/simpleui/sui_wallpapers" end
     out[#out + 1] = "/mnt/us/Wallpapers"
@@ -1385,6 +1406,31 @@ local function backgroundWidget(bb, w, h)
 end
 
 
+-- toScreenType(bb) -> bb, converted once to the framebuffer's own type when
+-- that is greyscale.
+--
+-- The decoder hands back RGB24 even on a greyscale panel, and a blit between
+-- different types converts every pixel: on a PW5 that was 55ms for the one
+-- full-screen wallpaper paint in every page turn and shelf switch, 15% of a
+-- page turn (measured on device). Same-type is a row copy. Converting here
+-- costs that 55ms once, per decode, and the grey copy is a third of the
+-- size. Colour screens keep the decoder's buffer: their framebuffer is not
+-- BB8, so the picture keeps its colour.
+function M.toScreenType(bb)
+    local ok, out = pcall(function()
+        local Screen = require("device").screen
+        local fb = Screen and Screen.bb
+        local Blitbuffer = require("ffi/blitbuffer")
+        if not (fb and fb.getType and fb:getType() == Blitbuffer.TYPE_BB8) then return bb end
+        if bb:getType() == Blitbuffer.TYPE_BB8 then return bb end
+        local grey = Blitbuffer.new(bb:getWidth(), bb:getHeight(), Blitbuffer.TYPE_BB8)
+        grey:blitFrom(bb, 0, 0, 0, 0, bb:getWidth(), bb:getHeight())
+        bb:free()
+        return grey
+    end)
+    return (ok and out) or bb
+end
+
 -- bg(name, w, h, night) -> a paintable full-screen widget, or nil.
 --
 -- night is part of the key AND of the render: the panel inverts everything at
@@ -1402,6 +1448,7 @@ function M.bg(name, w, h, night)
         logger.info("[bookshelf] wallpaper could not be decoded:", path)
         return nil
     end
+    bb = M.toScreenType(bb)
     if night and bb.invertRect then
         pcall(function() bb:invertRect(0, 0, bb:getWidth(), bb:getHeight()) end)
     end

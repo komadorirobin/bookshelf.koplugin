@@ -37,6 +37,7 @@ local BFont           = require("lib/bookshelf_fonts")
 local TextSegments    = require("lib/bookshelf_text_segments")
 local GestureZones    = require("lib/bookshelf_gesture_zones")
 local logger          = require("logger")
+local Space           = require("lib/bookshelf_space")
 local Screen          = Device.screen
 local _               = require("lib/bookshelf_i18n").gettext
 
@@ -168,10 +169,10 @@ local TabBar = InputContainer:extend{
 }
 
 function TabBar:init()
-    self.left_inset = self.left_inset or Screen:scaleBySize(10)
-    self.top_pad    = Screen:scaleBySize(12)   -- gap above the tabs (below title bar)
-    self.pad_h      = Screen:scaleBySize(14)
-    self.pad_v      = Screen:scaleBySize(6)
+    self.left_inset = self.left_inset or Space.px(10)
+    self.top_pad    = Space.px(12)   -- gap above the tabs (below title bar)
+    self.pad_h      = Space.px(14)
+    self.pad_v      = Space.px(6)
     self.border     = Size.border.thin         -- segmented-control frame + separators
     self.sep_w      = Size.border.thin
     -- UNSCALED. Font:getFace runs Screen:scaleBySize over its size argument
@@ -181,7 +182,40 @@ function TabBar:init()
     -- about 2, which put these labels at 56px beside a UI using 31
     -- (maintainer: "our tabs are huge apparently by default", from several
     -- screenshots -- it was every larger screen, not one device).
-    self.face       = Font:getFace("cfont", self.font_size or 13)
+    -- One row, whatever the screen: when the labels do not fit at the chosen
+    -- size, narrow the tabs' side padding first, then step the font down (to
+    -- no less than 60% of it) until they do (maintainer: "scale the tabs down
+    -- as well, when there's not enough space, so they never wrap"). The
+    -- wrapping below stays as a last resort, so a tab can never be clipped.
+    local size = self.font_size or 13
+    do
+        local avail   = self.width - 2 * self.left_inset
+        local n       = #self.tabs
+        local min_pad = Space.px(6)
+        local function textWidth(sz)
+            local face, total = Font:getFace("cfont", sz), 0
+            for _i, label in ipairs(self.tabs) do
+                local tw = TextWidget:new{ text = label, face = face }
+                total = total + tw:getSize().w
+                tw:free()
+            end
+            return total
+        end
+        local text_w = textWidth(size)
+        if text_w + 2 * self.pad_h * n > avail and n > 0 then
+            local pad = math.floor((avail - text_w) / (2 * n))
+            if pad >= min_pad then
+                self.pad_h = pad
+            else
+                self.pad_h = min_pad
+                local floor_size = size * 0.6
+                while size - 1 >= floor_size and textWidth(size) + 2 * min_pad * n > avail do
+                    size = size - 1
+                end
+            end
+        end
+    end
+    self.face       = Font:getFace("cfont", size)
 
     -- Pack tabs into rows that fit self.width, wrapping when the next tab would
     -- overflow (so a narrow screen / high DPI keeps every tab reachable instead
@@ -375,8 +409,8 @@ function ReviewsModal:init()
     local _perf_init_t0 = _gettime()
     local screen_w, screen_h = Screen:getWidth(), Screen:getHeight()
     -- Near-fullscreen with the standard screen-edge inset (matches TextViewer).
-    self.width  = self.width  or (screen_w - Screen:scaleBySize(30))
-    self.height = self.height or (screen_h - Screen:scaleBySize(30))
+    self.width  = self.width  or (screen_w - Space.px(30))
+    self.height = self.height or (screen_h - Space.px(30))
 
     -- Source tabs (e.g. File vs Hardcover description). Only meaningful with 2+.
     self._tabs = (type(self.tabs) == "table" and #self.tabs > 0) and self.tabs or nil
@@ -406,7 +440,7 @@ function ReviewsModal:init()
     -- Horizontal content inset, shared by the HTML body's CSS padding, the tab
     -- strip's left inset, the tag tab's pill inset, and the header's L/R + top
     -- padding -- so tabs, bodies and header all line up.
-    self._side_pad = Screen:scaleBySize(28)
+    self._side_pad = Space.px(28)
 
     -- ADD to key_events, don't replace it: FocusManager:_init already populated
     -- it with the focus-move (arrow) + Press bindings we rely on for dpad nav.
@@ -563,8 +597,16 @@ function ReviewsModal:init()
     -- floating inward. Top/bottom padding too, so text doesn't hug the title
     -- bar / footer line.
     local h_pad = self._side_pad
-    local v_pad = Screen:scaleBySize(28)
+    local v_pad = Space.px(28)
     css = css .. string.format("\nbody { padding: %dpx %dpx; }", v_pad, h_pad)
+    -- The UI font, so the description reads in the same typeface as the
+    -- rest of the modal and the shelf (issue 284). Skipped, leaving MuPDF's
+    -- sans-serif, when the font cannot be found on disk.
+    local ok_f, Fonts = pcall(require, "lib/bookshelf_fonts")
+    local ui_css = ok_f and Fonts.uiFontCss and Fonts.uiFontCss("bsui") or ""
+    if ui_css ~= "" then
+        css = ui_css .. css .. '\nbody { font-family: "bsui", sans-serif; }'
+    end
     -- Kept so _changeFontSize can re-render via htmlbox_widget:setContent
     -- without rebuilding the @font-face rule.
     self._css = css
@@ -585,15 +627,12 @@ function ReviewsModal:init()
         html_body         = self:_activeHtml(),
         css               = css,
         default_font_size = Screen:scaleBySize(self.font_size),
-        -- +1px width paired with +1px scroll_bar_width extends ONLY the
-        -- scrollbar's right edge into the popup frame's own border (leaving
-        -- the text area's width, and the scrollbar's left edge, unchanged) --
-        -- so the scrollbar's own thin border and the frame's border occupy
-        -- the same pixels on the right/top/bottom instead of sitting as two
-        -- adjacent but visually distinct lines, and only the scrollbar's
-        -- left edge (facing the text, nothing to merge with) stays visible.
-        width             = self.width + 1,
-        scroll_bar_width  = Screen:scaleBySize(6) + 1,
+        -- Full width, the bar at its right edge against the frame's border.
+        -- The bar is a rail (see _scroller) with no right edge of its own, so
+        -- the old +1px trick that overlapped a boxed bar's border with the
+        -- frame's is gone.
+        width             = self.width,
+        scroll_bar_width  = require("lib/bookshelf_snug_scroll").scroll_bar_width,
         height            = html_h,
         dialog            = self,
     }
@@ -690,7 +729,7 @@ function ReviewsModal:_buildHeader()
         padding_left   = pad,
         padding_right  = pad,
         padding_top    = pad,
-        padding_bottom = Screen:scaleBySize(8),  -- tight to the tab bar below
+        padding_bottom = Space.px(8),  -- tight to the tab bar below
         inner,
     }
     -- Top-right close icon. The old title bar that carried one was removed in
@@ -705,8 +744,8 @@ function ReviewsModal:_buildHeader()
     -- every other stock TitleBar-based dialog use for their close button).
     local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
     local icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * 0.6)
-    local side_m = Screen:scaleBySize(8)
-    local top_m  = Screen:scaleBySize(6)
+    local side_m = Space.px(8)
+    local top_m  = Space.px(6)
     local x_box = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE, bordersize = 0, margin = 0,
         padding = Screen:scaleBySize(4),  -- small tap target around the icon
@@ -783,8 +822,8 @@ end
 -- switches the source and reassembles. Left-inset to align with the body text.
 function ReviewsModal:_buildSourceChips(tab)
     local sep_w   = Size.border.thin
-    local h_pad   = Size.padding.large
-    local v_pad   = Size.padding.small
+    local h_pad   = Space.padding.large
+    local v_pad   = Space.padding.small
     -- Match the main bookshelf nav chip bar exactly: a logical 16pt label scaled
     -- by the user's chip-font setting. NOT Screen:scaleBySize (the font layer
     -- scales that again) -- keeps these source chips smaller than the tab bar.
@@ -850,7 +889,7 @@ function ReviewsModal:_buildSourceChips(tab)
         -- (lib/bookshelf_widget.lua's _buildReviewsHeader) -- the two tabs'
         -- hairlines must land at the identical Y or switching tabs visibly
         -- shifts the scroll boundary. -2/-2 brings this to the same 100px.
-        padding_top = Screen:scaleBySize(16) - 2, padding_bottom = Screen:scaleBySize(16) - 2,
+        padding_top = Space.px(16) - 2, padding_bottom = Space.px(16) - 2,
         framed,
     }
 end
@@ -912,15 +951,14 @@ function ReviewsModal:_buildSourcedBody(tab, w, h)
     -- rather than hugging it -- same value and reasoning as the Reviews tab's
     -- own header+hairline gap (lib/bookshelf_widget.lua's _buildReviewsTab).
     -- (A later rule overrides just padding-top from the shared `body { padding }`.)
-    local css = self._css .. string.format("\nbody { padding-top: %dpx; }", Screen:scaleBySize(8))
+    local css = self._css .. string.format("\nbody { padding-top: %dpx; }", Space.px(8))
     local scroller = self:_scroller{
         html_body         = (src and src.html) or "<p></p>",
         css               = css,
         default_font_size = Screen:scaleBySize(self.font_size),
-        -- See the identical +1px pairing on self.scroll_html above -- extends
-        -- only the scrollbar's right edge into the frame's own border.
-        width             = w + 1,
-        scroll_bar_width  = Screen:scaleBySize(6) + 1,
+        -- As self.scroll_html above: full width, a rail against the border.
+        width             = w,
+        scroll_bar_width  = require("lib/bookshelf_snug_scroll").scroll_bar_width,
         height            = math.max(Screen:scaleBySize(80), h - chip_h - hairline_h),
         dialog            = self,
     }
@@ -973,7 +1011,7 @@ function ReviewsModal:_assemble()
     self._vgroup = vg
     self.frame = FrameContainer:new{
         background  = Blitbuffer.COLOR_WHITE,
-        radius      = Size.radius.window,
+        radius      = Space.radius.window,
         bordersize  = Size.border.window,
         padding     = 0,
         vg,
@@ -1264,6 +1302,13 @@ end
 -- the last page, which is the wrong surprise.
 function ReviewsModal:_scroller(opts)
     local w = ScrollHtmlWidget:new(opts)
+    -- The same rail as every other scrollbar here (lib/bookshelf_snug_scroll):
+    -- a left rule the text area's full height and a grey thumb to the frame's
+    -- border, instead of the stock black box with a top and bottom of its own.
+    local ok_s, Snug = pcall(require, "lib/bookshelf_snug_scroll")
+    if ok_s and Snug and Snug._railPaint and w.v_scroll_bar then
+        w.v_scroll_bar.paintTo = Snug._railPaint
+    end
     local orig = w.onScrollText
     w.onScrollText = function(w_self, arg, ges)
         if ges and ges.direction == "south"

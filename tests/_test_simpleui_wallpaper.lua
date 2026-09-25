@@ -8,7 +8,7 @@ file:close()
 local body = assert(src:match("\n(function BookshelfWidget:_footerPanelRectRaw%(.-\nend)\n"))
 local env = setmetatable({
     BookshelfWidget = {},
-    Size = { radius = { window = 8 } },
+    Space = { radius = { window = 8 } },
     require = function(name)
         assert(name == "lib/bookshelf_cover_progress")
         return { resolvedColors = function() return { panel_bg = "paper" } end }

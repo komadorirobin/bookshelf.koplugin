@@ -25,6 +25,7 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Device          = require("device")
 local Screen          = Device.screen
+local Space           = require("lib/bookshelf_space")
 local BFont           = require("lib/bookshelf_fonts")
 local ImageSource     = require("lib/bookshelf_image_source")
 local SpineWidget     = require("lib/bookshelf_spine_widget")
@@ -42,7 +43,7 @@ function FocusCell:paintTo(bb, x, y)
     InputContainer.paintTo(self, bb, x, y)
     if self._focused and self.dimen then
         bb:paintBorder(x, y, self.dimen.w, self.dimen.h,
-                       Size.border.thick, Blitbuffer.COLOR_BLACK, Size.radius.default)
+                       Size.border.thick, Blitbuffer.COLOR_BLACK, Space.radius.default)
     end
 end
 function FocusCell:onFocus() self._focused = true; return true end
@@ -114,7 +115,7 @@ function CoverGridCell.new(opts)
         },
     }
     local cap_h = caption:getSize().h
-    local gap   = Screen:scaleBySize(4)
+    local gap   = Space.px(4)
 
     -- Cover box fills what's left, inset by RING on every side so the selection
     -- ring (which paints RING pixels beyond the box) stays within the tile.

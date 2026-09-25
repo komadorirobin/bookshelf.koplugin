@@ -49,6 +49,7 @@ local TextSegments   = require("lib/bookshelf_text_segments")
 local Pages          = require("lib/bookshelf_chip_pages")
 local PageWipe       = require("lib/bookshelf_page_wipe")
 local BandMetrics    = require("lib/bookshelf_band_metrics")
+local Space          = require("lib/bookshelf_space")
 
 -- Tab-bar font size scale (percent). 100 = built-in baseline; nudge dialog
 -- accepts 50-300.
@@ -402,6 +403,10 @@ local ChipBar = InputContainer:extend{
     has_wallpaper = false,
     -- Paint an opaque ground behind the strip? See ChipBar:paintTo.
     solid_ground = false,
+    -- Is anything painted behind the shelf at all (a wallpaper, a page
+    -- colour, the top panel's tint)? The FACT, where has_wallpaper is the
+    -- reader's choice of transparent buttons. See flashPending.
+    painted_ground = false,
     chips             = nil,   -- list of { key, label } (chips mode)
     active            = nil,   -- key of the currently-selected chip
     selected_key      = nil,   -- the active chip key for pagination; defaults to self.active
@@ -686,7 +691,7 @@ local function arrowPillFrame(label, h, chained, glyph)
             bold    = lbl_bold,
             fgcolor = Blitbuffer.COLOR_BLACK,
         }
-        local gap = Size.padding.default
+        local gap = Space.padding.default
         content_widget = HorizontalGroup:new{
             align = "center",
             icon_tw,
@@ -715,7 +720,7 @@ local function arrowPillFrame(label, h, chained, glyph)
     end
     local text_w = content_w  -- keep historical names so the layout maths below stay readable
     local text_h = content_h
-    local h_pad  = Size.padding.large
+    local h_pad  = Space.padding.large
     local tip_w  = math.floor(h * 0.4)
     -- For chained pills the body has a TRIANGULAR NOTCH carved into
     -- its LEFT side (matching the previous pill's tip shape) AND extra
@@ -895,7 +900,7 @@ local CHEVRON_NEXT = "\xEF\x81\x94"
 -- Measure the natural pixel width of a flex chip (no max_width constraint).
 -- Used both for pagination planning and proportional flex allocation.
 local function measureNatural(chip, height, scaled_fn)
-    local pad = Size.padding.large
+    local pad = Space.padding.large
     if chip.nerd_glyph then
         local ng_face, ng_bold = _iconFace(scaled_fn(18))
         local tw = TextWidget:new{
@@ -1284,7 +1289,7 @@ function ChipBar:_buildChipRow(flex_indices, flex_naturals, action_w, separator_
             cell_content = _buildLabelContent(
                 chip.label or "",
                 _scaled(16),
-                w - 2 * Size.padding.small,
+                w - 2 * Space.padding.small,
                 ink)
         end
         local is_cursor = is_cursor_pre
@@ -1760,7 +1765,7 @@ function ChipBar:_initBreadcrumb()
             -- inset so the text sits well clear of the last pill's
             -- tip apex, mirroring the breathing room a chained pill
             -- gives its own text via the extra-tip_w left padding.
-            local gap_w = pill_tip_w + Size.padding.large
+            local gap_w = pill_tip_w + Space.padding.large
             outer[#outer + 1] = HorizontalSpan:new{ width = gap_w }
             cursor = cursor + gap_w
             outer[#outer + 1] = deepest_widget
@@ -1877,7 +1882,24 @@ function ChipBar:flashPending(key)
     -- The roof does not need it anyway: it appears when the chip's selected
     -- state changes, which is the rebuild's business, not this flash's.
     local b = Size.border.thin
-    UIManager:setDirty(self.show_parent, "fast", Geom:new{
+    -- "fast" is A2: two tones, nothing in between. Over plain paper that is
+    -- the point -- the ring is pure black -- but over a wallpaper, a page
+    -- colour or the panel's tint, the chip's own interior is in the refreshed
+    -- rect too, and A2 snaps its greys to black and white until the rebuild
+    -- repaints them (maintainer: "with wallpaper, taps on the shelf bar does
+    -- a flash glitch ... inside the border flashes"). The framebuffer is
+    -- right the whole time; it is the waveform. So A2 only where the strip
+    -- behind the chip is plain black or white, "ui" (greys kept) otherwise.
+    local mode = "fast"
+    if self.painted_ground then
+        local plain = false
+        if self.solid_ground then
+            local ok, lum = pcall(function() return _stripGround():getColor8().a end)
+            plain = ok and (lum == 0xFF or lum == 0x00)
+        end
+        if not plain then mode = "ui" end
+    end
+    UIManager:setDirty(self.show_parent, mode, Geom:new{
         x = self.dimen.x + d.x,          -- cell x, less the outline's border
         y = self.dimen.y,                -- the strip's own top edge
         w = d.w + 2 * b,

@@ -15,6 +15,7 @@ local Focus        = require("lib/bookshelf_focus")
 
 local BookshelfSettings = require("lib/bookshelf_settings_store")
 local BFont        = require("lib/bookshelf_fonts")
+local Space        = require("lib/bookshelf_space")
 
 -- ─── Settings singleton ───────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ Wrap content in [if:foo]…[/if] to show it only when the token has a value. Add
             item_count = function() return #items() end,
             item_at    = function(idx) return items()[idx] end,
             row_renderer = function(item, dimen)
-                local inner_pad = Screen:scaleBySize(12)
+                local inner_pad = Space.px(12)
                 local content_w = dimen.w - 2 * inner_pad - 2 * Size.border.thin
                 local preview = ""
                 if preview_book and item.token and not item.token:match("^%[") then
@@ -250,7 +251,7 @@ Wrap content in [if:foo]…[/if] to show it only when the token has a value. Add
                 local stack = VerticalGroup:new{
                     align = "left",
                     desc_w,
-                    VerticalSpan:new{ width = Screen:scaleBySize(4) },
+                    VerticalSpan:new{ width = Space.px(4) },
                     tok_w,
                 }
                 -- Card-style frame: thin border, rounded corners, white bg.
@@ -258,7 +259,7 @@ Wrap content in [if:foo]…[/if] to show it only when the token has a value. Add
                 -- matches when bookends is installed.
                 local card_frame = FrameContainer:new{
                     bordersize     = Size.border.thin,
-                    radius         = Size.radius.default,
+                    radius         = Space.radius.default,
                     padding        = 0,
                     padding_left   = inner_pad,
                     padding_right  = inner_pad,
@@ -1523,6 +1524,39 @@ function Settings:_wallpaperMenu()
             end,
         },
         {
+            -- Issue 419: pictures kept in a folder of the reader's own.
+            text_func = function()
+                local d = Wallpaper.userDir()
+                local short = d and (d:match("([^/]+/[^/]+)$") or d)
+                return T(_("Wallpaper folder: %1"), short or _("None"))
+            end,
+            help_text = T(_("A folder of your own to take wallpapers from, "
+                .. "listed along with the ones in %1. Useful when you already "
+                .. "keep pictures somewhere else. Nothing in it is changed. "
+                .. "Long-press to stop using it."), Wallpaper.dir() or "?"),
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local PathChooser = require("ui/widget/pathchooser")
+                UIManager:show(PathChooser:new{
+                    title            = _("Choose wallpaper folder"),
+                    path             = Wallpaper.userDir()
+                                       or G_reader_settings:readSetting("home_dir") or "/",
+                    select_directory = true,
+                    select_file      = false,
+                    show_files       = false,
+                    onConfirm        = function(folder)
+                        Wallpaper.setUserDir(folder)
+                        if touchmenu_instance then touchmenu_instance:updateItems() end
+                    end,
+                })
+            end,
+            hold_callback = function(touchmenu_instance)
+                Wallpaper.setUserDir(nil)
+                self:_markDirty()
+                if touchmenu_instance then touchmenu_instance:updateItems() end
+            end,
+        },
+        {
             text_func = function()
                 return T(_("Background color: %1"),
                          self:_colorValueLabel(Wallpaper.BG_SETTING, 0))
@@ -1751,8 +1785,10 @@ function Settings:_wallpaperSubItems(key)
     -- list, and the reader is here to pick a picture first.
     local function folderHint()
         local dir = Wallpaper.dir() or "?"
+        local user = Wallpaper.userDir()
         return {
-            text    = T(_("Images are loaded from %1"), dir),
+            text    = user and T(_("Images are loaded from %1 and %2"), dir, user)
+                           or T(_("Images are loaded from %1"), dir),
             enabled = false,
         }
     end
@@ -1969,27 +2005,25 @@ function Settings:_ornamentsRow()
             local O = orn()
             local dir = (O and O.dir and O.dir()) or "?"
             return T(_("Small pieces that stand in the gaps on a spine shelf. "
-                .. "Drop PNG or SVG files into %1 and they appear there.\n\n"
+                .. "Drop PNG or SVG files into %1 and they appear there; a "
+                .. "folder of them there is a pack, switched on and off as one.\n\n"
+                .. "Tap to browse them, switch them off and on, or delete them. "
                 .. "How often they appear is set per shelf: long-press a shelf "
                 .. "chip, then Shelf style."), dir)
         end,
         keep_menu_open = true,
-        callback = function()
-            -- Required here, as everywhere else in this file: InfoMessage is
-            -- not a module-level upvalue.
-            local InfoMessage = require("ui/widget/infomessage")
-            local O = orn()
-            local dir = (O and O.dir and O.dir()) or "?"
-            local n = 0
-            if O and O.list then
-                local ok, list = pcall(O.list)
-                n = (ok and list) and #list or 0
-            end
-            UIManager:show(InfoMessage:new{
-                text = T(_("%1 ornaments installed.\n\nFolder:\n%2\n\n"
-                    .. "How often they appear is set per shelf, in Shelf style."),
-                    n, dir),
-            })
+        -- Browse, switch off and on, delete; packs are its chips.
+        callback = function(touchmenu_instance)
+            require("lib/bookshelf_ornament_browser").show(function()
+                local bw = self._bw
+                if bw and bw._rebuild then
+                    bw:_rebuild()
+                    UIManager:setDirty(bw, "ui")
+                end
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end)
         end,
     }
 end
@@ -3738,6 +3772,26 @@ function Settings:_behaviourSubItems()
         end,
     }
     items[#items + 1] = {
+        -- Issue 366: for readers who live in full screen and kept landing
+        -- back in the top panel by accident.
+        text = _("Swipe down leaves full screen shelves"),
+        help_text = _("When enabled, swiping down in full screen shelves brings"
+            .. " the top panel back. Turn off to stay in full screen: the"
+            .. " swipe then refreshes the library, as it does with the top"
+            .. " panel showing, and the top panel comes back when you tap the"
+            .. " book icon at the start of the shelf bar, or with a gesture"
+            .. " set to Bookshelf: full screen shelves on or off."),
+        checked_func   = function()
+            return BookshelfSettings.nilOrTrue("expanded_swipe_back")
+        end,
+        keep_menu_open = true,
+        callback = function()
+            BookshelfSettings.save("expanded_swipe_back",
+                not BookshelfSettings.nilOrTrue("expanded_swipe_back"))
+            BookshelfSettings.flush()
+        end,
+    }
+    items[#items + 1] = {
         text = _("Double tap to open books"),
         help_text = _("When enabled, opening a book from the top panel "
             .. "card or from a shelf cover in full screen shelves requires "
@@ -3869,17 +3923,29 @@ function Settings:_librarySubItems()
             end,
         },
         {
-            text      = _("Extract page counts"),
-            help_text = _("Paginate books at the default layout, so spine"
-                .. " thickness reflects their real length whatever font you"
-                .. " read them in, and books you have never opened get a page"
-                .. " count. Each book is rendered in the background; this can"
-                .. " take a while on a large library."),
+            text      = _("Extract page counts\xE2\x80\xA6"),
+            help_text = _("Find page counts for your books, so spines, page"
+                .. " count badges and tokens reflect their length. Publisher page numbers and Hardcover editions"
+                .. " are used where a book has them; the rest are rendered in"
+                .. " the background at your reading settings, which can take a"
+                .. " while on a large library."),
             callback  = function(touchmenu_instance)
                 if touchmenu_instance then
                     UIManager:close(touchmenu_instance)
                 end
-                UIManager:nextTick(function() plugin:scanPageCounts() end)
+                -- Choices first (sources, fill or recount, delete); the
+                -- dialog starts the scan.
+                UIManager:nextTick(function()
+                    require("lib/bookshelf_page_count_dialog").show(
+                        function(opts) plugin:scanPageCounts(opts) end,
+                        function()
+                            local bw = self._bw
+                            if bw and bw._rebuild then
+                                bw:_rebuild()
+                                UIManager:setDirty(bw, "ui")
+                            end
+                        end)
+                end)
             end,
         },
     {
@@ -4065,6 +4131,23 @@ function Settings:_librarySubItems()
             callback = function()
                 local enabled = BookshelfSettings.read("search_include_folders") == true
                 BookshelfSettings.save("search_include_folders", not enabled)
+                BookshelfSettings.flush()
+            end,
+        },
+        {
+            -- Issue 371. On by default, as it always was.
+            text = _("Include genres and tags in search results"),
+            help_text = _("When searching, also match books by their genres"
+                .. " and tags, and list matching genres as results. Turn off"
+                .. " if you search by title, author or series and the genre"
+                .. " matches get in the way."),
+            checked_func   = function()
+                return BookshelfSettings.read("search_include_genres") ~= false
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = BookshelfSettings.read("search_include_genres") ~= false
+                BookshelfSettings.save("search_include_genres", not enabled)
                 BookshelfSettings.flush()
             end,
         },
@@ -5521,7 +5604,7 @@ function Settings:_about()
     -- Inner padding: Size.padding.large (10dp) reads as cramped at this
     -- frame size; the text edges sit ~1mm from the rounded border on
     -- PW5. Scale up to ~24dp -- still snug but visibly breathable.
-    local FRAME_PAD = Screen:scaleBySize(24)
+    local FRAME_PAD = Space.px(24)
     local content_w = frame_w - FRAME_PAD * 2
 
     local column = VerticalGroup:new{ align = "center" }
@@ -5548,7 +5631,7 @@ function Settings:_about()
                 scale_factor = 0,
                 alpha        = true,
             }
-            column[#column + 1] = VerticalSpan:new{ width = Size.padding.default }
+            column[#column + 1] = VerticalSpan:new{ width = Space.padding.default }
         end
     end
 
@@ -5575,7 +5658,7 @@ function Settings:_about()
         local ok_u, Updater = pcall(require, "lib/bookshelf_updater")
         local others = (ok_u and Updater.otherCopies) and Updater.otherCopies() or {}
         if #others > 0 then
-            column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+            column[#column + 1] = VerticalSpan:new{ width = Space.padding.large }
             local warn_face = BFont:getFace("cfont", 14)
             column[#column + 1] = TextBoxWidget:new{
                 text = T(_("Another copy of Bookshelf is installed and is also "
@@ -5587,7 +5670,7 @@ function Settings:_about()
             }
         end
     end
-    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+    column[#column + 1] = VerticalSpan:new{ width = Space.padding.large }
     local desc_face, desc_bold = BFont:getFace("cfont", 16)
     column[#column + 1] = TextBoxWidget:new{
         text      = description,
@@ -5596,7 +5679,7 @@ function Settings:_about()
         width     = content_w,
         alignment = "center",
     }
-    column[#column + 1] = VerticalSpan:new{ width = Size.padding.large }
+    column[#column + 1] = VerticalSpan:new{ width = Space.padding.large }
     -- Tappable URL: tries Device:openLink (works on SDL / Android), then
     -- falls back to copying to KOReader's internal clipboard + a brief
     -- Notification. On Kindle there's no native browser so the
@@ -5638,7 +5721,7 @@ function Settings:_about()
     -- top-heavy in the screenshot. Bottom keeps the full FRAME_PAD so
     -- the URL has the same air the description gets.
     local frame = FrameContainer:new{
-        radius        = Size.radius.window,
+        radius        = Space.radius.window,
         padding       = FRAME_PAD,
         padding_top   = math.floor(FRAME_PAD * 0.5),
         margin        = 0,

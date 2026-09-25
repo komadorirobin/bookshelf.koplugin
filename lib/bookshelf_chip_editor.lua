@@ -16,6 +16,7 @@ local UIManager      = require("ui/uimanager")
 local Geom           = require("ui/geometry")
 local Size           = require("ui/size")
 local Screen         = require("device").screen
+local Space          = require("lib/bookshelf_space")
 
 local TabModel = require("lib/bookshelf_tab_model")
 local ViewMode = require("lib/bookshelf_view_mode")
@@ -66,7 +67,7 @@ local function _highAnchor(get_dialog)
             -- `left + content_w > screen_w` branch, hanging a too-wide dialog
             -- off the LEFT edge (title first) rather than the right.
             x = math.floor((Screen:getWidth() - dw) / 2),
-            y = Screen:scaleBySize(96),
+            y = Space.px(96),
             -- w matches the dialog so a mirrored (RTL) layout, which takes the
             -- other branch (left = x + w - content_w), lands on that same
             -- centred x instead of a dialog's width to the left of it. h stays
@@ -889,7 +890,10 @@ function Editor:editTab(tab_id, opts)
         local source_row = {
             {
                 text_func = function()
-                    return _("Source: ") .. _resolveSourceLabel(draft.source)
+                    -- "grouping" in the label: readers asking how to make a
+                    -- shelf of series or authors did not look for it under
+                    -- "Source" (maintainer).
+                    return _("Source / grouping: ") .. _resolveSourceLabel(draft.source)
                 end,
                 callback = function()
                     Editor:_pickSource(draft, function() applyLivePreview(true); rebuild() end)
@@ -1226,7 +1230,7 @@ function Editor:editTab(tab_id, opts)
             if #row > 0 then non_empty_buttons[#non_empty_buttons + 1] = row end
         end
         local button_table = ButtonTable:new{
-            width   = dialog_w - 2 * Size.padding.default,
+            width   = dialog_w - 2 * Space.padding.default,
             buttons = non_empty_buttons,
             zero_sep = true,
         }
@@ -1275,7 +1279,7 @@ function Editor:editTab(tab_id, opts)
 
     -- Build frame shell once; rebuild() will fill frame[1].
     frame = FrameContainer:new{
-        radius     = Size.radius.window,
+        radius     = Space.radius.window,
         padding    = 0,
         margin     = 0,
         background = Blitbuffer.COLOR_WHITE,
@@ -2616,7 +2620,14 @@ function Editor:_pickSource(draft, on_close)
         return { text = prefix .. label, callback = on_tap }
     end
 
+    -- Two greyed headings split the list in two: shelves of BOOKS, and
+    -- shelves GROUPED into series / author / genre ... tiles, the second being
+    -- what readers looked for and did not find (maintainer).
+    local function heading(label)
+        return { { text = label, enabled = false } }
+    end
     local rows = {
+        heading(_("Books")),
         -- Row 1: the most-reached-for shortcuts — date-based plus the
         -- favourites curated shortcut. Favourites was previously on its
         -- own row but it's the same "curated shortcut" tier as Recent /
@@ -2643,6 +2654,7 @@ function Editor:_pickSource(draft, on_close)
                 function() open_folder_picker("folder_flat") end),
         },
         -- Rows 4+: browse-all on the left, specific-picker on the right
+        heading(_("Grouped")),
         {
             btn("series",    _("Series")),
             specific_btn("single_series", _("Specific series\xE2\x80\xA6"),
@@ -2701,7 +2713,7 @@ function Editor:_pickSource(draft, on_close)
         table.insert(rows, #rows, { btn("kindle", _("Kindle Virtual Library")) })
     end
     d = ButtonDialog:new{
-        title   = _("Shelf source"),
+        title   = _("Shelf source or grouping"),
         buttons = rows,
         anchor  = _highAnchor(function() return d end),
     }
@@ -3167,7 +3179,8 @@ function Editor:_pickSortLevel(draft, level_index, on_close, on_arranged)
         -- numeric/size sorts (file size / page count / stack size) share
         -- the final 3-up row.
         rows = {
-            { key_btn("title"),          key_btn("filename")          },
+            { key_btn("title"),          key_btn("filename"),
+              key_btn("series_or_title") },
             { key_btn("author_surname"), key_btn("author_name")       },
             -- Series name / index / combined ("Series + #") share one row
             -- so the one-tap combined option sits beside the pair it merges.

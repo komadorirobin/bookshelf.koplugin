@@ -24,6 +24,7 @@ reads only the modern "annotations" array, so a legacy-only sidecar surfaces a
 brief notification instead of an empty browser.
 ]]
 local _ = require("lib/bookshelf_i18n").gettext
+local T = require("ffi/util").template
 local Quotes = require("lib/bookshelf_quotes")
 
 local TAP_KEY = "micromodule_quote_of_day_tap" -- "new" | "bookmarks" | "open_book"
@@ -47,41 +48,159 @@ local function posEqual(a, b)
     return true
 end
 
--- Module settings dialog (long-press > "Module settings…"): two radio groups
--- under greyed header rows. Each pick saves, reloads the menu beneath and
--- re-opens the dialog so the checkmark refreshes. Switching refresh mode needs
--- no explicit invalidation -- the shared cache key changes shape.
-local function showSettings(ctx)
+-- Module settings dialog (long-press > "Module settings..."). One row per
+-- setting, each showing its current value and opening a small dialog of its
+-- own: the single flat list this replaced (every choice, then a heading and a
+-- row per highlight colour) ran off the screen at a large DPI, and its "Leave
+-- out" rows did not read as actions (maintainer). Each pick saves, reloads the
+-- menu beneath and re-opens its dialog so the checkmark moves; Back returns
+-- to the main one.
+local NAMES = { red = "Red", orange = "Orange", yellow = "Yellow",
+    green = "Green", olive = "Olive", cyan = "Cyan", blue = "Blue",
+    purple = "Purple", gray = "Gray" }
+local function colourName(c)
+    -- KOReader's own names for its colours, already translated there.
+    local ko_ = require("gettext")
+    return NAMES[c] and ko_(NAMES[c]) or (c:gsub("^%l", string.upper))
+end
+
+-- Where quotes files go, as a path a reader can find: the settings dir can be
+-- relative ("./settings" on a Kindle).
+local function quotesDirShown()
+    local d = Quotes.quotesDirs()[1] or "?"
+    local ok, util = pcall(require, "ffi/util")
+    local base = d:match("^(.*)/bookshelf/quotes$")
+    local real = ok and util.realpath and base and util.realpath(base)
+    return real and (real .. "/bookshelf/quotes") or d
+end
+
+local showSettings
+local function subDialog(ctx, title, build)
     local ButtonDialog = require("ui/widget/buttondialog")
     local UIManager    = require("ui/uimanager")
-    local Store        = require("lib/bookshelf_settings_store")
     local Kit          = require("lib/bookshelf_module_kit")
     local dialog
-    local function radio(label, store_key, read, value)
-        return Kit.radioRow{
-            label = label, active = read() == value,
-            on_pick = function()
-                Store.save(store_key, value)
-                Kit.settingsReopen(ctx, dialog, showSettings)
-            end,
+    local function reopen() Kit.settingsReopen(ctx, dialog, function() subDialog(ctx, title, build) end) end
+    local rows = build(reopen)
+    rows[#rows + 1] = { {
+        text = _("Back"),
+        callback = function() UIManager:close(dialog); showSettings(ctx) end,
+    } }
+    dialog = ButtonDialog:new{ title = title, title_align = "center",
+        width_factor = 0.75, buttons = rows }
+    UIManager:show(dialog)
+end
+
+local function note(text) return { { text = text, enabled = false } } end
+
+local function sourceDialog(ctx)
+    local Kit = require("lib/bookshelf_module_kit")
+    subDialog(ctx, _("Quotes from"), function(reopen)
+        local function r(label, v)
+            return { Kit.radioRow{ label = label, active = Quotes.readSource() == v,
+                on_pick = function() Quotes.setSource(v); reopen() end } }
+        end
+        return {
+            r(_("Your highlights"), "highlights"),
+            r(_("Quotes files"), "files"),
+            r(_("Both"), "both"),
+            note(T(_("Quotes files go in %1"), quotesDirShown())),
         }
+    end)
+end
+
+local function radioDialog(ctx, title, key, read, choices)
+    local Kit   = require("lib/bookshelf_module_kit")
+    local Store = require("lib/bookshelf_settings_store")
+    subDialog(ctx, title, function(reopen)
+        local rows = {}
+        for _i, c in ipairs(choices) do
+            rows[#rows + 1] = { Kit.radioRow{ label = c[1], active = read() == c[2],
+                on_pick = function() Store.save(key, c[2]); reopen() end } }
+        end
+        return rows
+    end)
+end
+
+local function booksDialog(ctx)
+    local Kit = require("lib/bookshelf_module_kit")
+    subDialog(ctx, _("Books left out"), function(reopen)
+        local rows = { note(_("Their highlights are never the quote of the day. Untick one to bring it back.")) }
+        local cur = Quotes.current()
+        if cur and cur.filepath and not Quotes.isBookSkipped(cur.filepath) then
+            rows[#rows + 1] = { {
+                text = T(_("Leave out %1 (today's quote)"), cur.title or "?"),
+                callback = function() Quotes.skipBook(cur.filepath, cur.title); reopen() end,
+            } }
+        end
+        for _i, b in ipairs(Quotes.skippedBooks()) do
+            rows[#rows + 1] = { Kit.radioRow{ label = b.title, active = true, toggle = true,
+                on_pick = function() Quotes.unskipBook(b.fp); reopen() end } }
+        end
+        return rows
+    end)
+end
+
+local function coloursDialog(ctx, colours)
+    local Kit = require("lib/bookshelf_module_kit")
+    subDialog(ctx, _("Highlight colors"), function(reopen)
+        local rows = { note(_("Only ticked colors are used.")) }
+        for _i, c in ipairs(colours) do
+            rows[#rows + 1] = { Kit.radioRow{ label = colourName(c),
+                active = not Quotes.isColorSkipped(c), toggle = true,
+                on_pick = function()
+                    Quotes.setColorSkipped(c, not Quotes.isColorSkipped(c)); reopen()
+                end } }
+        end
+        return rows
+    end)
+end
+
+showSettings = function(ctx)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local UIManager    = require("ui/uimanager")
+    local dialog
+    local function open(fn)
+        return function() UIManager:close(dialog); fn() end
     end
-    local function header(label)
-        return { text = label, enabled = false }
+    local SOURCE = { highlights = _("Your highlights"), files = _("Quotes files"), both = _("Both") }
+    local REFRESH = { daily = _("Once per day"), open = _("Every menu open") }
+    local TAP = { new = _("New quote"), bookmarks = _("Open bookmark list"),
+                  open_book = _("Open book at quote") }
+    local source = Quotes.readSource()
+    local rows = {
+        { { text = T(_("Quotes from: %1"), SOURCE[source]), callback = open(function() sourceDialog(ctx) end) } },
+        { { text = T(_("Refresh: %1"), REFRESH[Quotes.readRefresh()]),
+            callback = open(function()
+                radioDialog(ctx, _("Refresh"), Quotes.REFRESH_KEY, Quotes.readRefresh, {
+                    { _("Once per day"), "daily" }, { _("Every menu open"), "open" } })
+            end) } },
+        { { text = T(_("Tap: %1"), TAP[readTap()]),
+            callback = open(function()
+                radioDialog(ctx, _("Tap action"), TAP_KEY, readTap, {
+                    { _("New quote"), "new" }, { _("Open bookmark list"), "bookmarks" },
+                    { _("Open book at quote"), "open_book" } })
+            end) } },
+    }
+    -- Books and colours only mean anything for highlights (issue 368).
+    if source ~= "files" then
+        rows[#rows + 1] = { { text = T(_("Books left out: %1"), Quotes.skippedBookCount()),
+            callback = open(function() booksDialog(ctx) end) } }
+        local colours = Quotes.coloursInUse()
+        if #colours > 0 then
+            local used = 0
+            for _i, c in ipairs(colours) do if not Quotes.isColorSkipped(c) then used = used + 1 end end
+            local label = used == #colours and _("all")
+                          or T(_("%1 of %2"), used, #colours)
+            rows[#rows + 1] = { { text = T(_("Highlight colors: %1"), label),
+                callback = open(function() coloursDialog(ctx, colours) end) } }
+        end
     end
     dialog = ButtonDialog:new{
         title        = _("Quote of the day"),
         title_align  = "center",
-        width_factor = 0.65,
-        buttons      = {
-            { header(_("Refresh")) },
-            { radio(_("Once per day"), Quotes.REFRESH_KEY, Quotes.readRefresh, "daily") },
-            { radio(_("Every menu open"), Quotes.REFRESH_KEY, Quotes.readRefresh, "open") },
-            { header(_("Tap action")) },
-            { radio(_("New quote"), TAP_KEY, readTap, "new") },
-            { radio(_("Open bookmark list"), TAP_KEY, readTap, "bookmarks") },
-            { radio(_("Open book at quote"), TAP_KEY, readTap, "open_book") },
-        },
+        width_factor = 0.75,
+        buttons      = rows,
     }
     UIManager:show(dialog)
 end
@@ -114,7 +233,8 @@ return {
             -- Muted fallback rather than nil so the card shows a friendly
             -- message instead of the raw module key.
             return TextWidget:new{
-                text = _("No highlights yet"),
+                text = Quotes.readSource() == "highlights" and _("No highlights yet")
+                       or _("No quotes yet"),
                 face = Fonts:getFace("cfont", sc(15)),
                 fgcolor = SM.COLOR_MUTED,
                 max_width = mw,
@@ -123,14 +243,17 @@ return {
         local Kit = require("lib/bookshelf_module_kit")
         local quote_text = "\xE2\x80\x9C" .. q.text .. "\xE2\x80\x9D" -- "…"
 
-        local attribution = "\xE2\x80\x94 " .. q.title -- "— <book title>"
-        if q.author and q.author ~= "" then
-            attribution = attribution .. ", " .. q.author
-        end
+        -- "— <book title>, <author>". A quote from a quotes file may have only
+        -- an author, or neither (issue 258).
+        local parts = {}
+        if q.title and q.title ~= "" then parts[#parts + 1] = q.title end
+        if q.author and q.author ~= "" then parts[#parts + 1] = q.author end
+        local attribution = #parts > 0 and ("\xE2\x80\x94 " .. table.concat(parts, ", ")) or ""
         -- Attribution at the same font size as the quote (size 15), muted,
         -- wraps in a narrow cell so the author still shows.
-        local attr = Kit.fitText{ text = attribution, size = 15, scale_pct = scale_pct,
-            width = mw, fgcolor = Kit.COLOR_MUTED, opts = { italic = true } }
+        local attr = attribution ~= "" and Kit.fitText{ text = attribution, size = 15,
+            scale_pct = scale_pct, width = mw, fgcolor = Kit.COLOR_MUTED,
+            opts = { italic = true } } or nil
         -- In the picker preview, truncate the quote to the room left after the
         -- attribution so it fits the cell on a few lines at a readable size
         -- (issue #183). Everywhere else the quote body reports its NATURAL height
@@ -141,9 +264,10 @@ return {
         -- to the remaining room -- the attribution is the part that must
         -- never be lost to the cell's bottom clip.
         local max_h = ((preview or ctx.clamp) and avail_h and avail_h > 0)
-            and math.max(1, avail_h - attr:getSize().h) or nil
+            and math.max(1, avail_h - (attr and attr:getSize().h or 0)) or nil
         local quote_box = Kit.fitText{ text = quote_text, size = 15, scale_pct = scale_pct,
             width = mw, max_h = max_h }
+        if not attr then return quote_box end
         return VerticalGroup:new{ align = "left", quote_box, attr }
     end,
     show_settings = showSettings,

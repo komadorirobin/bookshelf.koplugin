@@ -20,6 +20,7 @@ local BookshelfSettings = require("lib/bookshelf_settings_store")
 local Blitbuffer     = require("ffi/blitbuffer")
 local Device         = require("device")
 local Screen         = Device.screen
+local Space          = require("lib/bookshelf_space")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
@@ -503,6 +504,9 @@ end
 -- entry stores the sidecar's mtime and is validated against it once per
 -- session; a mismatch clears the entry so the next plan re-reads the truth.
 local _progress_validated = {}
+-- Opened books whose sidecar has been checked for its own page numbers this
+-- session (see the spine plan's thickness block).
+local _stable_checked = {}
 
 local function _sidecarMtime(fp)
     local ok, m = pcall(function()
@@ -540,8 +544,19 @@ end
 --
 -- src says where `pages` came from, and the spine's THICKNESS reads it
 -- (issue 387, see thicknessPages):
---   "scan"    the page-count scan: a publisher page list, Hardcover, or a
---             headless render at the default layout -- font-independent
+--   "print"   the page-count scan's publisher page list or Hardcover edition:
+--             the printed book's pages
+--   "calibre" the page-count scan's copy of a Calibre custom column (issue
+--             405), such as the Count Pages plugin's #pages
+--   "filename" the page-count scan's copy of a p(N) marker in the file name,
+--             when the reader kept file names among its sources
+--   "user"    the page-count scan's headless render at the reader's own
+--             global layout (lib/bookshelf_reader_layout): close to the count
+--             the reader will show, so it is shown
+--   "layout"  an older scan's render at crengine's built-in font, margins
+--             and full screen: 3-4x short of the reader's count, and not
+--             print scale either. Spine widths only, never SHOWN
+--   "scan"    any of the scan's counts, stored before they were told apart
 --   "stable"  the sidecar's stable page numbers, or a p(N) filename marker
 --   "render"  the sidecar's stats.pages: KOReader's count at the reader's
 --             OWN font and margins, which is why the same book changed width
@@ -549,12 +564,23 @@ end
 -- A rendered count never overwrites a scanned one: the plan persists what
 -- readProgress answers for every book it shows, and that used to replace the
 -- scan's layout-free count with the font-dependent one on first sight.
+local SCAN_TAGS  = { print = true, user = true, calibre = true, filename = true,
+                     layout = true, scan = true }
+local SHOWN_TAGS = { print = true, user = true, calibre = true, filename = true,
+                     stable = true, render = true }
+SpineShelf.SCAN_TAGS = SCAN_TAGS
+
 function SpineShelf.persistProgress(fp, pages, status, src)
     if not fp then return end
     local F = _facts()
     if not F then return end
     local e = F.get(fp)
-    local keep_scan = e and e.psrc == "scan" and e.p and src ~= "scan"
+    -- ...except by the book's own page numbers ("stable"): layout-free, so
+    -- better than any scan, and the count the book shows everywhere. Kept
+    -- behind a scan's count, a book showing its 406 printed pages stood on
+    -- the shelf at the width of its 1272-page render.
+    local keep_scan = e and SCAN_TAGS[e.psrc] and e.p and not SCAN_TAGS[src]
+                      and src ~= "stable"
     F.put(fp, {
         p    = (not keep_scan) and pages or nil,
         psrc = (not keep_scan) and pages and src or nil,
@@ -563,6 +589,32 @@ function SpineShelf.persistProgress(fp, pages, status, src)
         m    = _sidecarMtime(fp),
     })
     _progress_validated[fp] = true
+end
+
+-- persistPages(fp, pages, src) -- a page-count scan's answer, and nothing else.
+-- persistProgress also records the book's read status, which the scan had to
+-- open every book's sidecar to learn: seconds of main-process work over a
+-- library, while the shelf waited. The status is the plan's to record when it
+-- shows the book; the scan only knows a count.
+function SpineShelf.persistPages(fp, pages, src)
+    if not fp or not pages then return end
+    local F = _facts()
+    if not F then return end
+    F.put(fp, { p = pages, psrc = src })
+end
+
+-- shownPages(fp) -> the stored count, when it is one to show as the book's
+-- page count; nil otherwise.
+-- Reddit report: "page counts extracted by Bookshelf are way off, like a
+-- factor of 4". They were renders at crengine's defaults ("layout"), served
+-- everywhere a page count is read (%page_count, badges, sort) as though they
+-- were the book's. A legacy "scan" could be one, and an untagged count from
+-- before the tags could be anything, so none of those is shown; the next
+-- scan counts those books again.
+function SpineShelf.shownPages(fp)
+    local pp, _s, _k, psrc = SpineShelf.cachedProgress(fp)
+    if pp and SHOWN_TAGS[psrc] then return pp end
+    return nil
 end
 
 -- thicknessPages(c) -> the page count a spine's WIDTH is drawn from.
@@ -583,7 +635,7 @@ end
 -- The %pages token and the hero keep the reading count: that is the number
 -- of pages the reader actually turns. This is only the spine's width.
 function SpineShelf.thicknessPages(c)
-    return c.filename or c.stable or c.scan or c.bim or c.rendered
+    return c.stable or c.scan or c.filename or c.bim or c.rendered
 end
 
 local function _sampleAverage(bb)
@@ -1380,7 +1432,7 @@ local function _paintVerticalCJK(bb, x, y, run_len, band_w, text, face_size, loo
     -- Inset: leave a 1pt-scaled gap on each side, both to clear the hairline
     -- border (drawn on x and x+spine_w-1) and because a large glyph kissing
     -- the edge looks bad. All horizontal math below uses this net width.
-    local inset = math.max(1, Screen:scaleBySize(1))
+    local inset = math.max(1, Space.px(1))
     local bw = band_w - 2 * inset
     if bw < 6 then inset, bw = 0, band_w end
 
@@ -1490,7 +1542,7 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
             local used = _paintVerticalCJK(bb, x, y, run_len, band_w,
                                            text, face_size, look, night)
             if author and author ~= "" and used > 0 then
-                local gap = Screen:scaleBySize(10)
+                local gap = Space.px(10)
                 local rem = run_len - used - gap
                 if rem >= Screen:scaleBySize(20) and _isCJKText(author) then
                     local asize = math.max(6, face_size - 3)
@@ -1573,7 +1625,7 @@ local function _paintRotatedTitle(bb, x, y, run_len, band_w, text, face_size, lo
         -- worthwhile stretch of spine to sit on. On a wrapped title, after
         -- its last line.
         local atw, asz, author_w = nil, nil, 0
-        local seg_gap = Screen:scaleBySize(10)
+        local seg_gap = Space.px(10)
         if author and author ~= "" then
             local avail = run_len - last_w - seg_gap
             if avail >= Screen:scaleBySize(28) then
@@ -2127,7 +2179,7 @@ function SpineBookSlot:_renderIntoAt(bb, x, y, night)
             bb:paintRectRGB32(sx0 + sw_edge - hairline, jy, hairline, hairline, bc)
         end
     end
-    local pad = Screen:scaleBySize(3)
+    local pad = Space.px(3)
     local cur_top = body_top + pad
     local bottom = top + spine_h - pad
 
@@ -2410,8 +2462,8 @@ function ShelfBadges:drawAt(bb, x, y)
     local ok_sd, StackDisplay = pcall(require, "lib/bookshelf_stack_display")
     if not (ok_sd and StackDisplay and StackDisplay.ribbonColors) then return end
     local fill, fg = StackDisplay.ribbonColors()
-    local pad_x = Screen:scaleBySize(5)
-    local pad_y = Screen:scaleBySize(2)
+    local pad_x = Space.px(5)
+    local pad_y = Space.px(2)
     -- Sized from the TEXT, not the plank: the plank zone alone is too
     -- shallow for a legible label on dense shelves, and a real acrylic
     -- badge covers the books' feet anyway -- it hangs in FRONT of them.
@@ -2436,7 +2488,7 @@ function ShelfBadges:drawAt(bb, x, y)
                 local nxt = spans[_i + 1]
                 local wall = (nxt and nxt.x or (self.dimen.w
                               - SpineShelf.endMargin(h))) - s.x
-                              - Screen:scaleBySize(2)
+                              - Space.px(2)
                 local allow = math.max(s.w,
                     math.min(wall, s.w + Screen:scaleBySize(30)))
                 -- Below ~9 characters of room the badge is pure noise
@@ -2561,7 +2613,7 @@ function SpineShelf.badgeDrop(row_h)
         if not ok or not text_h then text_h = math.floor(size * 1.9) end
         SpineShelf._badge_text_h[size] = text_h
     end
-    local pad_y = Screen:scaleBySize(2)
+    local pad_y = Space.px(2)
     local drop  = text_h + 2 * pad_y - SpineShelf.plankFace(row_h) - 2
     return math.max(0, drop)
 end
@@ -3311,15 +3363,27 @@ function SpineShelf.plan(items, opts)
             local pp, ps, known, psrc, opened = SpineShelf.cachedProgress(src.filepath)
             if pp then
                 if psrc == "stable" then thick.stable = pp
-                elseif psrc == "scan" then thick.scan = pp
+                elseif SCAN_TAGS[psrc] then thick.scan = pp
                 -- Untagged, from before the tags: a book with no sidecar can
                 -- only have had it from the scan or its filename.
                 elseif psrc == nil and not opened then thick.scan = pp
                 end
+                -- Only a count fit to show goes on the record; a layout
+                -- render sets the width and nothing else (shownPages).
+                if SHOWN_TAGS[psrc] then pages = pages or pp end
             end
-            pages = pages or pp
             if src.status == nil and ps then src.status = ps end
-            if (not pages or not known) and src.filepath
+            -- A width-only count still answers "is anything known": without
+            -- it every layout-scanned book would open its sidecar on every
+            -- plan, for a count the sidecar does not have.
+            -- An OPENED book with only a scan's count may have its own page
+            -- numbers in its sidecar since, which beat the scan for width
+            -- (see thicknessPages); look once a session, and a stable count
+            -- found replaces the scan's in the store.
+            local check_stable = thick.scan and opened and psrc ~= "stable"
+                                 and not _stable_checked[src.filepath]
+            if check_stable then _stable_checked[src.filepath] = true end
+            if (not (pages or thick.scan) or not known or check_stable) and src.filepath
                     and ok_repo and Repo and Repo.readProgress then
                 local _tp = _gettime()
                 pcall(function()
@@ -3335,15 +3399,19 @@ function SpineShelf.plan(items, opts)
                         src._page_src = pc_src or "render"
                     end
                     if src.status == nil then src.status = st end
-                    if pc and (pc_src == "stable" or pc_src == "filename") then
+                    if pc and pc_src == "stable" then
                         thick.stable = thick.stable or pc
                     end
                     -- A count the store itself supplied goes back unchanged
-                    -- (nil leaves it alone), keeping its tag.
-                    local tag = (pc_src == "stable" or pc_src == "filename") and "stable"
+                    -- (nil leaves it alone), keeping its tag. So does a
+                    -- filename marker's, which is free to read again: stored
+                    -- as "stable" it passed for the book's own page numbers,
+                    -- and a scan skipped the book as already counted.
+                    local tag = (pc_src == "stable" and "stable")
                                 or (pc_src == "render" and "render") or nil
+                    local keep = pc_src ~= "store" and pc_src ~= "filename"
                     SpineShelf.persistProgress(src.filepath,
-                        pc_src ~= "store" and pc or nil, st, tag)
+                        keep and pc or nil, st, tag)
                 end)
                 _t_pages = _t_pages + (_gettime() - _tp)
             end
@@ -3484,7 +3552,7 @@ function SpineShelf.plan(items, opts)
             local prev   = flat[j - 1]
             local prev_e = entries[#entries]
             local prev_face = prev_e and prev_e.face_out
-            local face_gap  = Screen:scaleBySize(SpineShelf.FACE_GAP_DP)
+            local face_gap  = Space.px(SpineShelf.FACE_GAP_DP)
             if prev.run_idx == f.run_idx then
                 -- Same run: tight, unless BOTH neighbours are covers
                 -- (the "All books" wall) -- covers need air.
@@ -4055,7 +4123,7 @@ function SpineShelf.rowWidget(opts)
                         is_bulk_selected = is_bulk,
                         -- No frame around a face-out on this shelf, so the
                         -- bulk flag keeps its circle off the card's edges.
-                        bulk_flag_inset  = Screen:scaleBySize(4),
+                        bulk_flag_inset  = Space.px(4),
                         -- The status glyphs' below-card dangle vanished
                         -- behind the lift shadow / plank here; they move to
                         -- the corner the heart vacated (user ruling).

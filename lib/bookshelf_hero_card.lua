@@ -22,6 +22,7 @@ local TextWidget      = require("ui/widget/textwidget")
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local Size            = require("ui/size")
+local Space           = require("lib/bookshelf_space")
 local Font            = require("ui/font")
 local logger          = require("logger")
 local _gettime        = require("lib/bookshelf_gettime")
@@ -222,7 +223,7 @@ function HeroCard:_renderEmpty()
                 text      = "Welcome to Bookshelf · Tap a cover to start reading",
                 face      = fontFace("infofont", 14),
                 fgcolor   = _ink(),
-                width     = self.width - Size.padding.large * 2,
+                width     = self.width - Space.padding.large * 2,
                 alignment = "center",
             },
         },
@@ -382,9 +383,101 @@ local buildLine
 -- the status text. Normal-mode hero passes default; collapsed-mode strip
 -- passes false because the chip strip below it serves the same separator
 -- role and doubling up reads as visual noise.
-function HeroCard.buildStatusRow(book, state, width, with_hairline)
+-- buildJobRow(region, width) -> the status line's stand-in while a
+-- background job runs (lib/bookshelf_scan_progress), or nil when none is:
+-- what it is doing, a bar, and Stop. One height whatever the text, so each
+-- progress tick swaps the strip in place. Drawn in the status region's face
+-- and the shelf's ink, and the bar is the %bar token's own, so it follows the
+-- reader's bar style and colours on every theme.
+function HeroCard.buildJobRow(region, width)
+    local ok_p, Progress = pcall(require, "lib/bookshelf_scan_progress")
+    local job = ok_p and Progress.active() and Progress.job()
+    if not job then return nil end
+    region = region or {}
+    local face = regionFace(region)
+    local ink  = _ink() or Blitbuffer.COLOR_BLACK
+    local gap  = Space.padding.large
+    local _    = require("lib/bookshelf_i18n").gettext
+    -- Filled with the ink and lettered in the panel's own ground (black on
+    -- white by day, flipped on a dark shelf), so it stands out in the line.
+    -- A size down from the line's text, so the filled box sits inside the
+    -- row's height rather than pressing on the hairline below.
+    local paper = Blitbuffer.COLOR_WHITE
+    local ok_cp, CP = pcall(require, "lib/bookshelf_cover_progress")
+    if ok_cp and CP and CP.resolvedColors then
+        local ok_c, colors = pcall(CP.resolvedColors)
+        if ok_c and colors and colors.panel_bg then paper = colors.panel_bg end
+    end
+    local label_size = math.max(8, math.floor((region.font_size or 14) * 0.85 + 0.5))
+    local label = TextWidget:new{
+        text = _("Stop"),
+        face = fontFace(region.font_face, label_size, false),
+        fgcolor = paper,
+        bold = true,
+    }
+    local stop_frame = FrameContainer:new{
+        bordersize = 0,
+        radius     = Space.radius.button,
+        padding    = 0,
+        padding_top    = Space.padding.tiny,
+        padding_bottom = Space.padding.tiny,
+        padding_left   = Space.padding.large,
+        padding_right  = Space.padding.large,
+        margin     = 0,
+        background = ink,
+        label,
+    }
+    local stop = InputContainer:new{
+        dimen = Geom:new{ w = stop_frame:getSize().w, h = stop_frame:getSize().h },
+        stop_frame,
+    }
+    stop.ges_events = { Tap = { GestureRange:new{ ges = "tap", range = stop.dimen } } }
+    function stop:onTap()
+        Progress.stop()
+        return true
+    end
+    local stop_w = stop.dimen.w
+    local bar_w  = math.floor(width * 0.28)
+    local text_w = math.max(0, width - bar_w - stop_w - 2 * gap)
+    local text = job.title or ""
+    local icon = Progress.icon and Progress.icon()
+    if icon then text = icon .. " " .. text end
+    if job.detail and job.detail ~= "" then text = text .. "  \xC2\xB7  " .. job.detail end
+    local text_widget = _buildSegmentedInline(text, face, region.bold or false, text_w, false)
+    local bar = buildLine("%bar", region, bar_w, { book_pct = job.fraction or 0 }, nil, true)
+    local h = math.max(text_widget:getSize().h, bar:getSize().h, stop.dimen.h)
+    local function cell(w, widget)
+        return LeftContainer:new{ dimen = Geom:new{ w = w, h = h }, widget }
+    end
+    -- Air under the row, so the Stop box does not sit on the hairline below.
+    return VerticalGroup:new{ align = "left", HorizontalGroup:new{
+        align = "center",
+        cell(text_w, text_widget),
+        HorizontalSpan:new{ width = gap },
+        CenterContainer:new{ dimen = Geom:new{ w = bar_w, h = h }, bar },
+        HorizontalSpan:new{ width = gap },
+        CenterContainer:new{ dimen = Geom:new{ w = stop_w, h = h }, stop },
+    }, VerticalSpan:new{ width = Space.padding.default } }
+end
+
+-- allow_job (5th): shelf surfaces pass true, so a running background job's
+-- progress takes the line's place (shown even when the line is switched
+-- off). The reader's copy of the line (bookshelf_reader_status) does not.
+function HeroCard.buildStatusRow(book, state, width, with_hairline, allow_job)
     if with_hairline == nil then with_hairline = true end
     local regions = Regions.read()
+    local job_row = allow_job and HeroCard.buildJobRow(regions.status, width)
+    if job_row then
+        local vg = VerticalGroup:new{ align = "left", job_row }
+        if with_hairline then
+            vg[#vg + 1] = LineWidget:new{
+                dimen      = Geom:new{ w = width, h = Size.line.medium },
+                background = Blitbuffer.gray(0.4),
+            }
+            vg[#vg + 1] = VerticalSpan:new{ width = Space.padding.default }
+        end
+        return vg
+    end
     if not regions.status or regions.status.disabled then return nil end
     if not book then return nil end
     -- This is the FULL-WIDTH status line (micro-module hero + full-screen
@@ -403,7 +496,7 @@ function HeroCard.buildStatusRow(book, state, width, with_hairline)
             dimen      = Geom:new{ w = width, h = Size.line.medium },
             background = Blitbuffer.gray(0.4),
         }
-        vg[#vg + 1] = VerticalSpan:new{ width = Size.padding.default }
+        vg[#vg + 1] = VerticalSpan:new{ width = Space.padding.default }
     end
     return vg
 end
@@ -512,8 +605,8 @@ buildLine = function(expanded, region, width, book, max_height, single_line)
     -- %spacer the elastic widget IS the gap -- adding padding around it
     -- would just shift the right text inward by a few pixels.
     local apply_gap  = (kind == "bar")
-    local before_gap = (apply_gap and b_widget and not before:match("%s$")) and Size.padding.small or 0
-    local after_gap  = (apply_gap and a_widget and not after:match("^%s"))  and Size.padding.small or 0
+    local before_gap = (apply_gap and b_widget and not before:match("%s$")) and Space.padding.small or 0
+    local after_gap  = (apply_gap and a_widget and not after:match("^%s"))  and Space.padding.small or 0
 
     -- #170: a %spacer line must stay on ONE line within `width`. When the two
     -- sides together overflow, the centred HorizontalGroup renders at its
@@ -524,7 +617,7 @@ buildLine = function(expanded, region, width, book, max_height, single_line)
         -- Reserve a little separation so a truncated line reads
         -- "4:27 PM   …right", not "4:27 PM…right" -- the leftover becomes the
         -- elastic span (gap) between the two sides.
-        local trunc_gap = Size.padding.large
+        local trunc_gap = Space.padding.large
         if a_widget and (b_w + trunc_gap) < width then
             -- truncate_left: the after-spacer side is right-aligned, so keep its
             -- right-anchored tail and put the ellipsis by the spacer (issue #170).
@@ -661,7 +754,18 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- scope the e-ink refresh footprint on minute-tick / frontlight /
     -- charging / wifi events to just this strip.
     self._status_strip_widgets = nil
-    if not regions.status.disabled then
+    local job_row = HeroCard.buildJobRow(regions.status, right_w)
+    if job_row then
+        local hairline_widget = LineWidget:new{
+            dimen      = Geom:new{ w = right_w, h = Size.line.medium },
+            background = Blitbuffer.gray(0.4),
+        }
+        local gap_widget = VerticalSpan:new{ width = Space.padding.default }
+        right_top[#right_top + 1] = job_row
+        right_top[#right_top + 1] = hairline_widget
+        right_top[#right_top + 1] = gap_widget
+        self._status_strip_widgets = { job_row, hairline_widget, gap_widget }
+    elseif not regions.status.disabled then
         local status_text = Tokens.expand(regions.status.template, book, state)
         status_text = stripStyleTags(status_text)
         if not Tokens.isEmpty(status_text) then
@@ -670,7 +774,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 dimen      = Geom:new{ w = right_w, h = Size.line.medium },
                 background = Blitbuffer.gray(0.4),
             }
-            local gap_widget = VerticalSpan:new{ width = Size.padding.default }
+            local gap_widget = VerticalSpan:new{ width = Space.padding.default }
             right_top[#right_top + 1] = status_widget
             right_top[#right_top + 1] = hairline_widget
             right_top[#right_top + 1] = gap_widget
@@ -733,7 +837,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
             local star_size = regions.rating.font_size or 16
             local face      = fontFace(nil, hardcover_mode and star_size
                 or math.floor(star_size * 1.25 + 0.5))
-            local gap       = Screen:scaleBySize(4)
+            local gap       = Space.px(4)
             local row       = HorizontalGroup:new{ align = "center" }
             local hero_self = self
             for i = 1, 5 do
@@ -897,7 +1001,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 subtitle_h = subtitle_size and subtitle_size.h or 0
             end
             local reserve = subtitle_h + regionLineH(regions.author)
-                + regionLineH(regions.metadata) + Size.padding.default * 2
+                + regionLineH(regions.metadata) + Space.padding.default * 2
             local max_title_h = math.max(math.floor(title_lh),
                 cover_h - top_used - reserve)
             right_top[#right_top + 1] =
@@ -982,7 +1086,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 -- A little extra breathing room than the usual default gap so
                 -- the pills don't crowd the progress line below them.
                 right_bottom[#right_bottom + 1] = VerticalSpan:new{
-                    width = Size.padding.default + Screen:scaleBySize(4),
+                    width = Space.padding.default + Space.px(4),
                 }
                 tags_n = 2  -- the AlignContainer + the gap span above
             end
@@ -1036,7 +1140,7 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     -- other. Title/subtitle/author/metadata are kept; the description, added next,
     -- budgets itself against whatever bottom block survives.
     do
-        local breath = Size.padding.default
+        local breath = Space.padding.default
         -- Sum child heights directly rather than calling the GROUP's getSize():
         -- the group caches per-child paint offsets on getSize(), and the
         -- description is appended to right_top AFTER this, so a premature group
@@ -1083,14 +1187,14 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         desc_text = desc_text:match("^%s*(.-)%s*$") or desc_text
     end
     if not Tokens.isEmpty(desc_text) then
-        right_top[#right_top + 1] = VerticalSpan:new{ width = Size.padding.default }
+        right_top[#right_top + 1] = VerticalSpan:new{ width = Space.padding.default }
         local top_used = 0
         for i = 1, #right_top do
             local g = right_top[i]:getSize()
             top_used = top_used + (g and g.h or 0)
         end
         local bottom_h = right_bottom:getSize().h
-        local breath   = Size.padding.default
+        local breath   = Space.padding.default
         local available = cover_h - top_used - bottom_h - breath
         local desc_face  = regionFace(regions.description)
         -- The gate is ONE LINE of the description's own face, not a fixed
@@ -1239,7 +1343,9 @@ function HeroCard:_renderFull()
     -- ran round the top, left and part of the sides, and stopped at the bottom
     -- edge. Costs the cover another SHADOW_OFFSET in each dimension, which is
     -- the price of a ring that closes.
-    local SHADOW_OFFSET = Screen:scaleBySize(4)
+    -- Space: a drop shadow should not grow with a DPI override. Mirrors
+    -- bookshelf_spine_widget's SHADOW_OFFSET.
+    local SHADOW_OFFSET = Space.px(4)
 
     -- True-aspect: render the hero cover at the book's OWN aspect, TOP-anchored
     -- within the fixed-height region, WITHOUT shrinking ordinary covers.
@@ -1312,7 +1418,7 @@ function HeroCard:_renderFull()
     }
     local _perf_cover_ms = (_gettime() - _perf_cover_t0) * 1000
 
-    local text_padding = self.pad or Size.padding.fullscreen
+    local text_padding = self.pad or Space.padding.fullscreen
     -- #87 belt-and-braces: floor at 1 so a too-wide cover (from any caller)
     -- can never hand the right-column TextWidgets a max_width <= 0, which
     -- aborts makeLine natively. The real fix caps cover_w upstream in

@@ -38,6 +38,8 @@ local store = {
     flush = function() end,
 }
 local Screen = { night_mode = false, scaleBySize = function(_, n) return n end }
+package.loaded["device"] = { screen = Screen }
+local Space = require("lib/bookshelf_space")
 local palette = { panel_bg = "paper", ink = "ink" }
 local function dependency(name)
     if name == "lib/bookshelf_wallpaper" then return W end
@@ -46,7 +48,7 @@ local function dependency(name)
     end
     error("Unexpected require: " .. name)
 end
-local common = { BookshelfSettings = store, Screen = Screen, require = dependency }
+local common = { BookshelfSettings = store, Screen = Screen, Space = Space, require = dependency }
 setmetatable(common, { __index = _G })
 local function reset()
     stored = { [W.SCRIM_SETTING] = 0.85, [W.BUTTONS_SETTING] = false }
@@ -141,6 +143,7 @@ local buildFullscreenPanel = compile("return function(self)\n"
 local settings_src = read("lib/bookshelf_settings.lua")
 local settings_env = setmetatable({
     Settings = {}, _ = function(s) return s end,
+    T = function(s, value) return (s:gsub("%%1", function() return tostring(value) end)) end,
     UIManager = { setDirty = function(_, _, mode) repaints[#repaints + 1] = mode end },
 }, { __index = common })
 compile(method(settings_src, "Settings", "_wallpaperMenu") .. "\n"
@@ -162,7 +165,7 @@ t.test("default preserves the title plate, footer panel and upper chrome", funct
     eq(width, 110); eq(bare, false)
     local w = shelf()
     eq(w:wallpaperScrimStrength(), 0.85)
-    eq({ w:footerPanelRect() }, { 16, 1488, 1232, 60, 8, 0.85, "paper" })
+    eq({ w:footerPanelRect() }, { 16, 1488, 1232, 60, 7, 0.85, "paper" })
 end)
 
 t.test("the opt-in removes the actual title plate, not the text", function()
@@ -179,7 +182,7 @@ t.test("the opt-in removes only the footer from the shared ground state", functi
     assert(w:footerPanelRect())
     store.save(KEY, true)
     eq(w:footerPanelRect(), nil, "setting generation must invalidate the footer memo")
-    eq({ w:footerPanelRect(true) }, { 16, 1488, 1232, 0, 8, 0.85, "paper" },
+    eq({ w:footerPanelRect(true) }, { 16, 1488, 1232, 0, 7, 0.85, "paper" },
         "shared panels keep the footer boundary, not its fill")
     eq(w:wallpaperScrimStrength(), 0.85, "hero and chip shading must stay on")
     eq(W.transparentButtons(store.read), false, "chip/button backgrounds stay unchanged")

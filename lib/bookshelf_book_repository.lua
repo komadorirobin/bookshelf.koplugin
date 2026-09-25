@@ -1264,6 +1264,21 @@ function Repo.buildBookMeta(filepath, opts)
     local info
     if not want_cover and _batchInfoFor then
         info = _batchInfoFor(filepath)
+        -- The batched rows are a snapshot, and once the session's background
+        -- refresh has run they stay as they were for the rest of it. A row
+        -- captured before the book's cover was extracted says "no cover"
+        -- (a text-only "Scan library metadata" leaves exactly that row), and
+        -- a record built from it gets has_cover = nil, which SpineWidget
+        -- draws as the placeholder. It surfaced as covers that come back on
+        -- Refresh metadata and vanish on the next page (issue 451): the first
+        -- draw is a live read, which fills the cover cache, and a cached
+        -- cover is what sends every later draw here. A cached cover is proof
+        -- the row is out of date, so ask BIM itself. Books that really have
+        -- no cover have nothing cached and stay on the fast path.
+        if info and info.has_cover ~= "Y" then
+            local ok_scc, SCC = pcall(require, "lib/bookshelf_scaled_cover_cache")
+            if ok_scc and SCC and SCC.has and SCC:has(filepath) then info = nil end
+        end
     end
     if not info then
         info = _bimGetBookInfo(bim, filepath, want_cover) or {}
@@ -1717,6 +1732,46 @@ end
 -- as their own (free) category before probing anything heavier.
 Repo.pageCountFromFilename = pageCountFromFilename
 
+-- Issue 405: a page count from a Calibre custom column, for the page-count
+-- scan. The Count Pages plugin for Calibre fills one in (usually #pages), and
+-- a reader who already keeps it may prefer it to the scan's own render.
+--
+-- calibrePageColumn() -> the column's lookup name (lowercased, no '#') and how
+-- many books carry a number in it, or nil when there is none -- including when
+-- the Calibre metadata setting is off, since nothing is read then. "pages" wins
+-- when present; otherwise the column whose name has "page" in it that the most
+-- books fill. Map lookups only: the Calibre file is already parsed and cached.
+function Repo.calibrePageColumn()
+    if BookshelfSettings.read("calibre_metadata") ~= true then return nil end
+    local counts = {}
+    for _i, fp in ipairs(Repo.getAllFilepaths()) do
+        local fields = CalibreMeta.fieldsFor(fp, true)
+        if fields then
+            for key, v in pairs(fields) do
+                if key:find("page", 1, true) and tonumber(v) and tonumber(v) > 0 then
+                    counts[key] = (counts[key] or 0) + 1
+                end
+            end
+        end
+    end
+    if counts.pages then return "pages", counts.pages end
+    local best, n = nil, 0
+    for key, c in pairs(counts) do
+        if c > n or (c == n and best and key < best) then best, n = key, c end
+    end
+    if best then return best, n end
+    return nil
+end
+
+-- calibrePagesFor(filepath, column) -> that book's count in the column, or nil.
+function Repo.calibrePagesFor(filepath, column)
+    if type(column) ~= "string" then return nil end
+    local fields = CalibreMeta.fieldsFor(filepath, BookshelfSettings.read("calibre_metadata"))
+    local n = fields and tonumber(fields[column])
+    if n and n > 0 then return math.floor(n + 0.5) end
+    return nil
+end
+
 -- _scannedPageCount(filepath) -> the count the "Extract page counts" scan
 -- found for this book, or nil.
 --
@@ -1729,7 +1784,8 @@ Repo.pageCountFromFilename = pageCountFromFilename
 -- pages" has to look there. Without this the scan showed up in the spine
 -- widths, which read the store directly, and nowhere else -- device report:
 -- "our page count scan worked for book spine width but doesn't populate the
--- page_count token".
+-- page_count token". Only the counts fit to show, though: a layout render is
+-- a spine-width scale, not the book's length (SpineShelf.shownPages).
 --
 -- Required lazily: the shelf module requires this one back, and a load-time
 -- pair would be a cycle. By the time anything asks for a page count both are
@@ -1739,10 +1795,10 @@ local function _scannedPageCount(filepath)
     if not filepath then return nil end
     local ok, SpineShelf = pcall(require, "lib/bookshelf_spine_shelf")
     if not ok or type(SpineShelf) ~= "table"
-            or type(SpineShelf.cachedProgress) ~= "function" then
+            or type(SpineShelf.shownPages) ~= "function" then
         return nil
     end
-    local ok2, pages = pcall(SpineShelf.cachedProgress, filepath)
+    local ok2, pages = pcall(SpineShelf.shownPages, filepath)
     return ok2 and tonumber(pages) or nil
 end
 
@@ -1753,9 +1809,15 @@ end
 -- when it is a real number. After it come the two sources that need no file
 -- open and no database read:
 --
---   1. a p(<n>) marker in the filename (#159), free and explicit
---   2. the "Extract page counts" scan's store, which holds an ESTIMATE for
---      most books (see _scannedPageCount)
+--   1. the "Extract page counts" scan's store (see _scannedPageCount)
+--   2. a p(<n>) marker in the filename (#159), free
+--
+-- The store comes first: a scan's count is one the reader chose to have,
+-- from sources they picked -- and a marker is often Calibre's estimate, which
+-- a reader who ran the scan with "file names" unticked meant to replace
+-- (maintainer: "for someone who has that in their filenames, they might want
+-- to override it"). A scan that does use file names stores the marker's own
+-- number, so nothing changes for those who keep it.
 --
 -- Every consumer asks the same question and each had grown its own ending:
 -- the hero's had both rungs, the lazy resolver's sidecar branch had only the
@@ -1764,7 +1826,7 @@ end
 function Repo.pageCountFor(filepath, known)
     known = tonumber(known)
     if known and known > 0 then return known end
-    return pageCountFromFilename(filepath) or _scannedPageCount(filepath)
+    return _scannedPageCount(filepath) or pageCountFromFilename(filepath)
 end
 
 
@@ -1920,8 +1982,7 @@ function Repo.buildBook(filepath, opts)
     -- rung long before the division.
     -- And the same page_src readProgress would report for it.
     if not ds_page_src and fallback_page_count then
-        ds_page_src = (pageCountFromFilename(filepath) == fallback_page_count)
-                      and "filename" or "store"
+        ds_page_src = _scannedPageCount(filepath) and "store" or "filename"
     end
     _writeProgressCache(filepath, tonumber(book.book_pct), book.status,
                         book.rating, fallback_page_count, book.page_num, ds_page_src)
@@ -2625,6 +2686,8 @@ local function _resetLightMetaProgress(rec)
 end
 
 function Repo.invalidateProgressCache(filepath)
+    -- The Pages sort remembers the counts it looked up.
+    if SortEngine.clearPageCountMemo then SortEngine.clearPageCountMemo() end
     -- A status change is exactly what makes the stored finished count wrong.
     _finished_count.value = nil
     _dropFinishedCount()
@@ -2762,16 +2825,17 @@ function Repo.readProgress(filepath)
         end
     end
     -- Bookshelf's own persisted page-count store: the bulk scanner's
-    -- answers for never-opened books (publisher page lists, Hardcover
-    -- links, headless renders), kept OUT of sidecars because creating one
+    -- answers for never-opened books (publisher page lists and Hardcover
+    -- links; never its headless renders, which only set spine widths --
+    -- see SpineShelf.shownPages), kept OUT of sidecars because creating one
     -- marks a book as opened in stock KOReader. Served here so EVERY
     -- consumer of readProgress -- %pages, %bar{rel}, list lines, sort
     -- keys -- sees them, not just spine widths. Above the filename guess:
     -- a scanned count is real, the filename one is folklore.
     if not page_count then
         local ok_ss, SS = pcall(require, "lib/bookshelf_spine_shelf")
-        if ok_ss and SS and SS.cachedProgress then
-            local pp = select(1, SS.cachedProgress(filepath))
+        if ok_ss and SS and SS.shownPages then
+            local pp = SS.shownPages(filepath)
             if pp then
                 page_count = tonumber(pp)
                 if page_count then page_src = "store" end
@@ -2944,8 +3008,18 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
     -- BEFORE the hidden/system filter, so the set is the directory's real
     -- contents and not this walk's view of it.
     local listing = listings and {} or nil
+    -- An UNPACKED EPUB (Reddit report: dozens of "books" titled c01, c05...
+    -- in a section called OEBPS) is a folder holding a "mimetype" file and a
+    -- META-INF folder, with its chapters as .xhtml/.html files that pass the
+    -- book test one by one. Nothing inside it is a book. That is only known
+    -- once the whole listing has been read, so this directory's files and
+    -- subfolders wait in `found` / `subdirs` until then -- no extra stat.
+    local seen_mimetype, seen_meta_inf = false, false
+    local found, subdirs = {}, {}
     for entry in iter, dir_obj do
         if listing then listing[entry] = true end
+        if entry == "mimetype" then seen_mimetype = true
+        elseif entry == "META-INF" then seen_meta_inf = true end
         -- Skip "." / ".." and any hidden file or directory (entries
         -- starting with "."). The hidden-file filter catches AppleDouble
         -- metadata companions macOS spits out when copying to FAT32
@@ -2978,15 +3052,14 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
                 -- rewrite), which would falsely invalidate the walk cache
                 -- on every read session if we recorded them in `dirs`.
                 if entry:sub(-4) ~= ".sdr" then
-                    if dirs then dirs[fp] = attr.modification or 0 end
-                    walkBooks(fp, depth, out, current_depth + 1, dirs, listings)
+                    subdirs[#subdirs + 1] = { fp = fp, mtime = attr.modification or 0 }
                 end
             elseif mode == "file" then
                 if _supportedExt(entry) then
                     -- size kept alongside mtime so sort-by-File-size on
                     -- custom-source tabs has data without re-statting.
                     -- attr.size is already in hand from the same lfs call.
-                    out[#out + 1] = {
+                    found[#found + 1] = {
                         fp    = fp,
                         mtime = attr.modification or 0,
                         size  = attr.size or 0,
@@ -2996,6 +3069,13 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
         end
     end
     if listings and listing then listings[root] = listing end
+    if seen_mimetype and seen_meta_inf then return end
+    for i = 1, #found do out[#out + 1] = found[i] end
+    for i = 1, #subdirs do
+        local d = subdirs[i]
+        if dirs then dirs[d.fp] = d.mtime end
+        walkBooks(d.fp, depth, out, current_depth + 1, dirs, listings)
+    end
 end
 
 -- _dirsChanged(dirs): true if any recorded directory's current mtime differs
@@ -3501,7 +3581,19 @@ local function _bimDbFingerprint()
         mtime = lfs.attributes(db_path, "modification")
     end
     if not size then return nil end
-    return string.format("v%d:%d:%d", LIGHTMETA_SNAPSHOT_VERSION, size, mtime or 0)
+    mtime = mtime or 0
+    -- In WAL mode (every device but Kobo) a write lands in the -wal file and
+    -- leaves the main file's size and mtime alone until a checkpoint, so the
+    -- main file by itself called a snapshot fresh after BIM had moved on.
+    -- Seen on the desktop rig: a cover extraction, and the snapshot from
+    -- before it still matched.
+    local wal = db_path .. "-wal"
+    local wal_size = lfs.attributes(wal, "size")
+    if wal_size then
+        return string.format("v%d:%d:%d:%d:%d", LIGHTMETA_SNAPSHOT_VERSION, size, mtime,
+                             wal_size, lfs.attributes(wal, "modification") or 0)
+    end
+    return string.format("v%d:%d:%d", LIGHTMETA_SNAPSHOT_VERSION, size, mtime)
 end
 
 local function _lightMetaPersist()
@@ -3941,7 +4033,11 @@ function Repo.findFirstBookIn(path, max_depth)
     local ok, iter, dir_obj = pcall(lfs.dir, path)
     if not ok then return nil end
     local files, dirs = {}, {}
+    local has_mimetype, has_meta_inf = false, false
     for f in iter, dir_obj do
+        -- An unpacked EPUB holds chapter files, not books: see walkBooks.
+        if f == "mimetype" then has_mimetype = true
+        elseif f == "META-INF" then has_meta_inf = true end
         if f ~= "." and f ~= ".." and not f:match("^%.") then
             local fp = _joinPath(path, f)
             local attr = lfs.attributes(fp)
@@ -3956,6 +4052,7 @@ function Repo.findFirstBookIn(path, max_depth)
             end
         end
     end
+    if has_mimetype and has_meta_inf then return nil end
     -- Files at this level take precedence over deeper subdirectories.
     table.sort(files, function(a, b) return a.name < b.name end)
     if files[1] then return files[1].fp end
@@ -3987,8 +4084,21 @@ function Repo.folderHasBooks(path)
         local dir = table.remove(stack)
         local ok_dir, iter, dir_obj = pcall(lfs.dir, dir)
         if ok_dir and type(iter) == "function" then
+            -- The whole listing first: an unpacked EPUB (a "mimetype" file
+            -- beside a META-INF folder) holds chapter files that pass the book
+            -- test but are not books, and that is only known at the end of
+            -- the listing. Same rule as walkBooks.
+            local names = {}
+            local has_mimetype, has_meta_inf = false, false
             for entry in iter, dir_obj do
+                if entry == "mimetype" then has_mimetype = true
+                elseif entry == "META-INF" then has_meta_inf = true end
                 if entry ~= "." and entry ~= ".." and entry:sub(1, 1) ~= "." then
+                    names[#names + 1] = entry
+                end
+            end
+            if not (has_mimetype and has_meta_inf) then
+                for _i, entry in ipairs(names) do
                     local fp   = _joinPath(dir, entry)
                     local attr = lfs.attributes(fp)
                     if attr then
@@ -4519,6 +4629,7 @@ function Repo.getAll(path, limit, offset, sort_priority, filter, opts)
         if k == "author_name" or k == "author_surname" then needs.authors = true end
         if k == "series_name" or k == "series_index"
                 or k == "series_combined"              then needs.series  = true end
+        if k == "series_or_title" then needs.series = true; needs.title = true end
         if k == "percent_read" then needs.percent  = true end
         if k == "read_status" or k == "read_status_active" then needs.status = true end
         if k == "last_opened"  then needs.last_opened = true end
@@ -4981,7 +5092,14 @@ end
 -- Shared by the filesystem walk and the Kindle library below: two copies of the
 -- match rule is how one source quietly starts answering a different question
 -- from the other.
-local function _searchMatches(b, words)
+-- Genres and tags take part in search unless the reader has switched them
+-- off (issue 371: someone who searches by title or author finds the tag
+-- matches clutter). Folder names are the other way round -- see searchAll.
+local function _searchIncludesGenres()
+    return BookshelfSettings.read("search_include_genres") ~= false
+end
+
+local function _searchMatches(b, words, skip_genres)
     local parts = {
         (b.title       or ""):lower(),
         (b.author      or ""):lower(),
@@ -4991,7 +5109,7 @@ local function _searchMatches(b, words)
     if b.authors then
         for _i, a in ipairs(b.authors) do parts[#parts + 1] = a:lower() end
     end
-    if b.genres then
+    if b.genres and not skip_genres then
         for _i, g in ipairs(b.genres) do parts[#parts + 1] = g:lower() end
     end
     local hay = table.concat(parts, " ")
@@ -5038,6 +5156,7 @@ function Repo.searchBooks(query, limit, scope)
     end
     if #words == 0 then return {} end
     local light_cache = _getLightMetaCache(home, depth)
+    local skip_genres = not _searchIncludesGenres()
     local out = {}
     for _i, c in ipairs(cands) do
         -- _buildBookMetaLight rather than buildBookMeta: search compares
@@ -5045,7 +5164,7 @@ function Repo.searchBooks(query, limit, scope)
         -- search reuses the same BIM batch read warmed by a previous
         -- Series / Authors / Genres tab visit.
         local b = _lightMetaForFp(light_cache, c.fp)
-        if b and _searchMatches(b, words) then
+        if b and _searchMatches(b, words, skip_genres) then
             out[#out + 1] = b
             if limit and #out >= limit then break end
         end
@@ -5064,7 +5183,7 @@ function Repo.searchBooks(query, limit, scope)
         end
         if ok_list and type(kindle_books) == "table" then
             for _i, b in ipairs(kindle_books) do
-                if _searchMatches(b, words) then
+                if _searchMatches(b, words, skip_genres) then
                     out[#out + 1] = b
                     if limit and #out >= limit then break end
                 end
@@ -7279,11 +7398,11 @@ function Repo.searchAll(query, scope)
     end
     Repo.getAuthors(0, 0, nil, scope)
     Repo.getSeriesGroups(0, 0, nil, scope)
-    Repo.getGenres(0, 0, nil, scope)
+    if _searchIncludesGenres() then Repo.getGenres(0, 0, nil, scope) end
 
     local authors = matchGroups(_authors_cache)
     local series  = matchGroups(_series_cache)
-    local genres  = matchGroups(_genres_cache)
+    local genres  = _searchIncludesGenres() and matchGroups(_genres_cache) or {}
 
     -- ── books ──
     local books = Repo.searchBooks(query, 200, scope) or {}
@@ -8419,38 +8538,78 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             return matched
         end
 
-        -- Virtual sources that already carry exact local paths should not walk
-        -- the entire library merely to rediscover those same files. Hydrate
-        -- only their small path set with the shared light-metadata batch, while
-        -- still enforcing the active profile scope.
-        local function loadCandidatesFromPaths(paths)
+        -- loadCandidatesFromPaths(set): the same records, for a source that
+        -- is a LIST of books (history, favourites, a collection) rather than
+        -- a slice of the library. Those went through the library walk and
+        -- kept only its matches, so a book outside the home folder -- read,
+        -- or collected, from elsewhere on the device -- dropped out of its
+        -- chip the moment a filter or a sort was set on it, while the plain
+        -- chip showed it (issue 305). The list is also far shorter than the
+        -- library, so no walk at all. Sorted by path, as the walk was, so
+        -- ties in the sort below keep a stable order.
+        --
+        -- Only BOOKS, by the walk's own test, and nothing inside KOReader's
+        -- own folder. The default Recent chip carries a sort, so every reader
+        -- comes through here, and KOReader's history holds more than books: an
+        -- image opened from the file browser, and the quickstart guide
+        -- (<koreader>/help/quickstart-*.html) that nearly everyone was shown
+        -- on first launch. The walk never saw those, and neither should this.
+        local function loadCandidatesFromPaths(set)
             local lfs = require("libs/libkoreader-lfs")
+            local ko_dir
+            local ok_ds, DataStorage = pcall(require, "datastorage")
+            if ok_ds and type(DataStorage) == "table" and DataStorage.getDataDir then
+                local ok_d, d = pcall(function() return DataStorage:getDataDir() end)
+                if ok_d and type(d) == "string" and d ~= "" and d ~= "/" then
+                    ko_dir = d:gsub("/+$", "") .. "/"
+                end
+            end
             local home  = G_reader_settings:readSetting("home_dir") or "/"
             local depth = BookshelfSettings.read("latest_walk_depth") or 3
             local light_cache = _getLightMetaCache(home, depth)
             local roots = _scopeRoots(scope)
-            local matched, seen = {}, {}
             local function inScope(fp)
                 if not roots then return true end
                 for _, root in ipairs(roots) do
-                    if fp == root or fp:sub(1, #root + 1) == root .. "/" then
-                        return true
-                    end
+                    local prefix = _joinPath(root, "")
+                    if fp == root or fp:sub(1, #prefix) == prefix then return true end
                 end
                 return false
             end
-            for _, fp in ipairs(paths or {}) do
-                if type(fp) == "string" and not seen[fp] and inScope(fp) then
-                    seen[fp] = true
-                    local attr = lfs.attributes(fp)
-                    if type(attr) == "table" and attr.mode == "file" then
-                        local b = _lightMetaForFp(light_cache, fp)
-                        if b then
-                            b.date_added = b.date_added or attr.modification or 0
-                            b.size = b.size or attr.size or 0
-                            matched[#matched + 1] = b
-                        end
-                    end
+            local read_time = {}
+            for _i, entry in ipairs(getReadHistory().hist) do
+                local t = entry.time or 0
+                if entry.file and t > (read_time[entry.file] or 0) then
+                    read_time[entry.file] = t
+                end
+            end
+            local paths = {}
+            -- ...unless the home folder is in there too: some readers keep
+            -- their books inside KOReader's folder (Android especially).
+            local home_prefix = (G_reader_settings:readSetting("home_dir") or "/"):gsub("/+$", "") .. "/"
+            -- A home of "/" (unset, or the filesystem root) contains
+            -- everything, so it is no reason to keep KOReader's own files.
+            local function kosOwn(fp)
+                return ko_dir and fp:sub(1, #ko_dir) == ko_dir
+                       and (home_prefix == "/" or fp:sub(1, #home_prefix) ~= home_prefix)
+            end
+            for fp in pairs(set) do
+                if type(fp) == "string" and not fp:find("^OPDS://")
+                        and _supportedExt(fp:match("([^/]+)$")) and not kosOwn(fp)
+                        and inScope(fp) then
+                    paths[#paths + 1] = fp
+                end
+            end
+            table.sort(paths)
+            local matched = {}
+            for _i, fp in ipairs(paths) do
+                local attr = lfs.attributes(fp)
+                local b = attr and attr.mode == "file" and _lightMetaForFp(light_cache, fp) or nil
+                if b then
+                    b._last_read = read_time[fp] or 0
+                    if not b.date_added then b.date_added = attr.modification or 0 end
+                    if not b.size then b.size = attr.size or 0 end
+                    matched[#matched + 1] = b
                 end
             end
             return matched
@@ -8473,11 +8632,10 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
             local rh = getReadHistory()
             local in_history = {}
             for _i, entry in ipairs(rh.hist) do
-                if entry.file then in_history[entry.file] = true end
+                -- entry.dim: deleted through the file manager (see getRecent).
+                if entry.file and not entry.dim then in_history[entry.file] = true end
             end
-            candidates = loadCandidatesByPredicate(function(b)
-                return in_history[b.filepath]
-            end, nil, true)
+            candidates = loadCandidatesFromPaths(in_history)
         elseif kind == "favorites" then
             -- Favourites with filter: match against the favorites
             -- collection. Same flow as 'collection' but with a fixed
@@ -8491,14 +8649,16 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
                     if type(fp) == "string" then set[fp] = true end
                 end
             end
-            candidates = loadCandidatesByPredicate(function(b)
-                return set[b.filepath]
-            end, nil, true)
+            candidates = loadCandidatesFromPaths(set)
         elseif kind == "bookorbit_want" then
             -- SimpleUI has already resolved BookOrbit book IDs to local files.
             -- Treat that persisted cache as a virtual collection and hydrate
             -- those exact paths rather than walking thousands of library files.
-            candidates = loadCandidatesFromPaths(source.paths)
+            local set = {}
+            for _, fp in ipairs(source.paths or {}) do
+                if type(fp) == "string" then set[fp] = true end
+            end
+            candidates = loadCandidatesFromPaths(set)
         elseif kind == "folder" then
             -- Reached only when a status filter is active (otherwise the
             -- early-return above sends folder chips to getAll for tree view).
@@ -8537,8 +8697,7 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
                     end
                 end
             end
-            candidates = loadCandidatesByPredicate(function(b) return set[b.filepath] end,
-                nil, true)
+            candidates = loadCandidatesFromPaths(set)
             -- Stamped onto the record so the collection_order sort key can see
             -- it; the records come out of the library store, which knows
             -- nothing about collections (issue 441).
@@ -8799,5 +8958,17 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit, scope_or
         (_gettime() - _diag_t0) * 1000))
     return page, total
 end
+
+-- The Pages sort's resolver for a record that carries no count of its own
+-- (SortEngine.pageCountOf). A book with a sidecar goes through readProgress,
+-- the same ladder the badge and %page_count use (cached, 120s); one without
+-- takes only the free rungs -- its filename marker and the page-count scan's
+-- store -- so an unopened library sorts without a single sidecar open.
+SortEngine.setPageCountResolver(function(fp)
+    if _hasSidecar(fp) then
+        return select(4, Repo.readProgress(fp))
+    end
+    return Repo.pageCountFor(fp)
+end)
 
 return Repo

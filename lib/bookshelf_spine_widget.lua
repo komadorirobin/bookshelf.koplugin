@@ -28,6 +28,7 @@ local Size            = require("ui/size")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local Device          = require("device")
 local Screen          = Device.screen
+local Space           = require("lib/bookshelf_space")
 local CoverProgress   = require("lib/bookshelf_cover_progress")
 local TextFit         = require("lib/bookshelf_text_fit")
 local T               = require("ffi/util").template
@@ -155,8 +156,11 @@ local function _getRepo()
 end
 
 -- Shadow geometry shared by both render paths.
-local SHADOW_OFFSET   = Screen:scaleBySize(4)       -- shadow offset in dp
-local CARD_RADIUS     = Screen:scaleBySize(4)       -- rounded corner radius
+-- Space, not scaleBySize: a drop shadow is depth, not text, and should not
+-- grow with a DPI override (maintainer).
+-- SELECTED_BORDER equals it (below), so the selection ring follows.
+local SHADOW_OFFSET   = Space.px(4)                 -- shadow offset in dp
+local CARD_RADIUS     = Space.px(4)                 -- rounded corner radius (shape: no DPI growth)
 local CARD_BORDER     = Screen:scaleBySize(1)       -- 1dp border on the card
 
 -- How far an on-hold book's cover is faded toward the page background, as a
@@ -280,7 +284,7 @@ local GLYPH_DANGLE_GROWTH_SHARE = 0.5
 
 -- Horizontal inset of the glyph from the card's left edge.
 local function _glyphLeftInset()
-    return Size.padding.small + Screen:scaleBySize(2)
+    return Space.padding.small + Space.px(2)
 end
 
 -- Cover-badge font scale alias: delegates to CoverProgress.badgeSize so
@@ -340,13 +344,13 @@ end
 -- Matches the horizontal side margin so the bar reads as evenly inset
 -- from all three nearby cover edges (left, right, bottom).
 local function _barBottomPadding()
-    return Screen:scaleBySize(3)
+    return Space.px(3)
 end
 
 -- Horizontal margin between the bar and the card sides (inset from the
 -- card's inside-border so the rounded bar doesn't kiss the cover edges).
 local function _barSideMargin()
-    return Screen:scaleBySize(3)
+    return Space.px(3)
 end
 
 -- _coverFillBB(bb, img_w, img_h) — produce the slot-sized (img_w × img_h)
@@ -1099,6 +1103,40 @@ local function _showSeriesNum(in_series)
     return false
 end
 
+-- Downscaled copies of cached covers, for slots smaller than the cached
+-- bitmap: a list row's thumbnail, a small cover grid. ImageWidget redid that
+-- MuPDF scale every time a page was built -- 11-14% of a list or genre page
+-- turn on a PW5 (measured with jit.p) -- for the same book at the same size.
+-- The copy is exactly what ImageWidget would make (the same scaleBlitBuffer
+-- to the same width and height), so nothing changes on screen.
+--
+-- Each entry remembers the cached bitmap it was made from: a cover replaced
+-- in the cache (a larger copy, a refresh) is a different bitmap, so the copy
+-- is remade rather than served stale. A small LRU by count: the copies are
+-- thumbnail-sized, and a page holds a few dozen at most.
+local THUMB_CAP = 96
+local _thumbs, _thumb_order = {}, {}
+local function _thumbFor(fp, src, w, h)
+    local key = fp .. "|" .. w .. "x" .. h
+    local e = _thumbs[key]
+    if e and e.src == src then return e.bb end
+    local ok, scaled = pcall(function()
+        return require("ui/renderimage"):scaleBlitBuffer(src, w, h, false)
+    end)
+    if not (ok and scaled) then return nil end
+    if not e then
+        _thumb_order[#_thumb_order + 1] = key
+        if #_thumb_order > THUMB_CAP then
+            -- Dropped, not freed: a widget on screen may still paint it, and
+            -- the FFI finaliser frees it once nothing does.
+            _thumbs[table.remove(_thumb_order, 1)] = nil
+        end
+    end
+    _thumbs[key] = { src = src, bb = scaled }
+    return scaled
+end
+SpineWidget._thumbFor = _thumbFor
+
 function SpineWidget:init()
     self.dimen = Geom:new{ w = self.width, h = self.height }
     if self.draft == nil then self.draft = _draft_mode end
@@ -1588,7 +1626,7 @@ function SpineWidget:_renderShadowedCard(inner)
             bordersize     = Size.border.thin,
             background     = colors.badge_bg,
             color          = colors.border,
-            radius         = Screen:scaleBySize(3),
+            radius         = Space.px(3),
             padding_left   = 0,
             padding_right  = 0,
             padding_top    = 0,
@@ -1647,9 +1685,9 @@ function SpineWidget:_renderShadowedCard(inner)
                 bordersize     = Size.border.thin,
                 background     = colors.badge_bg,
                 color          = colors.border,
-                radius         = Screen:scaleBySize(3),
-                padding_left   = Size.padding.small,
-                padding_right  = Size.padding.small,
+                radius         = Space.px(3),
+                padding_left   = Space.padding.small,
+                padding_right  = Space.padding.small,
                 padding_top    = 0,
                 padding_bottom = 0,
                 TextWidget:new{
@@ -1689,7 +1727,7 @@ function SpineWidget:_renderShadowedCard(inner)
         end
 
         if indicators.bar then
-            local gap = badge_w > 0 and Screen:scaleBySize(4) or 0
+            local gap = badge_w > 0 and Space.px(4) or 0
             local bar_w = row_w - badge_w - gap
             if bar_w > 0 then
                 local bar = CoverProgress.buildBarWidget(
@@ -1806,11 +1844,11 @@ function SpineWidget:_renderShadowedCard(inner)
             bordersize     = Size.border.thin,
             background     = colors.badge_bg,
             color          = colors.border,
-            radius         = Screen:scaleBySize(3),
-            padding_left   = Size.padding.default,
-            padding_right  = Size.padding.default,
-            padding_top    = Size.padding.small,
-            padding_bottom = Size.padding.small,
+            radius         = Space.px(3),
+            padding_left   = Space.padding.default,
+            padding_right  = Space.padding.default,
+            padding_top    = Space.padding.small,
+            padding_bottom = Space.padding.small,
             TextWidget:new{
                 -- "#\u{200A}N": HAIR SPACE between the hash and the
                 -- index for readability inside the small bold pill --
@@ -2176,6 +2214,10 @@ function SpineWidget:_renderCover(bb)
             }
             if not self.cover_fill then
                 img_args.scale_factor = 0   -- aspect-preserving downscale
+            elseif cached:getWidth() ~= img_w or cached:getHeight() ~= img_h then
+                -- The stretch ImageWidget would do, done once (_thumbFor).
+                local thumb = _thumbFor(fp, cached, img_w, img_h)
+                if thumb then img_args.image = thumb end
             end
             return self:_wrapCoverInCard(
                 ImageWidget:new(img_args), card_w, card_h, border)
@@ -2638,8 +2680,8 @@ function SpineWidget:_renderFallback()
     -- glyph) + author. Each text region caps at a fraction of card_h
     -- so a long title doesn't push the author off the bottom at small
     -- slot sizes.
-    local inset_h        = math.max(Screen:scaleBySize(6), math.floor(card_w * 0.06))
-    local inset_v_top    = math.max(Screen:scaleBySize(8), math.floor(card_h * 0.06))
+    local inset_h        = math.max(Space.px(6), math.floor(card_w * 0.06))
+    local inset_v_top    = math.max(Space.px(8), math.floor(card_h * 0.06))
     -- Bottom inset grows to contain the progress bar (when shown) so the
     -- rounded pill sits within the paper-tone bottom strip with the same
     -- breathing room above the bar as below it (bar_pad on each side).
@@ -2651,7 +2693,7 @@ function SpineWidget:_renderFallback()
     end
     local outer_inset_w = card_w - inset_h * 2
     local outer_inset_h = card_h - inset_v_top - inset_v_bottom
-    local content_pad   = math.max(Screen:scaleBySize(4), math.floor(card_w * 0.04))
+    local content_pad   = math.max(Space.px(4), math.floor(card_w * 0.04))
     local content_w     = outer_inset_w - border * 2 - content_pad * 2
 
     -- Degenerate slot: the card's frame alone, no text.
@@ -2767,7 +2809,7 @@ function SpineWidget:_renderFallback()
             dimen      = Geom:new{ w = rule_line_w, h = rule_h },
         }
     end
-    local rule_gap = HorizontalSpan:new{ width = Size.padding.small }
+    local rule_gap = HorizontalSpan:new{ width = Space.padding.small }
     -- Decorative glyph is a FIXED size so the divider motif reads the same on
     -- every placeholder, rather than growing with the title (which made the
     -- diamond jump between tiles of the same size as titles varied in length).
@@ -2849,7 +2891,7 @@ function SpineWidget:_renderFallback()
     do
         local ok_sz, sz = pcall(function() return motif:getSize() end)
         if ok_sz and sz and sz.h then
-            local wanted = sz.h + (motif_is_icon and 2 * Size.padding.small or 0)
+            local wanted = sz.h + (motif_is_icon and 2 * Space.padding.small or 0)
             if wanted > motif_band_h then motif_band_h = wanted end
         end
     end
@@ -2860,7 +2902,7 @@ function SpineWidget:_renderFallback()
             ruleLine(),
             rule_gap,
             motif,
-            HorizontalSpan:new{ width = Size.padding.small },
+            HorizontalSpan:new{ width = Space.padding.small },
             ruleLine(),
         },
     }

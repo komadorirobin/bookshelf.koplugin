@@ -13,6 +13,24 @@ package.loaded["libs/libkoreader-lfs"] = {
         if attr == "mode" then return mode end
         return { mode = mode, modification = 1 }
     end,
+    dir = function(path)
+        local prefix = path:gsub("/+$", "") .. "/"
+        local names = {}
+        for fp in pairs(files) do
+            if fp:sub(1, #prefix) == prefix then
+                local name = fp:sub(#prefix + 1)
+                if name ~= "" and not name:find("/", 1, true) then
+                    names[#names + 1] = name
+                end
+            end
+        end
+        table.sort(names)
+        local index = 0
+        return function()
+            index = index + 1
+            return names[index]
+        end
+    end,
 }
 
 package.loaded["logger"] = {
@@ -122,6 +140,27 @@ test("explicit image library path overrides both default folders", function()
     eq(ImageSource.getImageLibraryPath(), "/custom")
     eq(ImageSource.resolveStackImage("author", "Isaac Asimov"),
        "/custom/authors/Isaac Asimov.jpg")
+end)
+
+test("explicit image library returns one root and tolerates missing images", function()
+    reset()
+    store.image_library_path = "/custom///"
+    local paths = ImageSource.getImageLibraryPaths()
+    eq(#paths, 1, "gsub's replacement count is not another library root")
+    eq(paths[1], "/custom")
+    eq(ImageSource.resolveStackImage("author", "Nobody"), nil)
+end)
+
+test("stack discovery preserves the case of files in either default root", function()
+    reset()
+    files["/library/.bookshelf-images/authors/"] = "directory"
+    files["/library/bookshelf-images/authors/"] = "directory"
+    files["/library/.bookshelf-images/authors/Isaac Asimov.PNG"] = "file"
+    files["/library/bookshelf-images/authors/arthur-clarke.JPEG"] = "file"
+    eq(ImageSource.resolveStackImage("author", "Isaac Asimov"),
+       "/library/.bookshelf-images/authors/Isaac Asimov.PNG")
+    eq(ImageSource.resolveStackImage("author", "Arthur Clarke"),
+       "/library/bookshelf-images/authors/arthur-clarke.JPEG")
 end)
 
 if fail > 0 then

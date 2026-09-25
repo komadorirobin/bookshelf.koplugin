@@ -42,6 +42,17 @@ package.loaded["ui/size"]        = {
 package.loaded["ui/font"]        = { getFace = function() return {} end }
 package.loaded["ui/uimanager"]   = { setDirty = function() end, close = function() end,
                                      show = function() end, nextTick = function(_, fn) end }
+-- Under luajit the REAL ffi answers require("ffi") (the catch-all mock below
+-- only reaches plain Lua), and with blitbuffer stubbed nothing declares its
+-- colour types, so the widget's modules died at load on
+-- ffi.typeof("ColorRGB32"). Declare it the way blitbuffer does.
+do
+    local ok_ffi, ffi = pcall(require, "ffi")
+    if ok_ffi and type(ffi) == "table" and ffi.cdef
+            and not pcall(ffi.typeof, "ColorRGB32") then
+        ffi.cdef("typedef struct ColorRGB32 { uint8_t r, g, b, alpha; } ColorRGB32;")
+    end
+end
 package.loaded["ffi/blitbuffer"] = { COLOR_BLACK = 0, COLOR_WHITE = 0xFF,
                                      gray = function(v) return v end }
 package.loaded["device"]         = {
@@ -322,8 +333,9 @@ test("_expandedBand: a hidden chip bar frees the bar and the PAD after it", func
 end)
 
 test("_maxRows: the freed height can buy the row it was worth (tall, lone chip)", function()
-    eq(bw(1080, 2400, true):_maxRows(), 5)
-    local w = bw(1080, 2400, true)
+    -- Choose the row boundary with Space padding and the fork's footer reserve.
+    eq(bw(1080, 2410, true):_maxRows(), 5)
+    local w = bw(1080, 2410, true)
     w._chip_bar_hidden = true
     eq(w:_maxRows(), 6, "the old frozen chrome sum still paid for the hidden bar")
 end)

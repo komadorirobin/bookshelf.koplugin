@@ -64,8 +64,14 @@ local CALIBRE_TTL = 60
 --
 -- KOReader's calibre plugin rewrites metadata.calibre after a wireless sync
 -- from load_calibre's whitelisted fields, permanently deleting everything
--- else -- measured against the real binding, the fields WE read that do not
--- survive are author_sort, languages, comments and user_metadata. So when a
+-- else. What survives, measured by running KOReader's own
+-- CalibreMetadata:init + cleanUnused over a genuine Calibre file: its
+-- used_metadata list only (uuid, lpath, last_modified, size, title, authors,
+-- author_sort, tags, series, series_index), every one written as
+-- `book[k] or rapidjson.null` - and author_sort arrives as null anyway, its
+-- value already dropped by load_calibre. So title_sort, pubdate, publisher,
+-- rating, keywords, languages, comments and user_metadata are all gone after
+-- a sync, and the keys that remain can be null. So when a
 -- calibre-written file passes through here, the two fields with NO other
 -- source anywhere -- author_sort (the old wipe, NiLuJe/lua-rapidjson#1 still
 -- dormant) and the custom series columns (issue 299) -- are HARVESTED into a
@@ -96,20 +102,27 @@ local function _loadHarvest(meta_path)
     return nil
 end
 
+-- Deep equality over plain JSON-shaped values. The harvest used to be compared
+-- field by field (author_sort, extra_series, calibre), which meant a change to
+-- any field added later - title_sort, or one only a newer copy of this module
+-- knows - never counted as a change and was never written.
 local function _sameHarvestEntry(a, b)
-    if (a and a.author_sort) ~= (b and b.author_sort) then return false end
-    local ea, eb = (a and a.extra_series) or {}, (b and b.extra_series) or {}
-    if #ea ~= #eb then return false end
-    for i = 1, #ea do
-        if ea[i].name ~= eb[i].name or ea[i].num ~= eb[i].num then
-            return false
-        end
+    if a == b then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not _sameHarvestEntry(v, b[k]) then return false end
     end
-    local fa, fb = (a and a.calibre) or {}, (b and b.calibre) or {}
-    for k, v in pairs(fa) do if fb[k] ~= v then return false end end
-    for k in pairs(fb) do if fa[k] == nil then return false end end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
     return true
 end
+
+-- The fields THIS copy of the module harvests. Both plugins carry a copy and
+-- users update one without the other, so a field missing from this list may
+-- simply be newer than this copy: it is carried forward, never dropped. Add a
+-- field here and to slim(); the restore below needs no change.
+local HARVEST_OWNED = { "author_sort", "title_sort", "extra_series", "calibre" }
 
 local function _saveHarvest(meta_path, books, previous)
     -- Only on change: this runs inside the metadata reload, and a JSON write
@@ -190,6 +203,20 @@ local function _calibreMetadataFor(filepath, enabled)
         _calibre_state.map = nil
         return nil
     end
+    -- JSON null decodes to rapidjson.null, a TRUTHY sentinel, not to nil. It
+    -- matters here more than anywhere: KOReader's calibre plugin rewrites this
+    -- file through a slim() that writes every field it keeps as
+    -- `book[k] or rapidjson.null`, so a synced file says "author_sort": null
+    -- rather than leaving the key out. Tested as `~= nil`, that null made
+    -- every synced file look freshly written by Calibre (see the detection
+    -- below). present() is the test to use for any value read from the file.
+    local NULL = rapidjson.null
+    local function present(v)
+        return v ~= nil and (NULL == nil or v ~= NULL)
+    end
+    local function val(v)
+        if present(v) then return v end
+    end
     -- WHICH PARSER, and why it matters (issue 299): rapidjson.load_calibre is
     -- KOReader's slimming parser -- fast and memory-light because it KEEPS
     -- ONLY the fields its calibre plugin needs, and user_metadata (where a
@@ -266,22 +293,22 @@ local function _calibreMetadataFor(filepath, enabled)
     local function slim(book)
         local out = {
             lpath        = book.lpath,
-            title        = book.title,
+            title        = val(book.title),
             -- calibre's own sort title ("Locked Tomb, The"), which it computes
             -- with its language-aware rules -- so a "sort by title" that
             -- ignores leading articles uses the user's metadata rather than us
             -- guessing at English grammar. In PUBLICATION_METADATA_FIELDS, so
             -- calibre serialises it to the device file. Sibling of author_sort
             -- below, harvested the same way.
-            title_sort   = book.title_sort,
-            authors      = book.authors,
-            author_sort  = book.author_sort,
-            series       = book.series,
-            series_index = book.series_index,
-            tags         = book.tags,
-            keywords     = book.keywords,
-            languages    = book.languages,
-            comments     = book.comments,
+            title_sort   = val(book.title_sort),
+            authors      = val(book.authors),
+            author_sort  = val(book.author_sort),
+            series       = val(book.series),
+            series_index = val(book.series_index),
+            tags         = val(book.tags),
+            keywords     = val(book.keywords),
+            languages    = val(book.languages),
+            comments     = val(book.comments),
         }
         if type(book.user_metadata) == "table" then
             local extras
@@ -372,7 +399,8 @@ local function _calibreMetadataFor(filepath, enabled)
     local calibre_written = false
     for _i, book in ipairs(data) do
         if type(book) == "table" and book.lpath then
-            if book.user_metadata ~= nil or book.author_sort ~= nil then
+            -- present(), not ~= nil: a synced file carries "author_sort": null.
+            if present(book.user_metadata) or present(book.author_sort) then
                 calibre_written = true
             end
             map[_normPath(lib_root .. "/" .. book.lpath)] = full and slim(book) or book
@@ -380,53 +408,68 @@ local function _calibreMetadataFor(filepath, enabled)
     end
     if full and calibre_written then
         -- A calibre-written file: harvest everything with no other source.
+        -- Each entry starts from what is already on disk, so a field written
+        -- by a NEWER copy of this module survives this copy's rewrite, and
+        -- then every field this copy owns is replaced with the live value -
+        -- nil included, so a field Calibre has cleared is cleared here too.
+        -- A book no longer in the file is dropped, as before: carrying
+        -- forward is per field, never per book.
+        local previous = _loadHarvest(meta_path)
         local harvest = {}
         for _i, book in ipairs(data) do
             if type(book) == "table" and book.lpath then
                 local entry = map[_normPath(lib_root .. "/" .. book.lpath)]
-                if entry and (entry.author_sort or entry.extra_series
-                              or entry.calibre) then
-                    harvest[book.lpath] = {
-                        author_sort  = entry.author_sort,
-                        extra_series = entry.extra_series,
-                        calibre      = entry.calibre,
-                    }
+                if entry then
+                    local merged = {}
+                    local prev = previous and previous[book.lpath]
+                    if type(prev) == "table" then
+                        for k, v in pairs(prev) do merged[k] = v end
+                    end
+                    for _j, k in ipairs(HARVEST_OWNED) do merged[k] = entry[k] end
+                    if next(merged) ~= nil then harvest[book.lpath] = merged end
                 end
             end
         end
-        _saveHarvest(meta_path, harvest, _loadHarvest(meta_path))
+        _saveHarvest(meta_path, harvest, previous)
     elseif not calibre_written then
         -- KOReader's plugin has rewritten the file: merge what was harvested
         -- back over the survivors, by lpath.
         local harvest = _loadHarvest(meta_path)
         if harvest then
             for lpath, saved in pairs(harvest) do
-                local entry = map[lib_root .. "/" .. lpath]
-                if entry then
-                    if entry.author_sort == nil then
-                        entry.author_sort = saved.author_sort
-                    end
-                    if entry.extra_series == nil then
-                        entry.extra_series = saved.extra_series
-                    end
-                    -- Per-KEY merge, not all-or-nothing. entry.calibre is
-                    -- rarely nil after a rewrite: the three standard fields
-                    -- (pubdate, publisher, rating) are built from TOP-LEVEL
-                    -- keys that SURVIVE the strip, so a whole-table nil check
-                    -- saw a non-empty table and skipped the restore, silently
-                    -- dropping every harvested CUSTOM column on any book with
-                    -- a publisher, pubdate or rating - which is most books.
-                    -- Only the sparse ones ever recovered. Found by testing
-                    -- against a genuine calibre-written file on device; the
-                    -- pure-Lua suite pins it now.
-                    -- Keys present in the file still win, so a column the user
-                    -- genuinely cleared in Calibre stays cleared.
-                    if saved.calibre then
-                        entry.calibre = entry.calibre or {}
-                        for k, v in pairs(saved.calibre) do
-                            if entry.calibre[k] == nil then
-                                entry.calibre[k] = v
+                -- Normalised like every other lookup into this map, which is
+                -- keyed through _normPath: an lpath with a leading slash
+                -- would otherwise miss and drop the whole restore silently.
+                local entry = map[_normPath(lib_root .. "/" .. lpath)]
+                if entry and type(saved) == "table" then
+                    -- EVERY harvested field, not a list of them, so a field a
+                    -- newer copy added is restored too and adding one to
+                    -- HARVEST_OWNED needs no change here. A value still present
+                    -- in the file always wins.
+                    for k, v in pairs(saved) do
+                        if not present(v) then
+                            -- A null saved by the bug this fixes; nothing to
+                            -- restore. Skip rather than write it back as a value.
+                        elseif k == "calibre" then
+                            -- Per-KEY merge, not all-or-nothing, so any key
+                            -- still present in the file wins over the harvest.
+                            -- (An earlier all-or-nothing check was fixed for
+                            -- books whose pubdate/publisher/rating survived a
+                            -- strip. KOReader's REAL rewrite keeps none of
+                            -- those - see the header - so on a genuinely synced
+                            -- file entry.calibre starts empty and per-key and
+                            -- whole-table agree. Per-key stays: it is the
+                            -- correct rule for any file that keeps some.)
+                            if type(v) == "table" then
+                                entry.calibre = entry.calibre or {}
+                                for ck, cv in pairs(v) do
+                                    if present(cv) and not present(entry.calibre[ck]) then
+                                        entry.calibre[ck] = cv
+                                    end
+                                end
                             end
+                        elseif not present(entry[k]) then
+                            entry[k] = v
                         end
                     end
                 end

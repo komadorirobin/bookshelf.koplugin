@@ -454,7 +454,21 @@ end
 -- to live here as a local, which is exactly how bookends ended up with
 -- %description but not its sanitiser (85aa7c8) and rendered raw "<p>" tags on
 -- screen. One copy now, checked byte-identical by tools/check_token_parity.sh.
-local cleanDescription = Semantics.cleanDescription
+-- Memoised on the raw text: a list row expands %description every time the
+-- page is built, and the clean-up is a dozen gsub passes over the whole blurb
+-- -- 5-7% of a list page turn on a PW5 (jit.p). Pure, so a cache by input is
+-- exact. Bounded by count; cleared wholesale when full.
+local _clean_memo, _clean_n, CLEAN_CAP = {}, 0, 256
+local function cleanDescription(raw)
+    if not raw or raw == "" then return "" end
+    local hit = _clean_memo[raw]
+    if hit then return hit end
+    local out = Semantics.cleanDescription(raw)
+    if _clean_n >= CLEAN_CAP then _clean_memo, _clean_n = {}, 0 end
+    _clean_memo[raw] = out
+    _clean_n = _clean_n + 1
+    return out
+end
 
 Tokens.cleanDescription = cleanDescription      -- exported for tests / ad-hoc use
 Tokens.expanders.description = function(book)
@@ -680,6 +694,23 @@ function Tokens.reviewsHtml(payload)
     return table.concat(out, "\n")
 end
 
+-- myReviewHtml(text): the reader's own review (KOReader's summary.note) as
+-- HTML for the Reviews tab. Plain text in, so it is escaped; a blank line
+-- starts a paragraph and a single newline is a line break, as typed.
+function Tokens.myReviewHtml(text)
+    if type(text) ~= "string" or not text:match("%S") then return nil end
+    local out = {}
+    local norm = text:gsub("\r\n?", "\n")
+    for para in (norm .. "\n\n"):gmatch("(.-)\n%s*\n") do
+        if para:match("%S") then
+            local lines = {}
+            for line in (para .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = _escHtml(line) end
+            out[#out + 1] = "<p>" .. table.concat(lines, "<br/>") .. "</p>"
+        end
+    end
+    return table.concat(out, "\n")
+end
+
 -- autoLinkReportHtml(data): the HTML body for the post-scan auto-link report,
 -- rendered in the shared reviews modal. Lists what got linked (so the user can
 -- verify each match) and what didn't; the "no identifier" bucket is a count,
@@ -782,6 +813,7 @@ end
 -- report, same modal as the auto-link report. data:
 --   skipped   number       -- already had a count (opened / prior scan)
 --   filename  {name,...}   -- counted from a p(N) filename marker
+--   calibre   {{name=,pages=},...} -- from a Calibre custom column
 --   publisher {{name=,pages=},...}
 --   hardcover {{name=,pages=},...}
 --   rendered  {{name=,pages=},...}
@@ -795,6 +827,7 @@ function Tokens.pageCountReportHtml(data)
     local DOT = " \xC2\xB7 "  -- " · "
     local function list(t) return type(t) == "table" and t or {} end
     local filename  = list(data.filename)
+    local calibre   = list(data.calibre)
     local publisher = list(data.publisher)
     local hardcover = list(data.hardcover)
     local rendered  = list(data.rendered)
@@ -822,6 +855,9 @@ function Tokens.pageCountReportHtml(data)
     summary[#summary + 1] = string.format("Publisher %d", #publisher)
     summary[#summary + 1] = string.format("Hardcover %d", #hardcover)
     summary[#summary + 1] = string.format("Paginated %d", #rendered)
+    if #calibre > 0 then
+        summary[#summary + 1] = string.format("Calibre %d", #calibre)
+    end
     if #failed > 0 then
         summary[#summary + 1] = string.format("Failed %d", #failed)
     end
@@ -854,7 +890,8 @@ function Tokens.pageCountReportHtml(data)
     end
     section("Publisher page numbers", publisher, true)
     section("Hardcover editions", hardcover, true)
-    section("Paginated with the reading engine", rendered, true)
+    section("Paginated at your reading settings", rendered, true)
+    section("From your Calibre column", calibre, true)
     section("Counted from the filename", filename, false)
     section("Could not be paginated", failed, false)
 
