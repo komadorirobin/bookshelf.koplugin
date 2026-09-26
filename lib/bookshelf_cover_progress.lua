@@ -34,7 +34,7 @@ local function _ensureWidgetDeps()
     FrameContainer = require("ui/widget/container/framecontainer")
     Geom           = require("ui/geometry")
     OverlapGroup   = require("ui/widget/overlapgroup")
-    TextWidget     = require("ui/widget/textwidget")
+    TextWidget     = require("lib/bookshelf_colour_text")
     Widget         = require("ui/widget/widget")
     local ok_ffi, ffi_mod = pcall(require, "ffi")
     ffi = ok_ffi and ffi_mod or {
@@ -286,6 +286,7 @@ local function _paintBorder(bb, x, y, w, h, bw, c, r)
         bb:paintBorder(x, y, w, h, bw, c, r)
     end
 end
+M.paintBorder = _paintBorder
 
 local function _getProgressBarWidget()
     if ProgressBarWidget then return ProgressBarWidget end
@@ -1016,6 +1017,40 @@ function M.resolvedColors()
     return _resolved_cache
 end
 M.resolvedColours = M.resolvedColors
+
+-- resolvePicked(raw) -> a Blitbuffer colour for a stored colour value, with
+-- the same correction every palette entry gets: the value is stored for its
+-- slot's frame (the night slot pre-inverted for a frame that flips it), and
+-- when the shelf's theme and the frame disagree it is flipped before it is
+-- parsed. For the few readers of a picked colour that do not go through
+-- resolvedColors (the selected shelf button, the page's own colour).
+function M.resolvePicked(raw)
+    if type(raw) == "nil" then return nil end
+    _ensureWidgetDeps()
+    local want_dark, inverting = M.theme()
+    if want_dark ~= inverting then raw = Color.invertValue(raw) end
+    return Color.parseColorValue(raw, Screen:isColorEnabled())
+end
+
+-- pickedBarColors() -> { fill = , bg = } or nil: the progress bar colours the
+-- reader actually PICKED for the current mode, resolved like every other
+-- colour here (night slot, theme flip, colour or grey screen). nil when
+-- neither is picked, so a bar painter keeps its own defaults -- each bookends
+-- style has its own look, and handing over this plugin's defaults would wash
+-- it out. The hero and list-row bars used to read the DAY keys directly, so
+-- in night mode they painted the day colour for an inverting frame and it
+-- displayed as its opposite.
+function M.pickedBarColors()
+    local suffix = _modeSuffix()
+    local picked_fill  = BookshelfSettings.read("progress_fill" .. suffix)
+    local picked_track = BookshelfSettings.read("progress_track" .. suffix)
+    if type(picked_fill) == "nil" and type(picked_track) == "nil" then return nil end
+    local colors = M.resolvedColors()
+    return {
+        fill = (type(picked_fill) ~= "nil") and colors.fill or nil,
+        bg   = (type(picked_track) ~= "nil") and colors.track or nil,
+    }
+end
 
 -- Returns the raw setting values (storage shape, not Blitbuffer). For
 -- the settings menu's "currently set to..." label rendering. Folder

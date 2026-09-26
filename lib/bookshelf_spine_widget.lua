@@ -316,7 +316,7 @@ local _page_pill_h_memo = {}
 local function _pagePillRefH(size)
     local h = _page_pill_h_memo[size]
     if not h then
-        local TextWidget = require("ui/widget/textwidget")
+        local TextWidget = require("lib/bookshelf_colour_text")
         local ref_face, ref_bold = BFont:getFace("smallinfofont", size, { bold = true })
         local ref = TextWidget:new{
             -- Match the page-count pill's actual text (hair space
@@ -1188,7 +1188,7 @@ function SpineWidget.newStatusGlyphOverlay(args)
     if card_w <= 0 or card_h <= 0 then return nil end
 
     if args.state == "read" then
-        local TextWidget = require("ui/widget/textwidget")
+        local TextWidget = require("lib/bookshelf_colour_text")
         local Font       = require("ui/font")
         local check_widget = TextWidget:new{
             text = "\xEF\x90\xAE",   -- U+F42E nerd-font check
@@ -1584,7 +1584,7 @@ function SpineWidget:_renderShadowedCard(inner)
     --     via CenterContainer plus a small downward VerticalSpan bias to
     --     compensate for the glyph's no-descender bbox skew.
     if indicators.glyph == "complete_tickbox" then
-        local TextWidget = require("ui/widget/textwidget")
+        local TextWidget = require("lib/bookshelf_colour_text")
         local colors    = CoverProgress.resolvedColors()
 
         -- Natural inner height of the page-count pill (memoized probe
@@ -1674,7 +1674,7 @@ function SpineWidget:_renderShadowedCard(inner)
 
         local badge_widget, badge_w, badge_h = nil, 0, 0
         if want_page_count then
-            local TextWidget = require("ui/widget/textwidget")
+            local TextWidget = require("lib/bookshelf_colour_text")
             -- Same face + weight as the "#N" series badge so the two
             -- badges read as a matched pair when both are present on a
             -- cover. Vertical padding is dropped to zero (the border
@@ -1837,7 +1837,7 @@ function SpineWidget:_renderShadowedCard(inner)
             and not self.suppress_badges
             and not self.suppress_number_badges
             and self.book and self.book.series_num then
-        local TextWidget     = require("ui/widget/textwidget")
+        local TextWidget     = require("lib/bookshelf_colour_text")
         local colors        = CoverProgress.resolvedColors()
         local sn_face, sn_bold = BFont:getFace("smallinfofont", _badgeSize(12), { bold = true })
         local badge = ColorSafeFrame:new{
@@ -2659,7 +2659,7 @@ end
 
 function SpineWidget:_renderFallback()
     local TextBoxWidget   = require("ui/widget/textboxwidget")
-    local TextWidget      = require("ui/widget/textwidget")
+    local TextWidget      = require("lib/bookshelf_colour_text")
     local VerticalGroup   = require("ui/widget/verticalgroup")
     local HorizontalGroup = require("ui/widget/horizontalgroup")
     local HorizontalSpan  = require("ui/widget/horizontalspan")
