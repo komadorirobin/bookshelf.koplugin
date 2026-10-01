@@ -465,6 +465,25 @@ function BookshelfWidget:_dispatchSimpleUIBarAction(action_id)
 
     local plugin = ctx.plugin
     local fm = ctx.fm
+    local ok_bridge, Bridge = pcall(require, "sui_bookshelf_bridge")
+    local profile_key = ok_bridge and type(Bridge) == "table" and Bridge.profileForNavigation
+        and Bridge.profileForNavigation(action_id)
+    if profile_key then
+        local function switch(live_fm)
+            if BookshelfWidget.live ~= self then return end
+            if live_fm and live_fm._simpleui_plugin then
+                self:setSimpleUIBarHost{ fm = live_fm, plugin = live_fm._simpleui_plugin }
+            end
+            if self.profile and self.profile.key == profile_key then
+                self:refreshAfterReaderReturn()
+            else
+                self:setProfile(profile_key)
+            end
+        end
+        local Park = require("lib/bookshelf_reader_park")
+        if not Park.finishForShelfNavigation(self, switch, true) then switch(fm) end
+        return true
+    end
     if self:_isSimpleUIInPlaceAction(action_id) then
         plugin:_onTabTap(action_id, fm)
         return true
@@ -1016,6 +1035,10 @@ function BookshelfWidget:init()
     -- `activation_menu` preference — fixed as a side benefit.)
 
     local diag_init_t_pre_rebuild = _gettime()
+    if self._initial_target_file then
+        self._initial_target_found = self:showFileLocation(self._initial_target_file, true)
+        self._initial_target_file = nil
+    end
     self:_rebuild()
     self:_startStatusTimer()
     logger.dbg(string.format(
@@ -1107,9 +1130,19 @@ function BookshelfWidget:_sanitizeProfileFolderDrilldown()
     return false
 end
 
-function BookshelfWidget:setProfile(profile_key)
+function BookshelfWidget:setProfile(profile_key, defer_rebuild)
     local profile = Profiles.get(profile_key)
     if self.profile == profile then return end
+    -- Chip IDs such as "latest" and "authors" are shared by profiles, but
+    -- their view caches and pending cover jobs belong to the old scope.
+    if self._cancelChipPreload then self:_cancelChipPreload() end
+    self._warmed_chip_keys = nil
+    self._spine_fetch_cache = nil
+    self._pending_restore_drill = nil
+    self:_clearDpadFocus()
+    self._tap_selected_fp = nil
+    self._preview_book = nil
+    if self._selection then self._selection:exitMode() end
     self.profile_key = profile_key
     self.profile = profile
     self._drilldown_path = {}
@@ -1122,26 +1155,32 @@ function BookshelfWidget:setProfile(profile_key)
     else
         self.chip = BookshelfSettings.read("active_chip") or "all"
     end
-    self:_rebuild()
-    UIManager:setDirty(self, "ui")
+    if not defer_rebuild then
+        self:_rebuild()
+        UIManager:setDirty(self, "ui")
+    end
 end
 
--- Open the folder containing filepath and move pagination to the page where the
--- book is rendered. The first one-item fetch warms Repo.getAll's sorted shape
--- cache; the second fetch asks for light metadata only, so locating a book does
--- not decode every cover in a large folder.
-function BookshelfWidget:showFileLocation(filepath)
+-- Resolve the final navigation state before building. The light-only query
+-- works on both cold and warm caches, without decoding a throwaway cover.
+function BookshelfWidget:showFileLocation(filepath, defer_rebuild)
     local loc = Profiles.locationForFile(filepath)
     if not loc then return false end
+    local old_profile, old_chip, old_cursor = self.profile, self.chip, self._cursor
+    local old_tip = self._drilldown_path and self._drilldown_path[#self._drilldown_path]
+    local old_depth = #(self._drilldown_path or {})
+    local old_folder = old_tip and old_tip.kind == "folder" and old_tip.payload.path
+        or (self:_profileChip() or {}).path
 
     if not (self.profile and self.profile.key == loc.profile_key) then
-        self:setProfile(loc.profile_key)
+        self:setProfile(loc.profile_key, true)
     end
     if not self.profile then return false end
 
     self:_clearDpadFocus()
     self.chip = loc.chip_key
     BookshelfSettings.saveDeferred(self:_profileSettingKey(), self.chip)
+    self._pending_restore_drill = nil
     self._drilldown_path = {}
     if loc.folder ~= loc.root then
         self._drilldown_path[1] = {
@@ -1156,15 +1195,9 @@ function BookshelfWidget:showFileLocation(filepath)
 
     -- Keep these arguments identical to the profile-folder fetch path in
     -- _fetchChipItems so the position is calculated in the displayed order.
-    local folder_opts = {
-        sort_priority       = Profiles.folderSortPriority(self.profile),
-        reverse             = false,
-        folder_read_summary = true,
-        lazy_cover          = true,
-    }
-    Repo.getAll(loc.folder, 1, 0, folder_opts)
-    local items = Repo.getAll(loc.folder, nil, 0, folder_opts, nil,
-        { light_only = true }) or {}
+    local items = Repo.getAll(loc.folder, nil, 0,
+        Profiles.folderSortPriority(self.profile), nil,
+        { light_only = true, lazy_cover = true }) or {}
     local target = _normFolderPath(loc.filepath)
     local found_index
     for i, item in ipairs(items) do
@@ -1183,8 +1216,18 @@ function BookshelfWidget:showFileLocation(filepath)
             tostring(filepath), tostring(loc.folder))
     end
 
-    self:_rebuild()
-    UIManager:setDirty(self, "ui")
+    if not defer_rebuild then
+        if old_profile == self.profile and old_chip == self.chip
+                and old_cursor == self._cursor and old_folder == loc.folder
+                and old_depth == #self._drilldown_path
+                and (not old_tip or old_tip.kind == "folder")
+                and self.width == Screen:getWidth() and self.height == Screen:getHeight() then
+            self:refreshAfterReaderReturn()
+        else
+            self:_rebuild()
+            UIManager:setDirty(self, "ui")
+        end
+    end
     return found_index ~= nil
 end
 
@@ -4148,7 +4191,6 @@ function BookshelfWidget:_fetchChipItems(n, want_all)
     -- The stock shelf has no profile scope; fork profiles add the helper.
     -- Keep the shared folder-drill path usable without that extension.
     local profile_scope = self._profileScope and self:_profileScope() or nil
-    local folder_read_summary = self.profile ~= nil
     local TabModel  = require("lib/bookshelf_tab_model")
     local tab       = TabModel.getById(self.chip)
     if tip and tip.kind == "folder" then
@@ -4162,12 +4204,8 @@ function BookshelfWidget:_fetchChipItems(n, want_all)
                 (not self.profile and tab) and tab.filter or nil, sopts)
         end
         if self.profile then
-            return Repo.getAll(tip.payload.path, LIMIT, offset, {
-                sort_priority       = Profiles.folderSortPriority(self.profile),
-                reverse             = false,
-                folder_read_summary = folder_read_summary,
-                lazy_cover          = true,
-            })
+            return Repo.getAll(tip.payload.path, LIMIT, offset,
+                Profiles.folderSortPriority(self.profile), nil, fetch_opts)
         end
         -- Drilldown inheritance: the chip's sort_priority levels 2+ drive
         -- the order of books inside the drilled-into folder, mirroring how
@@ -4218,12 +4256,8 @@ function BookshelfWidget:_fetchChipItems(n, want_all)
             return Repo.getFolderSections(LIMIT, offset,
                 Profiles.folderSortPriority(self.profile), profile_scope, nil, sopts)
         end
-        return Repo.getAll(profile_chip.path, LIMIT, offset, {
-            sort_priority       = Profiles.folderSortPriority(self.profile),
-            reverse             = false,
-            folder_read_summary = folder_read_summary,
-            lazy_cover          = true,
-        })
+        return Repo.getAll(profile_chip.path, LIMIT, offset,
+            Profiles.folderSortPriority(self.profile), nil, fetch_opts)
     end
     if profile_chip and profile_chip.kind == "next" then
         return Repo.getNextUnreadInSeries(LIMIT, offset, profile_scope)
@@ -8187,6 +8221,18 @@ function BookshelfWidget:_jumpScanList()
     local tip        = self._drilldown_path[#self._drilldown_path]
     local fetch_opts = { lazy_cover = true, light_only = true }
     local BIG_LIMIT  = math.max(self._total_items or 0, 10000)
+
+    -- Fixed profiles have their own folder priority, independent of tabs.
+    local profile_chip = self.profile and self:_profileChip()
+    local profile_folder = tip and tip.kind == "folder" and tip.payload.path
+        or (not tip and profile_chip and profile_chip.path)
+    if self.profile and profile_folder then
+        local priority = Profiles.folderSortPriority(self.profile)
+        local ok, fetched = pcall(Repo.getAll, profile_folder, BIG_LIMIT, 0,
+            priority, nil, fetch_opts)
+        return ok and fetched or nil, priority and priority[1] and priority[1].key,
+            ok and "getAll-profile" or ("getAll-ERR:" .. tostring(fetched))
+    end
 
     -- Group drill (series / author / genre / tag / format / rating /
     -- language): the books are already hydrated on the payload, in the order

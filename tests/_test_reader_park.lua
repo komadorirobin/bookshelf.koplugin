@@ -493,6 +493,36 @@ t.test("failed parked shelf navigation keeps the shelf and reader recoverable", 
     assert(ran == false, "navigation must not run over a failed reader close")
 end)
 
+t.test("profile navigation retains the shelf after really closing the parked reader", function()
+    reset()
+    local fake_fm = { _simpleui_plugin = {} }
+    package.loaded["apps/filemanager/filemanager"] = { instance = nil }
+    local rui, plugin, shelf = parkFixture()
+    rui.showFileManager = function()
+        package.loaded["apps/filemanager/filemanager"].instance = fake_fm
+    end
+    local action_fm
+    assert(Park.finishForShelfNavigation(shelf, function(fm)
+        assert(rui.close_calls == 1 and #closed_widgets == 0)
+        action_fm = fm
+    end, true))
+    assert(rui.close_calls == 1 and action_fm == nil)
+    drainTicks()
+    assert(action_fm == fake_fm and #closed_widgets == 0)
+    assert(plugin.raised and not plugin.shown and not Park.isParked())
+    package.loaded["apps/filemanager/filemanager"] = nil
+end)
+
+t.test("a failed close also suppresses an in-place profile switch", function()
+    reset()
+    local rui, _, shelf = parkFixture()
+    rui.onClose = function() error("close failed") end
+    local ran = false
+    assert(Park.finishForShelfNavigation(shelf, function() ran = true end, true))
+    drainTicks()
+    assert(not ran and Park.isParked() and #closed_widgets == 0)
+end)
+
 t.test("non-parked shelf navigation falls through without running the action", function()
     reset()
     local ran = false

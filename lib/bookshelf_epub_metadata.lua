@@ -301,23 +301,51 @@ local function _readOpfFromEpub(filepath)
 end
 
 local _cache = {}
+local _disk = require("lib/bookshelf_keyed_cache").new("epub_metadata", 1)
 
 local function _statKey(filepath)
     local ok, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok or not lfs then return "" end
+    if not ok or not lfs then return nil end
     local attr = lfs.attributes(filepath)
     if type(attr) == "table" then
-        return tostring(attr.modification or "") .. ":" .. tostring(attr.size or "")
+        if attr.modification and attr.size then
+            return tostring(attr.modification) .. ":" .. tostring(attr.size)
+        end
+        return nil
     end
     local mtime = lfs.attributes(filepath, "modification")
     local size = lfs.attributes(filepath, "size")
-    return tostring(mtime or "") .. ":" .. tostring(size or "")
+    if mtime and size then return tostring(mtime) .. ":" .. tostring(size) end
+end
+
+local function validEntry(entry, stat_key)
+    if type(entry) ~= "table" or entry.stat_key ~= stat_key or entry.parsed ~= true then
+        return false
+    end
+    for _, field in ipairs({ "subtitle", "illustrator", "translator", "series_name", "series_num" }) do
+        if entry[field] ~= nil and type(entry[field]) ~= "string" then return false end
+    end
+    if entry.authors ~= nil then
+        if type(entry.authors) ~= "table" then return false end
+        for _, author in pairs(entry.authors) do
+            if type(author) ~= "string" then return false end
+        end
+    end
+    return true
 end
 
 local function _metadataForFile(filepath)
     local stat_key = _statKey(filepath)
     local cached = _cache[filepath]
-    if cached and cached.stat_key == stat_key then return cached end
+    if cached and cached.stat_key == stat_key
+            and (cached.parsed or os.time() < (cached.retry_after or 0)) then return cached end
+    if stat_key then
+        local saved = _disk.read(filepath)
+        if validEntry(saved, stat_key) then
+            _cache[filepath] = saved
+            return saved
+        end
+    end
 
     local entry = { stat_key = stat_key }
     local ok, opf = pcall(_readOpfFromEpub, filepath)
@@ -327,6 +355,12 @@ local function _metadataForFile(filepath)
         entry.illustrator = EpubMetadata.extractIllustratorFromOpf(opf)
         entry.translator = EpubMetadata.extractTranslatorFromOpf(opf)
         entry.series_name, entry.series_num = EpubMetadata.extractSeriesFromOpf(opf)
+        entry.parsed = true
+        if stat_key and _statKey(filepath) == stat_key then _disk.write(filepath, entry) end
+    else
+        -- Missing files or a transient unzip failure must not become a
+        -- persistent negative cache entry.
+        entry.retry_after = os.time() + 60
     end
     _cache[filepath] = entry
     return entry
@@ -372,8 +406,10 @@ end
 function EpubMetadata.invalidate(filepath)
     if filepath then
         _cache[filepath] = nil
+        _disk.remove(filepath)
     else
         _cache = {}
+        _disk.clear()
     end
 end
 

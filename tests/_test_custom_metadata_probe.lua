@@ -70,9 +70,9 @@ local seed = src:match("\nlocal function _seedDirEntryCache%(listings%)\n(.-)\ne
 
 t.test("the walk hands its directory listings to the gate", function()
     assert(seed, "_seedDirEntryCache is gone or was renamed")
-    assert(src:match("local function walkBooks%(root, depth, out, current_depth, dirs, listings%)"),
+    assert(src:match("local function walkBooks%(root, depth, out, current_depth, dirs, listings, work%)"),
         "walkBooks no longer collects listings")
-    assert(src:match("walkBooks%(home, depth, fresh, 0, dirs, listings%)"),
+    assert(src:match("walkBooks%(home, depth, fresh, 0, dirs, listings, work%)"),
         "the cached walk no longer passes a listings table")
     assert(src:match("_seedDirEntryCache%(listings%)"),
         "the listings are collected but never handed over")

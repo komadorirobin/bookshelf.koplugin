@@ -116,13 +116,22 @@ _G.G_reader_settings = setmetatable({}, {
 -- and read by the next. Repo is loaded with dofile(), so re-loading it gives a
 -- fresh module with an empty in-memory walk cache: that IS a restart, which is
 -- the only condition under which the snapshot does anything.
-local disk = { data = nil, saves = 0, loads = 0, deletes = 0 }
+local disk = { data = nil, files = {}, saves = 0, loads = 0, deletes = 0 }
 package.loaded["persist"] = {
-    new = function(_self, _opts)
+    new = function(_self, opts)
         return {
-            load   = function() disk.loads = disk.loads + 1; return disk.data end,
-            save   = function(_s, t) disk.saves = disk.saves + 1; disk.data = t; return true end,
-            delete = function() disk.deletes = disk.deletes + 1; disk.data = nil; return true end,
+            load = function() disk.loads = disk.loads + 1; return disk.files[opts.path] end,
+            save = function(_s, value)
+                disk.saves = disk.saves + 1
+                disk.data, disk.files[opts.path] = value, value
+                return true
+            end,
+            delete = function()
+                disk.deletes = disk.deletes + 1
+                if disk.data == disk.files[opts.path] then disk.data = nil end
+                disk.files[opts.path] = nil
+                return true
+            end,
         }
     end,
 }
@@ -164,6 +173,8 @@ end
 
 local function setup()
     disk.data, disk.saves, disk.loads, disk.deletes = nil, 0, 0, 0
+    disk.files = {}
+    package.loaded["engines/sui_library_scan"] = nil
     mtimes = { ["/home"] = 10, ["/home/sub"] = 20,
                ["/home/a.epub"] = 100, ["/home/sub/b.epub"] = 200 }
     setTree({
@@ -247,7 +258,7 @@ end)
 t.test("a corrupt snapshot is a miss, not a crash", function()
     setup()
     freshRepo().getLatest(10)
-    disk.data.list = "not a table"
+    disk.data.value.list = "not a table"
     dir_reads = 0
     local out = freshRepo().getLatest(10)
     assert(dir_reads > 0, "a malformed snapshot was accepted")
@@ -262,7 +273,190 @@ t.test("invalidateWalkCache drops the snapshot as well as the memory", function(
     -- Anything that says "forget the library" has to reach the copy that
     -- survives a restart, or the next launch resurrects what was invalidated.
     assert(disk.deletes > 0, "the persisted walk survived an invalidation")
-    assert(disk.data == nil, "the snapshot is still on disk")
+    for path in pairs(disk.files) do
+        assert(not path:find("/walks/", 1, true), "the snapshot is still on disk")
+    end
+end)
+
+t.test("five unchanged roots all survive repeated restarts", function()
+    setup()
+    local roots, fixture = {}, {}
+    for i = 1, 5 do
+        local root = "/root" .. i
+        roots[i] = root
+        fixture[root] = { ".", "..", "book.epub" }
+        mtimes[root] = 10
+    end
+    setTree(fixture)
+    local scope = { roots = roots }
+    assert(#freshRepo().getAllFilepaths(scope) == 5)
+    assert(disk.saves == 5)
+    for _ = 1, 2 do
+        dir_reads = 0
+        assert(#freshRepo().getAllFilepaths(scope) == 5)
+        assert(dir_reads == 0, "root snapshots overwrote each other")
+        assert(disk.saves == 5, "unchanged roots were saved again")
+    end
+    mtimes[roots[3]] = 11
+    dir_reads = 0
+    assert(#freshRepo().getAllFilepaths(scope) == 5)
+    assert(dir_reads == 1, "only the changed root should be walked")
+end)
+
+t.test("old single-root snapshots are still readable", function()
+    setup()
+    disk.files["/tmp/bookshelf-walk-test/cache/bookshelf/bookshelf.walk"] = {
+        version = 1, key = "/home:3",
+        list = { { fp = "/home/a.epub", mtime = 100 }, { fp = "/home/sub/b.epub", mtime = 200 } },
+        dirs = { ["/home"] = 10, ["/home/sub"] = 20 },
+    }
+    assert(#freshRepo().getAllFilepaths() == 2)
+    assert(dir_reads == 0)
+end)
+
+local function scheduler()
+    local queue = {}
+    package.loaded["ui/uimanager"] = {
+        scheduleIn = function(_, _, fn) queue[#queue + 1] = fn end,
+        unschedule = function(_, fn)
+            for i = #queue, 1, -1 do if queue[i] == fn then table.remove(queue, i) end end
+        end,
+    }
+    return queue, function() assert(table.remove(queue, 1), "no pending tick")() end
+end
+
+local function largeTree()
+    setup()
+    local names = { ".", ".." }
+    for i = 1, 500 do names[#names + 1] = i .. ".epub" end
+    setTree({ ["/home"] = names })
+end
+
+t.test("preload yields, pauses for interaction and publishes only complete roots", function()
+    largeTree()
+    local queue, tick = scheduler()
+    local active = true
+    local Repo = freshRepo()
+    Repo.prewarmFilepaths({ "/home" }, { is_active = function() return active end })
+    assert(dir_reads == 0, "preload ran synchronously")
+    tick()
+    assert(disk.saves == 0 and #queue == 1, "partial walk was published")
+    active = false
+    tick()
+    assert(disk.saves == 0)
+    active = true
+    local ticks = 0
+    while #queue > 0 do tick(); ticks = ticks + 1; assert(ticks < 50) end
+    assert(ticks > 1 and disk.saves == 1)
+    dir_reads = 0
+    assert(#Repo.getAllFilepaths() == 500 and dir_reads == 0)
+end)
+
+t.test("cancelling a yielded preload does not publish it", function()
+    largeTree()
+    local queue, tick = scheduler()
+    local cancel = freshRepo().prewarmFilepaths({ "/home" })
+    tick()
+    cancel()
+    assert(#queue == 0 and disk.saves == 0)
+end)
+
+t.test("foreground queries win over an older yielded preload", function()
+    largeTree()
+    local queue, tick = scheduler()
+    local Repo = freshRepo()
+    Repo.prewarmFilepaths({ "/home" })
+    tick()
+    assert(#Repo.getAllFilepaths() == 500)
+    while #queue > 0 do tick() end
+    assert(disk.saves == 1, "preload replaced the foreground cache")
+end)
+
+t.test("invalidation cancels a yielded preload", function()
+    largeTree()
+    local queue, tick = scheduler()
+    local Repo = freshRepo()
+    Repo.prewarmFilepaths({ "/home" })
+    tick()
+    Repo.invalidateWalkCache()
+    local before = disk.saves
+    while #queue > 0 do tick() end
+    assert(disk.saves == before, "invalidated results came back")
+end)
+
+t.test("cancelling closes a yielded directory handle and stops future work", function()
+    largeTree()
+    local lfs = package.loaded["libs/libkoreader-lfs"]
+    local original_dir, closed = lfs.dir, 0
+    lfs.dir = function(path)
+        local iter = original_dir(path)
+        local handle = { close = function() closed = closed + 1 end }
+        return function()
+            local name = iter()
+            if not name then handle:close() end
+            return name
+        end, handle
+    end
+    local queue, tick = scheduler()
+    local alive = true
+    freshRepo().prewarmFilepaths({ "/home" }, { is_alive = function() return alive end })
+    tick()
+    assert(closed == 0, "expected a suspended iterator")
+    alive = false
+    tick()
+    assert(closed == 1 and #queue == 0 and disk.saves == 0)
+end)
+
+t.test("foreground replacement during final validation is not overwritten", function()
+    setup()
+    -- 63 directory entries, then the 64th checkpoint yields in validation.
+    local names = { ".", ".." }
+    for i = 1, 61 do names[#names + 1] = i .. ".epub" end
+    setTree({ ["/home"] = names })
+    local queue, tick = scheduler()
+    local Repo = freshRepo()
+    Repo.prewarmFilepaths({ "/home" })
+    tick()
+    assert(disk.saves == 0)
+    assert(#Repo.getAllFilepaths() == 61 and disk.saves == 1)
+    while #queue > 0 do tick() end
+    assert(disk.saves == 1, "final validation published over the foreground cache")
+end)
+
+t.test("recent input pauses preload until Home becomes idle", function()
+    largeTree()
+    local queue, tick = scheduler()
+    local last_input = math.huge
+    local cancel = freshRepo().prewarmFilepaths({ "/home" }, {
+        last_input_at = function() return last_input end,
+    })
+    tick()
+    assert(dir_reads == 0 and #queue == 1)
+    last_input = 0
+    tick()
+    assert(dir_reads == 1)
+    cancel()
+end)
+
+t.test("a matching SimpleUI index avoids another walk and keeps extra formats", function()
+    setup()
+    package.loaded["engines/sui_library_scan"] = {
+        peekFileIndex = function(root, depth)
+            assert(root == "/home" and depth == 3)
+            return { complete = true, files = {
+                { fp = "/home/a.epub", mtime = 100 },
+                { fp = "/home/sub/b.fb3", mtime = 200 },
+                { fp = "/home/cover.jpg", mtime = 200 },
+                { fp = "/home2/not-here.epub", mtime = 200 },
+            }, dirs = { ["/home"] = 10, ["/home/sub"] = 20 } }
+        end,
+    }
+    local files = freshRepo().getAllFilepaths()
+    assert(#files == 2 and files[2] == "/home/sub/b.fb3")
+    assert(dir_reads == 0)
+    mtimes["/home"] = 11
+    assert(#freshRepo().getAllFilepaths() == 2)
+    assert(dir_reads > 0, "stale shared index was trusted")
 end)
 
 t.done()

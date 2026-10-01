@@ -121,8 +121,10 @@ t.test("cover and list profile folders still show drillable folder cards", funct
         local called, args, _scope, priority = dispatch(true, false, drilled)
         eq(called, "getAll")
         eq(args[1], drilled and "/lib/Manga/Series" or "/lib/Manga")
-        eq(args[4].sort_priority, priority)
-        eq(args[4].folder_read_summary, true)
+        eq(args[4], priority)
+        eq(args[5], nil)
+        eq(args[6].lazy_cover, true)
+        eq(args[6].light_only, true)
     end
 end)
 

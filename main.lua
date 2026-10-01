@@ -914,7 +914,7 @@ end
 -- Show or refresh the BookshelfWidget. We keep a single instance live
 -- across the plugin's lifetime so opening a book and closing it doesn't
 -- require destroying + recreating + flashing the FileManager underneath.
-function Bookshelf:show(profile_key)
+function Bookshelf:show(profile_key, target_file)
     -- Diag: cradle the whole call so the log shows whether this was a
     -- cold start (new widget) or a warm refresh (existing widget got a
     -- softRefresh). The cold-start path runs BookshelfWidget:init ->
@@ -988,11 +988,6 @@ function Bookshelf:show(profile_key)
         end
     end
     if self._widget then
-        if profile_key and not (self._widget.profile and self._widget.profile.key == profile_key) then
-            self._widget:setProfile(profile_key)
-            self:_evictHomescreenOverlay()
-            return
-        end
         -- Already on the stack (probably underneath the Reader). Refresh data
         -- and request a repaint so freshly-closed books surface in Recent etc.
         -- Restore screen rotation saved before the reader opened — the reader
@@ -1025,6 +1020,16 @@ function Bookshelf:show(profile_key)
                     self._widget.dimen.h = self._widget.height
                 end
             end
+        end
+        if target_file then
+            self._widget:showFileLocation(target_file)
+            self:_evictHomescreenOverlay()
+            return
+        end
+        if profile_key and not (self._widget.profile and self._widget.profile.key == profile_key) then
+            self._widget:setProfile(profile_key)
+            self:_evictHomescreenOverlay()
+            return
         end
         -- Whatever happened above, the screen may no longer be the shape this
         -- tree was measured for -- every row width, the hero and the footer
@@ -1071,7 +1076,9 @@ function Bookshelf:show(profile_key)
         return
     end
     local t_pre_new = _gettime()
-    self._widget = BookshelfWidget:new{ profile_key = profile_key }
+    self._widget = BookshelfWidget:new{
+        profile_key = profile_key, _initial_target_file = target_file,
+    }
     local t_post_new = _gettime()
     -- Clear our reference if the widget is dismissed for any reason, so a
     -- subsequent show() falls back to the create path.
@@ -1111,10 +1118,7 @@ end
 
 function Bookshelf:_showAfterReaderReturn(profile_key, target_file)
     if not self._widget then
-        self:show(profile_key)
-        if target_file and self._widget and self._widget.showFileLocation then
-            self._widget:showFileLocation(target_file)
-        end
+        self:show(profile_key, target_file)
         return
     end
     local Screen = require("device").screen
@@ -1476,10 +1480,7 @@ function Bookshelf:_safeShow(profile_key, target_file)
     self:_cancelReaderPrewarm()
     local readerui = self.ui
     if not (readerui and readerui.document and readerui.onClose) then
-        self:show(profile_key)
-        if target_file and self._widget and self._widget.showFileLocation then
-            self._widget:showFileLocation(target_file)
-        end
+        self:show(profile_key, target_file)
         return
     end
     local file = readerui.document.file
@@ -1768,9 +1769,10 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
         widget = BookshelfWidget:new{
             profile_key = profile_key,
             _simpleui_bar_host = opts.simpleui_bar_host,
+            _initial_target_file = opts.explicit_return_target and opts.target_file or nil,
         }
         created = true
-    elseif profile_key and not (widget.profile and widget.profile.key == profile_key)
+    elseif not opts.target_file and profile_key and not (widget.profile and widget.profile.key == profile_key)
             and type(widget.setProfile) == "function" then
         widget:setProfile(profile_key)
     end
@@ -1833,14 +1835,15 @@ function Bookshelf:_prewarmShelfBehindReader(profile_key, readerui, opts)
     -- eventual close only has to raise an already-final widget.
     if opts.explicit_return_target and opts.target_file
             and type(widget.showFileLocation) == "function" then
-        local ok_target, target_err = pcall(function()
-            widget:showFileLocation(opts.target_file)
+        local ok_target, target_found = pcall(function()
+            if created then return widget._initial_target_found end
+            return widget:showFileLocation(opts.target_file)
         end)
         if not ok_target then
             logger.warn("[bookshelf] reader prewarm target failed: "
-                .. tostring(target_err))
+                .. tostring(target_found))
         else
-            widget._bookshelf_reader_return_ready = true
+            widget._bookshelf_reader_return_ready = target_found == true
         end
     end
     UIManager:setDirty(readerui, "ui")
@@ -2047,32 +2050,19 @@ function Bookshelf:onPrepareBookshelfHome(payload)
     end
 
     local ok_repo, Repo = pcall(require, "lib/bookshelf_book_repository")
-    if not (ok_repo and Repo and type(Repo.getAllFilepaths) == "function") then
+    if not (ok_repo and Repo and type(Repo.prewarmFilepaths) == "function") then
         return false
     end
-
-    local warmed = 0
+    if self._cancel_home_prewarm then self._cancel_home_prewarm() end
+    local roots = {}
     for _, profile_key in ipairs({ "prose", "comics" }) do
-        if type(payload.is_alive) == "function" and not payload.is_alive() then
-            return false
-        end
-        if type(payload.is_active) == "function" and not payload.is_active() then
-            return false
-        end
         local profile = Profiles.get(profile_key)
-        local ok, err = pcall(Repo.getAllFilepaths, Profiles.scope(profile))
-        if ok then
-            warmed = warmed + 1
-        else
-            logger.warn("[bookshelf] Home cache prewarm failed for "
-                .. profile_key .. ": " .. tostring(err))
+        for _, root in ipairs(profile and profile.roots or {}) do
+            roots[#roots + 1] = root
         end
     end
-    if warmed > 0 then
-        logger.dbg("[bookshelf perf] Home cache prewarm: profiles="
-            .. tostring(warmed))
-    end
-    return warmed == 2
+    self._cancel_home_prewarm = Repo.prewarmFilepaths(roots, payload)
+    return true
 end
 
 --- Register the in-reader status line, if the user asked for it.

@@ -43,10 +43,11 @@ package.loaded["lib/bookshelf_profiles"] = {
 }
 
 local warmed = {}
+local cancelled = 0
 package.loaded["lib/bookshelf_book_repository"] = {
-    getAllFilepaths = function(scope)
-        warmed[#warmed + 1] = scope
-        return {}
+    prewarmFilepaths = function(roots, opts)
+        warmed[#warmed + 1] = { roots = roots, opts = opts }
+        return function() cancelled = cancelled + 1 end
     end,
 }
 
@@ -60,9 +61,18 @@ runner.test("Home prewarm warms both profile scopes", function()
         is_active = function() return active end,
     }
     assert(accepted == true)
-    assert(#warmed == 2)
-    assert(warmed[1] == scopes.prose)
-    assert(warmed[2] == scopes.comics)
+    assert(#warmed == 1)
+    assert(warmed[1].roots[1] == scopes.prose.roots[1])
+    assert(warmed[1].roots[2] == scopes.comics.roots[1])
+    assert(warmed[1].opts.is_active() == true)
+    active = false
+    assert(warmed[1].opts.is_active() == false)
+end)
+
+runner.test("a new Home request cancels the previous preload", function()
+    local before = cancelled
+    assert(Bookshelf:onPrepareBookshelfHome{ is_active = function() return true end })
+    assert(cancelled == before + 1)
 end)
 
 runner.test("Home prewarm rejects an inactive Home screen", function()
@@ -76,4 +86,3 @@ runner.test("Home prewarm rejects an inactive Home screen", function()
 end)
 
 runner.done()
-

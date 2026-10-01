@@ -2149,6 +2149,7 @@ end
 -- the events hadn't already cleared.
 local WALK_CACHE_TTL = 24 * 3600  -- vestigial; HIT paths no longer consult expires_at
 local _walk_cache = {}      -- { [key] = { list = {...}, expires_at = number } }
+local _walk_generation = 0
 
 -- Series-groups cache. The walk-cache covers the lfs.dir + per-file mtime
 -- sweep, but getSeriesGroups also iterates EVERY candidate calling
@@ -2493,6 +2494,7 @@ function Repo.invalidateCalibreCache()
 end
 
 function Repo.invalidateWalkCache()
+    _walk_generation = _walk_generation + 1
     Repo.invalidateCalibreCache()
     _finished_count.value = nil
     _dropFinishedCount()
@@ -2981,7 +2983,7 @@ end
 -- to detect "did anything in the library change since we cached?" with a
 -- single stat() per dir on subsequent reads, far cheaper than re-walking
 -- the entire tree on each chip tap.
-local function walkBooks(root, depth, out, current_depth, dirs, listings)
+local function walkBooks(root, depth, out, current_depth, dirs, listings, work)
     current_depth = current_depth or 0
     if current_depth > depth then return end
     -- Refuse to walk an unset/empty root. "/" is permitted (some users set
@@ -3000,6 +3002,7 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
     -- step. pcall returns (ok, ret1, ret2, …) — capture both real returns.
     local ok, iter, dir_obj = pcall(lfs.dir, root)
     if not ok or type(iter) ~= "function" then return end
+    if work then work.dir_handle = dir_obj end
 
     -- The custom-metadata gate below needs to know whether a book's sibling
     -- ".sdr" exists, and answers that from a per-directory listing it builds
@@ -3017,6 +3020,7 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
     local seen_mimetype, seen_meta_inf = false, false
     local found, subdirs = {}, {}
     for entry in iter, dir_obj do
+        if work then work.checkpoint() end
         if listing then listing[entry] = true end
         if entry == "mimetype" then seen_mimetype = true
         elseif entry == "META-INF" then seen_meta_inf = true end
@@ -3068,13 +3072,14 @@ local function walkBooks(root, depth, out, current_depth, dirs, listings)
             end
         end
     end
+    if work then work.dir_handle = nil end
     if listings and listing then listings[root] = listing end
     if seen_mimetype and seen_meta_inf then return end
     for i = 1, #found do out[#out + 1] = found[i] end
     for i = 1, #subdirs do
         local d = subdirs[i]
         if dirs then dirs[d.fp] = d.mtime end
-        walkBooks(d.fp, depth, out, current_depth + 1, dirs, listings)
+        walkBooks(d.fp, depth, out, current_depth + 1, dirs, listings, work)
     end
 end
 
@@ -3083,11 +3088,12 @@ end
 -- a stat() takes ~50us and a typical library has ~100-500 dirs, so the
 -- whole check is single-digit ms even on a cold filesystem cache. Cheaper
 -- than the 1-3s a re-walk would cost.
-local function _dirsChanged(dirs)
+local function _dirsChanged(dirs, work)
     if not dirs then return true end
     local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     if not ok_lfs or not lfs or not lfs.attributes then return true end
     for path, recorded in pairs(dirs) do
+        if work then work.checkpoint() end
         local now_mtime = lfs.attributes(path, "modification")
         if not now_mtime or now_mtime ~= recorded then return true end
     end
@@ -3111,7 +3117,6 @@ end
 -- would otherwise rebuild one directory at a time, and they are valid under
 -- exactly the same condition as the walk itself: if every recorded directory
 -- has an unchanged mtime, its contents are unchanged too.
-local WALK_SNAPSHOT_VERSION = 1
 
 -- ── Where our cache files live ─────────────────────────────────────────────
 --
@@ -3167,6 +3172,9 @@ local function _cachePath(name)
     return dir .. name
 end
 
+local cachedWalk
+do
+local WALK_SNAPSHOT_VERSION = 1
 local function _walkPersist()
     local ok_p, Persist = pcall(require, "persist")
     local path = _cachePath("bookshelf.walk")
@@ -3178,22 +3186,32 @@ local function _walkPersist()
     return ok_new and p or nil
 end
 
+local _walk_snapshots = require("lib/bookshelf_keyed_cache").new("walks", 1)
+local _legacy_walk_loaded, _legacy_walk
 local function _loadWalkSnapshot(key)
-    local p = _walkPersist()
-    if not p then return nil end
-    local ok, t = pcall(p.load, p)
-    if not (ok and type(t) == "table") then return nil end
+    local t = _walk_snapshots.read(key)
+    if type(t) == "table" and type(t.list) == "table" and type(t.dirs) == "table" then
+        return t
+    end
+    -- Accept the old single-root file once, without letting later roots
+    -- overwrite it or repeatedly decompress it.
+    if not _legacy_walk_loaded then
+        _legacy_walk_loaded = true
+        local p = _walkPersist()
+        if p then
+            local ok, old = pcall(p.load, p)
+            if ok then _legacy_walk = old end
+        end
+    end
+    t = _legacy_walk
+    if type(t) ~= "table" then return nil end
     if t.version ~= WALK_SNAPSHOT_VERSION or t.key ~= key then return nil end
     if type(t.list) ~= "table" or type(t.dirs) ~= "table" then return nil end
     return t
 end
 
 local function _saveWalkSnapshot(key, list, dirs, listings)
-    local p = _walkPersist()
-    if not p then return end
-    pcall(p.save, p, {
-        version  = WALK_SNAPSHOT_VERSION,
-        key      = key,
+    _walk_snapshots.write(key, {
         list     = list,
         dirs     = dirs,
         listings = listings,
@@ -3201,17 +3219,55 @@ local function _saveWalkSnapshot(key, list, dirs, listings)
 end
 
 _dropWalkSnapshot = function()
+    _walk_snapshots.clear()
+    _legacy_walk_loaded, _legacy_walk = true, nil
     local p = _walkPersist()
     if p then pcall(p.delete, p) end
+end
+
+local function _simpleUIWalk(home, depth, work)
+    local scan = package.loaded["engines/sui_library_scan"]
+    if type(scan) ~= "table" or type(scan.peekFileIndex) ~= "function" then return end
+    local ok, index = pcall(scan.peekFileIndex, home, depth)
+    if not ok or type(index) ~= "table" or not index.complete
+            or type(index.files) ~= "table" or type(index.dirs) ~= "table" then return end
+    local root = home:gsub("/+$", "")
+    if root == "" then root = "/" end
+    local prefix = root == "/" and "/" or root .. "/"
+    local list, dirs, listings = {}, {}, {}
+    for path, mtime in pairs(index.dirs) do
+        if work then work.checkpoint() end
+        if path == root or path:sub(1, #prefix) == prefix then
+            local rest = path == root and "" or path:sub(#prefix + 1)
+            local level = 0
+            for _ in rest:gmatch("[^/]+") do level = level + 1 end
+            if level <= depth + 1 then dirs[path] = mtime end
+            if level <= depth and index.listings then listings[path] = index.listings[path] end
+        end
+    end
+    if not dirs[root] then return end
+    for _, record in ipairs(index.files) do
+        if work then work.checkpoint() end
+        local fp = record.fp
+        if type(fp) == "string" and fp:sub(1, #prefix) == prefix and _supportedExt(fp) then
+            local _, level = fp:sub(#prefix + 1):gsub("/", "")
+            if level <= depth then
+                list[#list + 1] = { fp = fp, mtime = record.mtime, size = record.size }
+            end
+        end
+    end
+    if _dirsChanged(dirs, work) then return end
+    return list, dirs, listings
 end
 
 -- Returns a shallow copy of the cached candidate list for (home, depth).
 -- Walks fresh on miss/expiry/dir-mtime-change. The copy is so callers
 -- (e.g. getLatest) can sort in place without mutating the cached order.
-local function cachedWalk(home, depth)
+cachedWalk = function(home, depth, work)
     local key = (home or "/") .. ":" .. tostring(depth or 0)
     local now = os.time()
     local entry = _walk_cache[key]
+    local prior_entry, generation = entry, _walk_generation
     local from_snapshot = false
     if not entry then
         -- Nothing in memory: try the previous launch's walk. It is adopted
@@ -3234,22 +3290,31 @@ local function cachedWalk(home, depth)
     -- pass may cost hundreds of stats on a large library.
     -- A persisted snapshot must always be validated before use. An in-memory
     -- entry only needs one directory-mtime pass per second.
-    elseif (from_snapshot or entry.validated_at ~= now) and _dirsChanged(entry.dirs) then
+    elseif (from_snapshot or entry.validated_at ~= now) and _dirsChanged(entry.dirs, work) then
         stale_reason = from_snapshot and "snapshot-dir-mtime" or "dir-mtime"
     end
     if stale_reason then
         local _t0 = _gettime()
-        local fresh, dirs = {}, {}
+        local fresh, dirs, listings = _simpleUIWalk(home, depth, work)
+        local shared = fresh ~= nil
+        fresh, dirs, listings = fresh or {}, dirs or {}, listings or {}
         -- Record the root's own mtime too -- a new top-level book or folder
         -- bumps the home_dir's mtime, and without this entry the dir-mtime
         -- check would miss those adds.
         local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
-        if ok_lfs and lfs and lfs.attributes then
+        if not shared and ok_lfs and lfs and lfs.attributes then
             local root_m = lfs.attributes(home, "modification")
             if root_m then dirs[home] = root_m end
         end
-        local listings = {}
-        walkBooks(home, depth, fresh, 0, dirs, listings)
+        if not shared then walkBooks(home, depth, fresh, 0, dirs, listings, work) end
+        -- A cooperative walk may have yielded to an import, invalidation or
+        -- a foreground query. Never publish a partial/stale replacement.
+        if work then
+            local changed = _dirsChanged(dirs, work)
+            -- Validation can itself yield to a newer foreground query.
+            if changed or _walk_generation ~= generation
+                    or _walk_cache[key] ~= prior_entry then return {} end
+        end
         -- Seed the custom-metadata gate from this walk. Only ever from a FRESH
         -- walk: a cached one could describe a library that has since changed,
         -- and this cache decides whether a book's sidecar directory exists.
@@ -3314,6 +3379,9 @@ local function cachedWalk(home, depth)
         logger.dbg(string.format("[bookshelf perf] cachedWalk: MISS(%s) walk=%.0fms files=%d dirs=%d depth=%s",
             stale_reason, _dt, #fresh, dir_count, tostring(depth)))
     else
+        if work and (_walk_generation ~= generation or _walk_cache[key] ~= prior_entry) then
+            return {}
+        end
         if from_snapshot then
             -- Accepted: every directory the previous launch recorded still has
             -- the mtime it had then, so both the book list and the listings
@@ -3331,6 +3399,70 @@ local function cachedWalk(home, depth)
     for i = 1, #entry.list do copy[i] = entry.list[i] end
     return copy
 end
+
+-- Schedule bounded Lua work rather than running a recursive scan in one UI
+-- callback. Only complete roots are published; cancellation closes an active
+-- directory iterator and leaves all previous cache entries intact.
+function Repo.prewarmFilepaths(roots, opts)
+    opts = opts or {}
+    local UIManager = require("ui/uimanager")
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local work = {}
+    local generation = _walk_generation
+    local cancelled, step
+    local operations, deadline = 0, 0
+    local co = coroutine.create(function()
+        local seen = {}
+        for _, root in ipairs(roots or {}) do
+            if type(root) == "string" and not seen[root] then
+                seen[root] = true
+                cachedWalk(root, depth, work)
+                coroutine.yield()
+            end
+        end
+    end)
+    work.checkpoint = function()
+        operations = operations + 1
+        if operations >= 64 or _gettime() >= deadline then coroutine.yield() end
+    end
+    local function cancel()
+        cancelled = true
+        if UIManager.unschedule then UIManager:unschedule(step) end
+        if work.dir_handle then
+            pcall(function() work.dir_handle:close() end)
+            work.dir_handle = nil
+        end
+        co, roots, opts = nil, nil, {}
+    end
+    step = function()
+        if cancelled then return end
+        if generation ~= _walk_generation
+                or (opts.is_alive and not opts.is_alive()) then cancel(); return end
+        if opts.is_active and not opts.is_active() then
+            UIManager:scheduleIn(1, step)
+            return
+        end
+        if opts.last_input_at and _gettime() - opts.last_input_at() < 5 then
+            UIManager:scheduleIn(1, step)
+            return
+        end
+        operations, deadline = 0, _gettime() + 0.008
+        local ok, err = coroutine.resume(co)
+        if not ok then
+            cancel()
+            logger.warn("[bookshelf] Home prewarm failed:", tostring(err))
+        elseif coroutine.status(co) == "dead" then
+            local on_done = opts.on_done
+            cancel()
+            if on_done then on_done() end
+        else
+            UIManager:scheduleIn(0.01, step)
+        end
+    end
+    UIManager:scheduleIn(0.01, step)
+    return cancel
+end
+end -- walk persistence and cooperative preload helpers
 
 -- Repo.countFinishedBooks() -> how many books in the library are Finished.
 --

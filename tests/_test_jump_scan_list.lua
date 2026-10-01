@@ -60,11 +60,14 @@ local function scan(opts)
             return { getById = function() return opts.tab end }
         end,
         Repo = Repo, math = math, pcall = pcall, tostring = tostring,
+        Profiles = { folderSortPriority = function() return opts.profile_priority end },
     }
     local self_tbl = {
         chip            = opts.chip or "library",
         _drilldown_path = opts.drill or {},
         _total_items    = opts.total_items,
+        profile         = opts.profile,
+        _profileChip    = function() return opts.profile_chip end,
     }
     local f = compile("local self = ... ; " .. body, env)
     local items, sort_key, via = f(self_tbl)
@@ -72,6 +75,22 @@ local function scan(opts)
 end
 
 local SP2 = { { key = "filename" }, { key = "title" } }
+
+t.test("fixed profile roots and drills use the displayed folder sort without cover hydration", function()
+    for _, drilled in ipairs{ false, true } do
+        local priority = { { key = "series_index" } }
+        local _, key, via, calls = scan{
+            tab = { sort_priority = SP2, filter = {} },
+            profile = { key = "comics" }, profile_priority = priority,
+            profile_chip = { kind = "folder", path = "/books" },
+            drill = drilled and { { kind = "folder", payload = { path = "/books/series" } } } or {},
+        }
+        assert(via == "getAll-profile" and key == "series_index")
+        assert(calls.getAll.path == (drilled and "/books/series" or "/books"))
+        assert(calls.getAll.sort_priority == priority and calls.getAll.filter == nil)
+        assert(calls.getAll.opts.light_only and calls.getAll.opts.lazy_cover)
+    end
+end)
 
 -- ── Folder drill: the reported bug ──
 
