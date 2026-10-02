@@ -42,7 +42,27 @@ local MAGIC = "BSC1"
 M.MAX_BYTES = 96 * 1024 * 1024
 
 local _dir            -- resolved cache directory, or false when unavailable
-local _swept = false  -- the count sweep runs at most once per session
+local _entries, _bytes, _indexed = {}, 0, false
+local _task, _dir_handle
+local _active = true
+local _write_generation = 0
+
+local function record(path, size, mtime)
+    local old = _entries[path]
+    _bytes = _bytes - (old and old.b or 0) + (size or 0)
+    _entries[path] = size and { p = path, b = size, m = mtime or 0 } or nil
+end
+
+local function cancelMaintenance()
+    if _task then
+        _task.ui:unschedule(_task.tick)
+        _task = nil
+    end
+    if _dir_handle then
+        pcall(function() _dir_handle:close() end)
+        _dir_handle = nil
+    end
+end
 
 local function dir()
     if _dir ~= nil then return _dir or nil end
@@ -102,29 +122,29 @@ local function bookOf(path)
     return fp
 end
 
---- Bring the store back under M.MAX_BYTES. Public because it is a real
---- operation rather than an internal detail, and because the once-per-session
---- guard belongs to the automatic call below, not to the work itself.
---- Prunes only when actually over the cap, so the usual cost is one dir
---- listing plus a stat per file.
-function M.sweep()
+-- Index existing files once, then account for every store/drop. Automatic
+-- maintenance yields between small batches of filesystem operations.
+local function sweep(yield_step)
+    yield_step = yield_step or function() end
     local d = dir()
     if not d then return end
-    local ok, entries = pcall(function()
-        local list = {}
-        for entry in lfs.dir(d) do
+    if not _indexed then
+        local iter, handle = lfs.dir(d)
+        _dir_handle = handle
+        for entry in iter, handle do
             if entry ~= "." and entry ~= ".." then
                 local p = d .. "/" .. entry
                 local a = lfs.attributes(p) or {}
-                list[#list + 1] = { p = p, m = a.modification or 0, b = a.size or 0 }
+                if a.mode == "file" then record(p, a.size, a.modification) end
+                yield_step()
             end
         end
-        return list
-    end)
-    if not ok or not entries then return end
-    local total = 0
-    for i = 1, #entries do total = total + entries[i].b end
-    if total <= M.MAX_BYTES then return end
+        _dir_handle = nil
+        _indexed = true
+    end
+    if _bytes <= M.MAX_BYTES then return end
+    local entries = {}
+    for _, entry in pairs(_entries) do entries[#entries + 1] = entry end
     -- Over budget. Before falling back to age, drop covers whose book is no
     -- longer there: those can never be used again, while an old cover for a
     -- book still on the shelf may well be wanted on the next launch.
@@ -143,6 +163,7 @@ function M.sweep()
         -- No readable header is its own kind of orphan: nothing can use it.
         entries[i].orphan = (fp == nil) or (lfs.attributes(fp, "mode") == nil)
         if entries[i].orphan then orphans = orphans + 1 end
+        yield_step()
     end
     table.sort(entries, function(a, b)
         if a.orphan ~= b.orphan then return a.orphan end   -- orphans first
@@ -150,22 +171,67 @@ function M.sweep()
     end)
     local pruned = 0
     for i = 1, #entries do
-        if total <= M.MAX_BYTES then break end
-        if pcall(os.remove, entries[i].p) then
-            total = total - entries[i].b
-            pruned = pruned + 1
+        if _bytes <= M.MAX_BYTES then break end
+        local entry = entries[i]
+        -- A foreground render may have replaced this file while we yielded.
+        if _entries[entry.p] == entry then
+            local ok, removed = pcall(os.remove, entry.p)
+            if (ok and removed) or lfs.attributes(entry.p, "mode") == nil then
+                record(entry.p, nil)
+                pruned = pruned + 1
+            end
         end
+        yield_step()
     end
     logger.dbg(string.format(
         "[bookshelf] cover disk cache: pruned %d of %d files (%d orphaned), now %d KB",
-        pruned, #entries, orphans, math.floor(total / 1024)))
+        pruned, #entries, orphans, math.floor(_bytes / 1024)))
 end
 
--- The automatic sweep: at most once per session, after a write.
+-- Explicit maintenance stays synchronous for tools/tests. Normal writes only
+-- queue bounded I/O steps; the byte ledger includes writes between steps.
+function M.sweep()
+    cancelMaintenance()
+    _entries, _bytes, _indexed = {}, 0, false
+    local ok, err = pcall(sweep)
+    if not ok then
+        cancelMaintenance()
+        logger.warn("[bookshelf] cover cache sweep:", err)
+    end
+end
+
 local function maybeSweep()
-    if _swept then return end
-    _swept = true
-    M.sweep()
+    if not _active or _task or (_indexed and _bytes <= M.MAX_BYTES) then return end
+    local ok, ui = pcall(require, "ui/uimanager")
+    if not ok or not ui.scheduleIn or not ui.unschedule then return end
+    local task = { ui = ui, generation = _write_generation }
+    local co = coroutine.create(function()
+        local operations = 0
+        sweep(function()
+            operations = operations + 1
+            if operations >= 8 then operations = 0; coroutine.yield() end
+        end)
+    end)
+    _task = task
+    task.tick = function()
+        if _task ~= task then return end
+        local resumed, err = coroutine.resume(co)
+        if not resumed or coroutine.status(co) == "dead" then
+            cancelMaintenance()
+            if not resumed then logger.warn("[bookshelf] cover cache sweep:", err) end
+            -- A render can add files after this sweep built its candidate
+            -- list. Retry for those writes, but never spin on failed deletes.
+            if resumed and task.generation ~= _write_generation then maybeSweep() end
+        else
+            ui:scheduleIn(0.02, task.tick)
+        end
+    end
+    ui:scheduleIn(0.05, task.tick)
+end
+
+function M.setActive(active)
+    _active = active == true
+    if _active then maybeSweep() else cancelMaintenance() end
 end
 
 --- Write a scaled cover. Returns true when it landed on disk.
@@ -173,6 +239,8 @@ function M.store(filepath, bb)
     if type(filepath) ~= "string" or filepath == "" or not bb then return false end
     local p = pathFor(filepath)
     if not p then return false end
+    local size, file
+    local tmp = p .. ".tmp"
     local ok = pcall(function()
         local ffi = require("ffi")
         local w, h = bb:getWidth(), bb:getHeight()
@@ -204,16 +272,25 @@ function M.store(filepath, bb)
         if (bb.getInverse  and bb:getInverse()  or 0) ~= 0 then error("inverted") end
         -- Write to a sibling and rename, so a crash mid-write cannot leave a
         -- truncated file that later reads as a valid header with short data.
-        local tmp = p .. ".tmp"
         local f = assert(io.open(tmp, "wb"))
-        f:write(string.format("%s %d %d %d %d %d\n%s\n",
-            MAGIC, w, h, stride, btype, #filepath, filepath))
-        f:write(ffi.string(bb.data, stride * h))
-        f:close()
-        os.remove(p)
+        file = f
+        local header = string.format("%s %d %d %d %d %d\n%s\n",
+            MAGIC, w, h, stride, btype, #filepath, filepath)
+        assert(f:write(header))
+        assert(f:write(ffi.string(bb.data, stride * h)))
+        assert(f:close())
+        file = nil
         assert(os.rename(tmp, p))
+        size = #header + stride * h
     end)
-    if ok then maybeSweep() end
+    if ok then
+        record(p, size, os.time())
+        _write_generation = _write_generation + 1
+        maybeSweep()
+    else
+        if file then pcall(file.close, file) end
+        os.remove(tmp)
+    end
     return ok
 end
 
@@ -251,10 +328,14 @@ end
 
 function M.drop(filepath)
     local p = pathFor(filepath)
-    if p then pcall(os.remove, p) end
+    if p then
+        local ok, removed = pcall(os.remove, p)
+        if (ok and removed) or not lfs.attributes(p, "mode") then record(p, nil) end
+    end
 end
 
 function M.clear()
+    cancelMaintenance()
     local d = dir()
     if not d then return end
     pcall(function()
@@ -262,6 +343,7 @@ function M.clear()
             if entry ~= "." and entry ~= ".." then pcall(os.remove, d .. "/" .. entry) end
         end
     end)
+    _entries, _bytes, _indexed = {}, 0, false
 end
 
 return M

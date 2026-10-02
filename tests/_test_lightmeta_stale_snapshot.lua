@@ -93,66 +93,47 @@ t.test("the cache serves stale rows now and schedules the refresh", function()
     assert(body:match("stale%-snapshot"), "the perf line should name the stale source")
 end)
 
-t.test("the refresh saves fresh rows, drops the map, and runs once at a time", function()
-    local scheduled = {}
-    local saved, invalidated, batches = nil, 0, 0
+t.test("refresh completion saves rows and invalidates derived metadata only", function()
+    local requested, saved, invalidated, gate = nil, nil, 0, 0
     local env = {
-        pcall = pcall, pairs = pairs, string = string, type = type,
-        require = function(name)
-            if name == "ui/uimanager" then
-                return { scheduleIn = function(_, _delay, fn) scheduled[#scheduled + 1] = fn end }
-            end
-            error("unexpected require " .. name)
+        pcall = pcall,
+        _light_meta_cache = { old = true }, _light_meta_rows_cache = { old = true },
+        _lightmeta_refresh = { request = function(opts) requested = opts end },
+        _bimDbFingerprint = function() return "v2:100:5" end,
+        _saveRowSnapshot = function(rows, fingerprint)
+            assert(fingerprint == "v2:100:5"); saved = rows
         end,
-        _lightmeta_refresh_pending = false,
-        _lightmeta_fresh_rows = nil,
-        LIGHTMETA_REFRESH_DELAY_S = 2,
-        _gettime = function() return 0 end,
-        logger = { dbg = function() end },
-        _loadBatchBookInfoFromBim = function() batches = batches + 1; return { ["/b/c"] = { title = "C" } } end,
-        _saveRowSnapshot = function(rows) saved = rows end,
-        Repo = { invalidateLightMeta = function() invalidated = invalidated + 1 end },
+        _invalidateCustomMetaGate = function() gate = gate + 1 end,
+        Repo = { invalidateBookCache = function(reason)
+            assert(reason == "metadata-refresh"); invalidated = invalidated + 1
+        end },
     }
-    local run = compile(sched_body, env)
-    run(); run()   -- second call while pending must not schedule twice
-    assert(#scheduled == 1, "one refresh in flight at a time, got " .. #scheduled)
-    assert(env._lightmeta_refresh_pending == true)
-    scheduled[1]()
-    assert(batches == 1, "the live batch ran once")
-    assert(saved and saved["/b/c"], "fresh rows were saved as the new snapshot")
-    assert(invalidated == 1, "the derived map was dropped so readers reload")
-    assert(env._lightmeta_refresh_pending == false, "pending flag cleared")
-    assert(env._lightmeta_fresh_rows and env._lightmeta_fresh_rows["/b/c"],
-        "the fresh rows are kept in memory, so the map does not depend on the save")
-    run()
-    assert(#scheduled == 1, "a session refreshes at most once, even if asked again")
+    compile(sched_body, env)()
+    assert(requested and saved == nil, "requesting refresh must not do I/O")
+    requested.done({ ["/b/c"] = { title = "C" } }, requested.fingerprint())
+    assert(saved["/b/c"] and invalidated == 1 and gate == 1)
+    assert(next(env._light_meta_cache) == nil and env._light_meta_rows_cache == nil)
 end)
 
-t.test("a failed save cannot re-arm the refresh loop", function()
-    -- The bug class: save fails (read-only dir), the invalidate drops the
-    -- map, the next reader loads the still-stale snapshot and schedules
-    -- again -- a full table read every two seconds. Memory now wins.
-    local scheduled, batches = {}, 0
+t.test("a failed snapshot save does not block derived-cache invalidation", function()
+    local requested, invalidated = nil, false
     local env = {
-        pcall = pcall, pairs = pairs, string = string, type = type,
-        require = function() return { scheduleIn = function(_, _d, fn) scheduled[#scheduled + 1] = fn end } end,
-        _lightmeta_refresh_pending = false, _lightmeta_fresh_rows = nil,
-        LIGHTMETA_REFRESH_DELAY_S = 2, _gettime = function() return 0 end,
-        logger = { dbg = function() end },
-        _loadBatchBookInfoFromBim = function() batches = batches + 1; return { ["/b/c"] = {} } end,
+        pcall = pcall,
+        _lightmeta_refresh = { request = function(opts) requested = opts end },
         _saveRowSnapshot = function() error("disk full") end,
-        Repo = { invalidateLightMeta = function() end },
+        _invalidateCustomMetaGate = function() end,
+        Repo = { invalidateBookCache = function() invalidated = true end },
     }
-    local run = compile(sched_body, env)
-    run(); scheduled[1]()
-    assert(batches == 1 and env._lightmeta_fresh_rows, "the refresh completed despite the failed save")
-    run()
-    assert(#scheduled == 1, "no second refresh: the fresh rows in memory satisfy the next reader")
+    compile(sched_body, env)()
+    requested.done({ ["/b/c"] = {} }, "v2:100:5")
+    assert(invalidated)
 end)
 
 t.test("the cache prefers a completed refresh's rows over the disk snapshot", function()
     local body = bodyOf("\nlocal function _getLightMetaCache%(home, depth%)\n(.-)\nend\n", "_getLightMetaCache")
-    assert(body:match("if _lightmeta_fresh_rows then"), "the cache must consult the in-memory fresh rows first")
+    assert(body:match("if _lightmeta_refresh.rows then"), "the cache must consult the in-memory fresh rows first")
+    assert(body:match("if not _lightmeta_refresh.invalidated then"),
+        "explicit invalidation must bypass even a matching old snapshot")
 end)
 
 t.test("the refresh is declared AFTER the save it calls", function()
@@ -162,22 +143,12 @@ t.test("the refresh is declared AFTER the save it calls", function()
     -- the map, and the stale boot rescheduled itself every two seconds. The
     -- extracted-body tests above cannot see this (they stub the upvalues), so
     -- pin the declaration order in the source itself.
-    local save_at    = src:find("\nlocal function _saveRowSnapshot%(rows%)")
+    local save_at    = src:find("\nlocal function _saveRowSnapshot%(rows, fingerprint%)")
     local refresh_at = src:find("\nlocal function _scheduleLightMetaRefresh%(%)")
     local cache_at   = src:find("\nlocal function _getLightMetaCache%(home, depth%)")
     assert(save_at and refresh_at and cache_at, "one of the three functions moved or was renamed")
     assert(save_at < refresh_at, "_saveRowSnapshot must be declared before the refresh that calls it")
     assert(refresh_at < cache_at, "the refresh must be declared before _getLightMetaCache, which calls it")
-end)
-
-t.test("with no event loop the stale rows simply stand", function()
-    local env = {
-        pcall = pcall, type = type,
-        require = function() error("no uimanager here") end,
-        _lightmeta_refresh_pending = false,
-    }
-    compile(sched_body, env)()
-    assert(env._lightmeta_refresh_pending == false, "nothing scheduled, nothing pending")
 end)
 
 t.done()

@@ -2268,6 +2268,7 @@ local _light_meta_cache = {}  -- { [key] = { map = {[fp]=record}, expires_at = n
 -- The expensive BIM SELECT is library-wide, so share its raw rows between
 -- profile roots. Each root still gets its own lazy, prefix-filtered map above.
 local _light_meta_rows_cache  -- { rows = {[fp]=info}, expires_at = number }
+local _lightmeta_refresh = require("lib/bookshelf_lightmeta_refresh")
 -- Folder→bookpaths cache. Used by selection-mode plumbing to answer
 -- "which book filepaths live (recursively) under this folder?" without
 -- redoing an lfs scan per query. The cached walk-list already knows the
@@ -2494,6 +2495,7 @@ function Repo.invalidateCalibreCache()
 end
 
 function Repo.invalidateWalkCache()
+    _lightmeta_refresh.invalidate()
     _walk_generation = _walk_generation + 1
     Repo.invalidateCalibreCache()
     _finished_count.value = nil
@@ -2773,6 +2775,7 @@ end
 -- title/author/series/genres -- must force a rebuild or the chips stay stale.
 -- The walk cache (file list) is untouched; only the per-file metadata refetches.
 function Repo.invalidateLightMeta()
+    _lightmeta_refresh.invalidate()
     _light_meta_cache = {}
     _light_meta_rows_cache = nil
     -- Re-read sidecar directories on the next derive so a freshly-written
@@ -3353,6 +3356,7 @@ cachedWalk = function(home, depth, work)
         _walk_cache[key] = entry
         _saveWalkSnapshot(key, fresh, dirs, listings)
         if files_changed and stale_reason ~= "miss" then
+            _lightmeta_refresh.invalidate()
             -- Downstream caches were built against the previous book set
             -- and won't include newly-added (or still-include removed)
             -- books. Drop them so the next query rebuilds against the
@@ -3764,54 +3768,30 @@ local function _loadRowSnapshot()
     return nil
 end
 
-local function _saveRowSnapshot(rows)
+local function _saveRowSnapshot(rows, fingerprint)
     if type(rows) ~= "table" then return end
-    local fingerprint = _bimDbFingerprint()
+    fingerprint = fingerprint or _bimDbFingerprint()
     if not fingerprint then return end
     local p = _lightMetaPersist()
     if not p then return end
     pcall(p.save, p, { fingerprint = fingerprint, rows = rows })
 end
 
--- Background refresh of a stale snapshot. The batch SELECT over a big
--- bookinfo table is the one launch cost we have seen reach 15 seconds (slow
--- SD / colour panels' larger cover blobs, issue 262), and the snapshot only
--- dodges it while the db is untouched -- any cover extraction between boots
--- brought it straight back onto the launch path. Now the shelf opens on the
--- stale rows and this runs a little later on the UI loop: it still blocks
--- for the read's duration when it runs, but after the first paint and the
--- first taps, not before them. One refresh in flight at a time; the fresh
--- rows are saved and the derived map dropped, so the next reader loads the
--- fresh snapshot (a zstd load, not a table scan).
-local LIGHTMETA_REFRESH_DELAY_S = 2
-local _lightmeta_refresh_pending = false
--- The rows a completed refresh produced, this session. _getLightMetaCache
--- prefers them over anything on disk, so the fresh map does NOT depend on
--- the snapshot save succeeding -- a read-only data dir or a full disk would
--- otherwise leave the stale snapshot in place and re-arm a full table read
--- every two seconds for the whole session. Set once: a session refreshes
--- at most once.
-local _lightmeta_fresh_rows = nil
+-- Keep stale first paint cheap, then refresh through cancellable row windows.
 local function _scheduleLightMetaRefresh()
-    if _lightmeta_refresh_pending or _lightmeta_fresh_rows then return end
-    local ok_um, UIManager = pcall(require, "ui/uimanager")
-    if not (ok_um and type(UIManager) == "table" and UIManager.scheduleIn) then
-        return   -- no event loop (standalone/tests): the stale rows stand
-    end
-    _lightmeta_refresh_pending = true
-    UIManager:scheduleIn(LIGHTMETA_REFRESH_DELAY_S, function()
-        _lightmeta_refresh_pending = false
-        local _t0 = _gettime()
-        local ok, rows = pcall(_loadBatchBookInfoFromBim)
-        if ok and rows then
-            _lightmeta_fresh_rows = rows
-            pcall(_saveRowSnapshot, rows)   -- best effort; memory is authoritative now
-            Repo.invalidateLightMeta()
-            logger.dbg(string.format(
-                "[bookshelf perf] light_meta: background refresh %.0fms rows=%d",
-                (_gettime() - _t0) * 1000, (function() local n = 0 for _ in pairs(rows) do n = n + 1 end return n end)()))
-        end
-    end)
+    _lightmeta_refresh.request{
+        fingerprint = _bimDbFingerprint,
+        done = function(rows, fingerprint)
+            pcall(_saveRowSnapshot, rows, fingerprint)
+            _light_meta_cache, _light_meta_rows_cache = {}, nil
+            Repo.invalidateBookCache("metadata-refresh")
+            _invalidateCustomMetaGate()
+        end,
+    }
+end
+
+function Repo.setMetadataRefreshActive(active)
+    _lightmeta_refresh.setActive(active)
 end
 
 -- _getLightMetaCache(home, depth) — returns a fp → light-record map for every
@@ -3847,8 +3827,8 @@ local function _getLightMetaCache(home, depth)
     local row_map
     local row_source
     local fresh
-    if _lightmeta_fresh_rows then
-        row_map = _lightmeta_fresh_rows
+    if _lightmeta_refresh.rows then
+        row_map = _lightmeta_refresh.rows
         fresh = true
         row_source = "memory-refresh"
     elseif row_entry and row_entry.expires_at > now then
@@ -3857,7 +3837,7 @@ local function _getLightMetaCache(home, depth)
         row_source = "memory"
     else
         local snapshot
-        snapshot, fresh = _loadRowSnapshot()
+        if not _lightmeta_refresh.invalidated then snapshot, fresh = _loadRowSnapshot() end
         row_map = snapshot or _loadBatchBookInfoFromBim()
         row_source = snapshot and (fresh and "snapshot" or "stale-snapshot")
                      or (row_map and "batch" or "fallback")
@@ -3868,7 +3848,10 @@ local function _getLightMetaCache(home, depth)
                 fresh = fresh,
                 expires_at = now + WALK_CACHE_TTL,
             }
-            if not snapshot then _saveRowSnapshot(row_map) end
+            if not snapshot then
+                _lightmeta_refresh.invalidated = false
+                _saveRowSnapshot(row_map)
+            end
         else
             _light_meta_rows_cache = nil
         end
@@ -7506,7 +7489,7 @@ function Repo.searchAll(query, scope)
                 seen_dirs[dir] = true
                 local basename = dir:match("([^/]+)$") or dir
                 if basename:lower():find(q, 1, true) then
-                    local first_book = Repo.buildBookMeta(c.fp)
+                    local first_book = { filepath = c.fp }
                     folders[#folders + 1] = {
                         kind       = "folder",
                         path       = dir,
@@ -7522,14 +7505,14 @@ function Repo.searchAll(query, scope)
     -- Warm each shape cache with limit=0 (populates the cache without
     -- hydrating any groups — in Lua, 0 is truthy so `0 or 8` = 0, giving
     -- an empty loop but still running the _buildGroups fill). Then iterate
-    -- shapes directly and hydrate only matching entries, avoiding the cost
-    -- of hydrating the full collection just to filter it.
+    -- shapes directly and return lightweight matches. The widget hydrates
+    -- only the visible page after collecting the search identifiers.
     local function matchGroups(cache_table)
         if not cache_table[key] then return {} end
         local out = {}
         for _i, shape in ipairs(cache_table[key].groups) do
             if (shape.series_name or ""):lower():find(q, 1, true) then
-                out[#out + 1] = _hydrateGroupShape(shape)
+                out[#out + 1] = _hydrateGroupShape(shape, nil, nil, true)
             end
         end
         return out

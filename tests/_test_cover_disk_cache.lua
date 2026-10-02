@@ -305,5 +305,120 @@ t.test("a file with no usable header is treated as an orphan", function()
     assert(Cache.load(live), "a usable cover was dropped in favour of junk")
 end)
 
+local queue = {}
+package.loaded["ui/uimanager"] = {
+    scheduleIn = function(_, _, fn) queue[#queue + 1] = fn end,
+    unschedule = function(_, fn)
+        for i = #queue, 1, -1 do if queue[i] == fn then table.remove(queue, i) end end
+    end,
+}
+local function tick() assert(table.remove(queue, 1))() end
+local function drain()
+    local ticks = 0
+    while #queue > 0 do
+        tick(); ticks = ticks + 1
+        assert(ticks < 1000, "maintenance must not spin on I/O errors")
+    end
+    return ticks
+end
+local function bytesOnDisk()
+    local bytes = 0
+    for e in lfs_real.dir(STORE) do
+        if e ~= "." and e ~= ".." then
+            bytes = bytes + lfs_real.attributes(STORE .. "/" .. e, "size")
+        end
+    end
+    return bytes
+end
+
+t.test("automatic pruning enforces the budget throughout a long session", function()
+    Cache.clear(); Cache.MAX_BYTES = 1000; Cache.setActive(true)
+    drain()
+    for round = 1, 4 do
+        for i = 1, 20 do
+            assert(Cache.store("/books/round" .. round .. "-" .. i, makeBB(16, 16, i)))
+        end
+        assert(#queue == 1, "writes queue one task, not a synchronous sweep per cover")
+        assert(bytesOnDisk() > Cache.MAX_BYTES, "test must exceed the cap before maintenance")
+        assert(drain() > 1, "large sweeps must yield")
+        assert(bytesOnDisk() <= Cache.MAX_BYTES, "later writes escaped the cap")
+    end
+end)
+t.test("overwrites and drops do not inflate the byte ledger", function()
+    Cache.clear(); Cache.MAX_BYTES = 500; Cache.setActive(true); drain()
+    for i = 1, 5 do assert(Cache.store("/books/replaced", makeBB(16, 16, i))) end
+    assert(#queue == 0 and Cache.load("/books/replaced").data[0] == 5)
+    Cache.drop("/books/replaced")
+    assert(Cache.store("/books/other", makeBB(16, 16, 6)))
+    assert(#queue == 0)
+end)
+t.test("suspend cancels maintenance and stale callbacks cannot touch disk", function()
+    Cache.clear(); Cache.MAX_BYTES = 1000; Cache.setActive(true)
+    for i = 1, 20 do assert(Cache.store("/books/pause" .. i, makeBB(16, 16, i))) end
+    local attributes, calls = lfs_real.attributes, 0
+    lfs_real.attributes = function(...)
+        calls = calls + 1
+        return attributes(...)
+    end
+    tick()
+    local first_calls, late = calls, assert(queue[1])
+    Cache.setActive(false)
+    late()
+    local late_calls = calls
+    lfs_real.attributes = attributes
+    assert(first_calls <= 8, "one index tick must not scan the whole cache")
+    assert(late_calls == first_calls and #queue == 0)
+    Cache.setActive(true); drain()
+    assert(bytesOnDisk() <= Cache.MAX_BYTES)
+end)
+t.test("writes during a yielded prune still end under budget", function()
+    Cache.clear(); Cache.MAX_BYTES = 1000; Cache.setActive(true); drain()
+    for i = 1, 16 do assert(Cache.store("/books/old" .. i, makeBB(16, 16, i))) end
+    tick() -- the candidate list now exists, but pruning has not finished
+    for i = 1, 16 do
+        assert(Cache.store("/books/old" .. i, makeBB(16, 16, 55)))
+        assert(Cache.store("/books/new" .. i, makeBB(16, 16, 77)))
+    end
+    drain()
+    assert(bytesOnDisk() <= Cache.MAX_BYTES)
+end)
+t.test("failed deletes do not pretend to free space or schedule an endless retry", function()
+    Cache.clear(); Cache.MAX_BYTES = 0; Cache.setActive(true); drain()
+    assert(Cache.store("/books/no-permission", makeBB(16, 16, 1)))
+    local remove = os.remove
+    os.remove = function(path)
+        if path:sub(1, #STORE) == STORE then return nil, "permission denied" end
+        return remove(path)
+    end
+    local ok, err = pcall(drain)
+    os.remove = remove
+    assert(ok, err)
+    assert(#queue == 0 and bytesOnDisk() > 0)
+    -- A new write should retry, now with working permissions.
+    assert(Cache.store("/books/after-permission", makeBB(16, 16, 2)))
+    drain()
+    assert(bytesOnDisk() == 0)
+end)
+t.test("failed pixel writes retain the previous usable cover and close the file", function()
+    Cache.clear(); Cache.MAX_BYTES = 1000
+    assert(Cache.store("/books/diskfull", makeBB(16, 16, 7)))
+    local open, file_closed = io.open, false
+    io.open = function(path, mode)
+        if mode == "wb" and path:match("%.tmp$") then
+            local n = 0
+            return {
+                write = function() n = n + 1; if n == 1 then return true end; return nil, "disk full" end,
+                close = function() file_closed = true; return true end,
+            }
+        end
+        return open(path, mode)
+    end
+    local stored = Cache.store("/books/diskfull", makeBB(16, 16, 9))
+    io.open = open
+    assert(not stored and file_closed)
+    assert(Cache.load("/books/diskfull").data[0] == 7)
+    Cache.setActive(false)
+end)
+
 os.execute("rm -rf '" .. DIR .. "'")
 t.done()

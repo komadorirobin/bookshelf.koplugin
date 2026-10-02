@@ -11191,7 +11191,10 @@ function BookshelfWidget:_gatedRepaint(tokens, debounce)
     end
 end
 
-function BookshelfWidget:_startStatusTimer()
+function BookshelfWidget:_startStatusTimer(background_active)
+    Repo.setMetadataRefreshActive(background_active ~= false)
+    local disk_cache = package.loaded["lib/bookshelf_cover_disk_cache"]
+    if disk_cache then disk_cache.setActive(background_active ~= false) end
     -- Restart the file poll here, as the counterpart to _stopStatusTimer's
     -- _cancelFilePoll. Every path that pauses the shelf funnels through that
     -- cancel -- onSuspend, onCloseWidget, _launchReader -- but only _rebuild
@@ -11249,6 +11252,9 @@ function BookshelfWidget:_startStatusTimer()
 end
 
 function BookshelfWidget:_stopStatusTimer()
+    Repo.setMetadataRefreshActive(false)
+    local disk_cache = package.loaded["lib/bookshelf_cover_disk_cache"]
+    if disk_cache then disk_cache.setActive(false) end
     -- Same hook also cancels the BIM-extraction poll — no point watching
     -- BIM while the reader is foregrounded; Bookshelf:show will re-arm
     -- everything on the next render.
@@ -11529,7 +11535,9 @@ function BookshelfWidget:onFlushSettings()
 end
 
 function BookshelfWidget:onResume()
-    self:_startStatusTimer()
+    -- Resume is broadcast to covered widgets too. Do not restart database
+    -- and disk maintenance behind a reader or another home screen.
+    self:_startStatusTimer(UIManager:getTopmostVisibleWidget() == self)
     -- File poll cancelled by onSuspend / _stopStatusTimer on the way
     -- into sleep; bring it back so a wake-up detects any files synced
     -- while the device was suspended. Idempotent.

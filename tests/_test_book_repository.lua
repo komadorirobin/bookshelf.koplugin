@@ -1450,6 +1450,39 @@ test("light metadata batch is shared across library profile roots", function()
     Repo.invalidateWalkCache()
 end)
 
+test("metadata invalidation drops completed refresh rows instead of reusing old titles", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = { home_dir = "/meta", bookshelf_latest_walk_depth = 1 }
+    _G._test_docsettings_data = nil
+    local fp = "/meta/a.epub"
+    package.loaded["libs/libkoreader-lfs"].dir = function()
+        return function() return nil end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        local attr = path == fp and { mode = "file", modification = 1, size = 10 }
+        if key then return attr and attr[key] end
+        return attr
+    end
+    local refresh = require("lib/bookshelf_lightmeta_refresh")
+    refresh.rows = { [fp] = { title = "Old title", authors = "Author", has_meta = "Y" } }
+    refresh.invalidated = false
+    assert(Repo.lightMetaFor(fp).title == "Old title")
+    _G._test_bim_batch_rows = {
+        { "/meta/" }, { "a.epub" }, { "New title" }, { "Author" }, {}, {}, {}, {},
+        { 100 }, {}, { "Y" }, { "N" }, {}, {}, {},
+    }
+    Repo.invalidateLightMeta()
+    assert(refresh.rows == nil)
+    assert(Repo.lightMetaFor(fp).title == "New title")
+    refresh.rows = { [fp] = { title = "Old title", authors = "Author", has_meta = "Y" } }
+    _G._test_bim_batch_rows[3][1] = "Imported title"
+    Repo.invalidateWalkCache()
+    assert(refresh.rows == nil)
+    assert(Repo.lightMetaFor(fp).title == "Imported title")
+    _G._test_bim_batch_rows = nil
+    Repo.invalidateWalkCache()
+end)
+
 test("buildBook: keeps single BIM author when filename author is not confirmed", function()
     _G._test_epub_author_call_count = 0
     _G._test_epub_author_creators = {
@@ -1848,6 +1881,49 @@ test("searchAll: matches author groups by name", function()
     assert(r.authors[1].series_name == "Isaac Asimov",
         "expected Isaac Asimov got " .. tostring(r.authors[1].series_name))
     assert(#r.authors[1].books == 1)
+end)
+
+test("searchAll: matched groups and folders stay cover-free until displayed", function()
+    Repo.invalidateWalkCache()
+    _G._test_settings = {
+        home_dir = "/search", bookshelf_latest_walk_depth = 3,
+        bookshelf_search_include_folders = true,
+    }
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = path == "/search" and { ".", "..", "Needle" }
+            or path == "/search/Needle" and { ".", "..", "a.epub" } or {}
+        local i = 0; return function() i = i + 1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(path, key)
+        local attr
+        if path == "/search" or path == "/search/Needle" then
+            attr = { mode = "directory", modification = 1, size = 0 }
+        elseif path == "/search/Needle/a.epub" then
+            attr = { mode = "file", modification = 1, size = 10 }
+        end
+        if key then return attr and attr[key] end
+        return attr
+    end
+    _G._test_bim_data = { ["/search/Needle/a.epub"] = {
+        title = "Needle", authors = "Needle Author", series = "Needle Series",
+        series_index = 1, keywords = "Needle Genre",
+    } }
+    Repo.searchAll("needle") -- warm the text index before counting cover hydrations
+    local build, calls = Repo.buildBookMeta, 0
+    Repo.buildBookMeta = function(...)
+        calls = calls + 1
+        return build(...)
+    end
+    local ok, result = pcall(Repo.searchAll, "needle")
+    Repo.buildBookMeta = build
+    assert(ok, result)
+    assert(#result.authors == 1 and #result.series == 1 and #result.genres == 1)
+    assert(#result.folders == 1 and #result.books == 1)
+    assert(result.authors[1].books[1].filepath == "/search/Needle/a.epub")
+    assert(result.folders[1].first_book.filepath == "/search/Needle/a.epub")
+    assert(calls == 0, "search hydrated offscreen covers: " .. calls)
+    local visible = Repo.findGroup("author", "Needle Author")
+    assert(visible and visible.books[1].title == "Needle", "visible groups must still hydrate")
 end)
 
 test("searchAll: genres match by default and can be switched off (issue 371)", function()
